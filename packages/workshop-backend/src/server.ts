@@ -1,3 +1,7 @@
+export {MailSourceLease,MailSendLease,MailDraftSendUI} from "./mail-source-lease";
+export {DriveImportLease} from "./drive-import-lease";
+export {CalendarSourceLease,CalendarWriteLease,CalendarDraftCreateUI} from "./calendar-source-lease";
+import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import { RpcStub, RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import type { JWTPayload } from "jose";
@@ -105,6 +109,22 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
 
     return admins.includes(name);
   }
+
+  /** Forward diagnostic activity only to the user bound to this authenticated capability. */
+  /** Forward diagnostics through the authenticated user and their selected account. */
+  async recordOwnUIReadiness(sample: UIReadinessSample, recipientAccountId: number): Promise<void> {
+    await this.user.recordOwnUIReadiness(sample, recipientAccountId);
+  }
+
+  async recordOwnWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> {
+    await this.user.recordOwnWorkspaceActivity(stream, sequence, active);
+  }
+  /** Read recipient choices only for the bound user. */
+  async getWorkspaceActivityReporting() { return this.user.getWorkspaceActivityReporting(); }
+  /** Select an activity recipient owned by the bound user. */
+  async setWorkspaceActivityReporting(accountId: number | null): Promise<void> { await this.user.setWorkspaceActivityReporting(accountId); }
+  /** Read aggregate activity for the bound user. */
+  async readOwnWorkspaceActivity() { return this.user.readOwnWorkspaceActivity(); }
 
   whoami(): Promise<AiChatAuthorInfo> {
     return this.user.whoami();
@@ -561,11 +581,38 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
         }));
   }
 
-  async getGatekeeperApp(id: string): Promise<GatekeeperUiFrame | null> {
+  /** Complete a preparation through an account owned by the authenticated user. */
+  async registerCalendarSelection(targetAccountId: number, project: string, request: string, selection: string) {
+    return this.user.registerCalendarSelection(targetAccountId,project,request,selection);
+  }
+  async registerMailSelection(targetAccountId: number, project: string, request: string, selection: string) {
+    return this.user.registerMailSelection(targetAccountId,project,request,selection);
+  }
+
+  /** List WebDAV connections owned by this authenticated user. */
+  async listDriveImportAccounts(accountId:number){return this.user.listDriveImportAccounts(accountId);}
+  async captureDriveImport(sourceAccountId:number,targetAccountId:number,fileId:string,project:string,request:string) {
+    return this.user.captureDriveImport(sourceAccountId,targetAccountId,fileId,project,request);
+  }
+
+  async prepareCalendarConnection(sourceAccountId: number, targetAccountId: number, calendarId: string, project: string, request: string) {
+    return this.user.prepareCalendarConnection(sourceAccountId,targetAccountId,calendarId,project,request);
+  }
+  async listCalendars(accountId:number) {return this.user.listCalendars(accountId);}
+
+  async listMailFolders(accountId:number,parent:string) {return this.user.listMailFolders(accountId,parent);}
+
+  async sendMailDraft(targetAccountId:number,id:string,sha256:string){return this.user.sendMailDraft(targetAccountId,id,sha256);}
+
+  async prepareMailConnection(sourceAccountId: number, targetAccountId: number, query: string, project: string, request: string) {
+    return this.user.prepareMailConnection(sourceAccountId,targetAccountId,query,project,request);
+  }
+
+  async getGatekeeperApp(id: string, accountId?: number): Promise<GatekeeperUiFrame | null> {
     // Self-sufficient: listProvidedAccounts provisions auto-provisioned accounts first (idempotent),
     // so a direct URL load of /gatekeepers/$id works without racing the Header's listGatekeeperApps.
     let accounts = await this.user.listProvidedAccounts();
-    let app = accounts.find(account => account.vendorId === id && account.description.providesUi);
+    let app = accounts.find(account => account.vendorId === id && account.description.providesUi && (accountId === undefined || account.accountId === accountId));
     if (!app) return null;
     // isAdmin is supplied fresh per open so admin-gated features reflect the user's current status.
     return this.user.startAccountAppUi(app.accountId, { isAdmin: this.#isAdmin() });

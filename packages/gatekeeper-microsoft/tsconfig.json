@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ESNext"
+    ],
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@gadgets/workshop-shared/*": [
+        "../workshop-shared/src/*"
+      ]
+    },
+    "types": [
+      "./worker-configuration.d.ts"
+    ]
+  },
+  "include": [
+    "src"
+  ]
+}

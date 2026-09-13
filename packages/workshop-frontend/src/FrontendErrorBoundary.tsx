@@ -1,3 +1,4 @@
+import { failShellReadiness } from "./shellReadiness"
 import { Component, type ReactNode } from 'react'
 import { reportIssue } from './errorReporting'
 
@@ -13,6 +14,7 @@ export default class FrontendErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error) {
+    failShellReadiness()
     reportIssue('workshop.react-render', error, {
       handled: false,
       severity: 'fatal',

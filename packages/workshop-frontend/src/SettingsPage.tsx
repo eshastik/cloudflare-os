@@ -1,3 +1,4 @@
+import WorkspaceActivitySummary from "./WorkspaceActivitySummary"
 import { useKumoToastManager } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from './AuthContext'
 import { useState, useEffect, useRef } from 'react'
@@ -378,6 +379,7 @@ export default function SettingsPage() {
         </section>
 
         {/* Usage & billing — only when the Cloudflare limits flow is enabled server-side */}
+        <WorkspaceActivitySummary />
         <UsageSettings />
 
         {/* Security — only for password accounts (hidden under CF Access or gatekeeper sign-in) */}

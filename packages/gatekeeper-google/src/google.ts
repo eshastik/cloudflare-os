@@ -1,3 +1,10 @@
+import {createApprovedGoogleCalendar} from './calendar-create';
+import {sendApprovedGmail} from './mail-send';
+import {SelectedGmailReader} from "./mail-source";
+import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
+import {GoogleDriveImportReader} from "./drive-import";
+import {SelectedCalendarReader} from "./calendar-source";
+import {calendarAccessMode, assertCalendarWriteAccess, type CalendarAccessMode} from "./calendar-access";
 import { WorkerEntrypoint, DurableObject, RpcTarget, RpcStub } from "cloudflare:workers";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import { GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor as GatekeeperVendorIface, Gatekeeper, ResourceDescription, ApprovalQueue, ObservationDescription, VendorDescription, GatekeeperConnectCallback, GatekeeperConnectOptions, AccountDescription, SupportedResource, ResourceConfiguratorFrame, Cursor, ActionKind, stripTrailingSlashes } from '@gadgets/workshop-shared/gatekeeper';
@@ -269,7 +276,18 @@ const LEGACY_GRANTED_RESOURCE_URL_PATTERNS = [
   BIGQUERY_RESOURCE.urlPattern,
 ];
 
+const GOOGLE_DRIVE_IMPORT_RESOURCE: SupportedResource = {
+  urlPattern: "https://drive.google.com/file/:fileId/*",
+  title: "Google Drive import",
+  description: "Read selected files for import into Mnemos. Original files are never changed.",
+  grantable: true,
+};
+
 const RESOURCE_SCOPES: {resource: SupportedResource, scopes: string[]}[] = [
+  {
+    resource: GOOGLE_DRIVE_IMPORT_RESOURCE,
+    scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+  },
   {
     resource: GMAIL_RESOURCE,
     scopes: [
@@ -616,6 +634,8 @@ export class UserAccount extends DurableObject<Env> {
       }
 
       this.ctx.storage.kv.put<string>("refreshToken", response.refreshToken);
+      this.ctx.storage.kv.put("calendarSourceGeneration", crypto.randomUUID());
+      this.ctx.storage.kv.delete("calendarSourcesRevoked");
       this.ctx.storage.kv.put<GoogleAccessToken>("accessToken", response.accessToken);
       // These credentials are new, so any recorded permanent failure no longer applies
       this.#mintFailure = undefined;
@@ -672,6 +692,17 @@ export class UserAccount extends DurableObject<Env> {
     if (cached.expires.valueOf() <= Date.now() + ACCESS_TOKEN_EXPIRY_SAFETY_MS) return false;
     if (opts?.staleToken !== undefined) return cached.token !== opts.staleToken;
     return !opts?.forceRefresh;
+  }
+
+  /** Internal generation oracle for persistent calendar sources; contains no token. */
+  async calendarSourceGeneration(): Promise<string> {
+    if (this.ctx.storage.kv.get<boolean>("calendarSourcesRevoked") || !this.ctx.storage.kv.get<string>("refreshToken")) throw new Error("Google account disconnected.");
+    let generation = this.ctx.storage.kv.get<string>("calendarSourceGeneration");
+    if (!generation) {
+      generation = crypto.randomUUID();
+      this.ctx.storage.kv.put("calendarSourceGeneration", generation);
+    }
+    return generation;
   }
 
   async getAccessToken(opts?: AccessTokenRequest): Promise<GoogleAccessToken> {
@@ -781,6 +812,8 @@ export class UserAccount extends DurableObject<Env> {
 
   async revoke(): Promise<void> {
     await this.#updateCredentials(async () => {
+      this.ctx.storage.kv.put("calendarSourcesRevoked", true);
+      this.ctx.storage.kv.put("calendarSourceGeneration", crypto.randomUUID());
       let refreshToken = this.ctx.storage.kv.get<string>("refreshToken");
       if (refreshToken) {
         await revokeGoogleToken(refreshToken, AbortSignal.timeout(TOKEN_REVOKE_TIMEOUT_MS));
@@ -798,6 +831,86 @@ type GatekeeperUserImplProps = {
 @validateRpc()
 export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImplProps>
                                 implements GatekeeperUser {
+  /** Only the trusted Workshop host receives this method; no provider token crosses RPC. */
+  async readDriveImport(fileId: string) {
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const patterns = await account.getGrantedResourceUrlPatterns();
+    if (!patterns.includes(GOOGLE_DRIVE_IMPORT_RESOURCE.urlPattern)) throw new Error("Drive import scope is not granted.");
+    // This existing account epoch rotates on Google OAuth replacement and explicit revoke.
+    const generation = await account.calendarSourceGeneration();
+    const validate = async () => {
+      if (await account.calendarSourceGeneration() !== generation) throw new Error("Google account changed.");
+      if (!(await account.getGrantedResourceUrlPatterns()).includes(GOOGLE_DRIVE_IMPORT_RESOURCE.urlPattern)) throw new Error("Drive import scope is not granted.");
+      if (await account.calendarSourceGeneration() !== generation) throw new Error("Google account changed.");
+    };
+    return new GoogleDriveImportReader(async opts => (await account.getAccessToken(opts)).token, validate).snapshot(fileId);
+  }
+
+  /** Select a fixed file for the trusted Workshop-to-Mnemos transfer. */
+  // Like getVerifier(), return the native Worker capability directly: the generated
+  // return validator wraps it in a JavaScript Proxy that workerd cannot serialize.
+  // Validate the selection here; account epoch/scope checks still run on every read.
+  @skipRpcValidation()
+  async getDriveImportSource(fileId: string) {
+    if(typeof fileId!=="string"||!/^[A-Za-z0-9_-]{1,255}$/.test(fileId))throw new Error("Invalid Drive file selection.");
+    const account=this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const generation=await account.calendarSourceGeneration();
+    const source=this.ctx.exports.GoogleDriveImportSource({props:{userObjectId:this.ctx.props.userObjectId,fileId,generation}});
+    await source.validate();
+    return {source,sourceKey:JSON.stringify([this.ctx.props.userObjectId,fileId,generation]),resource:GOOGLE_DRIVE_IMPORT_RESOURCE};
+  }
+
+  /** Explicit host-only send selection; not returned by getMailReadSource. */
+  async getMailSendSource(query:string){
+    validateGmailQueryForGrouping(query);
+    const account=this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const generation=await account.calendarSourceGeneration();
+    const source=this.ctx.exports.GoogleMailSendSource({props:{userObjectId:this.ctx.props.userObjectId,generation}});
+    await source.validate();
+    return {source,sourceKey:JSON.stringify([this.ctx.props.userObjectId,query,generation]),resource:GMAIL_RESOURCE};
+  }
+
+  /** Owner-only label discovery through the common mailbox folder picker. */
+  async listMailFolders(parent:string){
+    const account=this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const generation=await account.calendarSourceGeneration();
+    const reader=new SelectedGmailReader(async opts=>(await account.getAccessToken(opts)).token,'in:inbox',async()=>{
+      if(await account.calendarSourceGeneration()!==generation||!(await account.getGrantedResourceUrlPatterns()).includes(GMAIL_RESOURCE.urlPattern))throw Error('Gmail account unavailable.');
+      if(await account.calendarSourceGeneration()!==generation)throw Error('Gmail account changed.');
+    });
+    return reader.listFolders(parent);
+  }
+
+  /** Host-only factory; the caller must explicitly select and retain this read capability. */
+  async getMailReadSource(query: string) {
+    validateGmailQueryForGrouping(query);
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const generation = await account.calendarSourceGeneration();
+    if (!(await account.getGrantedResourceUrlPatterns()).includes(GMAIL_RESOURCE.urlPattern)) throw new Error("Gmail scope is not granted.");
+    const source = this.ctx.exports.GoogleMailReadSource({props: {userObjectId: this.ctx.props.userObjectId, query, generation}});
+    await source.metadata();
+    return {source, sourceKey: JSON.stringify([this.ctx.props.userObjectId, query, generation]), resource: GMAIL_RESOURCE};
+  }
+
+  async getCalendarWriteSource(calendarId:string){
+    const account=this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const generation=await account.calendarSourceGeneration();
+    const source=this.ctx.exports.GoogleCalendarWriteSource({props:{userObjectId:this.ctx.props.userObjectId,calendarId,generation}});
+    await source.validate();return {source,sourceKey:JSON.stringify([this.ctx.props.userObjectId,calendarId,generation]),resource:GOOGLE_CALENDAR_RESOURCE};
+  }
+
+  async getCalendarReadSource(calendarId: string) {
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const patterns = await account.getGrantedResourceUrlPatterns();
+    if (!patterns.includes(GOOGLE_CALENDAR_RESOURCE.urlPattern)) throw new Error("Calendar scope is not granted.");
+    const generation = await account.calendarSourceGeneration();
+    const reader = new SelectedCalendarReader(new GoogleCalendarApi(async opts => (await account.getAccessToken(opts)).token),
+      calendarId, generation, () => account.calendarSourceGeneration());
+    await reader.metadata();
+    return {source: this.ctx.exports.GoogleCalendarReadSource({props: {userObjectId: this.ctx.props.userObjectId, calendarId, generation}}),
+      sourceKey: JSON.stringify([this.ctx.props.userObjectId, calendarId, generation]), resource: GOOGLE_CALENDAR_RESOURCE};
+  }
+
   async describe(): Promise<AccountDescription> {
     let id = this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId);
     let obj = this.ctx.exports.UserAccount.get(id);
@@ -879,6 +992,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
       let availabilityMode: CalendarAvailabilityMode =
           parsed.searchParams.get("availability") === "allVisible" ? "allVisible" : "thisCalendar";
       let props: GoogleCalendarGatekeeperImplProps = {
+        accessMode: calendarAccessMode(parsed.searchParams.get("access")),
         userObjectId: this.ctx.props.userObjectId,
         calendarId,
         availabilityMode,
@@ -1887,8 +2001,29 @@ export class GmailGatekeeperImpl extends DurableObject<Env, GmailGatekeeperImplP
     return new GmailSessionImpl(ctx);
   }
 
+  // Mark before provider IO: a lost response must never cause a second email.
+  // Only a confirmed provider response makes retries successful. An unknown
+  // outcome stays pending for human inspection, including after a DO restart.
+  async #sendOnce(actionId: number, api: GmailApi, raw: string, threadId?: string): Promise<void> {
+    const key = `gmail:send:${actionId}`;
+    const state = this.ctx.storage.kv.get<string>(key);
+    if (state === "sent") return;
+    if (state) throw new Error("Gmail send outcome is unconfirmed. Check Sent before preparing a new action.");
+    if (!new PendingActionStore<GmailAction>(this.ctx.storage.kv).get(actionId)) {
+      throw new Error("Gmail action is no longer pending.");
+    }
+    this.ctx.storage.kv.put(key, "attempted");
+    try {
+      await api.sendRawMessage(raw, threadId);
+    } catch {
+      throw new Error("Gmail send outcome is unconfirmed. Check Sent before preparing a new action.");
+    }
+    this.ctx.storage.kv.put(key, "sent");
+  }
+
   // ---------------------------------------------------------------------------
   async applyAction(actionId: number): Promise<void> {
+    if (this.ctx.storage.kv.get<string>(`gmail:send:${actionId}`) === "sent") return;
     const pendingActions = new PendingActionStore<GmailAction>(this.ctx.storage.kv);
     const action = pendingActions.get(actionId);
     if (!action) throw new Error(`Unknown pending Gmail action: ${actionId}`);
@@ -1911,20 +2046,20 @@ export class GmailGatekeeperImpl extends DurableObject<Env, GmailGatekeeperImplP
         break;
       case "send": {
         const message = gmailApi.buildSendRaw(action.to, action.subject, action.body);
-        await gmailApi.sendRawMessage(message.raw);
+        await this.#sendOnce(actionId, gmailApi, message.raw);
         break;
       }
       case "reply": {
         const original = await gmailApi.getMessage(action.sourceMessageId);
         const message = await gmailApi.buildReplyRaw(
           original, action.body, action.replyAll, action.sourceWasSent);
-        await gmailApi.sendRawMessage(message.raw, action.threadId);
+        await this.#sendOnce(actionId, gmailApi, message.raw, action.threadId);
         break;
       }
       case "forward": {
         const original = await gmailApi.getMessage(action.sourceMessageId);
         const message = await gmailApi.buildForwardRaw(original, action.to, action.body);
-        await gmailApi.sendRawMessage(message.raw);
+        await this.#sendOnce(actionId, gmailApi, message.raw);
         break;
       }
       default:
@@ -2697,6 +2832,7 @@ type GoogleCalendarRevertInfo =
     };
 
 type GoogleCalendarGatekeeperImplProps = {
+  accessMode?: CalendarAccessMode;
   userObjectId: string;
   calendarId: string;
   availabilityMode: CalendarAvailabilityMode;
@@ -2787,20 +2923,22 @@ function applyPendingCalendarActions(
   events: CalendarEvent[],
   pending: {id: number, action: GoogleCalendarAction}[],
   opts: CalendarListEventsOptions,
+  timeZone: string,
 ): CalendarEvent[] {
+  const timeCache = new Map<string, number>();
   let byId = new Map(events.map(event => [event.id, {...event}]));
   let added: CalendarEvent[] = [];
 
   for (let {id, action} of pending) {
     if (action.type === "createEvent") {
       let event = pendingCalendarEventFromDraft(id, action, opts);
-      if (calendarEventOverlaps(event, opts.timeMin, opts.timeMax)) added.push(event);
+      if (calendarEventOverlaps(event, opts.timeMin, opts.timeMax, timeZone, timeCache)) added.push(event);
     } else if (action.type === "updateEvent") {
       let existing = byId.get(action.eventId);
       if (existing) {
         applyCalendarPatchToEvent(existing, action.patch, opts);
         existing.pending = true;
-        if (!calendarEventOverlaps(existing, opts.timeMin, opts.timeMax)) {
+        if (!calendarEventOverlaps(existing, opts.timeMin, opts.timeMax, timeZone, timeCache)) {
           byId.delete(action.eventId);
         }
       }
@@ -2811,7 +2949,7 @@ function applyPendingCalendarActions(
   }
 
   return [...byId.values(), ...added]
-      .toSorted((a, b) => calendarEventSortKey(a) - calendarEventSortKey(b));
+      .toSorted((a, b) => calendarEventSortKey(a, timeZone, timeCache) - calendarEventSortKey(b, timeZone, timeCache));
 }
 
 function validateEventTimes(start: CalendarTime, end: CalendarTime): void {
@@ -2856,7 +2994,7 @@ export class GoogleCalendarGatekeeperImpl
     return {
       url: `https://calendar.google.com/calendar/u/0/r?cid=${encodeURIComponent(this.ctx.props.calendarId)}`,
       title: `Calendar: ${calendar.summary}`,
-      snippet: `Google Calendar: ${calendar.summary}.${availability}`,
+      snippet: `Google Calendar: ${calendar.summary}. Access: ${calendarAccessMode(this.ctx.props.accessMode)}.${availability}`,
       suggestedBindingName: "GOOGLE_CALENDAR",
       tsType: "GoogleCalendarSession",
     };
@@ -2881,11 +3019,32 @@ export class GoogleCalendarGatekeeperImpl
       approvalQueue.dup(),
       pendingActions,
       calendarIds => this.#prepareAvailabilityCalendarObservation(calendarIds),
+      calendarAccessMode(this.ctx.props.accessMode),
     );
   }
 
+  // Each provider write (including undo notifications) is attempted once. A lost
+  // response cannot authorize replay after a restart or overlapping approval.
+  #writeState(actionId:number,operation:'apply'|'revert'){
+    return this.ctx.storage.kv.get<'attempted'|'done'>(`calendar:${operation}:${actionId}`);
+  }
+  async #writeOnce(actionId:number,operation:'apply'|'revert',write:()=>Promise<void>){
+    assertCalendarWriteAccess(this.ctx.props.accessMode);
+    const state=this.#writeState(actionId,operation);
+    if(state==='done')return;
+    if(state)throw Error('Calendar write outcome is unconfirmed. Check the calendar before another change.');
+    if(operation==='apply'&&!new PendingActionStore<GoogleCalendarAction>(this.ctx.storage.kv).get(actionId))throw Error('Calendar action is no longer pending.');
+    this.ctx.storage.kv.put(`calendar:${operation}:${actionId}`,'attempted');
+    try{await write();}catch{throw Error('Calendar write outcome is unconfirmed. Check the calendar before another change.');}
+    this.ctx.storage.kv.put(`calendar:${operation}:${actionId}`,'done');
+  }
+
   async applyAction(actionId: number): Promise<void> {
+    assertCalendarWriteAccess(this.ctx.props.accessMode);
     let pendingActions = new PendingActionStore<GoogleCalendarAction>(this.ctx.storage.kv);
+    const state=this.#writeState(actionId,'apply');
+    if(state==='done'){pendingActions.remove(actionId);return;}
+    if(state)throw Error('Calendar write outcome is unconfirmed. Check the calendar before another change.');
     let action = pendingActions.get(actionId);
     if (!action) {
       throw new Error(`Unknown pending Google Calendar action: ${actionId}`);
@@ -2894,30 +3053,28 @@ export class GoogleCalendarGatekeeperImpl
     let api = new GoogleCalendarApi(opts => this.#getAccessToken(opts));
     switch (action.type) {
       case "createEvent": {
-        let created = await api.createEvent(action.calendarId, action.event, action.sendUpdates);
-        pendingActions.remove(actionId);
-        this.ctx.storage.kv.put<GoogleCalendarRevertInfo>(this.#revertKey(actionId), {
-          type: "createdEvent",
-          calendarId: action.calendarId,
-          eventId: created.id,
-          sendUpdates: action.sendUpdates,
+        await this.#writeOnce(actionId,'apply',async()=>{
+          const created = await api.createEvent(action.calendarId, action.event, action.sendUpdates);
+          this.ctx.storage.kv.put<GoogleCalendarRevertInfo>(this.#revertKey(actionId), {
+            type: "createdEvent", calendarId: action.calendarId,
+            eventId: created.id, sendUpdates: action.sendUpdates,
+          });
         });
+        pendingActions.remove(actionId);
         return;
       }
       case "updateEvent": {
         let oldEvent = await api.getEvent(action.calendarId, action.eventId);
         let previous = priorCalendarPatch(oldEvent, action.patch);
-        await api.patchEvent(
-          action.calendarId, action.eventId,
-          eventPatchToGoogle(action.patch), action.sendUpdates);
-        pendingActions.remove(actionId);
-        this.ctx.storage.kv.put<GoogleCalendarRevertInfo>(this.#revertKey(actionId), {
-          type: "updatedEvent",
-          calendarId: action.calendarId,
-          eventId: action.eventId,
-          previous,
-          sendUpdates: action.sendUpdates,
+        await this.#writeOnce(actionId,'apply',async()=>{
+          await api.patchEvent(action.calendarId, action.eventId,
+            eventPatchToGoogle(action.patch), action.sendUpdates);
+          this.ctx.storage.kv.put<GoogleCalendarRevertInfo>(this.#revertKey(actionId), {
+            type: "updatedEvent", calendarId: action.calendarId,
+            eventId: action.eventId, previous, sendUpdates: action.sendUpdates,
+          });
         });
+        pendingActions.remove(actionId);
         return;
       }
       default: {
@@ -2928,12 +3085,17 @@ export class GoogleCalendarGatekeeperImpl
   }
 
   async rejectAction(actionId: number): Promise<void | {restart?: boolean}> {
+    if(this.#writeState(actionId,'apply')==='attempted')throw Error('Calendar write outcome is unconfirmed. Check the calendar before rejecting.');
     let pendingActions = new PendingActionStore<GoogleCalendarAction>(this.ctx.storage.kv);
     pendingActions.remove(actionId);
   }
 
   async revertAction(actionId: number)
       : Promise<void | {message?: string, canRetry?: boolean, restart?: boolean}> {
+    assertCalendarWriteAccess(this.ctx.props.accessMode);
+    const state=this.#writeState(actionId,'revert');
+    if(state==='done'){this.ctx.storage.kv.delete(this.#revertKey(actionId));return;}
+    if(state)throw Error('Calendar undo outcome is unconfirmed. Check the calendar before another change.');
     let revertInfo =
         this.ctx.storage.kv.get<GoogleCalendarRevertInfo>(this.#revertKey(actionId));
     if (!revertInfo) {
@@ -2946,12 +3108,12 @@ export class GoogleCalendarGatekeeperImpl
     let api = new GoogleCalendarApi(opts => this.#getAccessToken(opts));
     switch (revertInfo.type) {
       case "createdEvent":
-        await api.deleteEvent(revertInfo.calendarId, revertInfo.eventId, revertInfo.sendUpdates);
+        await this.#writeOnce(actionId,'revert',()=>api.deleteEvent(revertInfo.calendarId, revertInfo.eventId, revertInfo.sendUpdates));
         break;
       case "updatedEvent":
-        await api.patchEvent(
+        await this.#writeOnce(actionId,'revert',async()=>{await api.patchEvent(
           revertInfo.calendarId, revertInfo.eventId,
-          eventPatchToGoogle(revertInfo.previous), revertInfo.sendUpdates);
+          eventPatchToGoogle(revertInfo.previous), revertInfo.sendUpdates);});
         break;
       default: {
         const _exhaustive: never = revertInfo;
@@ -3066,6 +3228,7 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
   #api: GoogleCalendarApi;
   #calendarId: string;
   #availabilityMode: CalendarAvailabilityMode;
+  #accessMode: CalendarAccessMode;
   #approvalQueue: RpcStub<ApprovalQueue>;
   #pendingActions: PendingActionStore<GoogleCalendarAction>;
   #observeAvailabilityCalendars: (calendarIds: string[]) => Promise<ObserverCheck<string>>;
@@ -3077,9 +3240,11 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
     approvalQueue: RpcStub<ApprovalQueue>,
     pendingActions: PendingActionStore<GoogleCalendarAction>,
     observeAvailabilityCalendars: (calendarIds: string[]) => Promise<ObserverCheck<string>>,
+    accessMode: CalendarAccessMode = "manage",
   ) {
     super();
     this.#api = api;
+    this.#accessMode = accessMode;
     this.#calendarId = calendarId;
     this.#availabilityMode = availabilityMode;
     this.#approvalQueue = approvalQueue;
@@ -3088,7 +3253,7 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
   }
 
   async getCapabilities(): Promise<GoogleCalendarCapabilities> {
-    return {availabilityMode: this.#availabilityMode};
+    return {availabilityMode: this.#availabilityMode,accessMode:this.#accessMode};
   }
 
   async getCalendar(): Promise<GoogleCalendarInfo> {
@@ -3103,7 +3268,18 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
   async listEvents(opts: CalendarListEventsOptions): Promise<CalendarEvent[]> {
     validateCalendarTimeWindow(opts.timeMin, opts.timeMax, 366);
     let events = await this.#api.listEvents(this.#calendarId, opts);
-    let simulated = applyPendingCalendarActions(events, this.#pendingActions.list(), opts);
+    const pending = this.#pendingActions.list();
+    const hasAllDay = events.some(event => event.start.kind === "date" || event.end.kind === "date") ||
+        pending.some(({action}) => action.type === "createEvent"
+          ? action.event.start.kind === "date" || action.event.end.kind === "date"
+          : action.patch.start?.kind === "date" || action.patch.end?.kind === "date");
+    let timeZone = "UTC";
+    if (hasAllDay) {
+      const calendar = await this.#api.getCalendar(this.#calendarId);
+      if (!calendar.timeZone) throw new Error("Calendar time zone is unavailable for all-day events.");
+      timeZone = calendar.timeZone;
+    }
+    let simulated = applyPendingCalendarActions(events, pending, opts, timeZone);
 
     await this.#approvalQueue.authorizeObservation({
       title: "List Google Calendar events",
@@ -3164,6 +3340,7 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
     event: CalendarEventDraft,
     opts?: { sendUpdates?: CalendarSendUpdates },
   ): Promise<void> {
+    assertCalendarWriteAccess(this.#accessMode);
     if (!event.title.trim()) throw new Error("Event title is required.");
     validateEventTimes(event.start, event.end);
     let action: GoogleCalendarAction = {
@@ -3196,6 +3373,7 @@ class GoogleCalendarSessionImpl extends RpcTarget implements GoogleCalendarSessi
     patch: CalendarEventPatch,
     opts?: { sendUpdates?: CalendarSendUpdates },
   ): Promise<void> {
+    assertCalendarWriteAccess(this.#accessMode);
     if (!eventId.trim()) throw new Error("eventId is required.");
     if (Object.keys(patch).length === 0) throw new Error("patch must change at least one field.");
     if (patch.start !== undefined || patch.end !== undefined) {
@@ -3759,4 +3937,81 @@ class BigQuerySessionImpl extends RpcTarget implements BigQuerySession {
     });
     return result;
   }
+}
+
+
+/** Persistent read capability. Neither writes nor another calendar can be selected through it. */
+export class GoogleCalendarReadSource extends WorkerEntrypoint<Env, {userObjectId: string; calendarId: string; generation: string}> {
+  #reader() {
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    return new SelectedCalendarReader(new GoogleCalendarApi(async opts => (await account.getAccessToken(opts)).token),
+      this.ctx.props.calendarId, this.ctx.props.generation, () => account.calendarSourceGeneration());
+  }
+  async validate() { await this.#reader().validate(); }
+  async metadata() { return this.#reader().metadata(); }
+  async readWindow(input: Parameters<SelectedCalendarReader["readWindow"]>[0]) { return this.#reader().readWindow(input); }
+}
+
+
+/** A persistent server capability for one file; no write methods or provider URLs are exposed. */
+export class GoogleDriveImportSource extends WorkerEntrypoint<Env, {
+  userObjectId:string;fileId:string;generation:string;
+}> implements DriveImportSource {
+  #account(){return this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));}
+  async validate():Promise<void>{
+    const account=this.#account();
+    if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw new Error("Google account changed.");
+    if(!(await account.getGrantedResourceUrlPatterns()).includes(GOOGLE_DRIVE_IMPORT_RESOURCE.urlPattern))throw new Error("Drive import scope is not granted.");
+    if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw new Error("Google account changed.");
+  }
+  async read(){
+    const account=this.#account();
+    return new GoogleDriveImportReader(async opts=>(await account.getAccessToken(opts)).token,()=>this.validate()).snapshot(this.ctx.props.fileId);
+  }
+}
+
+/** Persistent, read-only Gmail query capability; OAuth remains account-owned. */
+export class GoogleMailReadSource extends WorkerEntrypoint<Env, {userObjectId: string; query: string; generation: string}> {
+  #reader() {
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    return new SelectedGmailReader(async opts => (await account.getAccessToken(opts)).token, this.ctx.props.query, async () => {
+      if (await account.calendarSourceGeneration() !== this.ctx.props.generation) throw new Error("Google account changed.");
+      if (!(await account.getGrantedResourceUrlPatterns()).includes(GMAIL_RESOURCE.urlPattern)) throw new Error("Gmail scope is not granted.");
+      if (await account.calendarSourceGeneration() !== this.ctx.props.generation) throw new Error("Google account changed.");
+    });
+  }
+  async validate() { await this.#reader().validate(); }
+  async metadata() { return this.#reader().metadata(); }
+  async readSelection(input: Parameters<SelectedGmailReader["readSelection"]>[0]) {
+    const result = await this.#reader().readSelection(input);
+    const account=this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    const description=await getGoogleAccountDescription((await account.getAccessToken()).token);
+    await this.validate();
+    return {provider: result.provider, query: result.query, self_addresses:description.uniqueName?[description.uniqueName]:[], messages_json: JSON.stringify(result.messages), ...(result.attachment?{attachment:result.attachment}:{}), truncated: result.truncated,...(result.next_cursor?{next_cursor:result.next_cursor}:{})};
+  }
+}
+
+/** Separate outgoing capability issued only by an explicit trusted-host selection. */
+export class GoogleMailSendSource extends WorkerEntrypoint<Env,{userObjectId:string;generation:string}> {
+  #account(){return this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));}
+  async validate(){
+    const account=this.#account();
+    if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw Error('Google account changed.');
+    if(!(await account.getGrantedResourceUrlPatterns()).includes(GMAIL_RESOURCE.urlPattern))throw Error('Gmail scope is not granted.');
+    if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw Error('Google account changed.');
+  }
+  async send(content:Parameters<typeof sendApprovedGmail>[1]){
+    await this.validate();
+    const account=this.#account(),description=await getGoogleAccountDescription((await account.getAccessToken()).token);
+    if(!description.uniqueName)throw Error('Google account has no email address.');
+    const api=new GmailApi(description.uniqueName,async opts=>(await account.getAccessToken(opts)).token);
+    return sendApprovedGmail(api,content,()=>this.validate());
+  }
+}
+
+/** Explicit writer; selected read capabilities never expose create(). */
+export class GoogleCalendarWriteSource extends WorkerEntrypoint<Env,{userObjectId:string;calendarId:string;generation:string}> {
+ #account(){return this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));}
+ async validate(){const account=this.#account();if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw Error('Google account changed.');if(!(await account.getGrantedResourceUrlPatterns()).includes(GOOGLE_CALENDAR_RESOURCE.urlPattern))throw Error('Calendar permission unavailable.');if(await account.calendarSourceGeneration()!==this.ctx.props.generation)throw Error('Google account changed.');}
+ async create(content:Parameters<typeof createApprovedGoogleCalendar>[2]){await this.validate();const account=this.#account();const api=new GoogleCalendarApi(async opts=>(await account.getAccessToken(opts)).token);return createApprovedGoogleCalendar(api,this.ctx.props.calendarId,content,()=>this.validate());}
 }

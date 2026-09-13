@@ -1,0 +1,23 @@
+[
+  {
+    "name": "MNEMOS_API_ORIGIN",
+    "kind": "secret",
+    "label": "Mnemos API HTTPS origin"
+  },
+  {
+    "name": "MNEMOS_STORAGE_ORIGIN",
+    "kind": "secret",
+    "label": "Mnemos file storage HTTPS origin"
+  },
+  {
+    "name": "MNEMOS_LOGIN_CONFIG",
+    "kind": "secret",
+    "label": "Mnemos server login configuration (JSON)",
+    "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/mnemos/oauth",
+    "setupSteps": [
+      "Register the displayed redirect URI with the corporate OIDC provider.",
+      "Configure the Mnemos IAM credential exchange and its server client secret.",
+      "Enter JSON with iamOrigin, authorizationEndpoint, tokenEndpoint, clientId, clientSecret, iamClientSecret and callbackUrl. Use the displayed redirect URI as callbackUrl."
+    ]
+  }
+]

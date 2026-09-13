@@ -1,8 +1,12 @@
+import { startWorkspaceUIReadiness } from "./uiReadiness"
+import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness"
+import { reportEmbeddedWorkspaceActivity } from "./workspaceActivity"
 import { useState, useEffect, useRef } from 'react'
 import { Text, Loader, Banner } from '@cloudflare/kumo'
 import { Sparkle } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
 import { GadgetClient, ConsoleLogEvent } from '@gadgets/workshop-shared/api'
+import { requestNativeSnapshot, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 // We want to inject Cap'n Web into the Gadget. Luckily it has no dependencies, so we can just take
 // the whole module and embed it. We can import the module using ?raw to get a string of the
@@ -57,6 +61,19 @@ try {
   Window.prototype.open = blockedOpen;
 } catch {}
 
+// Report only the occurrence of genuine input, never its key, target or contents.
+{
+let lastActivityReport = -Infinity;
+for (const name of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  window.addEventListener(name, event => {
+    const now = performance.now();
+    if (!event.isTrusted || now - lastActivityReport < 1000) return;
+    lastActivityReport = now;
+    window.parent.postMessage({ type: 'workspace-activity' }, '*');
+  }, { capture: true, passive: true });
+}
+}
+
 // Forward Escape key presses to the parent frame. The sandboxed iframe captures keydown events
 // when it has focus, so the parent never sees them. The workshop UI uses Escape to exit fullscreen
 // gadget mode, so forward it explicitly.
@@ -100,14 +117,14 @@ window.addEventListener('unhandledrejection', (event) => {
 
 `);
 
-const createSandboxedHtml = (jsCode: string): string => {
+const createSandboxedHtml = (jsCode: string, readinessId?: string): string => {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'none'; script-src data: 'unsafe-inline'; style-src data: 'unsafe-inline'; img-src data:; media-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none';">
 </head>
 <body>
-    <script type="module" src="data:text/javascript;charset=utf-8,${INJECTED_CODE_PREFIX}${encodeURIComponent(jsCode)}"></script>
+    <script type="module" src="data:text/javascript;charset=utf-8,${INJECTED_CODE_PREFIX}${encodeURIComponent(`const nativeUIReadinessAttempt = ${JSON.stringify(readinessId ?? null)};\n` + jsCode)}"></script>
 </body>
 </html>`.trim()
 }
@@ -122,6 +139,9 @@ interface GadgetUIProps {
   // Fires when the user presses Escape while the gadget iframe has focus. Sandboxed iframes
   // capture keydown events, so we forward Escape explicitly from inside the iframe.
   onIframeEscape?: () => void
+  nativeSnapshotSource?: NativeSnapshotSourceRef
+  readinessApi?: Parameters<typeof startWorkspaceUIReadiness>[0]
+  readinessSurface?: UIReadinessSample["surface"]
 }
 
 // How long to wait for a UI bundle before offering a retry instead of a spinner. Not a latency
@@ -133,7 +153,7 @@ export default function GadgetUI(props: GadgetUIProps) {
   return <GadgetUISession key={props.chatId} {...props} />
 }
 
-function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chatId, onConsoleLog, onIframeEscape }: GadgetUIProps) {
+function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chatId, onConsoleLog, onIframeEscape, nativeSnapshotSource, readinessApi, readinessSurface }: GadgetUIProps) {
   const [sandboxedHtml, setSandboxedHtml] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -141,6 +161,23 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const [isInvalidated, setIsInvalidated] = useState(false)
   const [iframeGeneration, setIframeGeneration] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const activityVisibleRef = useRef(isVisible)
+  activityVisibleRef.current = isVisible
+  useEffect(() => {
+    const target = iframeRef.current?.contentWindow
+    if (!nativeSnapshotSource || !target || !isVisible || isInvalidated || loading || error || !sandboxedHtml) return
+    const lifetime = new AbortController()
+    const read = (format: Parameters<typeof requestNativeSnapshot>[1], signal: AbortSignal) =>
+      requestNativeSnapshot(target, format, AbortSignal.any([signal, lifetime.signal]))
+    nativeSnapshotSource.current = read
+    return () => {
+      lifetime.abort()
+      if (nativeSnapshotSource.current === read) nativeSnapshotSource.current = null
+    }
+  }, [nativeSnapshotSource, gadget, chatId, isVisible, loading, error, sandboxedHtml, hasLoaded, isInvalidated, iframeGeneration, reloadTrigger])
+  const readinessRef = useRef<ReturnType<typeof startWorkspaceUIReadiness> | null>(null)
+  useEffect(() => () => { readinessRef.current?.finish("abandoned") }, [])
+  useEffect(() => { if (!isVisible) readinessRef.current?.finish("abandoned") }, [isVisible])
   const prevReloadTriggerRef = useRef(reloadTrigger)
   // Identifies the newest bundle load, so an older one can't write state after being superseded.
   const loadGenerationRef = useRef(0)
@@ -272,6 +309,12 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
     // nothing to clear it. Comparing generations means the newest run always owns the flag.
     const generation = ++loadGenerationRef.current
     const isCurrent = () => loadGenerationRef.current === generation
+    readinessRef.current?.finish("abandoned")
+    let resolveSupport!: (value: boolean) => void
+    const supported = new Promise<boolean>(resolve => { resolveSupport = resolve })
+    const attempt = readinessApi && readinessSurface ? startWorkspaceUIReadiness(readinessApi, readinessSurface, supported) : null
+    readinessRef.current = attempt
+
 
     // A dropped RPC never settles -- e.g. the stub was disposed under us by a reconnect -- and there
     // is nothing to catch. Rather than spin indefinitely, stop owning the load and offer a retry: the
@@ -281,6 +324,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       loadGenerationRef.current++      // so a late reply can no longer write state
       setLoading(false)
       setError('Timed out loading this view.')
+      resolveSupport(true)
+      attempt?.finish("timeout")
     }, UI_BUNDLE_LOAD_TIMEOUT_MS)
 
     const loadUiBundle = async () => {
@@ -291,9 +336,16 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
         const bundle = await gadget.getUiBundle(chatId)
         if (!isCurrent()) return
         if (bundle) {
-          const html = createSandboxedHtml(bundle.jsCode)
+          // Older editable blueprints do not implement the readiness protocol. Missing support
+          // is missing coverage, not a measured failure of an otherwise working editor.
+          const supportsReadiness = /type:\s*["']native-ui-readiness["']/.test(bundle.jsCode)
+          resolveSupport(supportsReadiness)
+          if (!supportsReadiness) attempt?.finish("abandoned")
+          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId)
           setSandboxedHtml(html)
         } else {
+          resolveSupport(true)
+          attempt?.finish("error")
           setSandboxedHtml(null)
         }
         setHasLoaded(true)
@@ -302,6 +354,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
         if (!isCurrent()) return
         console.error('Failed to load UI bundle:', err)
         setError('Failed to load UI bundle')
+        resolveSupport(true)
+        attempt?.finish("error")
       } finally {
         if (isCurrent()) setLoading(false)
         clearTimeout(giveUp)
@@ -315,10 +369,11 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       // view becomes hidden). Revoke this run explicitly so its late reply cannot populate state
       // for a different gadget, chat, or visibility lifecycle.
       if (isCurrent()) loadGenerationRef.current++
+      resolveSupport(false)
     }
   // LSP reports an error here, but tsc does not.
   // The LSP error is due to bugs that need to be fixed in Cap'n Web.
-  }, [gadget, isVisible, hasLoaded, isInvalidated, chatId, retryNonce])
+  }, [gadget, isVisible, hasLoaded, isInvalidated, chatId, retryNonce, readinessApi, readinessSurface])
 
   // Effect to handle iframe RPC handshake
   useEffect(() => {
@@ -371,6 +426,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           if (!isCurrent()) return
           console.error('Failed to establish RPC connection:', caught)
           setError('Failed to connect gadget to server')
+          readinessRef.current?.finish("error")
         } finally {
           if (handshakePendingRef.current === generation) handshakePendingRef.current = null
         }
@@ -380,6 +436,15 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           level: event.data.level,
           message: event.data.message,
         })
+      } else if (event.data?.type === 'native-ui-readiness') {
+        const attempt = readinessRef.current
+        if (attempt && event.data.attempt === attempt.observationId) {
+          if (!activityVisibleRef.current || document.visibilityState !== "visible") attempt.finish("abandoned")
+          else if (event.data.outcome === "ready") void attempt.afterPaint()
+          else if (event.data.outcome === "error") attempt.finish("error")
+        }
+      } else if (event.data?.type === 'workspace-activity') {
+        reportEmbeddedWorkspaceActivity(event, iframeRef.current, activityVisibleRef.current)
       } else if (event.data?.type === 'escape') {
         onIframeEscapeRef.current?.()
       }

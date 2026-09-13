@@ -1,3 +1,6 @@
+import { maintainAccessLease } from './access-lease.js';
+import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
+import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "./native-editor-update.js";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -185,6 +188,11 @@ type GatekeeperRecord = {
 
   // Records how this gatekeeper was originally created, enabling blueprint metadata derivation.
   creationSpec?: GatekeeperCreationSpec;
+
+  // Imported bytes may outlive their env binding or gadget. Keep their source in all observer
+  // checks until the whole workspace is deleted; this record cannot be removed as a connection.
+  nativeDocumentSource?: { gadgetId: WorkpieceId; userId: string; accountId: number; sourceKey: string; publication: string };
+
 
   // OBSOLETE: Before we had support for multiple gadgets per workspace, the binding name and
   // blueprint annotation information lived on the GatekeeperRecord. These properties continue
@@ -995,6 +1003,9 @@ export function sanitizeMessageFormatRefs(
 }
 
 class OverseerImpl implements AgentHooks {
+  // A source created in this instance must not release data to sessions predating its checks.
+  // Reconstructing the DO after abort clears this set and invalidates those old RPC sessions.
+  readonly freshNativeDocumentSources = new Set<WorkpieceId>();
   public storage: OverseerStorage;
   readonly logger: ReturnType<typeof createWorkshopLogger>;
 
@@ -1999,8 +2010,8 @@ class OverseerImpl implements AgentHooks {
   }
 
   // Apply a Yjs-encoded (V2) update to the code, incrementing the code version.
-  updateCode(update: Uint8Array): number {
-    let version = this.bumpVersion();
+  updateCode(update: Uint8Array, affectedGadgetIds?: WorkpieceId[]): number {
+    let version = this.bumpVersion(affectedGadgetIds);
     let timestamp = new Date();
     this.storage.code.put({version, timestamp, update});
 
@@ -2282,7 +2293,9 @@ class OverseerImpl implements AgentHooks {
       codeVersion += `.${chatId}.${sequence}`;
     }
 
-    return this.env.LOADER.get(`${this.ctx.id}.${codeVersion}.${gadgetId}`, async () => {
+    // The loaded worker holds callbacks into this Overseer instance. A code-only cache key
+    // would reuse dead capabilities after a revocation restart with unchanged code.
+    return this.env.LOADER.get(`${this.ctx.id}.${this.streamGeneration}.${codeVersion}.${gadgetId}`, async () => {
       let {ydoc} = this.buildYDoc("current");
 
       if (chatId !== undefined) {
@@ -2566,10 +2579,24 @@ class OverseerImpl implements AgentHooks {
     return new GatekeeperClientImpl<any>(this, id, facet);
   }
 
+  // Only a new instance can release a newly retained source: every pre-existing RPC session
+  // belonged to the instance we aborted. The source remains protected after unbinding/deletion.
+  assertNativeDocumentSourceReady(sourceId: WorkpieceId, gadgetId: WorkpieceId, userId: string) {
+    this.getGadgetRecord(gadgetId);
+    const record = this.storage.gatekeepers.get(sourceId);
+    const pin = record?.nativeDocumentSource;
+    if (!record || !pin || pin.gadgetId !== gadgetId || pin.userId !== userId) throw new Error("Invalid document source.");
+    if (this.freshNativeDocumentSources.has(sourceId)) throw new Error("Reconnect before opening the newly connected document source.");
+    return {record, pin};
+  }
+
   // Destroy a gatekeeper (connection) workpiece. Any binding edges pointing at it are severed so
   // no gadget's env retains a dangling entry. (This is distinct from merely unbinding it from one
   // gadget -- GadgetClient.unbind() -- which leaves the gatekeeper alive, possibly orphaned.)
   removeGatekeeper(id: number) {
+    if (this.storage.gatekeepers.get(id)?.nativeDocumentSource) {
+      throw new Error("This source protects imported document data and cannot be removed as a connection.");
+    }
     for (let gadget of Array.from(this.storage.gadgets.list())) {
       let names = Object.entries(gadget.bindings)
           .filter(([, edge]) => edge.target === id)
@@ -3326,7 +3353,7 @@ class OverseerImpl implements AgentHooks {
       // Display-only, and from the browser, so a bad value is dropped rather than refused.
       message = {...message, commandPosition: sanitizeCommandPosition(message)};
       using authorizer = new NativeRpcStub<ObservationAuthorizer>(
-          new SlashCommandAuthorizerImpl(this, gatekeeperId, {from: "user"}));
+          new ScopedObservationAuthorizerImpl(this, gatekeeperId, {from: "user"}));
       let result = await invokeSlashCommand(
           this.getGatekeeperFacet(gatekeeperId), message, authorizer);
       if (result.message === undefined) {
@@ -5915,8 +5942,8 @@ class OverseerImpl implements AgentHooks {
 
   // Selects the gatekeepers a non-owner observer with the given `role` must be verified against:
   //   - "build" collaborators (full access): every account-requiring gatekeeper.
-  //   - "use" collaborators (UI only): only account-requiring gatekeepers bound by some gadget,
-  //     since that is all the UI can invoke.
+  //   - "use" collaborators (UI only): bound account-requiring gatekeepers, plus retained native
+  //     sources whose imported bytes may remain after unbinding or deleting their original gadget.
   #inScopeGatekeepers(role: CollaboratorRole): GatekeeperRecord[] {
     let boundIds: Set<WorkpieceId> | undefined;
     if (role === "use") {
@@ -5934,7 +5961,7 @@ class OverseerImpl implements AgentHooks {
     let result: GatekeeperRecord[] = [];
     for (let gk of this.storage.gatekeepers.list()) {
       if (!observerVendorId(gk)) continue;
-      if (boundIds && !boundIds.has(gk.id)) continue;
+      if (boundIds && !boundIds.has(gk.id) && !gk.nativeDocumentSource) continue;
       result.push(gk);
     }
     return result;
@@ -6005,8 +6032,8 @@ class OverseerImpl implements AgentHooks {
     }
   }
 
-  // Bring a non-owner `profileId` into compliance as an observer for their `role`, so that they may
-  // open the Gadget. May invoke `configureCb` to ask the user to choose connected accounts for
+  // Verify a participant's sources before opening the Gadget. Owners must verify retained native
+  // document sources too. May invoke `configureCb` to ask the user to choose connected accounts for
   // gatekeeper bindings they haven't configured yet. Re-runs `addObserver` (re-verification) for
   // already-configured bindings on every open, catching revocation of the user's underlying
   // resource access promptly. Returns when fully verified; throws to deny access.
@@ -6016,11 +6043,16 @@ class OverseerImpl implements AgentHooks {
       profileId: string,
       clientUser: DurableObjectStub<UserDurableObject>,
       role: CollaboratorRole,
-      configureCb?: RpcStub<ObserverConfigCallback>): Promise<void> {
+      configureCb?: RpcStub<ObserverConfigCallback>, nativeSourcesOnly = false): Promise<void> {
     // 1. Select in-scope gatekeepers. If none require an account, there is nothing to verify and
     //    no observer record is needed (built-in gatekeepers never name observers in
     //    excludeObservers).
     let inScope = this.#inScopeGatekeepers(role);
+    // Workspace ownership does not imply permission to read imported corporate documents.
+    // Owners retain the existing exemption for ordinary application connections only.
+    if (nativeSourcesOnly || clientUser.id.toString() === this.ownerId) {
+      inScope = inScope.filter(gk => gk.nativeDocumentSource);
+    }
     if (inScope.length === 0) return;
 
     // 2. Load any existing observer record, and build a working copy of its account choices.
@@ -6032,6 +6064,15 @@ class OverseerImpl implements AgentHooks {
     // leaving pre-existing registrations intact (rollback restores the pre-call state).
     let preConfigured = new Set<number>(
         inScope.filter(gk => gk.id in accountChoices).map(gk => gk.id));
+
+    // Reuse the importing account only for its actual owner; every other participant chooses
+    // and verifies their own account. This is a hint, not an exemption from addObserver below.
+    for (let gk of inScope) {
+      let pin = gk.nativeDocumentSource;
+      if (!(gk.id in accountChoices) && pin?.userId === clientUser.id.toString()) {
+        accountChoices[gk.id] = pin.accountId;
+      }
+    }
 
     let observerId = record?.observerId ?? crypto.randomUUID();
     // Gatekeepers we successfully registered the observer with during this call.
@@ -6132,14 +6173,14 @@ class OverseerImpl implements AgentHooks {
             });
           };
 
-          let verifier = await clientUser.getVerifier(accountId, vendorId);
-          if (!verifier) {
-            // Account gone -> the overseer authors the reason. (Wrong vendor throws above.)
-            fail("This account is no longer connected.");
-            return;
-          }
-
           try {
+            const spec = gk.creationSpec;
+            let verifier = await clientUser.getVerifier(accountId, vendorId,
+                spec?.type === "gatekeeper" ? spec.typeUrlPattern || spec.resourceUrl : undefined);
+            if (!verifier) {
+              fail("This account is no longer connected.");
+              return;
+            }
             await this.getGatekeeperFacet(gk.id).addObserver(observerId, verifier);
             if (!preConfigured.has(gk.id)) newlyAdded.add(gk.id);
           } catch (err) {
@@ -6188,6 +6229,16 @@ class OverseerImpl implements AgentHooks {
     // 6. Persist the observer record only after all addObserver calls succeed. Creating/updating
     //    the record is the canonical moment the user becomes a configured observer.
     this.storage.observers.put({profileId, observerId, accountChoices});
+  }
+
+  // Imported data remains locally readable without further upstream downloads. Keep every
+  // open session's native-source verification fresh, including subscriptions and idle viewers.
+  maintainNativeAccess(profileId: string, clientUser: DurableObjectStub<UserDurableObject>,
+      role: CollaboratorRole): () => void {
+    if (!this.#inScopeGatekeepers(role).some(gk => gk.nativeDocumentSource)) return () => {};
+    return maintainAccessLease(
+        () => this.ensureObserver(profileId, clientUser, role, undefined, true),
+        () => { void this.scheduleRevocationRestart(); });
   }
 
   // Render the observer verification failures as one line per binding, naming the connection and the
@@ -6474,6 +6525,10 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
         // through the session fan-out (joinOutputsFanout).
         await this.impl.syncOutputsTo(clientUser);
       })();
+    }
+
+    if (isOwner) {
+      await this.impl.ensureObserver(profileId, clientUser, role, configureObservers);
     }
 
     if (role === "use") {
@@ -7133,12 +7188,15 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     this.#leavePresence = joinSessionPresence(
         this.impl, this.clientProfileId, "build", () => this.#getClientProfile());
     this.#leaveOutputsFanout = this.impl.joinOutputsFanout(clientUserId);
+    this.#stopAccessLease = this.impl.maintainNativeAccess(this.clientProfileId, this.clientUser, "build");
   }
 
   #leavePresence: () => void;
   #leaveOutputsFanout: () => void;
+  #stopAccessLease: () => void;
 
   [Symbol.dispose]() {
+    this.#stopAccessLease();
     this.#leavePresence();
     this.#leaveOutputsFanout();
     this.notifyClosed();
@@ -7306,16 +7364,14 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
         createdGadgets: [{gadgetId: record.id, title: record.title, bindingName}],
       }]);
     }
-    // @ts-expect-error An RpcTarget implementing the interface works in place of a stub, but the
-    //     type system doesn't know this.
-    return new GadgetClientImpl(this.impl, record.id, this.clientUser);
+    // Preserve Cap'n Web dispatch when this capability crosses Workers RPC. Returning the
+    // target directly loses nested native capabilities returned by its methods.
+    return new RpcStub<GadgetClient>(new GadgetClientImpl(this.impl, record.id, this.clientUser));
   }
 
   async getGadget(id: WorkpieceId): Promise<RpcStub<GadgetClient>> {
     this.impl.getGadgetRecord(id);  // validate it exists
-    // @ts-expect-error An RpcTarget implementing the interface works in place of a stub, but the
-    //     type system doesn't know this.
-    return new GadgetClientImpl(this.impl, id, this.clientUser);
+    return new RpcStub<GadgetClient>(new GadgetClientImpl(this.impl, id, this.clientUser));
   }
 
   async deleteSelf(): Promise<void> {
@@ -8796,12 +8852,15 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
     this.#leavePresence = joinSessionPresence(
         this.impl, this.clientProfileId, "use", () => this.clientUser.whoami());
     this.#leaveOutputsFanout = this.impl.joinOutputsFanout(clientUserId);
+    this.#stopAccessLease = this.impl.maintainNativeAccess(this.clientProfileId, this.clientUser, "use");
   }
 
   #leavePresence: () => void;
   #leaveOutputsFanout: () => void;
+  #stopAccessLease: () => void;
 
   [Symbol.dispose]() {
+    this.#stopAccessLease();
     this.#leavePresence();
     this.#leaveOutputsFanout();
     this.notifyClosed();
@@ -9015,6 +9074,74 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
   constructor(private impl: OverseerImpl, private id: WorkpieceId,
       private clientUser: DurableObjectStub<UserDurableObject>) {
     super();
+  }
+
+  async prepareNativeDocumentRead(accountId: number, resourceUrl: string, publication: string) {
+    this.impl.getGadgetRecord(this.id);
+    const source = await this.clientUser.getNativeDocumentSource(accountId, resourceUrl, publication);
+    const gadget = this.impl.getGadgetRecord(this.id);
+    if (gadget.pending) throw new Error("Accept the gadget before importing a document.");
+    const userId = this.clientUser.id.toString();
+    for (const record of this.impl.storage.gatekeepers.list()) {
+      const pin = record.nativeDocumentSource;
+      if (pin?.gadgetId === this.id && pin.userId === userId && pin.accountId === accountId && pin.sourceKey === source.sourceKey) {
+        return {sourceId: record.id, restartRequired: this.impl.freshNativeDocumentSources.has(record.id)};
+      }
+    }
+    const client = await this.impl.addGatekeeper(source.class, {
+      type: "gatekeeper", vendorId: source.vendorId, resourceUrl, typeUrlPattern: source.resource.urlPattern,
+    });
+    const id = await client.getId();
+    const record = this.impl.storage.gatekeepers.get(id);
+    if (!record) throw new Error("Document source disappeared.");
+    record.nativeDocumentSource = {gadgetId: this.id, userId, accountId, sourceKey: source.sourceKey, publication};
+    this.impl.storage.gatekeepers.put(record);
+    this.impl.freshNativeDocumentSources.add(id);
+    // Persist provenance, then close every old session. No download is issued by this method.
+    void this.impl.scheduleRevocationRestart();
+    return {sourceId: id, restartRequired: true};
+  }
+
+  async readNativeDocument(sourceId: WorkpieceId) {
+    const userId = this.clientUser.id.toString();
+    const {record, pin} = this.impl.assertNativeDocumentSourceReady(sourceId, this.id, userId);
+    if (record.creationSpec?.type !== "gatekeeper") throw new Error("Invalid document source.");
+    // Revalidate the initiating account and current deployment policy on each open.
+    const current = await this.clientUser.getNativeDocumentSource(pin.accountId, record.creationSpec.resourceUrl, pin.publication);
+    this.impl.assertNativeDocumentSourceReady(sourceId, this.id, userId);
+    if (current.sourceKey !== pin.sourceKey || current.vendorId !== record.creationSpec.vendorId || current.resource.urlPattern !== record.creationSpec.typeUrlPattern) throw new Error("The document source identity changed.");
+    const source = this.impl.getGatekeeperFacet(sourceId) as Fetcher<NativeDocumentSource>;
+    return source.openDocument(new ScopedObservationAuthorizerImpl(this.impl, sourceId, {from: "user"}));
+  }
+
+  async getNativeEditorUpdate() {
+    const record = this.impl.getGadgetRecord(this.id);
+    const target = await nativeEditorCode(record.output?.id ?? "");
+    if (!target) return null;
+    const {ydoc, version} = this.impl.buildYDoc("current");
+    try {
+      return {codeVersion: version, revision: target.revision,
+        changedFiles: nativeEditorChanges(ydoc, this.impl.gadgetRootName(this.id), target.files)};
+    } finally { ydoc.destroy(); }
+  }
+
+  async applyNativeEditorUpdate(codeVersion: number, revision: number): Promise<void> {
+    const record = this.impl.getGadgetRecord(this.id);
+    const target = await nativeEditorCode(record.output?.id ?? "");
+    if (!target || target.revision !== revision) throw new Error("Native editor update has changed. Reopen the update dialog.");
+    // No awaits below: validation and the code-log write share the same input gate.
+    const current = this.impl.getGadgetRecord(this.id);
+    if (current.output?.id !== record.output?.id) throw new Error("The editor format changed.");
+    if (current.pending || [...this.impl.storage.chatMeta.list()].some(meta => meta.activeAgent || meta.hasProposedChanges)) {
+      throw new Error("Finish or discard proposed code changes before updating the editor.");
+    }
+    const {ydoc, version} = this.impl.buildYDoc("current");
+    try {
+      if (version !== codeVersion) throw new Error("The code changed. Reopen the update dialog.");
+      if (nativeEditorChanges(ydoc, this.impl.gadgetRootName(this.id), target.files).length) {
+        this.impl.updateCode(replaceNativeEditorCode(ydoc, this.impl.gadgetRootName(this.id), target.files), [this.id]);
+      }
+    } finally { ydoc.destroy(); }
   }
 
   async getId(): Promise<WorkpieceId> {
@@ -9288,6 +9415,12 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
 
   // --- Allowed methods ---
 
+  async prepareNativeDocumentRead(_accountId: number, _resourceUrl: string, _publication: string): Promise<never> { this.#deny(); }
+  async readNativeDocument(_sourceId: WorkpieceId): Promise<never> { this.#deny(); }
+
+  async getNativeEditorUpdate() { return null; }
+  async applyNativeEditorUpdate(_codeVersion: number, _revision: number): Promise<void> { this.#deny(); }
+
   async getId(): Promise<WorkpieceId> {
     return this.id;
   }
@@ -9411,10 +9544,10 @@ class GatekeeperClientImpl<Session extends RpcCompatible<Session>>
   }
 }
 
-// ObservationAuthorizer handed to a slash-command provider. Scoped to one Gatekeeper; observations
+// ObservationAuthorizer for slash commands and human imports. Scoped to one Gatekeeper; observations
 // only (no actions or hooks).
 @validateRpc()
-class SlashCommandAuthorizerImpl extends NativeRpcTarget implements ObservationAuthorizer {
+class ScopedObservationAuthorizerImpl extends NativeRpcTarget implements ObservationAuthorizer {
   constructor(private impl: OverseerImpl, private gatekeeperId: number,
               private caller: GatekeeperCaller) {
     super();

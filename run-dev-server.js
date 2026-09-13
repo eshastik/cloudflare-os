@@ -42,6 +42,7 @@ function loadDevVars() {
   }
 }
 loadDevVars();
+if (process.env.DEV_DRIVE_FIXTURE && !["yandex", "google"].includes(process.env.DEV_DRIVE_FIXTURE)) throw new Error("Unknown local drive fixture");
 
 const useWorkersAi = process.argv.includes("--use-workers-ai-binding");
 
@@ -171,6 +172,8 @@ function bindingName(gk) {
 const SHARED_GATEKEEPER_CREDS = {
   "gatekeeper-github": { id: "GITHUB_CLIENT_ID", secret: "GITHUB_CLIENT_SECRET" },
   "gatekeeper-google": { id: "GOOGLE_CLIENT_ID", secret: "GOOGLE_CLIENT_SECRET" },
+  "gatekeeper-microsoft": { id: "MICROSOFT_CLIENT_ID", secret: "MICROSOFT_CLIENT_SECRET" },
+  "gatekeeper-yandex": { id: "YANDEX_CLIENT_ID", secret: "YANDEX_CLIENT_SECRET" },
   "gatekeeper-cloudflare": { id: "CLOUDFLARE_OAUTH_CLIENT_ID", secret: "CLOUDFLARE_OAUTH_CLIENT_SECRET" },
   "gatekeeper-supabase": { id: "SUPABASE_CLIENT_ID", secret: "SUPABASE_CLIENT_SECRET" },
   "gatekeeper-notion": { id: "NOTION_CLIENT_ID", secret: "NOTION_CLIENT_SECRET" },
@@ -187,6 +190,7 @@ const SHARED_GATEKEEPER_CREDS = {
 // `.dev.vars` is gitignored, so it cannot leave the machine. Secrets travel the same way
 // `CLIENT_SECRET` already does, via SHARED_GATEKEEPER_CREDS above.
 const PASSTHROUGH_GATEKEEPER_VARS = {
+  "gatekeeper-mnemos": ["MNEMOS_TELEGRAM_DELIVERY_MODE", "MNEMOS_TELEGRAM_PUBLIC_ORIGIN", "MNEMOS_API_ORIGIN", "MNEMOS_STORAGE_ORIGIN", "MNEMOS_LOGIN_CONFIG", "MNEMOS_LOGIN_PROFILES", "MNEMOS_CALENDAR_BRIDGE_TOKEN", "MNEMOS_MAIL_BRIDGE_TOKEN", "MNEMOS_DRIVE_ORIGIN_KEY", "MNEMOS_CALDAV_SERVERS", "MNEMOS_IMAP_SERVERS", "MNEMOS_WEBDAV_SERVERS"],
   "gatekeeper-mcp-portal": [
     "MCP_PORTAL_URL", "MCP_PORTAL_NAME", "MCP_PORTAL_AUTH", "MCP_PORTAL_TOKEN",
     "MCP_PORTAL_TRUST_ANNOTATIONS", "MCP_ALLOW_INSECURE",
@@ -213,6 +217,28 @@ for (const gk of gatekeepers) {
       config.vars = config.vars || {};
       config.vars[name] = process.env[name];
     }
+  }
+
+  if (["gatekeeper-google", "gatekeeper-yandex", "gatekeeper-microsoft"].includes(gk.name) && process.env.PUBLIC_BASE_URL) {
+    config.vars = config.vars || {};
+    config.vars.BASE_URL = process.env.PUBLIC_BASE_URL.replace(/\/$/, "") + "/gatekeeper/" + gk.name.slice("gatekeeper-".length);
+  }
+
+  if (gk.name === "gatekeeper-microsoft" && process.env.MICROSOFT_TENANT_ID) {
+    config.vars = config.vars || {};
+    config.vars.TENANT_ID = process.env.MICROSOFT_TENANT_ID;
+  }
+
+  // Explicit, local-only provider fixture. Never selected by production builds.
+  if (process.env.DEV_DRIVE_FIXTURE && gk.name === `gatekeeper-${process.env.DEV_DRIVE_FIXTURE}`) {
+    if (process.env.PUBLIC_BASE_URL !== "https://localhost:9443" || process.env.DEV_LISTEN_IP !== "127.0.0.1") {
+      throw new Error("Drive fixture requires the isolated loopback development server");
+    }
+    if ((config.vars?.CLIENT_ID && config.vars.CLIENT_ID !== "mnemos-drive-fixture") || (config.vars?.CLIENT_SECRET && config.vars.CLIENT_SECRET !== "local-fixture-not-a-provider-secret")) {
+      throw new Error("Remove real provider credentials before selecting the local fixture");
+    }
+    config.vars = {...config.vars, CLIENT_ID:"mnemos-drive-fixture", CLIENT_SECRET:"local-fixture-not-a-provider-secret"};
+    config.main = process.env.DEV_DRIVE_FIXTURE === "google" ? "../../scripts/local-google-drive-fixture-worker.ts" : "../../scripts/local-drive-fixture-worker.ts";
   }
 
   const outPath = join(gk.dir, "wrangler.dev.jsonc");
@@ -301,6 +327,17 @@ const configs = [
 ];
 
 const args = configs.flatMap(c => ["-c", c]);
+// Explicit local TLS and persistence keep an integration contour separate from
+// ordinary development state. The certificate's CA must be trusted by the caller.
+const cert = process.env.DEV_HTTPS_CERT_PATH;
+const key = process.env.DEV_HTTPS_KEY_PATH;
+if (Boolean(cert) !== Boolean(key)) {
+  throw new Error("DEV_HTTPS_CERT_PATH and DEV_HTTPS_KEY_PATH must be set together.");
+}
+if (cert) args.push("--local-protocol", "https", "--upstream-protocol", "https", "--https-cert-path", cert, "--https-key-path", key);
+if (process.env.DEV_ORIGIN_HOST) args.push("--local-upstream", process.env.DEV_ORIGIN_HOST);
+if (process.env.DEV_PERSIST_PATH) args.push("--persist-to", process.env.DEV_PERSIST_PATH);
+if (process.env.DEV_LISTEN_IP) args.push("--ip", process.env.DEV_LISTEN_IP);
 const backendHost = process.env.VITE_BACKEND_HOST;
 if (backendHost) {
   let wranglerPort;

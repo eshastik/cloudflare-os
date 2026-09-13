@@ -4,13 +4,13 @@
 import { FormatGlyph } from './FormatVisuals'
 import { useOutputFormats } from './useOutputFormats'
 
-export default function NewFormatRow({ label = 'Start with' }: { label?: string }) {
+export default function NewFormatRow({ label = 'Start with', layout = 'stacked' }: { label?: string; layout?: 'stacked' | 'inline' }) {
   const { formats, creating, create } = useOutputFormats()
 
   if (formats.length === 0) return null
 
   return (
-    <div className="flex flex-col items-center gap-2.5">
+    <div className={layout === 'inline' ? 'flex flex-wrap items-center gap-3 px-3 pb-4' : 'flex flex-col items-center gap-2.5'}>
       <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
         {label}
       </span>

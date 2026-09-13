@@ -1,0 +1,10 @@
+{
+  "name": "@gadgets/webdav-client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {".": "./src/client.ts"},
+  "scripts": {"types:check": "tsc --noEmit", "test": "node --test __tests__/*.test.mjs"},
+  "dependencies": {"xml-js": "1.6.11"},
+  "devDependencies": {"esbuild": "0.28.1"}
+}

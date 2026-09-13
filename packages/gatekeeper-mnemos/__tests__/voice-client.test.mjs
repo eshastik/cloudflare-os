@@ -1,0 +1,46 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+const compiled=await build({stdin:{contents:'export {MnemosAPI} from "./src/mnemos-api.ts";export {MnemosAccountSession} from "./src/account-session.ts";',resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const {MnemosAPI,MnemosAccountSession}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+test('Human voice client pins source, transcript edits and review while stripping authority fields',async()=>{
+ let live=true,alter=x=>x,after=()=>{};const calls=[];
+ const source={request_id:'source',project_id:'project',media_type:'audio/wav',size_bytes:3,sha256:'ab'.repeat(32)};
+ const api=new MnemosAPI('https://memory.example',async()=> 'fixture',async(url,init)=>{
+  if(url.endsWith('/whoami'))return Response.json({subject:{user_id:'owner'}});
+  const path=new URL(url).pathname,body=init.body?JSON.parse(init.body):null;calls.push({path,body,method:init.method});let out;
+  if(path==='/v1/voice-sources')out=source;
+  else if(path.endsWith('/download'))out={request_id:'source',project_id:'project',content_type:'audio/wav',size_bytes:3,sha256_hex:source.sha256,url:'https://objects.example/original',method:'GET',expires_at:new Date(Date.now()+60000).toISOString()};
+  else if(path.endsWith('/transcripts')||path.endsWith('/transcripts/2'))out={source_request_id:'source',revision:2,operation_id:'edit',kind:'human',text:body?.text??'original',provider:'',model_id:'',provider_request_id:'',uncertain:body?.uncertain??false};
+  else out={source_request_id:'source',operation_id:'review',revision:2,text_sha256:source.sha256,current:false};
+  out=alter({...out,secret:'hidden'});after();return Response.json(out);
+ });
+ const session=new MnemosAccountSession(api,()=>live);
+ assert.deepEqual(await session.importVoiceSource('source','project','upload','audio/wav'),source);
+ assert.equal((await session.downloadVoiceSource(source)).sha256_hex,source.sha256);
+ const edit={operation_id:'edit',expected_revision:1,text:'исправление',uncertain:true,provider:'injected'};
+ const pending=session.editVoiceTranscript('source',edit);edit.text='changed after call';
+ assert.equal((await pending).text,'исправление');assert.equal(calls.at(-1).body.provider,undefined);
+ assert.equal((await session.readVoiceTranscript('source',2)).text,'original');
+ const confirmation={operation_id:'review',revision:2,text_sha256:source.sha256,confirmed:true,run:true};
+ assert.equal((await session.confirmVoiceTranscript('source',confirmation)).current,false);assert.equal(calls.at(-1).body.run,undefined);
+ const before=calls.length;await session.readVoiceConfirmation('source','review');assert.equal(calls.at(-1).method,'GET');
+ await assert.rejects(session.confirmVoiceTranscript('source',{...confirmation,confirmed:false}));assert.equal(calls.length,before+1);
+ alter=x=>({...x,revision:99});await assert.rejects(session.readVoiceTranscript('source',2));
+ alter=x=>({...x,sha256_hex:'cd'.repeat(32)});await assert.rejects(session.downloadVoiceSource(source));
+ alter=x=>({...x,provider:'forged'});await assert.rejects(session.readVoiceTranscript('source',2));
+ alter=x=>x;after=()=>{live=false};await assert.rejects(session.readVoiceConfirmation('source','review'),e=>e.status===401);
+ const stopped=calls.length;await assert.rejects(session.readVoiceTranscript('source',2));assert.equal(calls.length,stopped);
+});
+test('Reviewed voice becomes a source-linked draft and cannot bypass team budget',async()=>{
+ const text='Summarize the project status.';const hash=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))).toString('hex');
+ const values=new Map(),storage={get:k=>structuredClone(values.get(k)),put:(k,v)=>values.set(k,structuredClone(v)),delete:k=>values.delete(k)};
+ let current=true,changedHash=false,creates=0;
+ const api={whoAmI:async()=>({subject:{tenant_id:'tenant',user_id:'owner'}}),readVoiceSource:async()=>({request_id:'source',project_id:'project'}),readVoiceConfirmation:async()=>({current,revision:2,text_sha256:changedHash?'bad':hash}),readVoiceTranscript:async()=>({text,revision:2}),readProjectBudget:async()=>({revision:1}),createTeamBudget:async(project,input)=>{creates++;assert.equal(input.task,text);assert.deepEqual(input.voice,{source_request_id:'source',confirmation_id:'review',revision:2,text_sha256:hash});throw Error('lost ack');}};
+ let session=new MnemosAccountSession(api,()=>true,storage);current=false;await assert.rejects(session.prepareVoiceCommand('source','review','agent','Concise summary'));assert.equal(values.size,0);
+ current=true;changedHash=true;await assert.rejects(session.prepareVoiceCommand('source','review','agent','Concise summary'));assert.equal(values.size,0);changedHash=false;
+ const saved=await session.prepareVoiceCommand('source','review','agent','Concise summary');assert.equal(saved.message,text);assert.equal(saved.voice.confirmation_id,'review');await assert.rejects(session.submitSavedAgentTask(saved.request_id));
+ session=new MnemosAccountSession(api,()=>true,storage);assert.deepEqual(await session.prepareVoiceCommand('source','review','agent','Concise summary'),saved);
+ await assert.rejects(session.budgetSavedAgentTask(saved.request_id,'foreign','1','10'));assert.equal(creates,0);
+ await assert.rejects(session.budgetSavedAgentTask(saved.request_id,'project','1','10'));assert.equal(creates,1);assert.equal(session.managedTaskRequest().budget_request.input.voice.text_sha256,hash);
+});

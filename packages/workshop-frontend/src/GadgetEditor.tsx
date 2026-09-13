@@ -1,3 +1,4 @@
+import { reportShellStage } from "./shellReadiness"
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useNavigate, useSearch, Link } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
@@ -55,6 +56,7 @@ import WorkspaceOpenErrorPage from './components/WorkspaceOpenErrorPage'
 import { useWorkspaceOpen } from './useWorkspaceOpen'
 import { reportIssue } from './errorReporting'
 import GadgetExportMenu from './GadgetExportMenu'
+import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
 
@@ -416,6 +418,7 @@ function NoGadgetPlaceholder({ height }: { height: string }) {
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function GadgetEditor() {
+  const nativeSnapshotSource = useRef<NativeSnapshotSource | null>(null)
   const params = useParams({ strict: false }) as { id?: string }
   const id = params.id
   const navigate = useNavigate()
@@ -698,6 +701,10 @@ export default function GadgetEditor() {
       persistWorkspaceView(id, normalized)
     }
   }, [id, workpiecesReady, workspaceView, allGadgets, metadata?.defaultGadgetId])
+
+  useEffect(() => {
+    reportShellStage("layout", error ? "error" : metadata && overseer && workpiecesReady && (selectedGadgetId === null || gadget !== null) ? "ready" : "loading", authenticatedApi)
+  }, [authenticatedApi, metadata, overseer, workpiecesReady, selectedGadgetId, gadget, error])
 
   const selectedFilesRoot = selectedGadgetSummary?.filesRoot
   // The stub for the selected gadget arrives via an effect; during a switch it briefly lags the
@@ -1598,6 +1605,8 @@ export default function GadgetEditor() {
                 <GadgetExportMenu
                   gadget={selectedGadgetStub}
                   gadgetTitle={selectedGadgetSummary?.title ?? 'Gadget'}
+                  outputId={selectedGadgetSummary?.output?.id}
+                  snapshotSource={nativeSnapshotSource}
                   chatId={previewChatId}
                   disabled={activeTab !== 'app' || previewMode}
                 />
@@ -1661,6 +1670,9 @@ export default function GadgetEditor() {
                   chatId={previewChatId}
                   onConsoleLog={handleClientConsoleLog}
                   onIframeEscape={isGadgetFullscreen ? exitGadgetFullscreen : undefined}
+                  nativeSnapshotSource={nativeSnapshotSource}
+                  readinessApi={authenticatedApi}
+                  readinessSurface={selectedGadgetSummary?.output?.id === "document" ? "cloudflareos.document" : selectedGadgetSummary?.output?.id === "spreadsheet" ? "cloudflareos.spreadsheet" : selectedGadgetSummary?.output?.id === "presentation" ? "cloudflareos.presentation" : undefined}
                 />
               ) : !previewMode && (
                 <NoGadgetPlaceholder height={RIGHT_CONTENT_H} />
@@ -1749,6 +1761,8 @@ export default function GadgetEditor() {
               isVisible={true}
               chatId={previewChatId}
               onConsoleLog={handleClientConsoleLog}
+              readinessApi={authenticatedApi}
+              readinessSurface={selectedGadgetSummary?.output?.id === "document" ? "cloudflareos.document" : selectedGadgetSummary?.output?.id === "spreadsheet" ? "cloudflareos.spreadsheet" : selectedGadgetSummary?.output?.id === "presentation" ? "cloudflareos.presentation" : undefined}
             />
           )}
         </div>

@@ -1,3 +1,8 @@
+import type {CalendarDraftContent,CalendarDraftExecution} from './calendar-draft';
+/** Plain calendar outcome shared with human and agent clients. */
+export type {CalendarDraftExecution} from './calendar-draft';
+import type {DriveImportSnapshot,DriveImportSource,DriveImportReceipt} from "./drive-import.js";
+import type { UIReadinessSample } from "./ui-readiness.js";
 // This file defines the API that the AI Gadgets Workshop uses to talk to Adapters. Each Adapter
 // provides connectivity to some external service which AI Gadgets can then manipulate. Each
 // installation of the Gadgets Workshop may have access to different adapters, typically based on
@@ -17,6 +22,7 @@
 // `Adapter` type is the root interface implemented by the service binding.
 
 import type { WorkerEntrypoint, DurableObject, RpcTarget, RpcStub } from "cloudflare:workers";
+import type { NativeDocumentFormat } from "./native-document";
 
 /**
  * A pagination cursor.
@@ -68,6 +74,11 @@ export type VendorDescription = {
   // The account — not the vendor — declares whether it provides an agent singleton and/or a
   // management UI (see AccountDescription.singleton / .providesUi).
   autoProvisionsAccount?: boolean;
+
+  /** Offers a human account management UI even without grantable agent resources.
+   * Keeps the vendor discoverable for explicit account connection; grants no account,
+   * singleton, or resource authority. The connected account must still declare providesUi. */
+  providesAccountUi?: boolean;
 }
 
 // Per-open context the Workshop passes to GatekeeperUser.startAppUi(). `isAdmin` is supplied fresh
@@ -132,6 +143,8 @@ export function boundAgentCatalog(
 
 // Describes a connected user account on an external service, for display purposes.
 export type AccountDescription = {
+  /** Supports diagnostic activity delivery only after the user selects this account as the recipient. */
+  receivesWorkspaceActivity?: boolean;
   // User's display name, e.g. "John Doe". This is a non-unique name that is human-readable.
   displayName?: string;
 
@@ -357,12 +370,344 @@ export interface ResourceConfiguratorHost extends RpcTarget {
 // iframe over a MessagePort RPC session. Used both for the small resource-configurator form
 // (startResourceConfigurator, hosted in the connect modal) and for full-page gatekeeper management
 // apps (startAppUi, e.g. the Context Library file manager, hosted on its own Workshop page).
+/** A service-issued ticket for one direct browser-to-storage text upload. */
+export interface GatekeeperUploadTicket {
+  /** Receipt to pass to the service's separate save operation. */
+  upload_id: string;
+  /** Signed storage destination; never provided by the sandboxed app. */
+  url: string;
+  /** Must be PUT. */
+  method: string;
+  /** Must be x-amz-checksum-sha256. */
+  checksum_header: string;
+  /** Base64 SHA-256 of the exact uploaded UTF-8 bytes. */
+  checksum_value: string;
+  /** Exact uploaded byte count. */
+  content_length: number;
+}
+
+/** Host-only capability; the service authenticates and authorizes each scope. */
+export interface GatekeeperTextUploadIssuer extends RpcTarget {
+  /** Issue a ticket for at most 256 KiB, with the host-computed size and checksum. */
+  issue(scope: string, size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+}
+
+/** Integrity metadata for one service-authorized text download. */
+export interface GatekeeperDownloadTicket {
+  /** Signed HTTPS storage URL retained by the host. */
+  url: string;
+  /** Must be GET. */
+  method: string;
+  /** Exact byte count; the consuming host enforces its format-specific limit. */
+  size_bytes: number;
+  /** SHA-256 of the complete body, in lowercase hexadecimal. */
+  sha256_hex: string;
+}
+
+/** Host-only access to a specific resource version and conflict side. */
+export interface GatekeeperTextDownloadIssuer extends RpcTarget {
+  /** Authorize and issue a ticket for the requested version and side. */
+  issue(scope: string, resource: string, version: string, side: number): Promise<GatekeeperDownloadTicket>;
+  /** Recheck live access and version after transfer, before revealing the text. */
+  validate(scope: string, resource: string, version: string): Promise<void>;
+}
+
+/** Host-only downloads of immutable document sides in an approval review. */
+export interface GatekeeperReviewDownloadIssuer extends RpcTarget {
+  /** Issue a file ticket, or null when the requested side is absent. */
+  issue(review: string, node: string, version: number, side: "before" | "after"): Promise<GatekeeperDownloadTicket | null>;
+  /** Recheck participation, document access and decision version after transfer. */
+  validate(review: string, node: string, version: number): Promise<void>;
+}
+
+/** Host-only access to one immutable native document publication. */
+export interface GatekeeperNativeDocumentDownload extends RpcTarget {
+  /** Authorize a signed download; includes the service's declared content type. */
+  issue(): Promise<GatekeeperDownloadTicket & { content_type: string }>;
+  /** Recheck current access before the host reveals downloaded content. */
+  validate(): Promise<void>;
+}
+
+/** Human-side selector; selected capabilities cannot switch documents or versions. */
+export interface GatekeeperNativeDocumentSelector extends RpcTarget {
+  /** Bind a native approval preview to one immutable review side and decision version. */
+  selectReview(review: string, resource: string, version: number, side: 'before' | 'after', format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeReviewDownload>>;
+  /** List readable service scopes from this connected account. */
+  scopes(): Promise<{ scopes: { id: string; name: string }[] }>;
+  /** List non-directory documents in the selected scope, preserving pagination. */
+  documents(scope: string, cursor: string): Promise<{ documents: { id: string; name: string;
+    /** Current shared deletion state, omitted when unknown or for a private-only choice. */
+    sharedDeleted?: boolean }[]; nextCursor: string; truncated: boolean }>;
+  /** List native publications and the server's canonical resource URL, without downloading content. */
+  publications(scope: string, resource: string, cursor: string): Promise<{
+    /** True when older private snapshots exceed the bounded ancestry walk. */
+    historyLimited?: boolean;
+    /** Present only when the first history page establishes the current shared deletion state. */
+    sharedDeleted?: boolean;
+    /** Canonical document identity to pass to the Workshop's source registration. */
+    resourceUrl: string;
+    /** Immutable, non-deleted native versions available to this account. */
+    publications: { id: string; recordedAt: string; actor: string;
+      /** Verified human owner when the publication actor is an agent; absent for older services. */
+      onBehalfOf?: string;
+      /** Recorder of this project snapshot, not the last edit of every document. */
+      recordedBy?: {
+        /** Authenticated actor that recorded the snapshot. */
+        actor: string;
+        /** Human owner when the recorder was an agent. */
+        onBehalfOf: string;
+      };
+      format: NativeDocumentFormat }[];
+    /** Cursor for the next history page; empty means the end. */
+    nextCursor: string;
+  }>;
+
+  /** Authorize one publication within the selected service scope and resource. */
+  select(scope: string, resource: string, publication: string): Promise<RpcStub<GatekeeperNativeDocumentDownload>>;
+}
+
+/** Immutable location belonging to a reviewed document revision. */
+export interface GatekeeperNativeReviewMetadata {
+  /** Immutable filename on this reviewed side. */
+  name: string;
+  /** Immutable parent identifier; empty is the project root. */
+  parent_id: string;
+}
+
+/** A download bound to one side of the reviewed proposal. */
+export interface GatekeeperNativeReviewDownload extends RpcTarget {
+  /** Authorize the selected side and issue a ticket, or return null for an absent side. */
+  issue(): Promise<(GatekeeperDownloadTicket & { content_type: string;
+    /** Immutable location on this side, omitted for legacy documents. */
+    metadata?: GatekeeperNativeReviewMetadata }) | null>;
+  /** Recheck live access and the decision version before revealing content or absence. */
+  validate(): Promise<void>;
+}
+
+/** Human-side saving of one native document in a personal draft. */
+export interface GatekeeperNativeDocumentWriter extends RpcTarget {
+  /** Return the selected existing head or the frozen base of a new document. */
+  head(): Promise<string>;
+  /** Prepare an upload of at most 4 MiB against the displayed draft head. */
+  issue(expectedHead: string, size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+  /** Save this document only; a new-document retry returns its first result. Never publishes. */
+  save(expectedHead: string, uploadId: string): Promise<string>;
+}
+
+/** A new-document writer whose frozen request can survive a browser reload. */
+export interface GatekeeperNativeDocumentCreator extends GatekeeperNativeDocumentWriter {
+  /** Freeze an issued upload and return an account-bound receipt before attempting creation. */
+  checkpoint(expectedHead: string, uploadId: string): Promise<string>;
+  /** Return the frozen base and upload of a recovered creation. */
+  recoveryState(): Promise<{ head: string; uploadId: string }>;
+}
+
+/** Frozen office update, authorized again whenever save is retried. */
+export interface GatekeeperOfficeUpdateWriter extends GatekeeperNativeDocumentWriter {
+  /** Freeze the issued upload and return an account-bound update receipt. */
+  checkpoint(expectedHead:string,uploadId:string):Promise<string>;
+  /** Recover the original target head and upload without creating a new request. */
+  recoveryState():Promise<{head:string;uploadId:string}>;
+}
+/** Immutable comparison displayed before an update decision. */
+export interface GatekeeperOfficeUpdateSummary {
+  /** Current target head to which the decision applies. */
+  head:string;
+  /** Whether the selected source changes the copy or conflicts with local edits. */
+  outcome:'source_unchanged'|'already_current'|'update_available'|'conflict';
+  /** Checksum of the current native copy. */
+  currentSHA256:string;
+  /** Checksum of the captured incoming archive. */
+  sourceSHA256:string;
+  /** Checksum of the exact converted incoming bytes. */
+  outputSHA256:string;
+  /** Conversion properties requiring explicit acceptance. */
+  unsupported:string[];
+}
+/** Human-side review bound to one target and captured source. */
+export interface GatekeeperOfficeUpdateReview extends RpcTarget {
+  /** Recheck the frozen target and source before revealing the comparison. */
+  describe():Promise<GatekeeperOfficeUpdateSummary>;
+  /** Download the converted incoming version through live access checks. */
+  preview():Promise<RpcStub<GatekeeperNativeDocumentDownload>>;
+  /** Freeze the reviewed update, with separate acceptance of losses and replacement. */
+  prepare(acceptUnsupported:boolean,replaceLocal:boolean):Promise<RpcStub<GatekeeperOfficeUpdateWriter>>;
+}
+
+/** Human-only conflict selection bound to one document and immutable personal head. */
+export interface GatekeeperNativeConflict extends RpcTarget {
+  /** Recheck access and list the exact sides; indices retain base/positive ordering. */
+  describe(): Promise<{ head: string; terms: { present: boolean; negative: boolean; metadata?: { name: string; parent_id: string; content_type: string } }[] }>;
+  /** Issue a checked side download; null explicitly denotes deletion. */
+  download(termIndex: number): Promise<GatekeeperDownloadTicket | null>;
+  /** Recheck the same document/head and current access after a download. */
+  validate(): Promise<void>;
+  /** Choose one positive side at the frozen head; never publish or retry at a newer head. */
+  resolve(termIndex: number): Promise<{ head: string }>;
+}
+
+/** Human-only picker for saving a native editor into a new or existing document. */
+export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
+  /** Bind an update comparison to the current copy and a captured archive/hash. */
+  reviewOfficeUpdate(scope:string,target:string,source:string,format:NativeDocumentFormat,sourceHead:string,sourceSHA256:string):Promise<RpcStub<GatekeeperOfficeUpdateReview>>;
+  /** Restore the same update request through a freshly authorized account session. */
+  resumeOfficeUpdate(receipt:string,format:NativeDocumentFormat):Promise<RpcStub<GatekeeperOfficeUpdateWriter>>;
+
+  /** Download the retained original of an imported copy, requiring access to both versions; null means no recorded original. */
+  originalOffice(scope: string, resource: string, expectedHead: string): Promise<RpcStub<GatekeeperNativeDocumentDownload> | null>;
+  /** Convert a stored personal original; retain source/head and report unsupported properties before creation. */
+  previewOffice(scope: string, resource: string, format: NativeDocumentFormat, source?: {
+    /** Exact captured personal head, read independently of the current creation head. */
+    head: string;
+    /** SHA-256 of the captured original bytes. */
+    sha256: string;
+  }): Promise<{ previewId: string; head: string; unsupported: string[];
+    /** Immutable source version and checksum returned by the server conversion. */
+    source: { head: string; sha256: string };
+    download: RpcStub<GatekeeperNativeDocumentDownload> }>;
+  /** Freeze a separate native copy from server-verified preview bytes, with explicit acceptance of conversion losses. */
+  createOffice(scope: string, name: string, format: NativeDocumentFormat, expectedHead: string, previewId: string, acceptUnsupported: boolean): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  /** Export a pinned personal version to DOCX/XLSX/PPTX; the returned download rechecks access. */
+  exportOffice(scope: string, resource: string, expectedHead: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentDownload>>;
+  /** Read the exact name/folder of an unconflicted native document with versioned metadata. */
+  documentLocation(scope: string, resource: string, format: NativeDocumentFormat): Promise<{ head: string; name: string; parent: string }>;
+  /** Save name/folder at the selected head with current source/destination rights; never publish or retry. */
+  saveLocation(scope: string, resource: string, expectedHead: string, name: string, parent: string, format: NativeDocumentFormat): Promise<{ head: string }>;
+  /** Page through currently visible destination folders; visibility does not grant write authority. */
+  folders(scope: string, cursor: string): Promise<{ folders: { id: string; name: string; parent: string }[]; nextCursor: string }>;
+  /** Select an existing native conflict without lending authority to gadget code. */
+  selectConflict(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeConflict>>;
+  /** Current human identity for displaying which decisions they may record. */
+  reviewerIdentity(): Promise<string>;
+  /** List proposals visible to the current human, preserving server pagination. */
+  reviewInbox(cursor: string): Promise<{ reviews: import('./publication-review').PublicationReview[]; next_cursor: string }>;
+  /** Record one explicit domain decision against its displayed version; server rights remain authoritative. */
+  decideReview(id: string, domain: string, version: number, approved: boolean): Promise<void>;
+  /** Merge the current shared project into the exact personal head; preserve conflicts and never publish or retry. */
+  updateDraft(scope: string, expectedHead: string): Promise<{ head: string }>;
+  /** Read current heads without creating or publishing a draft. */
+  publicationState(scope: string): Promise<{ personal_head: string; shared_head: string; personal_exists: boolean }>;
+  /** Delete one existing resolved native document at the explicitly confirmed personal head; never publish or retry. */
+  deleteDocument(scope: string, resource: string, expectedHead: string, format: NativeDocumentFormat): Promise<{ head: string }>;
+  /** Inspect the exact personal target before explicitly choosing content replacement or deleted-document restoration. */
+  restorationState(scope: string, resource: string, format: NativeDocumentFormat): Promise<{ head: string; deleted: boolean }>;
+  /** Restore one published document's content into the exact personal head; never publish or retry with a newer head. */
+  restorePublication(scope: string, resource: string, publication: string, expectedHead: string, format: NativeDocumentFormat, deleted?: boolean): Promise<{ head: string }>;
+  /** Submit all saved project changes at the displayed immutable heads. */
+  requestReview(scope: string, personalHead: string, sharedHead: string): Promise<{ candidate_id: string }>;
+  /** Read an authorized proposal, including current required decisions. */
+  review(id: string): Promise<import('./publication-review').PublicationReview>;
+  /** Publish only this author's ready proposal at its exact heads; the service rechecks authorization atomically. */
+  publishReview(scope: string, id: string): Promise<{ personal_head: string; shared_head: string; published: boolean; conflicted: boolean }>;
+  /** List service scopes currently accessible to this account. */
+  scopes(): Promise<{ scopes: { id: string; name: string }[] }>;
+  /** List document choices, with an explicit cursor and truncation indication. */
+  documents(scope: string, cursor: string): Promise<{ documents: { id: string; name: string;
+    /** Current shared deletion state, omitted when unknown or for a private-only choice. */
+    sharedDeleted?: boolean }[]; nextCursor: string; truncated: boolean }>;
+  /** List invitation choices and current modes for an owned private document at this head. */
+  participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean }[] }>;
+  /** Change one invitation using the displayed mode; current ownership, folder rights and head are rechecked. */
+  setParticipant(scope: string, resource: string, head: string, participant: string, expected: '' | 'read' | 'write', mode: '' | 'read' | 'write'): Promise<void>;
+  /** Open the user's personal draft and bind editing to one document and format. */
+  select(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentWriter>>;
+  /** Bind one creation in the scope root; retries through this writer retain the operation identity. */
+  create(scope: string, name: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  /** Restore the exact creation request from this account's receipt; saving rechecks current rights. */
+  resumeCreation(receipt: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+}
+
+/** A human-only, account-bound authorization flow for an external agent. */
+export interface GatekeeperAgentConsent extends RpcTarget {
+  /** Preview the opaque request; the returned selection is single-use in this session. */
+  preview(request: string): Promise<{
+    /** Opaque session-bound selection, never a credential. */
+    selection: string;
+    /** Authenticated account identity shown before consent. */
+    account: string;
+    /** Registered client requesting access. */
+    client_id: string;
+    /** Requested resource audience. */
+    resource: string;
+    /** Exact requested scopes. */
+    scopes: string[];
+    /** Server expiry in ISO 8601 format. */
+    expires_at: string;
+  }>;
+  /** Decide only the previously displayed request, using the account's current authority. */
+  decide(selection: string, approved: boolean): Promise<{
+    /** Registered callback with saved state and code or denial; never log or persist it. */
+    redirect_uri: string;
+  }>;
+}
+
+/** Account-bound execution available only to the human mail review screen. */
+export interface GatekeeperMailDraftSender extends WorkerEntrypoint {
+  /** Submit the exact approved draft; no account or content can be substituted. */
+  send(id:string,sha256:string):ReturnType<NonNullable<GatekeeperUser['sendMailDraft']>>;
+}
+
+/** Host-issued creator bound to the Mnemos account of the human screen. */
+export interface GatekeeperCalendarDraftCreator extends WorkerEntrypoint {
+  /** Create one exact approved meeting; the caller cannot change its account or content. */
+  create(id:string,sha256:string):Promise<CalendarDraftExecution>;
+}
+
+/** Complete HTML and the capabilities for a sandboxed gatekeeper screen. */
 export type GatekeeperUiFrame = {
+  /** Optional organization summary, retained by the human host and never given to gadgets. */
+  organizationMetrics?: RpcStub<import("./organization-metrics").OrganizationMetricsReader>;
+  /** Host-issued creator retained by the human review screen. */
+  calendarDraftCreator?:Fetcher<GatekeeperCalendarDraftCreator>;
+  /** Host-issued sender bound to this Mnemos account; never supplied to agents. */
+  mailDraftSender?:Fetcher<GatekeeperMailDraftSender>;
+  /** Optional human authorization capability retained by the trusted host, never forwarded to gadgets. */
+  agentConsent?: RpcStub<GatekeeperAgentConsent>;
   // Complete HTML for the UI. Workshop hosts it in a sandboxed iframe.
   iframeHtml: string;
 
   // Capability exposed to the iframe for any RPCs needed by the UI.
   ui: RpcStub<RpcTarget>;
+
+  /** Optional native personal-draft editing, retained by the trusted human host. */
+  nativeWrites?: {
+    /** Exact trusted HTTPS storage origin. */
+    storageOrigin: string;
+    /** Authenticated picker; never injected into gadget or agent code. */
+    selector: RpcStub<GatekeeperNativeDocumentWriteSelector>;
+  };
+
+  /** Optional native document transfers, retained only by the human UI host. */
+  nativeDownloads?: {
+    /** Exact trusted HTTPS storage origin. */
+    storageOrigin: string;
+    /** Authenticated selector; never forwarded to the sandboxed UI. */
+    selector: RpcStub<GatekeeperNativeDocumentSelector>;
+  };
+
+  /** Optional direct comparison downloads, retained only by the human UI host. */
+  reviewDownloads?: {
+    /** Exact trusted HTTPS storage origin. */
+    storageOrigin: string;
+    /** Authenticated issuer; never exposed through the iframe's ui object. */
+    issuer: RpcStub<GatekeeperReviewDownloadIssuer>;
+  };
+
+  /** Optional direct text reading, retained by the management-app host only. */
+  textDownloads?: {
+    /** Exact HTTPS storage origin from deployment configuration. */
+    storageOrigin: string;
+    /** Authenticated issuer; never forwarded through host.ui. */
+    issuer: RpcStub<GatekeeperTextDownloadIssuer>;
+  };
+
+  /** Optional direct text upload, retained by the management-app host only. */
+  textUploads?: {
+    /** Exact HTTPS storage origin from trusted deployment configuration. */
+    storageOrigin: string;
+    /** Authenticated issuer, never forwarded through host.ui to the iframe. */
+    issuer: RpcStub<GatekeeperTextUploadIssuer>;
+  };
 }
 
 // Legacy alias for GatekeeperUiFrame: the established return type of startResourceConfigurator,
@@ -486,7 +831,261 @@ export interface GatekeeperConnectCallback extends WorkerEntrypoint {
 // Adapter capability itself represents permission to access all of the user's data that is
 // available through it, so needs to be guarded carefully. Hence, only the Workshop itself should
 // ever have direct access to an Adapter object.
+/** Provider-neutral persistent read capability for one explicitly selected calendar. */
+export interface CalendarReadSource extends WorkerEntrypoint {
+  /** Recheck the source account and selection without exposing a credential. */
+  validate(): Promise<void>;
+  /** Read the selected calendar identity, display title and IANA time zone. */
+  metadata(): Promise<{provider: string; calendar_id: string; title: string; time_zone: string}>;
+  /** Read a bounded window. JSON is untrusted event data, never executable instructions. */
+  readWindow(input: {time_min: string; time_max: string; limit: number}): Promise<{
+    /** Stable provider calendar identity. */
+    calendar_id: string;
+    /** Calendar time zone, including for all-day events. */
+    time_zone: string;
+    /** JSON array of provider-normalized event records; bounded before serialization. */
+    events_json: string;
+    /** True when the requested limit omitted events. */
+    truncated: boolean;
+  }>;
+}
+
+/** Persistent read capability for an owner-selected mailbox query. */
+export interface MailReadSource extends WorkerEntrypoint {
+  /** Recheck account generation and provider consent. */
+  validate(): Promise<void>;
+  /** Return the exact immutable query and provider identifier. */
+  metadata(): Promise<{provider: string; query: string}>;
+  /** Return bounded, untrusted message data without modifying the mailbox. */
+  readSelection(input: import('./mail-search.ts').MailReadRequest): Promise<{
+    /** Provider identifier for the selected account. */
+    provider: string;
+    /** Exact query selected by the owner. */
+    query: string;
+    /** JSON array of normalized messages; never executable instructions. */
+    messages_json: string;
+    /** One explicitly requested attachment chunk; messages_json is [] on this path. */
+    attachment?:import('./mail-attachment.ts').MailAttachmentChunk;
+    /** Known mailbox identities for excluding self from reply-all suggestions; never credentials. */
+    self_addresses?: string[];
+    /** Provider continuation, kept behind Mnemos's account-bound cursor. */
+    next_cursor?: string;
+    /** Whether more matching messages were omitted. */
+    truncated: boolean;
+  }>;
+}
+
+/** Explicit meeting creation authority, separate from a calendar read selection. */
+export interface CalendarWriteSource extends WorkerEntrypoint {
+  /** Recheck the selected account, calendar and current consent. */
+  validate():Promise<void>;
+  /** Create the exact approved timed meeting and invite its listed attendees. */
+  create(content:CalendarDraftContent):Promise<{
+    /** Provider event identity; does not confirm invitation delivery. */
+    event_id:string;
+  }>;
+}
+
+/** Explicit outgoing-mail capability; never included in a mailbox read capability. */
+export interface MailSendSource extends WorkerEntrypoint {
+  /** Recheck the selected account generation and current provider permission. */
+  validate(): Promise<void>;
+  /** Submit the approved plain text once; a lost result must not be replayed. */
+  send(content: {
+    /** Exact approved recipient addresses. */
+    to: string[];
+    /** Exact approved copied recipient addresses, included in MIME and SMTP delivery. */
+    cc?: string[];
+    /** Exact approved files, subject to the shared decoded-size limit. */
+    attachments?:import('./mail-attachment').MailOutgoingAttachment[];
+    /** Exact approved subject. */
+    subject: string;
+    /** Exact approved plain text body. */
+    body: string;
+    /** Optional immutable parent captured by Mnemos, included in human approval. */
+    reply?: import('./mail-reply.ts').MailReplyTarget;
+  }): Promise<{
+    /** Explicit provider acceptance; does not prove delivery to the recipient. */
+    accepted: true;
+    /** Provider message identifier when returned by this API. */
+    message_id?: string;
+  }>;
+}
+
 export interface GatekeeperUser extends WorkerEntrypoint {
+  /** Issue calendar creation authority for a host-selected account/calendar. */
+  getCalendarWriteSource?(calendarId:string):Promise<{
+    /** Server-only authority, never returned by a read source. */
+    source:Fetcher<CalendarWriteSource>;
+    /** Same account/calendar/generation identity used by the read selection. */
+    sourceKey:string;
+    /** Required provider resource for host permission checks. */
+    resource:SupportedResource;
+  }>;
+  /** Resolve the saved selection of an exact approved meeting proposal. */
+  prepareCalendarDraftCreate?(id:string,sha256:string):Promise<{
+    /** Saved host account and provider selection identity. */
+    sourceKey:string;
+    /** Selected provider calendar ID. */
+    calendar_id:string;
+  }>;
+  /** Human execution through a separately selected calendar writer. */
+  createCalendarDraft?(id:string,sha256:string,sourceKey:string,source:Fetcher<CalendarWriteSource>):Promise<CalendarDraftExecution>;
+
+  /** Resolve the owned, approved proposal's saved mail selection for an explicit send. */
+  prepareMailDraftSend?(id:string,sha256:string):Promise<{
+    /** Host-owned source account and provider selection identity. */
+    sourceKey:string;
+    /** Original mailbox query, used to reproduce the provider selection identity. */
+    query:string;
+  }>;
+  /** Execute one exact approved proposal using the separately selected sender. */
+  sendMailDraft?(id:string,sha256:string,sourceKey:string,source:Fetcher<MailSendSource>):Promise<{
+    /** Provider acceptance or an attempt with unknown outcome. */
+    state:'attempted'|'accepted';
+    /** Provider acceptance ID when known. */
+    message_id?:string;
+  }>;
+
+  /** Host-only, explicit send factory for an existing account/query selection. */
+  getMailSendSource?(query: string): Promise<{
+    /** Outgoing authority retained only by trusted server code. */
+    source: Fetcher<MailSendSource>;
+    /** Same account/query/generation identity used by the read selection. */
+    sourceKey: string;
+    /** Provider resource required by host policy checks. */
+    resource: SupportedResource;
+  }>;
+
+  /** List calendars for the connected account owner; no event content or credentials. */
+  listCalendars?(): Promise<{
+    /** Concrete calendar choices. */
+    calendars: {
+      /** Provider ID used when selecting a calendar. */
+      id: string;
+      /** Provider display name, rendered as text. */
+      name: string;
+    }[];
+    /** More calendars exist beyond the bounded listing. */
+    truncated: boolean;
+  }>;
+
+  /** List concrete folders for the account owner; empty parent selects the root. */
+  listMailFolders?(parent: string): Promise<{
+    /** Readable folder choices; no message bodies or credentials. */
+    folders: {
+      /** Provider folder ID used for the fixed mail selection. */
+      id: string;
+      /** Provider folder name, rendered as text. */
+      name: string;
+      /** Whether the owner may navigate into this folder. */
+      hasChildren: boolean;
+    }[];
+    /** More folders exist beyond the bounded listing. */
+    truncated: boolean;
+  }>;
+
+  /** Create a fixed-query read capability; only the trusted host receives it. */
+  getMailReadSource?(query: string): Promise<{
+    /** Server-only reading authority. */
+    source: Fetcher<MailReadSource>;
+    /** Account/query/generation identity, not an OAuth token. */
+    sourceKey: string;
+    /** Required provider resource for host permission checks. */
+    resource: SupportedResource;
+  }>;
+  /** Persist a host-selected mail source under the current Mnemos owner. */
+  acceptMailReadSource?(project: string, request: string, sourceKey: string, source: Fetcher<MailReadSource>): Promise<{
+    /** Owner-bound preparation ID, not an authorization credential. */
+    selection_id: string;
+    /** Exact selected query for human review. */
+    query: string;
+  }>;
+
+  /** List safe identifiers for this human's enabled WebDAV connections. */
+  listDriveImportAccounts?(): Promise<Array<{
+    /** Account-local connection identifier, not a credential. */
+    id: string;
+    /** Human-readable account label. */
+    name: string;
+  }>>;
+  /** Select a fixed Drive file and account generation for a trusted host import. */
+  getDriveImportSource?(fileId: string): Promise<{
+    /** Read authority retained only on the server. */
+    source: Fetcher<DriveImportSource>;
+    /** Stable source/account generation identity, not a credential. */
+    sourceKey: string;
+    /** Resource category for current host policy checks. */
+    resource: SupportedResource;
+  }>;
+  /** Receive a host-selected source into this human's personal branch, preserving request identity on retry. */
+  captureDriveImport?(project: string, request: string, sourceKey: string, fileId: string, source: Fetcher<DriveImportSource>): Promise<DriveImportReceipt>;
+  /** Host-only capture of an explicitly selected Drive file from this account.
+   * Does not grant an agent access or create a Mnemos document. */
+  readDriveImport?(fileId: string): Promise<DriveImportSnapshot>;
+  /** Complete the explicitly prepared mail registration using this human account. */
+  registerMailSelection?(project: string, request: string, selection: string): Promise<{
+    /** Registered connection ID for management and agent use. */
+    connection_id: string;
+    /** Project bound to the connection. */
+    project_id: string;
+    /** Provider of the selected mail. */
+    provider: string;
+    /** SHA-256 of the immutable owner-selected query. */
+    query_sha256: string;
+    /** Current connection version for conditional changes. */
+    revision: number;
+    /** Saved connection state, not proof of effective agent access. */
+    enabled: boolean;
+  }>;
+
+  /** Complete the explicitly prepared calendar registration using this human account. */
+  registerCalendarSelection?(project: string, request: string, selection: string): Promise<{
+    /** Registered connection ID for management and agent use. */
+    connection_id: string;
+    /** Project bound to the connection. */
+    project_id: string;
+    /** Provider of the selected calendar. */
+    provider: string;
+    /** Stable provider calendar ID. */
+    calendar_id: string;
+    /** Current connection version for conditional changes. */
+    revision: number;
+    /** Saved connection state, not proof of effective agent access. */
+    enabled: boolean;
+  }>;
+
+  /** Host-only factory for an explicit calendar selection from this connected account. */
+  getCalendarReadSource?(calendarId: string): Promise<{
+    /** Persistent read authority; retained on the server, never sent to an iframe. */
+    source: Fetcher<CalendarReadSource>;
+    /** Stable account/calendar/generation identity used to reject changed retries. */
+    sourceKey: string;
+    /** Administrator-controlled category of the selected resource. */
+    resource: SupportedResource;
+  }>;
+  /** Host-only receiver for a selected calendar. Browser input cannot supply source authority. */
+  acceptCalendarReadSource?(project: string, request: string, sourceKey: string, source: Fetcher<CalendarReadSource>): Promise<{
+    /** Stable identifier of this preparation, not a bearer credential. */
+    selection_id: string;
+    /** Display title of the selected calendar. */
+    title: string;
+  }>;
+  /** Receive a diagnostic heartbeat using this account identity, never a caller-supplied user. */
+  recordWorkspaceActivity?(stream: string, sequence: number, active: boolean): Promise<void>;
+  /** Receive UI load timings through the explicitly selected workspace diagnostic account. */
+  recordUIReadiness?(sample: UIReadinessSample): Promise<void>;
+  /** Mint a persistent source for an explicit human import of one immutable native document publication.
+   * This grants no agent session; the Workshop must retain the source for future observer checks. */
+  getNativeDocumentSource?(resourceUrl: string, publication: string): Promise<{
+    /** Observer-enforcing source class bound to this account and exact publication. */
+    class: DurableObjectClass<NativeDocumentSource>;
+    /** Canonical source identity, including its organization. */
+    sourceKey: string;
+    /** Administrator-controlled resource category for this source. */
+    resource: SupportedResource;
+  }>;
+
   // Get display info for an account, suitable for display to a user.
   describe(): Promise<AccountDescription>;
 
@@ -730,6 +1329,17 @@ export interface Gatekeeper<Session> extends DurableObject {
   // `restart` has the same meaning as for `rejectAction()`.
   revertAction(action: number):
       Promise<void | {message?: string, canRetry?: boolean, restart?: boolean}>;
+}
+
+/** Persistent provenance for a human-imported native document, independently of agent bindings. */
+export interface NativeDocumentSource extends Gatekeeper<never> {
+  /** Open a fixed publication after checking current observers and authorizing the observation. */
+  openDocument(authorizer: RpcStub<ObservationAuthorizer>): Promise<{
+    /** Allowed origin for the direct storage transfer. */
+    storageOrigin: string;
+    /** Read-only capability fixed to this publication, with post-transfer access validation. */
+    download: RpcStub<GatekeeperNativeDocumentDownload>;
+  }>;
 }
 
 export interface ObservationAuthorizer extends RpcTarget {

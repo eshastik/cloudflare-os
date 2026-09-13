@@ -4,7 +4,7 @@
   "main": ".wrangler/validate/src/server.ts",
   "build": {
     "command": "pnpm run build:worker",
-    "watch_dir": "src"
+    "watch_dir": ["src", "../workshop-shared/src"]
   },
   "compatibility_date": "2026-02-02",
 

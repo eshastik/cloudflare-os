@@ -1,8 +1,13 @@
+/** Read or management authority selected for this calendar binding. */
+export type CalendarAccessMode = "read" | "manage";
+
 /** The availability lookup scope chosen when this calendar connection was configured. */
 export type CalendarAvailabilityMode = "thisCalendar" | "allVisible";
 
 /** Capabilities enabled for this Google Calendar connection. */
 export type GoogleCalendarCapabilities = {
+  /** Writes are unavailable when this connection is read-only. */
+  accessMode: CalendarAccessMode;
   /**
    * `thisCalendar`: `checkAvailability` may only query the bound calendar's own free/busy.
    * `allVisible`: `checkAvailability` may query any calendar visible to the connected Google
@@ -157,7 +162,7 @@ export interface GoogleCalendarSession {
   getCalendar(): Promise<GoogleCalendarInfo>;
 
   /**
-   * List all events on the selected calendar within the time window. The whole window is returned
+   * List non-cancelled events on the selected calendar within the time window. The whole window is returned
    * (results are not paginated by the caller); a very dense window throws rather than truncating.
    *
    * Results include submitted creates/updates that have not yet been committed to Google Calendar,

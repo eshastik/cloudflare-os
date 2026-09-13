@@ -9,7 +9,8 @@
     "deploy": "pnpm run build:configurator && wrangler deploy",
     "build": "pnpm run build:configurator && tsc",
     "types:check": "pnpm run build:configurator && tsc --noEmit",
-    "clean": "rm -rf dist src/generated"
+    "clean": "rm -rf dist src/generated",
+    "test": "node --test __tests__/*.test.mjs"
   },
   "dependencies": {
     "@gadgets/backend-utils": "workspace:*",
@@ -18,7 +19,8 @@
     "capnweb": "^0.8.0",
     "capnweb-validate": "0.2.1",
     "mimetext": "^3.0.28",
-    "postal-mime": "^2.7.5"
+    "postal-mime": "^2.7.5",
+    "temporal-polyfill": "1.0.2"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

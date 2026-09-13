@@ -1,0 +1,22 @@
+{
+  "name": "@gadgets/gatekeeper-yandex",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run types:check && wrangler deploy --dry-run --outdir dist",
+    "types:check": "wrangler types && tsc --noEmit",
+    "test": "node --test __tests__/account.test.mjs __tests__/drive-import.test.mjs __tests__/notification.test.mjs",
+    "test:worker": "pnpm run build && node --test __tests__/worker.test.mjs"
+  },
+  "dependencies": {
+    "@gadgets/backend-utils": "workspace:*",
+    "@gadgets/workshop-shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260804.1",
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260801.0-alpha"
+  },
+  "main": "src/yandex.ts"
+}

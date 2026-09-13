@@ -1,0 +1,19 @@
+{
+  "key": "public-fixture-key-for-drive-origin-v1",
+  "claim": {
+    "version": 1,
+    "tenant": "tenant",
+    "owner": "owner",
+    "project": "project",
+    "request": "request",
+    "upload": "upload",
+    "expected_head": "1111111111111111111111111111111111111111111111111111111111111111",
+    "provider": "google-drive",
+    "source_binding": "2222222222222222222222222222222222222222222222222222222222222222",
+    "file": "file",
+    "revision": "revision-1",
+    "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "size": 123
+  },
+  "proof": "eyJ2ZXJzaW9uIjoxLCJ0ZW5hbnQiOiJ0ZW5hbnQiLCJvd25lciI6Im93bmVyIiwicHJvamVjdCI6InByb2plY3QiLCJyZXF1ZXN0IjoicmVxdWVzdCIsInVwbG9hZCI6InVwbG9hZCIsImV4cGVjdGVkX2hlYWQiOiIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwicHJvdmlkZXIiOiJnb29nbGUtZHJpdmUiLCJzb3VyY2VfYmluZGluZyI6IjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJmaWxlIjoiZmlsZSIsInJldmlzaW9uIjoicmV2aXNpb24tMSIsInNoYTI1NiI6IjMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMiLCJzaXplIjoxMjN9.PTXg38fQA7wHWbPt0Xgt_-TYOUcxnZAAhB9lxuMRGEo"
+}

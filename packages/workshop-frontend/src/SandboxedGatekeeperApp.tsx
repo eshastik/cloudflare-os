@@ -1,3 +1,4 @@
+import {saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
@@ -7,6 +8,10 @@ import { createRateLimitedCapability } from './rateLimitedCapability'
 import { useTheme } from './ThemeContext'
 import type { ResolvedThemeMode } from './theme'
 import { forwardTrustedFrameError } from './errorReporting'
+import { uploadGatekeeperText } from './gatekeeperAppUpload'
+import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
+import { downloadGatekeeperNativeDocument, downloadGatekeeperText } from './gatekeeperAppDownload'
+import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { useAuthenticatedApi } from './AuthContext'
 import {
   normalizeGatekeeperAppPrompt,
@@ -76,12 +81,21 @@ function iframeStyleForOverlay(overlay: OverlayState): CSSProperties {
 // RPC session. The app uses `ui` to reach the gatekeeper's own capability, which Workshop relays and
 // rate-limits. `setPresenting` stays in Workshop and only grows/restores the iframe's layout.
 class GatekeeperAppHostImpl extends RpcTarget {
+  readonly #calendarDraftCreator:RpcStub<NonNullable<GatekeeperUiFrame['calendarDraftCreator']>>|undefined
+  readonly #mailDraftSender:RpcStub<NonNullable<GatekeeperUiFrame['mailDraftSender']>>|undefined
   readonly #ui: RpcStub<RpcTarget>
   readonly #disposeRateLimiter: () => void
   readonly #present: PresentController
   readonly #openTarget: OpenTarget
   readonly #openPrompt: OpenPrompt
   readonly #resolveWorkspaceTitles: ResolveWorkspaceTitles
+  readonly #uploads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textUploads']>['issuer']> } | undefined
+  readonly #uploadLifetime = new AbortController()
+  readonly #downloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textDownloads']>['issuer']> } | undefined
+  readonly #reviewDownloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['reviewDownloads']>['issuer']> } | undefined
+  readonly #nativeDownloads: { storageOrigin: string; selector: RpcStub<NonNullable<GatekeeperUiFrame['nativeDownloads']>['selector']> } | undefined
+  #downloadBusy = false
+  #uploadBusy = false
   #presenting = false
   #themeMode: ResolvedThemeMode
   #themeReceiver: RpcStub<ThemeReceiver> | null = null
@@ -97,8 +111,20 @@ class GatekeeperAppHostImpl extends RpcTarget {
     openTarget: OpenTarget,
     openPrompt: OpenPrompt,
     resolveWorkspaceTitles: ResolveWorkspaceTitles,
+    uploads?: GatekeeperUiFrame['textUploads'],
+    downloads?: GatekeeperUiFrame['textDownloads'],
+    reviewDownloads?: GatekeeperUiFrame['reviewDownloads'],
+    nativeDownloads?: GatekeeperUiFrame['nativeDownloads'],
+    mailDraftSender?:GatekeeperUiFrame['mailDraftSender'],
+    calendarDraftCreator?:GatekeeperUiFrame['calendarDraftCreator'],
   ) {
     super()
+    this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
+    this.#mailDraftSender=mailDraftSender?(mailDraftSender as RpcStub<typeof mailDraftSender>).dup():undefined
+    this.#nativeDownloads = nativeDownloads ? { storageOrigin: nativeDownloads.storageOrigin, selector: (nativeDownloads.selector as RpcStub<typeof nativeDownloads.selector>).dup() } : undefined
+    this.#uploads = uploads ? { storageOrigin: uploads.storageOrigin, issuer: (uploads.issuer as RpcStub<typeof uploads.issuer>).dup() } : undefined
+    this.#downloads = downloads ? { storageOrigin: downloads.storageOrigin, issuer: (downloads.issuer as RpcStub<typeof downloads.issuer>).dup() } : undefined
+    this.#reviewDownloads = reviewDownloads ? { storageOrigin: reviewDownloads.storageOrigin, issuer: (reviewDownloads.issuer as RpcStub<typeof reviewDownloads.issuer>).dup() } : undefined
     this.#themeMode = themeMode
     const { capability: ui, dispose } = createRateLimitedCapability(capability, {
       maxConcurrency: 8,
@@ -115,8 +141,92 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#resolveWorkspaceTitles = resolveWorkspaceTitles
   }
 
+  async createCalendarDraft(id:string,sha256:string){
+    if(!this.#calendarDraftCreator||this.#uploadLifetime.signal.aborted)throw Error('Calendar creation unavailable.');
+    return this.#calendarDraftCreator.create(id,sha256);
+  }
+
+  async sendMailDraft(id:string,sha256:string){
+    if(!this.#mailDraftSender||this.#uploadLifetime.signal.aborted)throw Error('Mail sending unavailable.');
+    return this.#mailDraftSender.send(id,sha256);
+  }
+
+  /** Save bounded bytes already read by the app, without enabling iframe downloads or navigation. */
+  async saveMailAttachment(bytes:Uint8Array,filename:string){
+    this.#uploadLifetime.signal.throwIfAborted()
+    saveMailAttachment(bytes,filename)
+  }
+
   get ui(): RpcStub<RpcTarget> {
     return this.#ui
+  }
+
+  // Only text and an opaque service scope come from the frame. The signed URL
+  // comes from the server-issued capability retained by this host.
+  async uploadText(scope: string, text: string): Promise<string> {
+    if (!this.#uploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted ||
+        typeof scope !== 'string' || !scope || scope.length > 255) {
+      throw new Error('Document upload unavailable.')
+    }
+    this.#uploadBusy = true
+    try {
+      const uploads = this.#uploads
+      return await uploadGatekeeperText(text, uploads.storageOrigin,
+        (size, checksum) => uploads.issuer.issue(scope, size, checksum),
+        this.#uploadLifetime.signal)
+    } finally { this.#uploadBusy = false }
+  }
+
+  // Revalidate access after S3 returns: a still-valid signed URL must not let an
+  // invalidated account reveal a late result through the host.
+  async downloadText(scope: string, resource: string, version: string, side: number): Promise<string> {
+    if (!this.#downloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
+        [scope, resource, version].some(value => typeof value !== 'string' || !value || value.length > 255) ||
+        !Number.isSafeInteger(side) || side < 0) throw new Error('Document download unavailable.')
+    this.#downloadBusy = true
+    try {
+      const downloads = this.#downloads
+      const ticket = await downloads.issuer.issue(scope, resource, version, side)
+      const text = await downloadGatekeeperText(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
+      await downloads.issuer.validate(scope, resource, version)
+      this.#uploadLifetime.signal.throwIfAborted()
+      return text
+    } catch { throw new Error('Document download failed.') }
+    finally { this.#downloadBusy = false }
+  }
+
+  // The selected capability and signed URL stay in the trusted host. This returns
+  // data only; it does not authorize storing it in a shared gadget.
+  async downloadNativeDocument(scope: string, resource: string, publication: string, format: NativeDocumentFormat): Promise<NativeDocumentSnapshot> {
+    if (!this.#nativeDownloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
+        [scope, resource, publication].some(value => typeof value !== 'string' || !value || value.length > 255) ||
+        (format !== 'cloudflareos.document' && format !== 'cloudflareos.spreadsheet')) throw new Error('Document download unavailable.')
+    this.#downloadBusy = true
+    try {
+      const downloads = this.#nativeDownloads
+      const selected = await downloads.selector.select(scope, resource, publication)
+      try {
+        return await downloadGatekeeperNativeDocument(downloads.storageOrigin, await selected.issue(),
+          format, this.#uploadLifetime.signal, () => selected.validate())
+      } finally { selected[Symbol.dispose]() }
+    } catch { throw new Error('Native document download failed.') }
+    finally { this.#downloadBusy = false }
+  }
+
+  async downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null> {
+    if (!this.#reviewDownloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
+        [review, node].some(value => typeof value !== 'string' || !value || value.length > 255) ||
+        !Number.isSafeInteger(version) || version < 0 || (side !== 'before' && side !== 'after')) throw new Error('Document download unavailable.')
+    this.#downloadBusy = true
+    try {
+      const downloads = this.#reviewDownloads
+      const ticket = await downloads.issuer.issue(review, node, version, side)
+      const text = ticket === null ? null : await downloadGatekeeperText(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
+      await downloads.issuer.validate(review, node, version)
+      this.#uploadLifetime.signal.throwIfAborted()
+      return text
+    } catch { throw new Error('Document download failed.') }
+    finally { this.#downloadBusy = false }
   }
 
   // Navigate to a workspace the app knows about. The IDs are validated here because the app is
@@ -191,6 +301,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
 
   // Cancel the rate limiter's pending resume timer once this host is no longer in use.
   dispose() {
+    this.#uploadLifetime.abort()
+    this.#uploads?.issuer[Symbol.dispose]?.()
+    this.#downloads?.issuer[Symbol.dispose]?.()
+    this.#reviewDownloads?.issuer[Symbol.dispose]?.()
+    this.#nativeDownloads?.selector[Symbol.dispose]?.()
+    this.#calendarDraftCreator?.[Symbol.dispose]()
+    this.#mailDraftSender?.[Symbol.dispose]()
     this.#disposeRateLimiter()
     this.#themeReceiver?.[Symbol.dispose]?.()
     this.#themeReceiver = null
@@ -292,9 +409,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
   useEffect(() => {
     connectedRef.current = false
     invalidatedRef.current = false
+    let closeRecording: (() => void) | undefined
 
     const connect = (port: MessagePort) => {
       if (connectedRef.current) {
+        closeRecording?.()
         // A second handshake (e.g. iframe reloaded) invalidates the session.
         invalidatedRef.current = true
         port.close()
@@ -316,6 +435,12 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
         openTarget,
         openPrompt,
         resolveWorkspaceTitles,
+        frame.textUploads,
+        frame.textDownloads,
+        frame.reviewDownloads,
+        frame.nativeDownloads,
+        frame.mailDraftSender,
+        frame.calendarDraftCreator,
       )
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
@@ -329,6 +454,17 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow || event.origin !== 'null') return
       if (invalidatedRef.current) return
+      if (event.data?.type === 'gatekeeper-audio-cancel') {
+        closeRecording?.()
+        closeRecording = undefined
+        return
+      }
+      if (event.data?.type === 'gatekeeper-audio-request' && connectedRef.current &&
+          typeof event.data.requestId === 'string' && /^[a-f0-9-]{36}$/.test(event.data.requestId)) {
+        closeRecording?.()
+        closeRecording = openGatekeeperAudioRecording(frameWindow, event.data.requestId)
+        return
+      }
       if (forwardTrustedFrameError(
         event, frameWindow, { surface: 'gatekeeper-app', gatekeeperVendorId },
       )) return
@@ -339,6 +475,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
 
     window.addEventListener('message', handleMessage)
     return () => {
+      closeRecording?.()
       window.removeEventListener('message', handleMessage)
       sessionRef.current?.[Symbol.dispose]?.()
       sessionRef.current = null
@@ -348,7 +485,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     }
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
     // carrying a fresh stub (even with identical HTML) never keeps talking through the stale one.
-  }, [frame.iframeHtml, frame.ui, gatekeeperVendorId, openPrompt, openTarget,
+  }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
       present, resolveWorkspaceTitles, setOverlayPhase])
 
   return (

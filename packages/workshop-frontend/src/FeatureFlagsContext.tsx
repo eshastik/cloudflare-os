@@ -1,3 +1,4 @@
+import { reportShellStage } from "./shellReadiness"
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { RpcStub } from 'capnweb'
 import {
@@ -20,6 +21,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState<{
     api: RpcStub<AuthenticatedApi>
     flags: UiFeatureFlags
+    failed: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -32,11 +34,12 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
           setLoaded({
             api: authenticatedApi,
             flags: { ...DEFAULT_UI_FEATURE_FLAGS, ...flags },
+            failed: false,
           })
         }
       } catch {
         if (!cancelled) {
-          setLoaded({ api: authenticatedApi, flags: { ...DEFAULT_UI_FEATURE_FLAGS } })
+          setLoaded({ api: authenticatedApi, flags: { ...DEFAULT_UI_FEATURE_FLAGS }, failed: true })
         }
       }
     }
@@ -44,6 +47,10 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
 
     return () => { cancelled = true }
   }, [authenticatedApi])
+
+  useEffect(() => {
+    reportShellStage("features", loaded?.api !== authenticatedApi ? "loading" : loaded.failed ? "error" : "ready", authenticatedApi)
+  }, [authenticatedApi, loaded])
 
   const value = loaded?.api === authenticatedApi
     ? { flags: loaded.flags, loading: false }

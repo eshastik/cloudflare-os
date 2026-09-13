@@ -508,10 +508,8 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
               ambientMode: mode,
             };
           }
-          if (supportedResources.length === 0) {
-            // Nothing to toggle for this gatekeeper.
-            return null;
-          }
+          // Account-only services (including native document sources) still need the vendor
+          // switch even when they offer no resources in the ordinary connection picker.
           let disabled = new Set(config.disabledResources[id] ?? []);
           return {
             vendorId: id,

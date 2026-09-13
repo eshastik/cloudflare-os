@@ -520,6 +520,7 @@ function ConnectorsPage() {
     const subscriber = new AccountsSubscriberAdapter({
       add({ id, description, vendor, supportedResources, credentialsValid, vendorId }) {
         if (cancelled) return
+        const hasAppUi = description.providesUi || accountMap.get(id)?.accountDescription.providesUi
         accountMap.set(id, {
           id,
           accountDescription: description,
@@ -529,9 +530,12 @@ function ConnectorsPage() {
           credentialsValid,
         })
         setAccounts(Array.from(accountMap.values()))
+        if (hasAppUi) refreshGatekeeperApps(authenticatedApi)
       },
       remove(id) {
+        const hadAppUi = accountMap.get(id)?.accountDescription.providesUi
         accountMap.delete(id)
+        if (!cancelled && hadAppUi) refreshGatekeeperApps(authenticatedApi)
         if (!cancelled) setAccounts(Array.from(accountMap.values()))
       },
       ready() {

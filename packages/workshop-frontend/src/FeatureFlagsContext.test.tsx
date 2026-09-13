@@ -11,8 +11,10 @@ import {
   type UiFeatureFlags,
 } from "@gadgets/workshop-shared/feature-flags";
 import { useAuthenticatedApi } from "./AuthContext";
+import { reportShellStage } from "./shellReadiness";
 import { FeatureFlagsProvider, useUiFeatureFlags } from "./FeatureFlagsContext";
 
+vi.mock("./shellReadiness", () => ({ reportShellStage: vi.fn() }));
 vi.mock("./AuthContext", () => ({ useAuthenticatedApi: vi.fn<typeof useAuthenticatedApi>() }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,6 +41,19 @@ describe("FeatureFlagsProvider", () => {
     act(() => root?.unmount());
     container?.remove();
     vi.restoreAllMocks();
+  });
+
+  it("marks a failed request as an error even though the UI renders default flags", async () => {
+    vi.mocked(reportShellStage).mockClear();
+    const currentApi = api(async () => { throw new Error("unavailable"); });
+    vi.mocked(useAuthenticatedApi).mockReturnValue({ authenticatedApi: currentApi } as ReturnType<typeof useAuthenticatedApi>);
+    let current: ReturnType<typeof useUiFeatureFlags> | undefined;
+    function Probe() { current = useUiFeatureFlags(); return null; }
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<FeatureFlagsProvider><Probe /></FeatureFlagsProvider>));
+    expect(current).toEqual({ flags: DEFAULT_UI_FEATURE_FLAGS, loading: false });
+    expect(reportShellStage).toHaveBeenLastCalledWith("features", "error", currentApi);
+    expect(reportShellStage).not.toHaveBeenCalledWith("features", "ready", currentApi);
   });
 
   it("uses defaults while loading and ignores a stale API response", async () => {

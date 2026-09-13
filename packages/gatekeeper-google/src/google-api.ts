@@ -781,13 +781,14 @@ export class GmailApi {
 
   // Build a raw new outbound email and return the exact structured payload
   // used to generate it, for approval display.
-  buildSendRaw(to: string[], subject: string, body: string): GmailOutboundMessage {
+  buildSendRaw(to: string[], subject: string, body: string, cc: string[] = []): GmailOutboundMessage {
     const normalizedTo = normalizeEmailRecipients(to);
+    const normalizedCc = normalizeEmailRecipients(cc).filter(address => !normalizedTo.some(to => to.toLowerCase() === address.toLowerCase()));
     return {
-      raw: buildEncodedEmail({ from: this.selfEmail, to: normalizedTo, subject, body }),
+      raw: buildEncodedEmail({ from: this.selfEmail, to: normalizedTo, cc: normalizedCc, subject, body }),
       from: this.selfEmail,
       to: normalizedTo,
-      cc: [],
+      cc: normalizedCc,
       subject,
       body,
       attachments: [],

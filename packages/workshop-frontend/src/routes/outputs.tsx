@@ -584,6 +584,8 @@ function OutputsPage() {
         <ViewToggle view={view} onChange={setView} />
       </header>
 
+      <NewFormatRow label="Create" layout="inline" />
+
       {/* Toolbar: format chips on the left (the browsing axis), scope + search on the right (the
           refining controls). Configured categories stay visible with zero counts. */}
       <div className={`flex flex-col gap-3 px-3 pb-3 sm:flex-row sm:items-center sm:justify-between ${
@@ -659,8 +661,6 @@ function OutputsPage() {
                   : 'Anything your workspaces build will show up here.'}
               </p>
             </div>
-            {/* Offer the deployment's formats here rather than sending them to the home page. */}
-            {!isFiltered && <NewFormatRow label="Start with" />}
           </div>
         ) : view === 'grid' ? (
           <div className="grid grid-cols-2 gap-4 px-3 sm:grid-cols-3 lg:grid-cols-4">

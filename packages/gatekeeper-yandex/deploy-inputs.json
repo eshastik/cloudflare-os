@@ -1,0 +1,15 @@
+[
+  {
+    "name": "CLIENT_ID",
+    "kind": "secret",
+    "label": "Yandex OAuth client ID",
+    "consoleUrl": "https://oauth.yandex.ru/",
+    "setupSteps": [
+      "Register a Yandex ID web application with the redirect URI below.",
+      "Enable login:info and cloud_api:disk.read. This integration only reads Disk files.",
+      "Enter the client ID and client secret."
+    ],
+    "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/yandex/oauth"
+  },
+  {"name": "CLIENT_SECRET", "kind": "secret", "label": "Yandex OAuth client secret"}
+]

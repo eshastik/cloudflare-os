@@ -16,6 +16,8 @@ import { GadgetPresence } from './components/GadgetPresence'
 import TopBarNotice from './TopBarNotice'
 import SiteLogo from './components/SiteLogo'
 import GadgetExportMenu from './GadgetExportMenu'
+import { useRef } from 'react'
+import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
 // The minimal, "use"-only experience: a shared top bar plus the gadget's deployed UI, and nothing
 // else. Collaborators with the "use" role may only render and interact with the gadget's mainline
@@ -54,6 +56,8 @@ export default function GadgetUseView({
   authenticatedApi,
   currentUserId,
 }: Props) {
+  const nativeSnapshotSource = useRef<NativeSnapshotSource | null>(null)
+  const outputId = gadgets.find(g => g.id === selectedGadgetId)?.output?.id
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-kumo-base relative">
       {/* ═══ TOP BAR ════════════════════════════════════════════════════════════ */}
@@ -110,8 +114,11 @@ export default function GadgetUseView({
         {/* Right: presence and user menu */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <GadgetExportMenu
+            canImport={false}
             gadget={gadget}
             gadgetTitle={gadgets.find(g => g.id === selectedGadgetId)?.title ?? 'Gadget'}
+            outputId={gadgets.find(g => g.id === selectedGadgetId)?.output?.id}
+            snapshotSource={nativeSnapshotSource}
           />
           <GadgetPresence
             overseer={overseer}
@@ -130,6 +137,9 @@ export default function GadgetUseView({
             gadget={gadget}
             height={`calc(100vh - ${TOPBAR_H}px)`}
             isVisible={true}
+            nativeSnapshotSource={nativeSnapshotSource}
+            readinessApi={authenticatedApi}
+            readinessSurface={outputId === "document" ? "cloudflareos.document" : outputId === "spreadsheet" ? "cloudflareos.spreadsheet" : outputId === "presentation" ? "cloudflareos.presentation" : undefined}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">

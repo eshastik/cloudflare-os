@@ -592,6 +592,169 @@
         "MCP_ALLOW_INSECURE": "false"
       }
     },
+    "gatekeeper-microsoft": {
+      "bindings": [
+        {
+          "name": "CLIENT_ID",
+          "text": "$SECRET(CLIENT_ID)",
+          "type": "secret_text"
+        },
+        {
+          "name": "CLIENT_SECRET",
+          "text": "$SECRET(CLIENT_SECRET)",
+          "type": "secret_text"
+        },
+        {
+          "name": "TENANT_ID",
+          "text": "$SECRET(TENANT_ID)",
+          "type": "secret_text"
+        }
+      ],
+      "compatibilityDate": "2026-02-02",
+      "compatibilityFlags": [
+        "allow_irrevocable_stub_storage"
+      ],
+      "inputs": [
+        {
+          "consoleUrl": "https://entra.microsoft.com/",
+          "kind": "secret",
+          "label": "Microsoft application (client) ID",
+          "name": "CLIENT_ID",
+          "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/microsoft/oauth",
+          "setupSteps": [
+            "Register a web application with the redirect URI below.",
+            "Enable delegated Microsoft Graph User.Read, Mail.Read and Calendars.Read permissions; request offline_access.",
+            "Enter the application ID, client secret and tenant ID matching the accounts allowed by your application."
+          ]
+        },
+        {
+          "kind": "secret",
+          "label": "Microsoft client secret",
+          "name": "CLIENT_SECRET"
+        },
+        {
+          "kind": "secret",
+          "label": "Microsoft tenant ID (GUID, organizations, consumers or common)",
+          "name": "TENANT_ID"
+        }
+      ],
+      "installable": true,
+      "kind": "gatekeeper",
+      "mainModule": "microsoft.js",
+      "migrations": [
+        {
+          "new_sqlite_classes": [
+            "UserAccount"
+          ],
+          "tag": "v1"
+        }
+      ],
+      "modules": [
+        {
+          "name": "microsoft.js",
+          "r2Key": "blobs/modules/f2c45b25a66fad6a4855aa7022fe10fe6dc4065b6bd201bac8e8f04942df566c",
+          "sha256": "f2c45b25a66fad6a4855aa7022fe10fe6dc4065b6bd201bac8e8f04942df566c",
+          "size": 113,
+          "type": "esm"
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "invocation_logs": false
+        }
+      },
+      "shortName": "microsoft",
+      "vars": {
+        "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/microsoft"
+      }
+    },
+    "gatekeeper-mnemos": {
+      "bindings": [
+        {
+          "name": "MNEMOS_API_ORIGIN",
+          "text": "$SECRET(MNEMOS_API_ORIGIN)",
+          "type": "secret_text"
+        },
+        {
+          "name": "MNEMOS_STORAGE_ORIGIN",
+          "text": "$SECRET(MNEMOS_STORAGE_ORIGIN)",
+          "type": "secret_text"
+        },
+        {
+          "name": "MNEMOS_LOGIN_CONFIG",
+          "text": "$SECRET(MNEMOS_LOGIN_CONFIG)",
+          "type": "secret_text"
+        }
+      ],
+      "compatibilityDate": "2026-02-02",
+      "compatibilityFlags": [
+        "allow_irrevocable_stub_storage",
+        "nodejs_compat"
+      ],
+      "inputs": [
+        {
+          "kind": "secret",
+          "label": "Mnemos API HTTPS origin",
+          "name": "MNEMOS_API_ORIGIN"
+        },
+        {
+          "kind": "secret",
+          "label": "Mnemos file storage HTTPS origin",
+          "name": "MNEMOS_STORAGE_ORIGIN"
+        },
+        {
+          "kind": "secret",
+          "label": "Mnemos server login configuration (JSON)",
+          "name": "MNEMOS_LOGIN_CONFIG",
+          "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/mnemos/oauth",
+          "setupSteps": [
+            "Register the displayed redirect URI with the corporate OIDC provider.",
+            "Configure the Mnemos IAM credential exchange and its server client secret.",
+            "Enter JSON with iamOrigin, authorizationEndpoint, tokenEndpoint, clientId, clientSecret, iamClientSecret and callbackUrl. Use the displayed redirect URI as callbackUrl."
+          ]
+        }
+      ],
+      "installable": true,
+      "kind": "gatekeeper",
+      "mainModule": "index.js",
+      "migrations": [
+        {
+          "new_sqlite_classes": [
+            "UserAccount"
+          ],
+          "tag": "v0"
+        },
+        {
+          "new_sqlite_classes": [
+            "MnemosNativeDocumentSource"
+          ],
+          "tag": "v1"
+        },
+        {
+          "new_sqlite_classes": [
+            "TelegramBot"
+          ],
+          "tag": "v2"
+        }
+      ],
+      "modules": [
+        {
+          "name": "index.js",
+          "r2Key": "blobs/modules/db0aee2c423bb2df3ee8f4f0cc8763000a119c18ca0e0e7b7041464e05959434",
+          "sha256": "db0aee2c423bb2df3ee8f4f0cc8763000a119c18ca0e0e7b7041464e05959434",
+          "size": 59,
+          "type": "esm"
+        }
+      ],
+      "observability": {
+        "enabled": false
+      },
+      "shortName": "mnemos",
+      "vars": {
+        "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/mnemos"
+      }
+    },
     "gatekeeper-notion": {
       "bindings": [
         {
@@ -897,6 +1060,73 @@
       "shortName": "supabase",
       "vars": {
         "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/supabase"
+      }
+    },
+    "gatekeeper-yandex": {
+      "bindings": [
+        {
+          "name": "CLIENT_ID",
+          "text": "$SECRET(CLIENT_ID)",
+          "type": "secret_text"
+        },
+        {
+          "name": "CLIENT_SECRET",
+          "text": "$SECRET(CLIENT_SECRET)",
+          "type": "secret_text"
+        }
+      ],
+      "compatibilityDate": "2026-02-02",
+      "compatibilityFlags": [
+        "allow_irrevocable_stub_storage"
+      ],
+      "inputs": [
+        {
+          "consoleUrl": "https://oauth.yandex.ru/",
+          "kind": "secret",
+          "label": "Yandex OAuth client ID",
+          "name": "CLIENT_ID",
+          "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/yandex/oauth",
+          "setupSteps": [
+            "Register a Yandex ID web application with the redirect URI below.",
+            "Enable login:info and cloud_api:disk.read. This integration only reads Disk files.",
+            "Enter the client ID and client secret."
+          ]
+        },
+        {
+          "kind": "secret",
+          "label": "Yandex OAuth client secret",
+          "name": "CLIENT_SECRET"
+        }
+      ],
+      "installable": true,
+      "kind": "gatekeeper",
+      "mainModule": "index.js",
+      "migrations": [
+        {
+          "new_sqlite_classes": [
+            "UserAccount"
+          ],
+          "tag": "v1"
+        }
+      ],
+      "modules": [
+        {
+          "name": "index.js",
+          "r2Key": "blobs/modules/b81e537f0ce09645834be042930d895d807f25d81e9baa785fbeda7860a6c1ea",
+          "sha256": "b81e537f0ce09645834be042930d895d807f25d81e9baa785fbeda7860a6c1ea",
+          "size": 59,
+          "type": "esm"
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "invocation_logs": false
+        }
+      },
+      "shortName": "yandex",
+      "vars": {
+        "BASE_URL": "$PUBLIC_BASE_URL/gatekeeper/yandex"
       }
     },
     "gatekeeper-zoominfo": {

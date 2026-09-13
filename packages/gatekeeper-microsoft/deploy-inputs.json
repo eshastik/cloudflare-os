@@ -1,0 +1,24 @@
+[
+  {
+    "name": "CLIENT_ID",
+    "kind": "secret",
+    "label": "Microsoft application (client) ID",
+    "consoleUrl": "https://entra.microsoft.com/",
+    "setupSteps": [
+      "Register a web application with the redirect URI below.",
+      "Enable delegated Microsoft Graph User.Read, Mail.Read and Calendars.Read permissions; request offline_access.",
+      "Enter the application ID, client secret and tenant ID matching the accounts allowed by your application."
+    ],
+    "redirectUriTemplate": "{PUBLIC_BASE_URL}/gatekeeper/microsoft/oauth"
+  },
+  {
+    "name": "CLIENT_SECRET",
+    "kind": "secret",
+    "label": "Microsoft client secret"
+  },
+  {
+    "name": "TENANT_ID",
+    "kind": "secret",
+    "label": "Microsoft tenant ID (GUID, organizations, consumers or common)"
+  }
+]

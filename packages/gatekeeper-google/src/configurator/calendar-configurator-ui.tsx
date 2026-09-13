@@ -2,7 +2,7 @@ import { Autocomplete, Field, h, RadioCards, Section, type ConfiguratorUISpec } 
 import type { CalendarConfiguratorRpc, CalendarConfiguratorValues } from "./calendar-configurator-types";
 
 export default {
-  initial: { availabilityMode: "thisCalendar" },
+  initial: { availabilityMode: "thisCalendar", accessMode: "read" },
 
   isReady({ values }) {
     return typeof values.calendarId === "string" && values.calendarId.length > 0;
@@ -11,19 +11,29 @@ export default {
   resourceUrl({ values }) {
     const calendarId = encodeURIComponent(values.calendarId ?? "");
     const availabilityMode = values.availabilityMode === "allVisible" ? "allVisible" : "thisCalendar";
-    return `https://calendar.google.com/calendar/${calendarId}/?availability=${availabilityMode}`;
+    return `https://calendar.google.com/calendar/${calendarId}/?availability=${availabilityMode}&access=${values.accessMode === "manage" ? "manage" : "read"}`;
   },
 
   render({ values, setValues, ui }) {
     const availabilityMode = values.availabilityMode === "allVisible" ? "allVisible" : "thisCalendar";
     return <Section>
-      <Field label="Calendar" description="Choose the calendar this connection can read and manage.">
+      <Field label="Calendar" description="Choose a calendar your account can read.">
         <Autocomplete
           name="calendarId"
           value={values.calendarId}
           placeholder="Search calendars..."
           loadOptions={query => ui.listCalendars(query)}
           onChange={calendarId => setValues({ calendarId })}
+        />
+      </Field>
+
+      <Field label="Calendar access" description="Choose whether this connection can propose changes.">
+        <RadioCards value={values.accessMode === "manage" ? "manage" : "read"}
+          options={[
+            {value:"read", title:"Read only", description:"Read events and availability without changing the calendar."},
+            {value:"manage", title:"Read and manage", description:"Propose changes for approval; Google Calendar permissions still apply."},
+          ]}
+          onChange={mode=>{if(mode==="read"||mode==="manage")setValues({accessMode:mode});}}
         />
       </Field>
 

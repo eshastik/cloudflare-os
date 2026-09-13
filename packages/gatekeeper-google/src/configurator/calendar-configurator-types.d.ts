@@ -5,9 +5,10 @@ export type ConfiguratorOption = {
   meta?: string;
 }
 
-export type { CalendarAvailabilityMode } from "../calendar-types";
+export type { CalendarAvailabilityMode, CalendarAccessMode } from "../calendar-types";
 
 export type CalendarConfiguratorValues = {
+  accessMode?: import("../calendar-types").CalendarAccessMode | null;
   calendarId?: string | null;
   availabilityMode?: CalendarAvailabilityMode | null;
 }

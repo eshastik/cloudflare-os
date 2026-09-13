@@ -25,6 +25,7 @@ vi.mock('@cloudflare/kumo', () => ({
 }))
 
 import GadgetUI from './GadgetUI'
+import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
 interface TestGadget {
   read(): string
@@ -175,6 +176,59 @@ describe('GadgetUI RPC recovery', () => {
     dispatchIframeHandshake(iframe, port2)
     return child
   }
+
+  it('waits for a matching native result and paint, ignores other frames and abandons hidden loads', async () => {
+    const gadget = fakeGadget('readiness', 'document.body.textContent = "native"; // {type:"native-ui-readiness"}')
+    const samples: Array<{observation_id:string;outcome:string;surface:string}> = []
+    const readinessApi = {
+      getWorkspaceActivityReporting: vi.fn(async () => ({ selectedAccountId:7, accounts:[], delivery:"pending" as const })),
+      recordOwnUIReadiness: vi.fn(async (sample, accountId) => { expect(accountId).toBe(7); samples.push(sample) }),
+    }
+    const paints: FrameRequestCallback[] = []
+    const raf=vi.spyOn(window,'requestAnimationFrame').mockImplementation(callback=>{paints.push(callback);return 1})
+    try {
+      await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
+      await vi.waitFor(() => expect(samples).toHaveLength(1))
+      const frame=container.querySelector('iframe')!
+      const id=samples[0].observation_id
+      expect(decodeURIComponent(frame.srcdoc)).toContain(`const nativeUIReadinessAttempt = "${id}"`)
+      const send=(attempt:string,source:Window|null=frame.contentWindow,origin='null')=>window.dispatchEvent(new MessageEvent('message',{source,origin,data:{type:'native-ui-readiness',attempt,outcome:'ready'}}))
+      send(id,window); send('obsolete'); send(id,frame.contentWindow,'https://foreign.example')
+      expect(paints).toHaveLength(0); expect(samples.map(s=>s.outcome)).toEqual(['pending'])
+      send(id)
+      expect(samples).toHaveLength(1)
+      paints.shift()!(0); paints.shift()!(1)
+      await vi.waitFor(() => expect(samples.map(s=>s.outcome)).toEqual(['pending','ready']))
+      expect(readinessApi.getWorkspaceActivityReporting).toHaveBeenCalledTimes(1)
+      await act(async()=>root.render(<GadgetUI gadget={gadget.stub} height="100px" reloadTrigger={1} readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
+      await vi.waitFor(()=>expect(samples).toHaveLength(3))
+      await act(async()=>root.render(<GadgetUI gadget={gadget.stub} height="100px" reloadTrigger={1} isVisible={false} readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
+      await vi.waitFor(()=>expect(samples.map(s=>s.outcome)).toEqual(['pending','ready','pending','abandoned']))
+    } finally { raf.mockRestore() }
+  })
+
+  it('does not report old native code without the readiness protocol as a failed load', async () => {
+    const gadget=fakeGadget('old-native','document.body.textContent = "working old editor"')
+    const readinessApi={getWorkspaceActivityReporting:vi.fn(async()=>({selectedAccountId:7,accounts:[],delivery:"pending" as const})),recordOwnUIReadiness:vi.fn(async()=>{})}
+    await act(async()=>root.render(<GadgetUI gadget={gadget.stub} height="100px" readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
+    await vi.waitFor(()=>expect(container.querySelector('iframe')).not.toBeNull())
+    expect(readinessApi.recordOwnUIReadiness).not.toHaveBeenCalled()
+  })
+
+  it('requests native data from the visible frame and cancels the request when it is hidden', async () => {
+    const gadget = fakeGadget('native', 'document.body.textContent = "native"')
+    const source: { current: NativeSnapshotSource | null } = { current: null }
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" nativeSnapshotSource={source} />))
+    await vi.waitFor(() => expect(source.current).not.toBeNull())
+    const frame = container.querySelector('iframe')!
+    const send = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => {})
+    const pending = source.current!('cloudflareos.document', new AbortController().signal).then(() => 'resolved', () => 'cancelled')
+    expect(send).toHaveBeenCalledWith({ type: 'native-snapshot-request', format: 'cloudflareos.document' }, '*', expect.any(Array))
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" isVisible={false} nativeSnapshotSource={source} />))
+    expect(await pending).toBe('cancelled')
+    expect(source.current).toBeNull()
+    send.mockRestore()
+  })
 
   it('keeps the iframe while redirecting calls to the replacement gadget client', async () => {
     const first = fakeGadget('first', 'document.body.textContent = "first"')

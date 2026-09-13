@@ -1,3 +1,5 @@
+import type {GatekeeperUser} from "./gatekeeper.js";
+import type { UIReadinessSample } from "./ui-readiness.js";
 // This file defines the API spoken between the Gadgets Workshop service and the front-end UI.
 //
 // The UI is a good old "fat client" SPA. Why not use SSR? Because:
@@ -24,7 +26,7 @@
 // Gadget a stub pointing to the Gadget's server-side Durable Object interface.
 
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
-import { AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
+import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
 
 export const SERVICE_SALT = new Uint8Array([
@@ -313,7 +315,37 @@ export const createAuthError = authErrors.create;
 export const getAuthErrorCode = authErrors.getCode;
 
 // Top-level API exposed to the user after they have authenticated.
+/** Observed activity of the current CloudflareOS user since collection began. */
+export interface OwnWorkspaceActivity {
+  /** Work sessions separated by more than 30 minutes without active observations. */
+  sessions: number;
+  /** Non-overlapping, continuously observed active milliseconds across tabs. */
+  activeMs: number;
+  /** Elapsed observed session milliseconds, including gaps shorter than the session timeout. */
+  sessionElapsedMs: number;
+}
+
+/** Recipient choices owned by the current user; selection is off by default. */
+export interface WorkspaceActivityReporting {
+  /** Selected connected account, or null when delivery is disabled. */
+  selectedAccountId: number | null;
+  /** Connected accounts that support receiving diagnostic activity. */
+  accounts: { /** Opaque account identifier. */ id: number; /** Account display label. */ label: string }[];
+  /** Outcome of the latest delivery for the selected account. */
+  delivery: "disabled" | "pending" | "sent" | "unavailable";
+}
+
 export interface AuthenticatedApi extends RpcTarget {
+  /** Read the current user's available activity recipients and delivery state. */
+  getWorkspaceActivityReporting(): Promise<WorkspaceActivityReporting>;
+  /** Explicitly select one owned connected account, or disable activity delivery. */
+  setWorkspaceActivityReporting(accountId: number | null): Promise<void>;
+  /** Record this user's diagnostic shell activity; sequence retries are idempotent. */
+  recordOwnWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void>;
+  /** Send bounded UI timing only while this owned account remains the selected diagnostic recipient. */
+  recordOwnUIReadiness(sample: UIReadinessSample, recipientAccountId: number): Promise<void>;
+  /** Read only the authenticated user's activity; no user identifier is accepted. */
+  readOwnWorkspaceActivity(): Promise<OwnWorkspaceActivity>;
   // Get profile info for the user who is logged in.
   whoami(): Promise<AiChatAuthorInfo>;
 
@@ -574,7 +606,45 @@ export interface AuthenticatedApi extends RpcTarget {
   // Get the app frame (self-contained iframe HTML + the gatekeeper's `ui` capability) for the given
   // gatekeeper id, or null if there is no such UI-providing gatekeeper. The Workshop hosts the HTML
   // in a sandboxed iframe and exposes `ui` to it over a MessagePort RPC session.
-  getGatekeeperApp(id: string): Promise<GatekeeperUiFrame | null>;
+  /** Open the app from the selected connected account; omitted accountId keeps the default account. */
+  getGatekeeperApp(id: string, accountId?: number): Promise<GatekeeperUiFrame | null>;
+
+  /** Register an owner-prepared selection. The request must remain unchanged on retry. */
+  registerMailSelection(targetAccountId: number, project: string, request: string, selection: string): ReturnType<NonNullable<GatekeeperUser["registerMailSelection"]>>;
+
+  /** Register an owner-prepared selection. The request must remain unchanged on retry. */
+  registerCalendarSelection(targetAccountId: number, project: string, request: string, selection: string): ReturnType<NonNullable<GatekeeperUser["registerCalendarSelection"]>>;
+
+  /** List the current human's WebDAV connections through an owned Mnemos account. */
+  listDriveImportAccounts(accountId: number): ReturnType<NonNullable<GatekeeperUser['listDriveImportAccounts']>>;
+  /** Capture a selected source into the owned Mnemos account; retries must retain all coordinates. */
+  captureDriveImport(sourceAccountId:number,targetAccountId:number,fileId:string,project:string,request:string): ReturnType<NonNullable<GatekeeperUser["captureDriveImport"]>>;
+
+  /** List calendars in an owned account after checking deployment policy. */
+  listCalendars(accountId: number): ReturnType<NonNullable<GatekeeperUser["listCalendars"]>>;
+
+  /** Navigate folders in an owned mail account after checking deployment policy. */
+  listMailFolders(accountId: number, parent: string): ReturnType<NonNullable<GatekeeperUser["listMailFolders"]>>;
+
+  /** Human execution of an exact approved mail proposal from an owned Mnemos account. */
+  sendMailDraft(targetAccountId:number,id:string,sha256:string):ReturnType<NonNullable<GatekeeperUser['sendMailDraft']>>;
+
+  /** Prepare one mail from two owned accounts; authority remains on the server. */
+  prepareMailConnection(sourceAccountId: number, targetAccountId: number, query: string, project: string, request: string): Promise<{
+    /** Stable preparation identity, not a credential or granted agent permission. */
+    selection_id: string;
+    /** Immutable owner-selected query. */
+    query: string;
+  }>;
+
+  /** Prepare one calendar from two owned accounts; authority remains on the server. */
+  prepareCalendarConnection(sourceAccountId: number, targetAccountId: number, calendarId: string, project: string, request: string): Promise<{
+    /** Stable preparation identity, not a credential or granted agent permission. */
+    selection_id: string;
+    /** Selected calendar's display title. */
+    title: string;
+  }>;
+
 
   // --- Deployment admin ---
 
@@ -2741,14 +2811,40 @@ export interface WorkpieceClient extends RpcTarget {
   // For a gadget, this deletes its registry entry (including its binding map) and hooks and
   // clears its files; gatekeepers it bound survive, possibly no longer bound by any gadget. For
   // a gatekeeper, this destroys the connection itself -- distinct from merely unbinding it from
-  // one gadget (GadgetClient.unbind()).
+  // one gadget (GadgetClient.unbind()). Sources retained for imported native documents cannot be
+  // removed individually, since their data may remain elsewhere in the workspace.
   remove(): Promise<void>;
 }
 
 // Capability representing one gadget workpiece within a workspace. Obtained from
 // Overseer.createGadget() or Overseer.getGadget(). Workspace-level concerns (code sync, chats,
 // sharing, actions, blueprint listing) stay on Overseer; this covers the per-gadget surface.
+/** A reviewed replacement of bundled native editor code, bound to the current code version. */
+export interface NativeEditorUpdate {
+  /** Current workspace code version; applying after another code edit is refused. */
+  codeVersion: number;
+  /** Bundled editor revision that will replace the current implementation. */
+  revision: number;
+  /** Code files that will be replaced or removed; document data is not part of this list. */
+  changedFiles: string[];
+}
+
 export interface GadgetClient extends WorkpieceClient {
+  /** Retain an immutable native source for future sharing checks. New sources require reconnecting before reading. */
+  prepareNativeDocumentRead(accountId: number, resourceUrl: string, publication: string): Promise<{
+    /** Workspace-local source handle, fixed to this gadget and the initiating connected account. */
+    sourceId: WorkpieceId;
+    /** True until the workspace restarts and previously opened sessions have been closed. */
+    restartRequired: boolean;
+  }>;
+  /** Read a retained source after reconnecting; the host must validate the download before restoring it. */
+  readNativeDocument(sourceId: WorkpieceId): ReturnType<NativeDocumentSource["openDocument"]>;
+
+  /** Prepare a code update for a native editor. Returns null for unsupported formats or use-only access. */
+  getNativeEditorUpdate(): Promise<NativeEditorUpdate | null>;
+  /** Replace native editor code after explicit confirmation; refuses changed code or pending agent edits. */
+  applyNativeEditorUpdate(codeVersion: number, revision: number): Promise<void>;
+
   // Get the gadget's deployed UI code, to be run inside an iframe sandbox.
   //
   // Returns null if the gadget has no deployed UI code (e.g. if it's new, or if it's just an AI

@@ -1,3 +1,4 @@
+import { reportShellStage } from "./shellReadiness"
 import { useEffect, useState } from 'react'
 import type { GatekeeperAppInfo } from '@gadgets/workshop-shared/api'
 import { useOptionalAuthenticatedApi } from './AuthContext'
@@ -26,6 +27,7 @@ export function refreshGatekeeperApps(api: object): void {
 export function useGatekeeperApps(): GatekeeperAppInfo[] {
   const auth = useOptionalAuthenticatedApi()
   const [apps, setApps] = useState<GatekeeperAppInfo[]>([])
+  const [initialization, setInitialization] = useState<{api: object; state: "ready" | "error"} | null>(null)
   // Bumped by refreshGatekeeperApps() to re-run the fetch effect after the cache is invalidated.
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -51,13 +53,17 @@ export function useGatekeeperApps(): GatekeeperAppInfo[] {
     let cancelled = false
     request
       .then((list) => {
-        if (!cancelled) setApps(list)
+        if (!cancelled) { setApps(list); setInitialization({api, state: "ready"}) }
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setInitialization({api, state: "error"}) })
     return () => {
       cancelled = true
     }
   }, [auth, refreshTick])
+
+  useEffect(() => {
+    if (auth) reportShellStage("apps", initialization?.api === auth.authenticatedApi ? initialization.state : "loading", auth.authenticatedApi)
+  }, [auth?.authenticatedApi, initialization])
 
   return apps
 }

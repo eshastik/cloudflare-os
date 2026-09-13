@@ -1,3 +1,4 @@
+import {Temporal} from "temporal-polyfill";
 import type {
   CalendarAttendee,
   CalendarEvent,
@@ -61,16 +62,32 @@ export function encodeCalendarId(calendarId: string): string {
 }
 
 function calendarTimeFromGoogle(value: GoogleCalendarTime | undefined): CalendarTime {
-  if (!value) return { kind: "dateTime", dateTime: new Date(0) };
-  if (value.date) return { kind: "date", date: value.date };
-  if (value.dateTime) {
-    return {
-      kind: "dateTime",
-      dateTime: new Date(value.dateTime),
-      timeZone: value.timeZone,
-    };
+  if (!value || (value.date !== undefined && value.dateTime !== undefined)) {
+    throw new Error("Google Calendar returned missing or ambiguous event time.");
   }
-  return { kind: "dateTime", dateTime: new Date(0) };
+  if (typeof value.date === "string") {
+    const parsed = new Date(value.date + "T00:00:00Z");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value.date) || !Number.isFinite(parsed.valueOf()) ||
+        parsed.toISOString().slice(0, 10) !== value.date) {
+      throw new Error("Google Calendar returned an invalid event date.");
+    }
+    return { kind: "date", date: value.date };
+  }
+  if (typeof value.dateTime === "string") {
+    let milliseconds: number;
+    if (/(?:Z|[+-]\d{2}:\d{2})$/i.test(value.dateTime)) {
+      milliseconds = Temporal.Instant.from(value.dateTime).epochMilliseconds;
+    } else {
+      if (!value.timeZone) throw new Error("Google Calendar event time requires a time zone.");
+      // Do not choose one occurrence silently when a wall time is ambiguous or
+      // nonexistent at a DST transition.
+      milliseconds = Temporal.PlainDateTime.from(value.dateTime)
+          .toZonedDateTime(value.timeZone, {disambiguation: "reject"}).epochMilliseconds;
+    }
+    const parsed = new Date(milliseconds);
+    return { kind: "dateTime", dateTime: parsed, timeZone: value.timeZone };
+  }
+  throw new Error("Google Calendar returned missing event time.");
 }
 
 function calendarTimeToGoogle(value: CalendarTime): GoogleCalendarTime {
@@ -85,6 +102,8 @@ export function calendarEventFromGoogle(
   event: GoogleCalendarEvent,
   opts?: { includeDescriptions?: boolean; pending?: boolean },
 ): CalendarEvent {
+  // Deleted events can contain only an ID and cannot be edited as live events.
+  if (event.status === "cancelled") throw new Error("Google Calendar event is cancelled.");
   return {
     id: event.id,
     title: event.summary ?? "(no title)",
@@ -136,17 +155,28 @@ export function eventPatchToGoogle(patch: CalendarEventPatch): Partial<GoogleCal
   return body;
 }
 
-function eventTimeMillis(value: CalendarTime): number {
-  if (value.kind === "date") return Date.parse(value.date + "T00:00:00Z");
-  return value.dateTime.valueOf();
+function eventTimeMillis(value: CalendarTime, timeZone: string, cache: Map<string, number>): number {
+  if (value.kind === "dateTime") return value.dateTime.valueOf();
+  const key = timeZone + ":" + value.date;
+  const existing = cache.get(key);
+  if (existing !== undefined) return existing;
+  calendarTimeFromGoogle({date: value.date});
+  // Omitting plainTime asks Temporal for the start of the day, including days
+  // whose first valid instant is after 00:00 because of a timezone transition.
+  const low = Temporal.PlainDate.from(value.date).toZonedDateTime(timeZone).epochMilliseconds;
+  cache.set(key, low);
+  return low;
 }
 
-export function calendarEventOverlaps(event: CalendarEvent, timeMin: Date, timeMax: Date): boolean {
-  return eventTimeMillis(event.end) > timeMin.valueOf() && eventTimeMillis(event.start) < timeMax.valueOf();
+export function calendarEventOverlaps(event: CalendarEvent, timeMin: Date, timeMax: Date,
+    timeZone: string, cache = new Map<string, number>()): boolean {
+  return eventTimeMillis(event.end, timeZone, cache) > timeMin.valueOf() &&
+      eventTimeMillis(event.start, timeZone, cache) < timeMax.valueOf();
 }
 
-export function calendarEventSortKey(event: CalendarEvent): number {
-  return eventTimeMillis(event.start);
+export function calendarEventSortKey(event: CalendarEvent, timeZone: string,
+    cache = new Map<string, number>()): number {
+  return eventTimeMillis(event.start, timeZone, cache);
 }
 
 export function validateCalendarTimeWindow(timeMin: Date, timeMax: Date, maxDays: number) {
@@ -199,8 +229,8 @@ export class GoogleCalendarApi {
     do {
       let params = new URLSearchParams({
         maxResults: "250",
-        // Only surface calendars the user can edit.
-        minAccessRole: "writer",
+        // Reading a shared calendar must not require permission to edit it.
+        minAccessRole: "reader",
         fields: "items(id,summary,description,timeZone,accessRole,primary),nextPageToken",
       });
       if (pageToken) params.set("pageToken", pageToken);
@@ -235,6 +265,8 @@ export class GoogleCalendarApi {
   // Lists all events in the window, paginating fully.
   async listEvents(calendarId: string, opts: CalendarListEventsOptions): Promise<CalendarEvent[]> {
     let events: CalendarEvent[] = [];
+    let scanned = 0;
+    const seenTokens = new Set<string>();
     let pageToken: string | undefined;
 
     do {
@@ -250,16 +282,22 @@ export class GoogleCalendarApi {
       let body = await this.#fetch<{items?: GoogleCalendarEvent[]; nextPageToken?: string}>(
         `/calendars/${encodeCalendarId(calendarId)}/events?${params}`);
       let items = body.items ?? [];
-      if (events.length + items.length > MAX_LIST_EVENTS) {
+      scanned += items.length;
+      if (scanned > MAX_LIST_EVENTS) {
         throw new Error(
           "Too many events in the requested window. Narrow timeMin/timeMax and try again.");
       }
       for (let event of items) {
+        if (event.status === "cancelled") continue;
         events.push(calendarEventFromGoogle(event, {
           includeDescriptions: opts.includeDescriptions,
         }));
       }
       pageToken = body.nextPageToken;
+      if (pageToken) {
+        if (seenTokens.has(pageToken)) throw new Error("Google Calendar repeated a page token.");
+        seenTokens.add(pageToken);
+      }
     } while (pageToken);
 
     return events;

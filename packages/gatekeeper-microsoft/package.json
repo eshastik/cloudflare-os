@@ -1,0 +1,21 @@
+{
+  "name": "@gadgets/gatekeeper-microsoft",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run types:check && wrangler deploy --dry-run --outdir dist",
+    "types:check": "wrangler types && tsc --noEmit",
+    "test": "node --test __tests__/calendar-create.test.mjs __tests__/account.test.mjs __tests__/mail-send.test.mjs __tests__/mail-source.test.mjs __tests__/calendar-source.test.mjs",
+    "test:worker": "pnpm run build && node --test __tests__/worker.test.mjs"
+  },
+  "dependencies": {
+    "@gadgets/workshop-shared": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "@cloudflare/workers-types": "5.20260804.1",
+    "miniflare": "5.20260801.0-alpha"
+  },
+  "main": "src/microsoft.ts"
+}

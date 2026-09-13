@@ -1,3 +1,5 @@
+import { bindShellReadiness, routeShellReadiness, skipShellReadiness, reportShellStage } from "../shellReadiness"
+import { observeWorkspaceActivity } from "../workspaceActivity"
 import { logRpcFailure } from '../rpcErrors'
 import { useState, useEffect } from 'react'
 import { createRootRoute, Outlet, useRouterState } from '@tanstack/react-router'
@@ -33,6 +35,10 @@ function RootComponent() {
   const { isAuthenticated, authenticatedApi, isLoading, error, logout, login } = useAuth(rpcStub)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
+  useEffect(() => {
+    if (authenticatedApi) return observeWorkspaceActivity(authenticatedApi);
+  }, [authenticatedApi])
+
   // When authenticatedApi becomes available, the connection is proven alive.
   useEffect(() => {
     if (authenticatedApi) markConnectionRestored()
@@ -46,6 +52,12 @@ function RootComponent() {
   // Signed-in users get the full app chrome so public pages (esp. the blueprint detail) feel
   // native — sidebar and all — instead of floating on a bare page.
   const standalone = isSignup || (isBlueprint && !isAuthenticated)
+
+  useEffect(() => {
+    routeShellReadiness(pathname)
+    if (standalone || (!isLoading && !isAuthenticated && !CF_ACCESS_MODE)) skipShellReadiness()
+    if (authenticatedApi) bindShellReadiness(authenticatedApi)
+  }, [pathname, standalone, isLoading, isAuthenticated, authenticatedApi])
 
   // The workspace editor renders fullscreen (no app chrome). /gadget/ is the legacy URL, kept
   // here so the chrome doesn't flash in during the redirect to /workspace/.
@@ -149,18 +161,28 @@ function AuthenticatedShell({
 }) {
   // null = still checking, true = needs onboarding, false = onboarding done
   const [onboardingNeeded, setOnboardingNeeded] = useState<boolean | null>(null)
+  const [onboardingResult, setOnboardingResult] = useState<{api: object; state: "ready" | "error" | "interactive"} | null>(null)
 
   useEffect(() => {
     let cancelled = false
     authenticatedApi.isOnboardingCompleted().then((completed) => {
-      if (!cancelled) setOnboardingNeeded(!completed)
+      if (!cancelled) {
+        setOnboardingNeeded(!completed)
+        setOnboardingResult({api: authenticatedApi, state: completed ? "ready" : "interactive"})
+      }
     }).catch((err) => {
       logRpcFailure('Failed to check onboarding status:', err)
       // If the check fails, skip onboarding to avoid blocking the user
-      if (!cancelled) setOnboardingNeeded(false)
+      if (!cancelled) { setOnboardingNeeded(false); setOnboardingResult({api: authenticatedApi, state: "error"}) }
     })
     return () => { cancelled = true }
   }, [authenticatedApi])
+
+  useEffect(() => {
+    const state = onboardingResult?.api === authenticatedApi ? onboardingResult.state : "loading"
+    if (state === "interactive") skipShellReadiness()
+    else reportShellStage("onboarding", state, authenticatedApi)
+  }, [authenticatedApi, onboardingResult])
 
   // Still checking onboarding status
   if (onboardingNeeded === null) {

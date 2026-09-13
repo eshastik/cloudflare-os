@@ -1,3 +1,4 @@
+import { initializeShellReadiness, reportShellStage, failShellReadiness } from "./shellReadiness"
 import { StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from '@tanstack/react-router'
@@ -114,6 +115,7 @@ export function markConnectionRestored() {
 }
 
 // Current stub. handleBroken() will replace this on disconnect.
+initializeShellReadiness()
 installWorkshopErrorReporting()
 let currentStub = startConnection();
 currentStub.onRpcBroken(handleBroken);
@@ -128,6 +130,7 @@ function AppWithConnection() {
   });
   const [serverConfig, setServerConfig] = useState<ServerConfig | null>(null);
   const [serverConfigError, setServerConfigError] = useState(false);
+  const [configReadyFor, setConfigReadyFor] = useState<{api: RpcStub<PublicApi>} | null>(null);
 
   useEffect(() => {
     let cb = () => setRpcState({ stub: currentStub, connectionLost: isConnectionLost });
@@ -143,15 +146,20 @@ function AppWithConnection() {
     rpcState.stub.getServerConfig()
       .then((cfg) => {
         if (!cancelled) {
+          setConfigReadyFor({api: rpcState.stub});
           setServerConfig(cfg.siteLogo ? {
             ...cfg,
             siteLogo: { url: cacheBustSiteLogoUrl(cfg.siteLogo.url) },
           } : cfg);
         }
       })
-      .catch(() => { if (!cancelled) setServerConfigError(true); });
+      .catch(() => { if (!cancelled) { setServerConfigError(true); } });
     return () => { cancelled = true; };
   }, [rpcState.stub]);
+
+  useEffect(() => {
+    reportShellStage("config", serverConfigError ? "error" : configReadyFor?.api === rpcState.stub ? "ready" : "loading");
+  }, [rpcState.stub, configReadyFor, serverConfigError]);
 
   // Apply the deployment's admin-chosen accent color (overrides brand CSS vars at runtime).
   useEffect(() => {
@@ -177,9 +185,10 @@ function AppWithConnection() {
 }
 
 const root = createRoot(document.getElementById('root')!, {
-  onUncaughtError: (error) => reportIssue('workshop.react-root', error, {
-    handled: false, severity: 'fatal', captureMechanism: 'react',
-  }),
+  onUncaughtError: (error) => {
+    failShellReadiness();
+    reportIssue('workshop.react-root', error, { handled: false, severity: 'fatal', captureMechanism: 'react' });
+  },
 })
 
 // Kick off dev auto-login in the background. If it completes before

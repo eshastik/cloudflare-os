@@ -1,3 +1,4 @@
+import { reportShellStage } from "../../shellReadiness"
 import { logRpcFailure } from '../../rpcErrors'
 import {
   createContext,
@@ -72,6 +73,7 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
 
   const [gadgets, setGadgets] = useState<GadgetMetadataWithTimestamps[]>([])
   const [gadgetsLoading, setGadgetsLoading] = useState(true)
+  const [initialization, setInitialization] = useState<{api: object; state: "ready" | "error"} | null>(null)
 
   const [search, setSearch] = useState('')
 
@@ -95,13 +97,18 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
         if (cancelled) return
         setGadgets(list)
         setGadgetsLoading(false)
+        setInitialization({api: authenticatedApi, state: "ready"})
       })
       .catch((err) => {
         logRpcFailure('Failed to load workspaces for sidebar:', err)
-        if (!cancelled) setGadgetsLoading(false)
+        if (!cancelled) { setGadgetsLoading(false); setInitialization({api: authenticatedApi, state: "error"}) }
       })
     return () => { cancelled = true }
   }, [authenticatedApi])
+
+  useEffect(() => {
+    reportShellStage("workspaces", initialization?.api === authenticatedApi ? initialization.state : "loading", authenticatedApi)
+  }, [authenticatedApi, initialization])
 
   // Dispose share overseer on close / unmount.
   useEffect(() => {
