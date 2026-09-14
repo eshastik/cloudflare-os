@@ -56,6 +56,7 @@ export interface MemoryData {
 }
 
 export interface DocumentRow {
+  privateOnly?: boolean;
   projectId: string;
   projectName: string;
   nodeId: string;
@@ -74,7 +75,7 @@ export function documentRows(project: ProjectData, reviews: PublicationReview[])
   }
   for (const [nodeId, doc] of project.privateDocs) {
     if (seen.has(nodeId)) continue;
-    rows.push({ projectId: project.id, projectName: project.name, nodeId, name: doc.name || nodeId, status: documentStatus(project, nodeId, true, reviews) });
+    rows.push({ projectId: project.id, projectName: project.name, nodeId, privateOnly: true, name: doc.name || nodeId, status: documentStatus(project, nodeId, true, reviews) });
   }
   return rows;
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@cloudflare/kumo";
 import { ArrowLeft } from "@phosphor-icons/react";
 import { closeLegacySection, confirmLegacyNavigation, openLegacySection, type LegacySection } from "../app/main.ts";
+import RoleMembershipPanel from "./RoleMembershipPanel.tsx";
 import { useLegacyContainer } from "./host.ts";
 
 export type { LegacySection };
@@ -46,6 +47,7 @@ export function useLegacySection(): { section: { section: LegacySection; title: 
 }
 
 export function LegacySwitch({ state, children }: { state: ReturnType<typeof useLegacySection>; children: ReactNode }) {
+  if (state.section?.section.kind === "roleMembership") return <RoleMembershipPanel onClose={state.close} />;
   if (state.section) return <LegacyPanel section={state.section.section} title={state.section.title} onClose={state.close} />;
   return <>{children}</>;
 }

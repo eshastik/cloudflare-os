@@ -243,39 +243,29 @@ code {
   line-height: var(--text-sm--line-height) !important;
 }
 
-/* Прежние разделы под вкладкой «Ещё»: сброс Tailwind снимает с них вид, возвращаем прежние правила в границах контейнера. */
-#legacy {
-  box-sizing: border-box;
-  max-width: 1024px;
-  margin: 0 auto;
-  padding: 0 40px 40px;
-  font-size: 15px;
-  line-height: 1.5;
-}
-#legacy h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
-#legacy h2 { font-size: 18px; font-weight: 600; margin: 20px 0 8px; }
-#legacy h3 { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
-#legacy p { margin: 8px 0; }
-#legacy pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Общие размеры и токены форм для разделов, ещё использующих DOM-контроллеры. */
+#legacy { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 0; font-size: var(--text-sm); line-height: 1.5; }
+#legacy *, #legacy *::before, #legacy *::after { box-sizing: border-box; }
+#legacy h1 { font-size: var(--text-lg); font-weight: 600; margin: 0 0 16px; }
+#legacy h2 { font-size: var(--text-base); font-weight: 600; margin: 24px 0 12px; }
+#legacy h3 { font-size: var(--text-sm); font-weight: 600; margin: 20px 0 8px; }
+#legacy p { margin: 12px 0; max-width: 78ch; overflow-wrap: anywhere; }
+#legacy pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border-radius: 8px; background: var(--color-kumo-elevated); }
 #legacy ul { list-style: none; padding: 0; margin: 0; }
-#legacy li { padding: 16px; border: 1px solid var(--color-kumo-line); border-radius: 10px; margin: 12px 0; overflow-wrap: anywhere; }
-#legacy button {
-  font: inherit;
-  padding: 8px 12px;
-  margin: 4px 8px 4px 0;
-  border: 1px solid var(--color-kumo-ring);
-  border-radius: 6px;
-  background: var(--color-kumo-control);
-  color: var(--text-color-kumo-default);
-}
-#legacy button:disabled { opacity: .5; cursor: wait; }
-#legacy button:focus-visible { outline: 3px solid var(--color-kumo-info); }
-#legacy input, #legacy textarea, #legacy select {
-  font: inherit;
-  border: 1px solid var(--color-kumo-ring);
-  border-radius: 6px;
-  padding: 6px 8px;
-  background: var(--color-kumo-control);
-  color: var(--text-color-kumo-default);
-}
-#legacy label { display: block; margin-top: 8px; }
+#legacy li, #legacy fieldset { padding: 16px; border: 1px solid var(--color-kumo-line); border-radius: 12px; margin: 12px 0; min-width: 0; overflow-wrap: anywhere; }
+#legacy button { font: inherit; font-weight: 500; min-height: 32px; max-width: 100%; padding: 6px 12px; margin: 4px 8px 4px 0; border: 1px solid var(--color-kumo-line); border-radius: 6px; background: var(--color-kumo-control); color: var(--text-color-kumo-default); overflow-wrap: anywhere; transition: background-color .15s; }
+#legacy button:hover:not(:disabled) { background: var(--color-kumo-tint); }
+#legacy button:disabled { opacity: .5; cursor: not-allowed; }
+#legacy :is(button,input,textarea,select):focus-visible { outline: 2px solid var(--color-kumo-ring); outline-offset: 2px; }
+#legacy :is(input,textarea,select) { font: inherit; border: 1px solid var(--color-kumo-line); border-radius: 6px; min-height: 36px; padding: 8px 10px; background: var(--color-kumo-control); color: var(--text-color-kumo-default); max-width: 100%; }
+#legacy :is(input:not([type="checkbox"]):not([type="radio"]),textarea,select) { display: block; width: 100%; max-width: 36rem; margin-top: 6px; }
+#legacy :is(input[type="checkbox"],input[type="radio"]) { min-height: auto; accent-color: var(--color-kumo-brand); margin-right: 8px; }
+#legacy textarea { min-height: 100px; resize: vertical; }
+#legacy label { display: block; margin: 16px 0; font-weight: 500; }
+#legacy label:has(input[type="checkbox"]), #legacy label:has(input[type="radio"]) { display: flex; align-items: center; gap: 4px; font-weight: 400; }
+#legacy :is(input,textarea,select):disabled { opacity: .55; }
+#legacy details { margin: 16px 0; }
+#legacy summary { font-weight: 500; padding: 8px 0; }
+#legacy table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+#legacy :is(th,td) { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--color-kumo-line); overflow-wrap: anywhere; }
+@media (max-width: 640px) { #legacy :is(input,textarea,select) { font-size: 16px; } #legacy table { display: block; overflow-x: auto; } }

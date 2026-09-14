@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Button } from "@cloudflare/kumo";
 import { ArrowLeft, CaretRight, Clock, FileText, MagnifyingGlass } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
-import { useUi } from "./host.ts";
+import { useHost, useUi } from "./host.ts";
 import { documentRows, type DocumentRow, type MemoryData } from "./data.ts";
 import { LegacyPanel } from "./legacy.tsx";
 import { relativeTime } from "./time.ts";
@@ -17,6 +17,7 @@ type Opened = { row: DocumentRow; content: DocumentContent | null; error: string
 
 export default function DocumentsTab({ data, initialProject = "" }: { data: MemoryData; initialProject?: string }) {
   const ui = useUi();
+  const host = useHost();
   const [selected, setSelected] = useState(initialProject);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<{ query: string; hits: SearchHit[]; pending: boolean; failed: number; busy: boolean } | null>(null);
@@ -69,10 +70,21 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   async function open(row: DocumentRow) {
     setOpened({ row, content: null, error: "" });
     try {
-      const content = await ui.readProjectDocument(row.projectId, row.nodeId);
+      let content: DocumentContent;
+      if (row.privateOnly) {
+        const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
+        if (!doc.exists) throw new Error("Документ больше не найден в личном черновике.");
+        if (doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("У документа конфликт версий. Откройте личный черновик, чтобы выбрать вариант.");
+        if (!/^(text\/|application\/(json|xml|javascript|x-yaml|yaml)(;|$))/.test(doc.content_type ?? "")) throw new Error("Этот формат нельзя показать как текст. Откройте личный черновик для работы с файлом.");
+        const text = await host.downloadText(row.projectId, row.nodeId, doc.head, 0);
+        content = {node_id: row.nodeId, text, media_type: doc.content_type ?? "text/plain", truncated: false};
+      } else {
+        content = await ui.readProjectDocument(row.projectId, row.nodeId);
+      }
       setOpened(current => current?.row === row ? { row, content, error: "" } : current);
-    } catch {
-      setOpened(current => current?.row === row ? { row, content: null, error: "Не удалось прочитать документ. Возможно, доступ отозван." } : current);
+    } catch (error) {
+      const localMessage = error instanceof Error && /^(Документ больше|У документа конфликт|Этот формат)/.test(error.message) ? error.message : "Не удалось загрузить содержимое. Повторите попытку; если ошибка сохраняется, проверьте состояние подключения.";
+      setOpened(current => current?.row === row ? { row, content: null, error: localMessage } : current);
     }
   }
 
@@ -93,7 +105,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
         <h2 className="mt-3 mb-1 text-lg font-semibold text-kumo-strong">Содержимое документа</h2>
         <p className="m-0 text-[12px] text-kumo-subtle">{opened.row.projectName} · {opened.row.name}</p>
         <div className="mt-3 rounded-xl border border-kumo-line bg-kumo-elevated p-4">
-          {opened.error && <Notice tone="danger">{opened.error}</Notice>}
+          {opened.error && <><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" onClick={() => void open(opened.row)}>Повторить загрузку</Button></>}
           {!opened.error && !opened.content && <Notice>Загрузка…</Notice>}
           {opened.content && <pre className="m-0 whitespace-pre-wrap break-words font-sans text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>}
           {opened.content?.truncated && <p className="mt-3 mb-0 text-[12px] text-kumo-subtle">Показано начало документа: он длиннее допустимого для просмотра.</p>}

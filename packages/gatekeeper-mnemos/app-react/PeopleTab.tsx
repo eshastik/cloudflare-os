@@ -55,7 +55,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
   </section></LegacySwitch>;
 }
 function CreatePerson({onCreated}: {onCreated(userName: string): void}) {
-  const ui = useUi(); const [name,setName]=useState(""); const [id,setId]=useState(() => crypto.randomUUID()); const [issuer,setIssuer]=useState(""); const [subject,setSubject]=useState(""); const [busy,setBusy]=useState(false); const [error,setError]=useState("");
+  const ui = useUi(); const [name,setName]=useState(""); const [id,setId]=useState<string>(() => crypto.randomUUID()); const [issuer,setIssuer]=useState(""); const [subject,setSubject]=useState(""); const [busy,setBusy]=useState(false); const [error,setError]=useState("");
   return <form className="grid gap-3 my-4" onSubmit={e => { e.preventDefault();setBusy(true);setError("");void ui.createPerson({issuer:issuer.trim(),user:{userName:id.trim(),externalId:subject.trim(),displayName:name.trim()}}).then(()=>onCreated(id.trim()),()=>setError("Не удалось добавить человека. Проверьте идентификаторы провайдера и полномочия.")).finally(()=>setBusy(false)); }}>
     <label>Имя<TextInput required value={name} onChange={e=>setName(e.target.value)} /></label>
     <details open><summary>Учётная запись провайдера входа</summary>
