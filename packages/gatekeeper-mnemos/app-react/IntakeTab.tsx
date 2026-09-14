@@ -20,11 +20,12 @@ export default function IntakeTab({data}:{data:MemoryData}) {
  const reload=useCallback(async()=>{
   const revision=++requestRevision.current;setLoading(true);setError("");
   try {const [s,a,p]=await Promise.all([ui.inboxStatus(),ui.inboxAlerts(decided),ui.listProjects()]);if(revision===requestRevision.current){setStatus(s);setAlerts(a);setProjects(p.projects);}}
-  catch {if(revision===requestRevision.current)setError("Не удалось получить состояние приёмной. Проверьте подключение и полномочия, затем обновите.");}
+  catch {if(revision===requestRevision.current)setError("Не удалось получить состояние приёмной. Проверьте подключение и повторите обновление.");}
   finally {if(revision===requestRevision.current)setLoading(false);}
  },[ui,decided]);
  useEffect(()=>{if(allowed)void reload();return()=>{requestRevision.current++;};},[allowed,reload]);
- useEffect(()=>{if(!allowed||busy||!status?.in_queue)return;const timer=setTimeout(()=>{if(document.visibilityState!=="hidden")void reload();},2000);return()=>clearTimeout(timer);},[allowed,busy,status,reload]);
+ useEffect(()=>{if(!allowed||busy||!(status?.in_queue||status?.awaiting_placement))return;const timer=setTimeout(()=>{if(document.visibilityState!=="hidden")void reload();},2000);return()=>clearTimeout(timer);},[allowed,busy,status,reload]);
+ useEffect(()=>{const visible=()=>{if(allowed&&document.visibilityState!=="hidden")void reload();};document.addEventListener("visibilitychange",visible);return()=>document.removeEventListener("visibilitychange",visible);},[allowed,reload]);
  useEffect(()=>{const changed=(event:MessageEvent)=>{if(event.source===window.parent&&event.data?.type==="mnemos-inbox-updated"&&allowed)void reload();};window.addEventListener("message",changed);return()=>window.removeEventListener("message",changed);},[allowed,reload]);
  async function pick(directory:boolean){
   if(busy)return;setBusy(true);setError("");
@@ -40,7 +41,7 @@ export default function IntakeTab({data}:{data:MemoryData}) {
     <Button disabled={busy} onClick={()=>void pick(false)}>Выбрать файлы</Button>
     <Button disabled={busy} variant="secondary" onClick={()=>void pick(true)}>Выбрать папку</Button>
    </div>
-   <Notice>{busy?"Загрузка и приём файлов. Не закрывайте эту страницу.":"До 64 МБ на файл. Полномочия сотрудников при загрузке и создании проекта не расширяются."}</Notice>
+   <Notice>{busy?"Загрузка и приём файлов. Не закрывайте эту страницу.":"До 64 МБ на файл. После разбора проверьте предложенные проекты и предметные области."}</Notice>
    {error&&<Notice tone="danger">{error}</Notice>}
   </Block>
   {!!files.length&&<Block title="Последняя загрузка" count={files.length}><RowList>{files.map((file,i)=><Row key={i}><RowText title={file.path} note={file.error || (file.receipt?.enqueued?"Принят, ожидает разбора":"Приём подтверждён")} />{file.error&&<span className="text-kumo-danger">Не подтверждён</span>}</Row>)}</RowList></Block>}
