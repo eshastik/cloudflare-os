@@ -24,18 +24,21 @@ test("«Организация»: разделы показаны по полн�
     app.button("Открыть: Метрики платформы").click();
     await app.until(() => app.text().includes("Метрики недоступны. Проверьте право просмотра"), "отказ сервера показан как есть");
     assert.equal(app.calls.filter(([m]) => m === "readPlatformMetrics").length, 1);
+    await app.until(() => app.button("Назад")?.disabled === false, "возврат доступен");
     app.button("Назад").click();
     await app.until(() => app.button("Открыть: Предупреждения политики"), "возврат к списку");
 
     app.button("Открыть: Предупреждения политики").click();
     await app.until(() => app.text().includes("требуется право администратора"), "отказ раздела предупреждений виден");
     assert.equal(app.calls.filter(([m]) => m === "policyAlerts").length, 1);
+    await app.until(() => app.button("Назад")?.disabled === false, "возврат доступен");
     app.button("Назад").click();
 
     allowed = true;
     await app.until(() => app.button("Открыть: Метрики платформы"), "список");
     app.button("Открыть: Метрики платформы").click();
     await app.until(() => app.text().includes("Завершённые публикации: 25"), "метрики при полномочии");
+    await app.until(() => app.button("Назад")?.disabled === false, "возврат доступен");
     app.button("Назад").click();
 
     await app.until(() => app.document.querySelector('#root select[aria-label="Проект профиля"]'), "выбор проекта для профиля");

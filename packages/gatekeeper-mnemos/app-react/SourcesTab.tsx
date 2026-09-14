@@ -32,14 +32,14 @@ function timeOf(iso: string): string {
 export default function SourcesTab({ data }: { data: MemoryData }) {
   const ui = useUi();
   const legacy = useLegacySection();
-  const imap = useLoad(() => ui.listImapAccounts(), "сервер отказал", [ui]);
-  const mail = useLoad(() => ui.listMailConnections(""), "сервер отказал", [ui]);
-  const caldav = useLoad(() => ui.listCalDAVAccounts(), "сервер отказал", [ui]);
-  const calendars = useLoad(() => ui.listCalendarConnections(""), "сервер отказал", [ui]);
-  const webdav = useLoad(() => ui.listWebDAVAccounts(), "сервер отказал", [ui]);
-  const git = useLoad(() => ui.listGitConnections(""), "сервер отказал", [ui]);
-  const databases = useLoad(() => ui.listVisibleDatabaseConnections(), "сервер отказал", [ui]);
-  const telegram = useLoad(() => ui.listTelegram(), "сервер отказал", [ui]);
+  const imap = useLoad(() => ui.listImapAccounts(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const mail = useLoad(() => ui.listMailConnections(""), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const caldav = useLoad(() => ui.listCalDAVAccounts(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const calendars = useLoad(() => ui.listCalendarConnections(""), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const webdav = useLoad(() => ui.listWebDAVAccounts(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const git = useLoad(() => ui.listGitConnections(""), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const databases = useLoad(() => ui.listVisibleDatabaseConnections(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
+  const telegram = useLoad(() => ui.listTelegram(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
   const project = (id: string) => projectName(data.projects, id);
 
   const mailRows: SourceRow[] = [
@@ -130,7 +130,7 @@ function OriginBlock({ data }: { data: MemoryData }) {
 
   return (
     <Block title="Импортированные копии" count={undefined}>
-      <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Копии из Jira, Bitrix24 и диска живут в Mnemos; внешний источник не изменяется. Перенос — в разделе «Ещё» (Перенос из Jira / Bitrix24). Происхождение конкретной копии:</p>
+      <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Копии из Jira, Bitrix24 и диска живут в Mnemos; внешний источник не изменяется. Для переноса используйте разделы Jira и Bitrix24 ниже. Происхождение конкретной копии:</p>
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Select aria-label="Проект копии" value={projectId} onChange={e => { setProjectId(e.target.value); setNodeId(""); setResult(null); }}>
           <option value="">Проект…</option>

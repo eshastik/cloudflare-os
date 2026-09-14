@@ -53,7 +53,7 @@ test("«Источники»: пустое состояние и отказ RPC 
   try {
     await app.open("Источники");
     const group = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
-    await app.until(() => group("Почта")?.textContent.includes("сервер отказал"), "отказ по почте");
+    await app.until(() => group("Почта")?.textContent.includes("не удалось загрузить подключения; проверьте их настройку и права доступа"), "отказ по почте");
     await app.until(() => group("Диск")?.textContent.includes("Подключений нет"), "пустой диск");
     assert.ok(group("Git").textContent.includes("Подключений нет"));
   } finally { app.dispose(); }
