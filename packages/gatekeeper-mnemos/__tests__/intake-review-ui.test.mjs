@@ -4,9 +4,10 @@ import {mountMemoryApp} from "./app-react-harness.mjs";
 
 test("папка проверяется до размещения; частичный сбой не создаёт второй проект",async()=>{
  const events=[];let retry=false;const projects=[];
+ let releaseRefresh;const refreshAllowed=new Promise(resolve=>{releaseRefresh=resolve;});
  const files=["one","two"].map((id,i)=>({id,blob_sha256_hex:id,paths:[`Папка/Файл${i+1}.txt`],status:"open",candidates:[],reason:"project.not_determined",suggested_domain:"право"}));
  const app=await mountMemoryApp({
-  async listProjects(){return {projects};},
+  async listProjects(){if(events.some(e=>e[0]==="decide"))await refreshAllowed;return {projects};},
   async inboxStatus(){return {total:2,in_queue:0,awaiting_classification:2,awaiting_placement:0,placed_in_tree:0,dead_lettered:0,dead_letters:[]};},
   async inboxAlerts(){return {alerts:files.filter(f=>f.status==="open"),truncated:false};},
   async createProject(name,slug){events.push(["create",name,slug]);const project={id:"new",name,slug};projects.push(project);return {project};},
@@ -26,7 +27,10 @@ test("папка проверяется до размещения; частич�
   assert.equal(events.length,0,"до подтверждения изменений нет");
   app.button("Подтвердить размещение: 2").click();
   await app.until(()=>app.text().includes("Не подтверждено — обновите"),"частичный сбой показан");
-  await app.until(()=>app.button("Проверить итог размещения"),"проверка доступна снова");
+  await app.until(()=>app.button("Проверить итог размещения"),"кнопка повторной проверки показана");
+  assert.ok(app.button("Проверить итог размещения").matches(":disabled"),"до обновления форма заблокирована");
+  releaseRefresh();
+  await app.until(()=>app.button("Проверить итог размещения")?.matches(":disabled")===false,"проверка доступна после обновления");
   assert.equal(events.filter(e=>e[0]==="create").length,1);
   assert.equal(files[0].status,"approved");
   retry=true;app.button("Проверить итог размещения").click();
