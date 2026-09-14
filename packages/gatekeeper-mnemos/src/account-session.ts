@@ -550,6 +550,10 @@ export class MnemosAccountSession {
   async createProject(name: string, slug: string) {
     this.#check(); const result = await this.#client.createProject(name, slug, this.#lifetime.signal); this.#check(); return result;
   }
+  /** Субъект сохраняется: сервер различает человеческое подтверждение и агентское исполнение. */
+  async workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest) {
+    this.#check(); const result = await this.#client.workshopAdminOperation(binding, operation, phase, request, this.#lifetime.signal); this.#check(); return result;
+  }
   async readWorkshopAgentScope(binding: string) { this.#check(); const result=await this.#client.readWorkshopAgentScope(binding,this.#lifetime.signal); this.#check(); return result; }
   async updateWorkshopAgentScope(binding: string, expected: string[], projects: string[]) {
     this.#check(); const result = await this.#client.updateWorkshopAgentScope(binding, expected, projects, this.#lifetime.signal); this.#check(); return result;

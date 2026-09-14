@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { MnemosAPIError } from "./mnemos-api.ts";
+import type { AdminOperation, AdminOperationRequest } from "./admin-operations.ts";
 
 // Node не знает модуль cloudflare:workers; DO и RpcTarget здесь — пустые базовые классы.
 const WORKERS_SHIM = "data:text/javascript," + encodeURIComponent(
@@ -41,6 +42,21 @@ interface Fixture {
 }
 
 function fixture(overrides: Partial<Fixture> = {}) {
+  const operations = new Map<string, AdminOperation>();
+  const admin = {
+    async prepare(id: string, request: AdminOperationRequest) {
+      const old = operations.get(id);
+      if (old) { assert.deepEqual(old.request, request); return structuredClone(old); }
+      const result: AdminOperation = {request_id: id, request, summary: "Создать проект «Продажи».", state: "pending"}; operations.set(id, result); return structuredClone(result);
+    },
+    async execute(id: string, request: AdminOperationRequest) {
+      const old = operations.get(id)!; assert.deepEqual(old.request, request);
+      if (state.revoked || state.agentRevoked || old.state === "rejected" || old.state === "pending") throw new MnemosAPIError(403);
+      if (old.state !== "applied") { old.state = "applied"; old.result = {project_id: "created-project"}; state.calls.push("admin:execute"); }
+      return structuredClone(old);
+    },
+    [Symbol.dispose]() {},
+  };
   const state: Fixture = {
     calls: [], revoked: false, agentRevoked: false, denyRead: false, projects: PROJECTS,
     personalExists: true, personalHead: HEAD_A, sharedHead: HEAD_S, draftText: BEFORE, tenants: {}, ...overrides,
@@ -165,7 +181,13 @@ function fixture(overrides: Partial<Fixture> = {}) {
     async startWorkshopAgent() {
       state.calls.push("startWorkshopAgent");
       if (state.revoked || state.agentRevoked) throw new MnemosAPIError(401);
-      return agent;
+      return {...agent, bindingId: "owned-binding", admin};
+    },
+    async decideWorkshopAdmin(binding: string, id: string, phase: "approve" | "reject", request: AdminOperationRequest) {
+      assert.equal(binding, "owned-binding"); const old = operations.get(id)!; assert.deepEqual(old.request, request);
+      if (state.revoked || state.agentRevoked || (old.state === "rejected" && phase === "approve") || (old.state === "applied" && phase === "reject")) throw new MnemosAPIError(403);
+      if (old.state !== "applied") old.state = phase === "approve" ? "approved" : "rejected";
+      state.calls.push(`human:${phase}`); return structuredClone(old);
     },
     async connectionIdentity() { return { subject: { tenant_id: "org", user_id: "alice" }, connectionName: JSON.stringify(["org", "alice"]) }; },
   };
@@ -189,7 +211,7 @@ function fixture(overrides: Partial<Fixture> = {}) {
     exports: { UserAccount: { idFromString: (s: string) => s, get: () => account } },
   };
   const library = new MnemosLibrary(ctx as any, { MNEMOS_API_ORIGIN: "https://memory.example" } as any);
-  return { library, state, uploads, kv };
+  return { library, state, uploads, kv, admin, account };
 }
 
 function authorizer(state: Fixture, deny = false) {
@@ -232,7 +254,7 @@ test("describe ресурса и типы для агента", async () => {
   assert.match(types, /interface MnemosLibrary\b/);
   assert.match(types, /saveDraft\(project: string, document: string, content: string\)/);
   // Публикация и отправка на согласование — решения человека; у агента таких методов нет.
-  assert.doesNotMatch(types, /publish|review|approv|share/i);
+  assert.doesNotMatch(types, /\b(?:publish\w*|review\w*|approve\w*|share\w*)\s*\(/i);
 });
 
 test("каталог: authorizeObservation до возврата, записи ограничены boundAgentCatalog", async () => {
@@ -394,4 +416,56 @@ test("opening a branch cannot overwrite a publication that raced with the draft 
 test("first document initializes an empty project using the agent credential",async()=>{
  const {library,state}=fixture({emptyProject:true,personalExists:false});const auth=authorizer(state);const session=await library.startSession(auth as any);
  const result=await session.createDraft("p1","","first.md",AFTER);assert.equal(result.status,"saved");assert.equal(result.document,"created-node");assert.ok(state.calls.includes("agent:openDraft:p1"));assert.deepEqual(humanWriteCalls(state),[]);assert.equal(auth.submitted.length,0);session[Symbol.dispose]();
+});
+
+test("административное предложение ждёт ручного подтверждения и не выполняется из сессии", async () => {
+  const {library, state} = fixture(); const auth = authorizer(state); const session = await library.startSession(auth as any);
+  const pending = await session.proposeCreateProject("request-one", "Продажи", "sales");
+  assert.equal(pending.status, "pending"); assert.equal(auth.submitted.length, 1);
+  const samePending = await session.proposeCreateProject("request-one", "Продажи", "sales"); assert.equal(samePending.action, pending.action); assert.equal(auth.submitted.length, 1);
+  assert.equal("applyAction" in session, false); assert.equal("decideWorkshopAdmin" in session, false);
+  assert.equal(state.calls.includes("admin:execute"), false);
+  assert.equal("actionKind" in auth.submitted[0].description, false);
+  assert.equal("autoApprovable" in auth.submitted[0].description, false);
+  assert.equal((auth.submitted[0].description as {ownerApprovalRequired?: boolean}).ownerApprovalRequired, true);
+  await library.applyAction(pending.action); await library.applyAction(pending.action);
+  assert.equal(state.calls.filter(c => c === "admin:execute").length, 1);
+  assert.ok(state.calls.indexOf("human:approve") < state.calls.indexOf("admin:execute"));
+  const repeated = await session.proposeCreateProject("request-one", "Продажи", "sales");
+  assert.equal(repeated.action, pending.action); assert.equal(repeated.status, "applied"); assert.equal(repeated.result?.project_id, "created-project");
+});
+
+test("отказ и повтор отказа запрещают исполнение; подмена ключа не меняет предложение", async () => {
+  const {library, state} = fixture(); const session = await library.startSession(authorizer(state) as any);
+  const proposal = await session.proposeCreateProject("request-two", "Продажи", "sales");
+  await assert.rejects(session.proposeCreateProject("request-two", "Другое", "other"), /другого/);
+  await library.rejectAction(proposal.action); await library.rejectAction(proposal.action);
+  await assert.rejects(library.applyAction(proposal.action), /отклонено/);
+  assert.equal(state.calls.includes("admin:execute"), false);
+});
+
+test("потеря ответа исполнения восстанавливается без повторного создания", async () => {
+  const {library, state, admin} = fixture(); const session = await library.startSession(authorizer(state) as any);
+  const proposal = await session.proposeCreateProject("request-three", "Продажи", "sales");
+  const execute = admin.execute; let lost = false;
+  admin.execute = async (...args) => { const result = await execute(...args); if (!lost) {lost = true; throw new Error("Потерян ответ");} return result; };
+  await assert.rejects(library.applyAction(proposal.action), /Потерян/); await library.applyAction(proposal.action);
+  assert.equal(state.calls.filter(c => c === "admin:execute").length, 1);
+});
+
+test("отзыв перед подтверждением не даёт выполнить административную запись", async () => {
+  for (const property of ["revoked", "agentRevoked"] as const) {
+    const {library, state} = fixture(); const session = await library.startSession(authorizer(state) as any);
+    const proposal = await session.proposeCreateProject("request-four", "Продажи", "sales"); state[property] = true;
+    await assert.rejects(library.applyAction(proposal.action)); assert.equal(state.calls.includes("admin:execute"), false);
+  }
+});
+
+test("старое административное предложение без ограничения владельца не исполняется и не отклоняется", async () => {
+  const {library, state, kv} = fixture(); const session = await library.startSession(authorizer(state) as any);
+  const proposal = await session.proposeCreateProject("legacy-request", "Продажи", "sales");
+  const saved = kv.get(`admin:${proposal.action}`) as {ownerRestricted?: true}; delete saved.ownerRestricted;
+  await assert.rejects(library.applyAction(proposal.action), /старой версией/);
+  await assert.rejects(library.rejectAction(proposal.action), /старой версией/);
+  assert.equal(state.calls.some(c => c === "human:approve" || c === "human:reject" || c === "admin:execute"), false);
 });

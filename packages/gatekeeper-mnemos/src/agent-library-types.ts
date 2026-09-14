@@ -1,11 +1,22 @@
-/** Типы, которые агент видит у биндинга MNEMOS. Чтение и запись личного черновика; публикации нет. */
+/** Типы биндинга MNEMOS: документы и ограниченные административные предложения. */
 export const MNEMOS_LIBRARY_TYPES = `
 /**
  * Опубликованные документы команды в Mnemos. Записи каталога — проекты; их id
  * передаются в searchProject(), readDocument() и saveDraft(). Каждое чтение
  * записывается как наблюдение. Личные черновики агент сохраняет сразу по выданным правам.
+ * Проект или доступ сотрудника сначала предлагается человеку в карточке подтверждения.
  */
 interface MnemosLibrary {
+  /** Предложить создание проекта. Сначала покажется короткое подтверждение человеку.
+   * requestId — стабильный уникальный ключ: повтор с тем же ключом не создаёт второй проект.
+   * slug — краткое имя латиницей, цифрами и дефисами. Дождитесь подтверждения результата. */
+  proposeCreateProject(requestId: string, name: string, slug: string): Promise<MnemosAdminProposal>;
+  /** Предложить файловый доступ существующего сотрудника к проекту и области.
+   * person/project — идентификаторы или точные имена; сервер отвергает неоднозначные совпадения.
+   * domain — область или пустая строка для всех.
+   * Нельзя выдумывать сотрудников или считать предложение выполненным до подтверждения.
+   * Повторяйте requestId только с теми же параметрами. */
+  proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write"): Promise<MnemosAdminProposal>;
   /** Проекты, доступные владельцу аккаунта. */
   listProjects(): Promise<MnemosProject[]>;
   /** Гибридный поиск (полнотекст + смысл) по опубликованным документам одного проекта; до 20 совпадений. */
@@ -57,5 +68,11 @@ interface MnemosDraftProposal {
   name: string;           // имя файла
   status: "saved";        // личный черновик записан
   head: string;           // сохранённая версия
+}
+interface MnemosAdminProposal {
+  action: number;
+  summary: string;
+  status: "pending" | "approved" | "rejected" | "applied";
+  result?: Record<string, string>;
 }
 `;

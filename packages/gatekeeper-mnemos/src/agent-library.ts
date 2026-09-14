@@ -10,6 +10,7 @@ import {
 } from "./mnemos-api.ts";
 import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
+import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
 import type { MnemosVerifierApi } from "./mnemos.ts";
 
 interface Env { MNEMOS_API_ORIGIN: string }
@@ -49,11 +50,14 @@ export interface AgentDraftWriter {
 /** Что отдаёт UserAccount.startWorkshopAgent(): имя связи, сессия и выдача загрузок под агентским credential. */
 export interface LibraryAgent {
   connectionName: string;
+  bindingId?: string;
+  admin?: { prepare(operation: string, request: AdminOperationRequest): Promise<AdminOperation>; execute(operation: string, request: AdminOperationRequest): Promise<AdminOperation>; [Symbol.dispose](): void };
   ui: AgentDraftWriter;
   textUploads?: { storageOrigin: string; issuer: TransferIssuer<[string, number, string], UploadTicket> };
 }
 /** Аккаунт владельца в объёме, нужном библиотеке. */
 export interface LibraryAccount {
+  decideWorkshopAdmin(binding: string, operation: string, phase: "approve" | "reject", request: AdminOperationRequest): Promise<AdminOperation>;
   openManagementSession(): Promise<LibraryReader>;
   startAppUi(): Promise<LibraryApp>;
   workshopAgent(): Promise<{ connectionName: string }>;
@@ -68,6 +72,9 @@ export interface MnemosSearchResult {
 }
 export interface MnemosDocument { document: string; name: string; text: string; mediaType: string; truncated: boolean }
 export interface MnemosDraftProposal { action: number; document: string; name: string; status: "saved"; head: string }
+/** Подтверждение выполняется отдельной карточкой в разговоре. */
+export interface MnemosAdminProposal { action: number; summary: string; status: AdminOperation["state"]; result?: Record<string, string> }
+interface StoredAdminProposal { binding: string; operation: string; request: AdminOperationRequest; summary: string; state: AdminOperation["state"]; ownerRestricted?: true; submitted?: boolean; result?: Record<string, string> }
 
 type Node = NodePage["nodes"][number];
 interface Located { id: string; name: string }
@@ -138,6 +145,7 @@ function release(value: unknown, depth = 0): void {
 }
 
 interface SessionCalls {
+  proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, request: AdminOperationRequest): Promise<MnemosAdminProposal>;
   createDraft(queue: RpcStub<ApprovalQueue>, project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown"): Promise<MnemosDraftProposal>;
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
   searchProject(queue: RpcStub<ApprovalQueue>, project: string, query: string): Promise<MnemosSearchResult>;
@@ -151,6 +159,8 @@ export class MnemosLibrarySession extends RpcTarget {
   #queue: RpcStub<ApprovalQueue>;
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
   async listProjects(): Promise<MnemosProject[]> { return this.#calls.listProjects(this.#queue); }
+  async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
+  async proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write") { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "grant_project_access", person, project, domain, mode}); }
   async searchProject(project: string, query: string): Promise<MnemosSearchResult> { return this.#calls.searchProject(this.#queue, project, query); }
   async readDocument(project: string, document: string): Promise<MnemosDocument> { return this.#calls.readDocument(this.#queue, project, document); }
   async createDraft(project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown" = "text/markdown") { return this.#calls.createDraft(this.#queue, project, parent, name, content, mediaType); }
@@ -170,7 +180,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     return {
       url: "mnemos://library",
       title: "Mnemos",
-      snippet: "Поиск и чтение опубликованных документов команды; личные черновики записываются сразу.",
+      snippet: "Материалы команды и личные черновики; создание проекта и доступ сотрудника через подтверждение в разговоре.",
       suggestedBindingName: "MNEMOS",
       tsType: "MnemosLibrary",
     };
@@ -183,6 +193,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const queue = approvalQueue.dup();
     try {
       return new MnemosLibrarySession({
+        proposeAdmin: (q, id, request) => this.#proposeAdmin(q, id, request),
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
         readDocument: (q, project, document) => this.#readDocument(q, project, document),
@@ -225,6 +236,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   // ---- запись черновика; applyAction также завершает старые уже выданные предложения ----
 
   async applyAction(action: number): Promise<void> {
+    if (this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)) { await this.#applyAdmin(action); return; }
     const proposal = this.#proposal(action);
     if (proposal.state === "applied") throw new Error("Действие уже выполнено: черновик записан ранее.");
     if (proposal.state === "rejected") throw new Error("Действие отклонено ранее; запись не выполняется.");
@@ -272,16 +284,64 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     } finally { release(app); }
   }
   async rejectAction(action: number): Promise<void> {
+    const admin = this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`);
+    if (admin) {
+      if (!admin.ownerRestricted) throw new Error("Предложение создано старой версией интерфейса. Подготовьте новое действие.");
+      const result = await this.#account().decideWorkshopAdmin(admin.binding, admin.operation, "reject", admin.request);
+      this.ctx.storage.kv.put(`admin:${action}`, {...admin, state: result.state}); return;
+    }
     const proposal = this.#proposal(action);
     if (proposal.state === "applied") throw new Error("Действие уже выполнено; отклонить его нельзя, откатите черновик в приложении Mnemos.");
     this.#settle(action, proposal, "rejected");
   }
   async revertAction(action: number): Promise<{ message: string }> {
+    if (this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)) return {message: "Для отмены административного изменения нужно отдельное подтверждённое действие."};
     const proposal = this.#proposal(action);
     return { message: `Откат делается в приложении Mnemos: восстановите в документе «${proposal.name}» прежнюю версию из истории личного черновика.` };
   }
 
   #key(action: number): string { return `draft:${action}`; }
+  async #proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, input: AdminOperationRequest): Promise<MnemosAdminProposal> {
+    identifier(requestId, "ключ операции", 128);
+    const request = checkedAdminOperation(input);
+    await queue.authorizeObservation({title: "Подготовка действия Mnemos", description: "Проверка предложения перед подтверждением человеком.", excludeObservers: await this.#excludedObservers()});
+    const agent = await this.#agent();
+    try {
+      if (!agent.admin || !agent.bindingId) throw new Error("Административные действия агента ещё не подключены.");
+      const index = `admin-request:${agent.bindingId}:${requestId}`;
+      const previous = this.ctx.storage.kv.get<number>(index);
+      if (previous) {
+        const saved = this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${previous}`)!;
+        if (JSON.stringify(saved.request) !== JSON.stringify(request)) throw new Error("Ключ уже использован для другого действия.");
+      }
+      const prepared = await agent.admin.prepare(requestId, request);
+      const action = this.ctx.storage.kv.get<number>(index) ?? this.#nextAction();
+      const saved = this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`);
+      if (saved && !saved.ownerRestricted) throw new Error("Предложение создано старой версией интерфейса. Подготовьте новое действие.");
+      const proposal: StoredAdminProposal = {binding: agent.bindingId, operation: requestId, request, summary: prepared.summary, state: prepared.state, ownerRestricted: true, ...(saved?.submitted ? {submitted: true} : {}), ...(prepared.result ? {result: prepared.result} : {})};
+      this.ctx.storage.kv.put(`admin:${action}`, proposal);
+      this.ctx.storage.kv.put(index, action);
+      if (prepared.state === "pending" && !proposal.submitted) {
+        await queue.submitAction(action, {title: request.kind === "create_project" ? "Создать проект" : "Изменить доступ сотрудника", description: prepared.summary, implementsRevert: false, awaitDecision: true, ownerApprovalRequired: true});
+        this.ctx.storage.kv.put(`admin:${action}`, {...this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)!, submitted: true});
+      }
+      return {action, summary: prepared.summary, status: prepared.state, ...(prepared.result ? {result: prepared.result} : {})};
+    } finally { release(agent); }
+  }
+  async #applyAdmin(action: number): Promise<void> {
+    const proposal = this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)!;
+    if (!proposal.ownerRestricted) throw new Error("Предложение создано старой версией интерфейса. Подготовьте новое действие.");
+    if (proposal.state === "rejected") throw new Error("Действие отклонено.");
+    // Этот путь доступен очереди подтверждений, но отсутствует в MnemosLibrarySession.
+    await this.#account().decideWorkshopAdmin(proposal.binding, proposal.operation, "approve", proposal.request);
+    const agent = await this.#agent();
+    try {
+      if (!agent.admin || agent.bindingId !== proposal.binding) throw new Error(AGENT_REVOKED);
+      const result = await agent.admin.execute(proposal.operation, proposal.request);
+      if (result.state !== "applied") throw new Error("Mnemos не подтвердил исполнение действия.");
+      this.ctx.storage.kv.put(`admin:${action}`, {...proposal, state: result.state, result: result.result});
+    } finally { release(agent); }
+  }
   #proposal(action: number): DraftProposal {
     if (!Number.isSafeInteger(action) || action <= 0) throw new Error(NOT_FOUND);
     const proposal = this.ctx.storage.kv.get<DraftProposal>(this.#key(action));

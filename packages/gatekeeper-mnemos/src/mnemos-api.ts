@@ -579,6 +579,9 @@ export class MnemosAPI {
   createProject(name: string, slug: string, signal?: AbortSignal): Promise<{project: ProjectPage["projects"][number]}> {
     return this.#request("/v1/projects", "POST", signal, {name, slug});
   }
+  workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest, signal?: AbortSignal): Promise<import("./admin-operations.ts").AdminOperation> {
+    return this.#request(`/v1/agent-connections/${segment(binding)}/admin-operations/${segment(operation)}/${phase}`, "POST", signal, request);
+  }
   readWorkshopAgentScope(binding: string, signal?: AbortSignal) { return this.#request<WorkshopAgentConnection>(`/v1/agent-connections/${segment(binding)}/workshop-scope`, "GET", signal); }
   updateWorkshopAgentScope(binding: string, expected: string[], projects: string[], signal?: AbortSignal) {
     return this.#request<WorkshopAgentConnection>(`/v1/agent-connections/${segment(binding)}/workshop-scope`, "POST", signal, {expected_project_ids: expected, project_ids: projects});
