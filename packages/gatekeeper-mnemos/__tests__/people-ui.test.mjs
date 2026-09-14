@@ -23,4 +23,18 @@ test('Отзыв требует предварительного итога и �
  await click(view.el,'Подтвердить отзыв');assert.deepEqual(calls,[legal]);assert.match(view.el.textContent,/Финансовая/);assert.equal(view.el.querySelector('[aria-label="Подтверждение изменения доступа"]'),null);await view.close();
 });
 
+test('область назначения берётся из материалов проекта, а не из роли сотрудника',async()=>{
+ const calls=[];
+ const ui={listPeople:async()=>({users:[{userName:'person',displayName:'Иван',active:true}]}),listPersonRights:async()=>({exists:true,rights:[]}),listOrganizationRoles:async()=>({roles:[{id:'employee-finance-role',name:'Финансовый отдел',active:true,kind:'functional_role'}],next_cursor:''}),browseProject:async(project,cursor)=>cursor?{nodes:[{node_id:'finance',name:'Финансы',is_dir:true,functional_role_id:'финансы'}],truncated:false,next_cursor:''}:{nodes:[],truncated:true,next_cursor:'second'},grantPersonRight:async right=>{calls.push(right);}};
+ const view=await render(ui);await click(view.el,'Настроить доступ: Иван');
+ const set=async(select,value)=>{await act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype,'value').set.call(select,value);select.dispatchEvent(new dom.window.Event('change',{bubbles:true}));});};
+ await set([...view.el.querySelectorAll('select')].find(select=>[...select.options].some(o=>o.value==='project')),'project');
+ const areas=view.el.querySelector('[aria-label="Предметная область материалов"]');
+ assert.ok(areas,'выбор области материалов');
+ assert.ok([...areas.options].some(option=>option.value==='финансы'),'область со второй страницы каталога');
+ assert.ok(![...areas.options].some(option=>option.value==='employee-finance-role'),'роль человека не подставляется в область файла');
+ await set(areas,'финансы');await click(view.el,'Проверить назначение');await click(view.el,'Подтвердить назначение');
+ assert.equal(calls[0].functional_role_id,'финансы');await view.close();
+});
+
 after(()=>{dom.window.close();for(const channel of channels){channel.port1.close();channel.port2.close();}globalThis.MessageChannel=OriginalMessageChannel;});

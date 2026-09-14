@@ -848,7 +848,7 @@ export interface NodeHistoryPage { events: { event_id: string; head: string; rec
 export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string; capabilities?: string[] }
 export interface ProjectPage { projects: { id: string; name: string; slug: string }[] }
 
-export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; shared_deleted?: boolean }[]; next_cursor?: string; truncated: boolean }
+export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean }[]; next_cursor?: string; truncated: boolean }
 export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean }
 
 export interface UploadTicket { upload_id: string; url: string; method: string; checksum_header: string; checksum_value: string; content_length: number }

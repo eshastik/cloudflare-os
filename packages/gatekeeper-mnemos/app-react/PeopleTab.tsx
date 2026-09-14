@@ -67,11 +67,36 @@ function CreatePerson({onCreated}: {onCreated(userName: string): void}) {
     {error && <Notice tone="danger">{error}</Notice>}<Button type="submit" disabled={busy}>Добавить человека</Button>
   </form>;
 }
+const STANDARD_RESOURCE_DOMAINS=[
+ {id:"юридический",name:"Юридические вопросы"},{id:"финансовый",name:"Финансовые вопросы"},
+ {id:"коммерческий",name:"Коммерческие вопросы"},{id:"технический",name:"Технические вопросы"},
+ {id:"административный",name:"Административные вопросы"},{id:"общий",name:"Общие материалы"},
+];
 function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
   const ui=useUi(); const [rights,setRights]=useState<AdminRights|null>(null); const [roles,setRoles]=useState<OrganizationRole[]>([]); const [rolesError,setRolesError]=useState(false); const [error,setError]=useState(""); const [notice,setNotice]=useState(""); const [busy,setBusy]=useState(false); const [revision,setRevision]=useState(0);
+  const [domains,setDomains]=useState(STANDARD_RESOURCE_DOMAINS),[domainsLoading,setDomainsLoading]=useState(false),[domainsError,setDomainsError]=useState(false);
   const [project,setProject]=useState(""); const [area,setArea]=useState(""); const [scope,setScope]=useState("area"); const [node,setNode]=useState(""); const [resourceClass,setResourceClass]=useState<"filesystem"|"database">("filesystem"); const [mode,setMode]=useState<"read"|"write">("read"); const [pending,setPending]=useState<{right:AdminRight;remove:boolean}|null>(null);
   useEffect(()=>{let current=true;setRights(null);setError("");void ui.listPersonRights(person.userName).then(r=>{if(current)setRights(r);},()=>{if(current)setError("Не удалось прочитать текущие назначения. Изменения недоступны.");});return()=>{current=false;};},[ui,person.userName,revision]);
   useEffect(()=>{let current=true;void (async()=>{const all:OrganizationRole[]=[];let cursor="";do {const page=await ui.listOrganizationRoles(cursor);all.push(...page.roles);cursor=page.next_cursor;}while(cursor);if(current)setRoles(all.filter(r=>r.active&&r.kind==="functional_role"));})().catch(()=>{if(current)setRolesError(true);});return()=>{current=false;};},[ui]);
+  useEffect(()=>{
+    let current=true;setDomains(STANDARD_RESOURCE_DOMAINS);setDomainsError(false);setArea("");
+    if(!project){setDomainsLoading(false);return;}
+    setDomainsLoading(true);
+    void (async()=>{
+      const found=new Map(STANDARD_RESOURCE_DOMAINS.map(domain=>[domain.id,domain]));
+      const visited=new Set<string>();let cursor="";
+      do {
+        if(visited.has(cursor)||visited.size>=200)throw Error("Каталог областей неполон");
+        visited.add(cursor);
+        const page=await ui.browseProject(project,cursor);
+        for(const node of page.nodes)if(node.functional_role_id){const id=node.functional_role_id;found.set(id,{id,name:STANDARD_RESOURCE_DOMAINS.find(domain=>domain.id===id)?.name||node.name||id});}
+        if(page.truncated&&!page.next_cursor)throw Error("Каталог областей неполон");
+        cursor=page.next_cursor||"";
+      }while(cursor&&current);
+      if(current)setDomains([...found.values()]);
+    })().catch(()=>{if(current)setDomainsError(true);}).finally(()=>{if(current)setDomainsLoading(false);});
+    return()=>{current=false;};
+  },[ui,project]);
   const summary=(r:AdminRight)=> r.kind==="capability" ? `Полномочие: ${r.capability}` : `${data.projects.find(p=>p.id===r.project_id)?.name || r.project_id} · ${r.functional_role_id ? roles.find(a=>a.id===r.functional_role_id)?.name || r.functional_role_id : "все предметные области"} · ${r.class==="database"?"база данных":"файлы"} · ${r.mode==="write"?"чтение и запись":"чтение"} · ${r.node_id ? "узел: "+r.node_id : "весь проект"}`;
   const change=async()=>{if(!pending)return;setBusy(true);setError("");setNotice("");try {if(pending.remove){const r=await ui.removePersonRight(pending.right);setNotice(r.outcome==="removed"?"Назначение отозвано.":r.outcome==="absent"?"Это назначение уже отсутствует.":r.outcome==="subject_unknown"?"Человек больше не найден в организации.":"Результат отзыва неизвестен. Проверьте список назначений.");}else{await ui.grantPersonRight(pending.right);setNotice("Назначение сохранено.");}setPending(null);setRevision(v=>v+1);}catch{setError("Сервер не подтвердил изменение. Обновите назначения перед повтором.");setPending(null);setRevision(v=>v+1);}finally{setBusy(false);}};
   return <Block title={`Доступ: ${person.displayName||person.userName}`}>
@@ -83,12 +108,13 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
       <label>Проект<Select required value={project} onChange={e=>{setProject(e.target.value);setNode("");}}><option value="">Выберите проект</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
       {data.projectsError && <Notice tone="danger">Не удалось прочитать проекты.</Notice>}
       <label>Область доступа<Select value={scope} onChange={e=>setScope(e.target.value)}><option value="area">Одна предметная область</option><option value="all">Все предметные области</option></Select></label>
-      {scope==="area" && <label>Предметная область ресурса<Select required value={area} onChange={e=>setArea(e.target.value)}><option value="">Выберите область</option>{roles.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</Select></label>}
-      {rolesError && <Notice tone="danger">Не удалось прочитать предметные области. Обновите страницу.</Notice>}
+      {scope==="area" && <label>Предметная область материалов<Select aria-label="Предметная область материалов" required disabled={domainsLoading||!project} value={area} onChange={e=>setArea(e.target.value)}><option value="">{domainsLoading?"Загрузка областей…":"Выберите область"}</option>{domains.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</Select></label>}
+      {domainsError && <Notice tone="danger">Не удалось полностью прочитать области материалов проекта. Выберите проект заново.</Notice>}
+      {rolesError && <Notice>Названия ролей недоступны; прежние назначения показаны по сохранённым значениям.</Notice>}
       <label>Ресурс<Select value={resourceClass} onChange={e=>setResourceClass(e.target.value as "filesystem"|"database")}><option value="filesystem">Файлы</option><option value="database">База данных</option></Select></label>
       <label>Действия<Select value={mode} onChange={e=>setMode(e.target.value as "read"|"write")}><option value="read">Чтение</option><option value="write">Чтение и запись</option></Select></label>
       <details className="sm:col-span-2"><summary>Ограничить узлом</summary><p>Пустое значение означает весь проект в выбранной предметной области. Укажите точный идентификатор узла, чтобы сузить доступ.</p><TextInput aria-label="Узел доступа" value={node} onChange={e=>setNode(e.target.value)} /></details>
-      <Button type="submit" disabled={busy||!rights?.exists||!project||(scope==="area"&&(!area||rolesError))}>Проверить назначение</Button>
+      <Button type="submit" disabled={busy||!rights?.exists||!project||(scope==="area"&&(!area||domainsError||domainsLoading))}>Проверить назначение</Button>
     </form>
     {pending && <div role="region" aria-label="Подтверждение изменения доступа" className="rounded-xl border border-kumo-line p-4 mt-4"><strong>{pending.remove?"Отозвать":"Добавить"} назначение для {person.displayName||person.userName}</strong><p>{summary(pending.right)}</p><p>Остальные назначения сохраняются. Согласование документов настраивается отдельно.</p><Button disabled={busy} onClick={()=>void change()}>Подтвердить {pending.remove?"отзыв":"назначение"}</Button><Button disabled={busy} variant="secondary" onClick={()=>setPending(null)}>Отмена</Button></div>}
   </Block>;
