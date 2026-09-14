@@ -1,3 +1,4 @@
+import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "./chat-voice";
 export {MailSourceLease,MailSendLease,MailDraftSendUI} from "./mail-source-lease";
 export {DriveImportLease} from "./drive-import-lease";
 export {CalendarSourceLease,CalendarWriteLease,CalendarDraftCreateUI} from "./calendar-source-lease";
@@ -65,7 +66,7 @@ export { OverseerDurableObject, GatekeeperLoopback, GatekeeperHookLoopback,
 export { ExternalMessageGateway };
 
 // Declare optional environment variables here since they may be omitted from wrangler.jsonc.
-type Env = Cloudflare.Env & {
+type Env = Cloudflare.Env & ChatVoiceConfig & {
   // Set these if using Cloudflare Access for authentication, otherwise username/password is used.
   CF_ACCESS_AUD?: string,  // audience
   CF_ACCESS_ISS?: string,  // team URL, i.e. https://<team>.cloudflareaccess.com
@@ -125,6 +126,17 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   async setWorkspaceActivityReporting(accountId: number | null): Promise<void> { await this.user.setWorkspaceActivityReporting(accountId); }
   /** Read aggregate activity for the bound user. */
   async readOwnWorkspaceActivity() { return this.user.readOwnWorkspaceActivity(); }
+
+  private voiceInFlight = false;
+  /** Доступность диктовки для текущего авторизованного соединения. */
+  async isChatVoiceAvailable(): Promise<boolean> { return chatVoiceAvailable(this.env); }
+  /** Одна запись одновременно; результат не отправляется агенту. */
+  async transcribeChatVoice(bytes: Uint8Array, mediaType: string): Promise<string> {
+    if (this.voiceInFlight) throw new Error("Предыдущая запись ещё распознаётся.");
+    this.voiceInFlight = true;
+    try { return await transcribeChatVoice(this.env, bytes, mediaType); }
+    finally { this.voiceInFlight = false; }
+  }
 
   whoami(): Promise<AiChatAuthorInfo> {
     return this.user.whoami();

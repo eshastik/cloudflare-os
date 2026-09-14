@@ -336,6 +336,10 @@ export interface WorkspaceActivityReporting {
 }
 
 export interface AuthenticatedApi extends RpcTarget {
+  /** Проверяет настройку серверного распознавания до запроса микрофона. */
+  isChatVoiceAvailable(): Promise<boolean>;
+  /** Распознаёт одну запись до 8 МБ; возвращает текст без отправки в чат. */
+  transcribeChatVoice(bytes: Uint8Array, mediaType: string): Promise<string>;
   /** Read the current user's available activity recipients and delivery state. */
   getWorkspaceActivityReporting(): Promise<WorkspaceActivityReporting>;
   /** Explicitly select one owned connected account, or disable activity delivery. */
