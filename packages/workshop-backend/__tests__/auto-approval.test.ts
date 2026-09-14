@@ -111,6 +111,13 @@ function flush(): Promise<void> {
 }
 
 describe("AutoApprovalDrainer.drain", () => {
+  it("не применяет действие владельца даже при включённом автоматическом правиле", async () => {
+    const storage = makeStorage(); enableRule(storage); putAction(storage, 1);
+    const record = getAction(storage, 1); record.description.ownerApprovalRequired = true; storage.actions.put(record);
+    const {applyFn, calls} = makeImmediateApply(storage);
+    await new AutoApprovalDrainer(storage, applyFn).drain(GK);
+    expect(calls).toEqual([]); expect(getAction(storage, 1).state).toBe("pending");
+  });
   it("applies all eligible pending actions in ascending id order", async () => {
     let storage = makeStorage();
     enableRule(storage);

@@ -67,7 +67,7 @@ export class AutoApprovalDrainer {
       let rule = tag !== undefined
           ? this.storage.autoApproveTags.get(`${gatekeeperId}:${tag}`)
           : undefined;
-      if (record.description.autoApprovable !== true || rule === undefined) {
+      if (record.description.ownerApprovalRequired || record.description.autoApprovable !== true || rule === undefined) {
         // A manual gate. Stop rather than skipping ahead to any later auto-eligible action.
         break;
       }

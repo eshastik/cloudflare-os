@@ -1646,6 +1646,10 @@ export type ActionDescription = {
   // to revert cleanly.
   implementsRevert: boolean;
 
+  /** Только владелец workspace может подтвердить или отклонить это действие.
+   * Допустимо только у ambient-ресурса владельца; автоматическое одобрение запрещено. */
+  ownerApprovalRequired?: boolean;
+
   // Hint that an agent should not keep working until this action has been approved or denied.
   //
   // Set this for actions whose effects the gatekeeper does NOT simulate. Because a not-yet-approved

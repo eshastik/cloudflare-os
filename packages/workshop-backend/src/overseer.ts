@@ -39,6 +39,7 @@ import { completeAgentCatalogSnapshot, normalizeAgentCatalog } from "./agent-cat
 import { refreshCachedBalance } from "./ai-gateway-billing/cloudflare/connection-service";
 import { SharingManager, SharingCaller, CollaboratorRecord, ShareKeyRecord } from "./sharing";
 import { AutoApprovalDrainer } from "./auto-approval";
+import { findSubmittedAction } from "./action-submission";
 import { collectSlashCommands, invokeSlashCommand } from "./slash-commands";
 import { createWorkshopLogger, obsContext, traced } from "./observability";
 import type { ChatGatewayRpcTarget, SubmitExternalMessageResult } from "@gadgets/workshop-shared/external-message-gateway";
@@ -2501,7 +2502,10 @@ class OverseerImpl implements AgentHooks {
   // requiring them here guarantees the audit log always records the resolving user and whether it
   // was applied automatically. For an auto-approval, `resolvedBy` is the user who enabled the rule.
   async applyPendingAction(record: ActionRecord & {type: "action"},
-                           resolvedBy: AiChatAuthorInfo, autoApproved: boolean): Promise<void> {
+                           resolvedBy: AiChatAuthorInfo, autoApproved: boolean, approvedByOwner = false): Promise<void> {
+    if (record.description.ownerApprovalRequired && (autoApproved || !approvedByOwner || this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type !== "ambient")) {
+      throw new Error("Это действие должен подтвердить владелец разговора.");
+    }
     let gatekeeper = this.getGatekeeperFacet(record.gatekeeperId);
     await gatekeeper.applyAction(record.action);
     record.state = "approved";
@@ -2901,6 +2905,20 @@ class OverseerImpl implements AgentHooks {
           "from performing actions.");
     }
 
+    if (description.ownerApprovalRequired && this.storage.gatekeepers.get(gatekeeperId)?.creationSpec?.type !== "ambient") {
+      throw new Error("Подтверждение владельца доступно только для его подключённого аккаунта.");
+    }
+    const willAutoApprove = !!(!description.ownerApprovalRequired && description.autoApprovable && description.actionKind &&
+        this.storage.autoApproveTags.get(`${gatekeeperId}:${description.actionKind.tag}`) !== undefined);
+    const previous = findSubmittedAction(this.storage.actions.list(), gatekeeperId, action, description);
+    if (previous) {
+      if (previous.state === "pending" && caller.from === "agent" && description.awaitDecision && !willAutoApprove) {
+        this.#getOrCreateCapturedActions(caller.chatId).awaitDecision = true;
+      }
+      if (previous.state === "pending" && willAutoApprove) this.ctx.waitUntil(this.drainAutoApprovals(gatekeeperId));
+      return;
+    }
+
     let actionId = this.storage.nextActionId.get();
     this.storage.nextActionId.put(actionId + 1);
 
@@ -2924,9 +2942,6 @@ class OverseerImpl implements AgentHooks {
 
     // Same auto-approval gate as before, named because awaitDecision uses it too. The drain is
     // deferred because applying calls back into the gatekeeper facet still awaiting submitAction.
-    let willAutoApprove = !!(description.autoApprovable && description.actionKind &&
-        this.storage.autoApproveTags.get(`${gatekeeperId}:${description.actionKind.tag}`) !== undefined);
-
     // Only agent turns suspend on awaitDecision, and only when a manual decision is pending.
     // Auto-approved actions keep the seamless behavior the user opted into.
     if (caller.from === "agent" && description.awaitDecision && !willAutoApprove) {
@@ -7629,7 +7644,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     // Resolve the approver's identity before applying, so a failed profile fetch can't leave the
     // action applied in the world but still "pending" in storage.
     let profile = await this.#getClientProfile();
-    await this.impl.applyPendingAction(action, profile, false);
+    await this.impl.applyPendingAction(action, profile, false, this.isOwner);
 
     // If this was an awaited agent action, resume only after all awaited actions in the turn are
     // approved. If applyPendingAction throws, the action stays pending and the turn stays suspended.
@@ -7773,6 +7788,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     if (action.type !== "action") {
       throw new Error(`Can't reject an observation: ${id}`);
     }
+    if (action.description.ownerApprovalRequired && !this.isOwner) throw new Error("Это действие может отклонить только владелец разговора.");
 
     let gatekeeper = this.impl.getGatekeeperFacet(action.gatekeeperId);
 
