@@ -94,6 +94,8 @@ let stoppingDevWatchers = false;
 
 // Spawn a persistent watcher.
 function spawnDevWatcher(label, command, args) {
+  // Persistent server installs serve built assets; UI rebuild watchers are only for development.
+  if (process.argv.includes("--no-watch")) return;
   const watcher = spawn(command, args, { stdio: "inherit", cwd: ROOT });
   watcher.on("exit", (code, signal) => {
     if (stoppingDevWatchers) return;
@@ -103,6 +105,13 @@ function spawnDevWatcher(label, command, args) {
 }
 
 for (const gk of gatekeepers) {
+  if (process.argv.includes("--prebuilt")) {
+    // Server releases were built before activation; never start UI build jobs on restart.
+    if (existsSync(join(gk.dir, "build-app.mjs")) && !existsSync(join(gk.dir, "src", "generated", "app.txt"))) {
+      throw new Error(`Prebuilt app missing for ${gk.name}`);
+    }
+    continue;
+  }
   // Configurator UI (compiled by build-gatekeeper-configurator.mjs).
   if (existsSync(join(gk.dir, "src", "configurator"))) {
     const script = join(ROOT, "scripts", "build-gatekeeper-configurator.mjs");

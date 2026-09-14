@@ -1,3 +1,4 @@
+import { sourceHealth, observeSourceRead } from './source-health.ts';
 import {ConnectionAuditStorage} from './connection-audit-storage.ts';
 import type {SmtpClient,SmtpServer,SmtpCredential} from './smtp-client.ts';
 import type {MailDraftContent} from './mail-drafts.ts';
@@ -14,7 +15,7 @@ type ReaderFactory=(server:ImapServer,credential:ImapCredential,mailbox:string,v
 const denied=()=>Error('IMAP account unavailable.');
 const id=(value:unknown)=>{if(typeof value!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value))throw denied();return value;};
 const serverKey=(server:Server)=>JSON.stringify([server.provider,server.host,server.port]);
-export const IMAP_RESOURCE={urlPattern:'mnemos://imap/mailboxes/*',title:'Почта IMAP',description:'Выбранные человеком папки почты; права агентам выдаются отдельно.'};
+export const IMAP_RESOURCE={urlPattern:'mnemos://imap/mailboxes/*',title:'Почта IMAP',description:'Выбранные человеком папки почты; права агентам выдаются отдельно.',receives:'mail' as const};
 
 /** Only deployment configuration adds corporate destinations; users select a key. */
 export function imapServers(config=''):Server[]{
@@ -54,7 +55,7 @@ export class ImapAccounts {
     if(!record||record.owner.tenant!==owner.tenant||record.owner.owner!==owner.owner||record.owner.epoch!==owner.epoch||this.#epoch()!==owner.epoch)throw denied();
     return record;
   }
-  #info(record:Account):ImapAccountInfo{return {id:record.id,server:record.server,username:record.credential.username,mailbox:record.mailbox,enabled:record.enabled,...(record.smtp?{send_from:record.smtp.credential.from}:{})};}
+  #info(record:Account):ImapAccountInfo{return {...sourceHealth(this.#storage,'imap',record.id,record.generation),id:record.id,server:record.server,username:record.credential.username,mailbox:record.mailbox,enabled:record.enabled,...(record.smtp?{send_from:record.smtp.credential.from}:{})};}
   list(owner:Owner){
     if(this.#epoch()!==owner.epoch)throw denied();
     return {servers:this.#servers.map(({id,title,host,port})=>({id,title,host,port})),accounts:(this.#storage.get<string[]>(this.#index(owner))??[])
@@ -100,9 +101,12 @@ export class ImapAccounts {
   validateSender(key:string,generation:string){this.#sender(key,generation);}
   async send(key:string,generation:string,content:MailDraftContent){return this.#sender(key,generation).send(content);}
   async readSelection(key:string,generation:string,input:import('@gadgets/workshop-shared/mail-search').MailReadRequest){
+    this.validate(key,generation);
+    return observeSourceRead(this.#storage,'imap',key,generation,async()=>{
     const result=await this.#selectedReader(key,generation).readSelection(input);this.validate(key,generation);
     const account=this.#source(key,generation).record;
     const self_addresses=[account.smtp?.credential.from,account.credential.username].filter((value):value is string=>typeof value==='string'&&/^[^\s<>@]+@[^\s<>@]+$/.test(value));
     return {provider:result.provider,query:'folder:'+key,self_addresses,messages_json:JSON.stringify(result.messages),...(result.attachment?{attachment:result.attachment}:{}),truncated:result.truncated,...(result.next_cursor?{next_cursor:result.next_cursor}:{})};
+    });
   }
 }

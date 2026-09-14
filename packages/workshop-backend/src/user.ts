@@ -56,6 +56,7 @@ export type ProvidedAccountInfo = {
 // usable directly, the way the runtime stub actually behaves.
 type AccountCreatorStub = Required<Pick<GatekeeperVendor, "createAccount">>;
 type SingletonAccountStub = Required<Pick<GatekeeperUser, "getSingletonGatekeeperClass" | "startAppUi">>;
+type SourceKind = NonNullable<SupportedResource["receives"]>;
 
 function areCredentialsValid(record: ConnectedAccountRecord): boolean {
   if (record.credentialsExpired) return false;
@@ -1395,10 +1396,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let record = this.storage.connectedAccounts.get(accountId);
     if (!record?.description.providesUi) throw new Error("No such app.");
     const frame=await (record.account as unknown as SingletonAccountStub).startAppUi(context);
-    if(record.vendorId==='mnemos'){
-      frame.mailDraftSender=this.ctx.exports.MailDraftSendUI({props:{userId:this.ctx.id.toString(),accountId}});
-      frame.calendarDraftCreator=this.ctx.exports.CalendarDraftCreateUI({props:{userId:this.ctx.id.toString(),accountId}});
-    }else{delete frame.mailDraftSender;delete frame.calendarDraftCreator;}
+    // Host-issued draft executors follow the sources the account receives; a gatekeeper cannot
+    // grant them to itself through the frame.
+    const receiving=await this.receivingResources(record),props={userId:this.ctx.id.toString(),accountId};
+    if(receiving.has('mail'))frame.mailDraftSender=this.ctx.exports.MailDraftSendUI({props});else delete frame.mailDraftSender;
+    if(receiving.has('calendar'))frame.calendarDraftCreator=this.ctx.exports.CalendarDraftCreateUI({props});else delete frame.calendarDraftCreator;
     return frame;
   }
 
@@ -1694,41 +1696,65 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     this.storage.connectedAccounts.put(record);
   }
 
+  // The kinds of host-transferred source an account takes in, each with the resource type it
+  // declared for the kind. The kernel names no vendor (ADR 0024 §2): whichever account declares a
+  // kind is its receiver, and that resource is also the account's own source of the kind.
+  private async receivingResources(record: ConnectedAccountRecord): Promise<Map<SourceKind, SupportedResource>> {
+    const receiving = new Map<SourceKind, SupportedResource>();
+    for (const resource of await record.account.getSupportedResources()) if (resource.receives) receiving.set(resource.receives, resource);
+    return receiving;
+  }
+
+  // Resolve an owned, valid account as the receiver of `kind`. A missing declaration is refused
+  // apart from an unavailable account, so a misconfigured vendor is told what it lacks.
+  private async receiver(accountId: number, kind: SourceKind, unavailable: string): Promise<[ConnectedAccountRecord, SupportedResource]> {
+    const record = this.storage.connectedAccounts.get(accountId);
+    if (!record || !areCredentialsValid(record)) throw new Error(unavailable);
+    const resource = (await this.receivingResources(record)).get(kind);
+    if (!resource) throw new Error(`This account does not receive ${kind} sources.`);
+    return [record, resource];
+  }
+
+  // The urlPattern admin policy is checked against when an account lists or transfers its own
+  // sources of `kind`: the pattern the kernel still hardcodes for OAuth vendors that predate the
+  // `receives` declaration, else the account's declared receiving resource; undefined for neither.
+  private async ownSourcePattern(record: ConnectedAccountRecord, kind: SourceKind, legacy: Partial<Record<string, string>>): Promise<string | undefined> {
+    return legacy[record.vendorId] ?? (await this.receivingResources(record)).get(kind)?.urlPattern;
+  }
+
   /** Recheck a persistent calendar source against current account and deployment policy. */
   async checkCalendarSourceAccounts(selection: CalendarSourceAccounts): Promise<void> {
     const config = await readAdminConfig(this.env);
     for (const [id, vendor] of [[selection.sourceAccountId, selection.sourceVendor], [selection.targetAccountId, selection.targetVendor]] as const) {
       const account = this.storage.connectedAccounts.get(id);
-      // Mnemos' immutable owner association outlives its short human login. Its
-      // receiver epoch rejects explicit disconnect; source OAuth must remain valid.
-      const needsCredential = id !== selection.targetAccountId || vendor !== "mnemos";
-      if (!account || account.vendorId !== vendor || (needsCredential && !areCredentialsValid(account))) throw new Error("The selected calendar account is unavailable.");
+      if (!account || account.vendorId !== vendor) throw new Error("The selected calendar account is unavailable.");
+      // A receiver's owner association outlives its short human login (its receiver epoch rejects
+      // explicit disconnect), so an expired target passes if it receives anything; a source never does.
+      if (!areCredentialsValid(account) && (id !== selection.targetAccountId || (await this.receivingResources(account)).size === 0)) throw new Error("The selected calendar account is unavailable.");
       if (config.disabledGatekeepers.includes(vendor.toLowerCase()) ||
           (account.autoProvisioned && ambientGatekeeperMode(config, vendor) === "disabled")) throw new Error("The selected calendar service is disabled.");
     }
     if (isResourceDisabled(config, selection.sourceVendor.toLowerCase(), selection.resourcePattern)) throw new Error("The selected calendar resource is disabled.");
   }
 
-  /** List safe WebDAV connection labels from an owned Mnemos account. */
+  /** List safe WebDAV connection labels from an owned receiving account. */
   async listDriveImportAccounts(accountId:number){
-    const account=this.storage.connectedAccounts.get(accountId);
-    if(!account||account.vendorId!=="mnemos"||!areCredentialsValid(account))throw new Error("Import account unavailable.");
-    await this.checkCalendarSourceAccounts({sourceAccountId:accountId,targetAccountId:accountId,sourceVendor:"mnemos",targetVendor:"mnemos",resourcePattern:"mnemos://webdav/files/*"});
+    const [account,files]=await this.receiver(accountId,'drive',"Import account unavailable.");
+    await this.checkCalendarSourceAccounts({sourceAccountId:accountId,targetAccountId:accountId,sourceVendor:account.vendorId,targetVendor:account.vendorId,resourcePattern:files.urlPattern});
     const factory=account.account as Required<Pick<GatekeeperUser,"listDriveImportAccounts">>;
     return factory.listDriveImportAccounts();
   }
-  /** Transfer a fixed source between owned accounts; retain it before any Mnemos write. */
+  /** Transfer a fixed source between owned accounts; retain it before any receiver write. */
   async captureDriveImport(sourceAccountId:number,targetAccountId:number,fileId:string,project:string,request:string) {
     if(![sourceAccountId,targetAccountId].every(id=>Number.isSafeInteger(id)&&id>0)||
        [fileId,project,request].some(value=>typeof value!=="string"||!value||value.length>255||/[\x00-\x1f\x7f]/.test(value)))throw new Error("Invalid Drive import coordinates.");
     const checkTarget=async()=>{
       const config=await readAdminConfig(this.env);
-      const target=this.storage.connectedAccounts.get(targetAccountId);
-      if(!target||target.vendorId!=="mnemos"||!areCredentialsValid(target))throw new Error("Import account unavailable.");
-      if(config.disabledGatekeepers.includes("mnemos"))throw new Error("Import service disabled.");
+      const [target]=await this.receiver(targetAccountId,'drive',"Import account unavailable.");
+      if(config.disabledGatekeepers.includes(target.vendorId.toLowerCase()))throw new Error("Import service disabled.");
       return target;
     };
-    await checkTarget();
+    let target=await checkTarget();
     type Transfer={sourceAccountId:number;targetAccountId:number;fileId:string;sourceKey:string;source:Fetcher<DriveImportSource>};
     const key="driveImportTransfer:"+JSON.stringify([project,request]);
     const matches=(value:Transfer)=>{if(value.sourceAccountId!==sourceAccountId||value.targetAccountId!==targetAccountId||value.fileId!==fileId)throw new Error("Drive import request changed.");};
@@ -1736,8 +1762,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if(transfer)matches(transfer);
     else {
       const sourceAccount=this.storage.connectedAccounts.get(sourceAccountId);
-      if(!sourceAccount||!["google","yandex","mnemos"].includes(sourceAccount.vendorId))throw new Error("Drive source account unavailable.");
-      const accounts:CalendarSourceAccounts={sourceAccountId,targetAccountId,sourceVendor:sourceAccount.vendorId,targetVendor:"mnemos",resourcePattern:sourceAccount.vendorId==="google"?"https://drive.google.com/file/:fileId/*":sourceAccount.vendorId==="yandex"?"https://disk.yandex.ru/*":"mnemos://webdav/files/*"};
+      const resourcePattern=sourceAccount&&await this.ownSourcePattern(sourceAccount,'drive',{google:"https://drive.google.com/file/:fileId/*",yandex:"https://disk.yandex.ru/*"});
+      if(!sourceAccount||!resourcePattern)throw new Error("Drive source account unavailable.");
+      const accounts:CalendarSourceAccounts={sourceAccountId,targetAccountId,sourceVendor:sourceAccount.vendorId,targetVendor:target.vendorId,resourcePattern};
       await this.checkCalendarSourceAccounts(accounts);
       const factory=sourceAccount.account as Required<Pick<GatekeeperUser,"getDriveImportSource">>;
       const selected=await factory.getDriveImportSource(fileId);
@@ -1749,30 +1776,28 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       transfer=this.ctx.storage.kv.get<Transfer>(key);
       if(transfer)matches(transfer);else {transfer=candidate;this.ctx.storage.kv.put(key,transfer)}
     }
-    const target=await checkTarget();
+    target=await checkTarget();
     const receiver=target.account as Required<Pick<GatekeeperUser,"captureDriveImport">>;
     const result=await receiver.captureDriveImport(project,request,transfer.sourceKey,fileId,transfer.source);
     await checkTarget();
     return result;
   }
 
-  /** Complete registration through this user's selected Mnemos account. */
+  /** Complete registration through this user's selected receiving account. */
   async registerCalendarSelection(targetAccountId: number, project: string, request: string, selection: string) {
     if (!Number.isSafeInteger(targetAccountId) || targetAccountId < 1) throw new Error("Invalid calendar account.");
-    const account = this.storage.connectedAccounts.get(targetAccountId);
-    if (!account || account.vendorId !== "mnemos" || !areCredentialsValid(account)) throw new Error("Calendar account unavailable.");
+    const [account] = await this.receiver(targetAccountId, 'calendar', "Calendar account unavailable.");
     const config = await readAdminConfig(this.env);
-    if (config.disabledGatekeepers.includes("mnemos")) throw new Error("Calendar service disabled.");
+    if (config.disabledGatekeepers.includes(account.vendorId.toLowerCase())) throw new Error("Calendar service disabled.");
     const receiver = account.account as Required<Pick<GatekeeperUser,"registerCalendarSelection">>;
     // The stored source lease rechecks both accounts and policy during resolve.
     return receiver.registerCalendarSelection(project,request,selection);
   }
   async registerMailSelection(targetAccountId: number, project: string, request: string, selection: string) {
     if (!Number.isSafeInteger(targetAccountId) || targetAccountId < 1) throw new Error("Invalid mail account.");
-    const account = this.storage.connectedAccounts.get(targetAccountId);
-    if (!account || account.vendorId !== "mnemos" || !areCredentialsValid(account)) throw new Error("Mail account unavailable.");
+    const [account] = await this.receiver(targetAccountId, 'mail', "Mail account unavailable.");
     const config = await readAdminConfig(this.env);
-    if (config.disabledGatekeepers.includes("mnemos")) throw new Error("Mail service disabled.");
+    if (config.disabledGatekeepers.includes(account.vendorId.toLowerCase())) throw new Error("Mail service disabled.");
     const receiver = account.account as Required<Pick<GatekeeperUser,"registerMailSelection">>;
     // The stored source lease rechecks both accounts and policy during resolve.
     return receiver.registerMailSelection(project,request,selection);
@@ -1783,8 +1808,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (![sourceAccountId,targetAccountId].every(id => Number.isSafeInteger(id) && id > 0) ||
         [calendarId,project,request].some(value => typeof value !== "string" || !value || value.length > 255 || /[\x00\r\n]/.test(value))) throw new Error("Invalid calendar selection.");
     const sourceAccount = this.storage.connectedAccounts.get(sourceAccountId);
-    const targetAccount = this.storage.connectedAccounts.get(targetAccountId);
-    if (!sourceAccount || !targetAccount || targetAccount.vendorId !== "mnemos" || !areCredentialsValid(targetAccount)) throw new Error("The selected calendar account is unavailable.");
+    if (!sourceAccount) throw new Error("The selected calendar account is unavailable.");
+    const [targetAccount] = await this.receiver(targetAccountId, 'calendar', "The selected calendar account is unavailable.");
     const accounts: CalendarSourceAccounts = {sourceAccountId,targetAccountId,sourceVendor:sourceAccount.vendorId,targetVendor:targetAccount.vendorId,resourcePattern:""};
     await this.checkCalendarSourceAccounts(accounts);
     const sourceOwner = sourceAccount.account as Required<Pick<GatekeeperUser,"getCalendarReadSource">>;
@@ -1801,8 +1826,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async listCalendars(accountId:number) {
     if(!Number.isSafeInteger(accountId)||accountId<1)throw new Error("Invalid calendar account.");
     const account=this.storage.connectedAccounts.get(accountId);
-    if(!account||!['microsoft','mnemos'].includes(account.vendorId))throw new Error("Calendars unavailable.");
-    const scope:CalendarSourceAccounts={sourceAccountId:accountId,targetAccountId:accountId,sourceVendor:account.vendorId,targetVendor:account.vendorId,resourcePattern:account.vendorId==='mnemos'?'mnemos://caldav/calendars/*':"https://graph.microsoft.com/v1.0/me/calendars/*"};
+    const resourcePattern=account&&await this.ownSourcePattern(account,'calendar',{microsoft:"https://graph.microsoft.com/v1.0/me/calendars/*"});
+    if(!account||!resourcePattern)throw new Error("Calendars unavailable.");
+    const scope:CalendarSourceAccounts={sourceAccountId:accountId,targetAccountId:accountId,sourceVendor:account.vendorId,targetVendor:account.vendorId,resourcePattern};
     await this.checkCalendarSourceAccounts(scope);
     const provider=account.account as Required<Pick<GatekeeperUser,"listCalendars">>;
     const result=await provider.listCalendars();
@@ -1813,8 +1839,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async listMailFolders(accountId:number,parent:string) {
     if(!Number.isSafeInteger(accountId)||accountId<1||typeof parent!=="string"||parent.length>255)throw new Error("Invalid mail account.");
     const account=this.storage.connectedAccounts.get(accountId);
-    if(!account||!["google","microsoft","mnemos"].includes(account.vendorId))throw new Error("Mail folders unavailable.");
-    const resourcePattern=account.vendorId==='google'?'https://mail.google.com/*':account.vendorId==='mnemos'?'mnemos://imap/mailboxes/*':'https://graph.microsoft.com/v1.0/me/mailFolders/*';
+    const resourcePattern=account&&await this.ownSourcePattern(account,'mail',{google:'https://mail.google.com/*',microsoft:'https://graph.microsoft.com/v1.0/me/mailFolders/*'});
+    if(!account||!resourcePattern)throw new Error("Mail folders unavailable.");
     const scope:CalendarSourceAccounts={sourceAccountId:accountId,targetAccountId:accountId,sourceVendor:account.vendorId,targetVendor:account.vendorId,resourcePattern};
     await this.checkCalendarSourceAccounts(scope);
     const provider=account.account as Required<Pick<GatekeeperUser,"listMailFolders">>;
@@ -1825,14 +1851,13 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   async createCalendarDraft(targetAccountId:number,id:string,sha256:string){
     if(!Number.isSafeInteger(targetAccountId)||targetAccountId<1||typeof id!=='string'||!id||id.length>255||typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256))throw Error('Invalid calendar draft.');
-    const target=this.storage.connectedAccounts.get(targetAccountId);
-    if(!target||target.vendorId!=='mnemos'||!areCredentialsValid(target))throw Error('Calendar account unavailable.');
+    const [target]=await this.receiver(targetAccountId,'calendar','Calendar account unavailable.');
     const receiver=target.account as Required<Pick<GatekeeperUser,'prepareCalendarDraftCreate'|'createCalendarDraft'>>;
     const selection=await receiver.prepareCalendarDraftCreate(id,sha256);
     const coordinates:unknown=JSON.parse(selection.sourceKey);
     if(!Array.isArray(coordinates)||coordinates.length!==2||!Number.isSafeInteger(coordinates[0])||typeof coordinates[1]!=='string')throw Error('Calendar writer unavailable.');
     const sourceAccountId=coordinates[0],account=this.storage.connectedAccounts.get(sourceAccountId);
-    if(!account||!['google','microsoft','mnemos'].includes(account.vendorId))throw Error('This calendar provider does not support meeting creation yet.');
+    if(!account||!(['google','microsoft'].includes(account.vendorId)||(await this.receivingResources(account)).has('calendar')))throw Error('This calendar provider does not support meeting creation yet.');
     const accounts:CalendarSourceAccounts={sourceAccountId,targetAccountId,sourceVendor:account.vendorId,targetVendor:target.vendorId,resourcePattern:''};
     await this.checkCalendarSourceAccounts(accounts);
     const provider=account.account as Required<Pick<GatekeeperUser,'getCalendarWriteSource'>>;
@@ -1848,14 +1873,13 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   async sendMailDraft(targetAccountId:number,id:string,sha256:string){
     if(!Number.isSafeInteger(targetAccountId)||targetAccountId<1||typeof id!=='string'||id.length>255||typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256))throw Error('Invalid mail draft.');
-    const target=this.storage.connectedAccounts.get(targetAccountId);
-    if(!target||target.vendorId!=='mnemos'||!areCredentialsValid(target))throw Error('Mail account unavailable.');
+    const [target]=await this.receiver(targetAccountId,'mail','Mail account unavailable.');
     const receiver=target.account as Required<Pick<GatekeeperUser,'prepareMailDraftSend'|'sendMailDraft'>>;
     const selection=await receiver.prepareMailDraftSend(id,sha256);
     const coordinates:unknown=JSON.parse(selection.sourceKey);
     if(!Array.isArray(coordinates)||coordinates.length!==2||!Number.isSafeInteger(coordinates[0])||typeof coordinates[1]!=='string')throw Error('Mail sender unavailable.');
     const sourceAccountId=coordinates[0],account=this.storage.connectedAccounts.get(sourceAccountId);
-    if(!account||!['google','microsoft','mnemos'].includes(account.vendorId))throw Error('This mail provider does not support sending yet.');
+    if(!account||!(['google','microsoft'].includes(account.vendorId)||(await this.receivingResources(account)).has('mail')))throw Error('This mail provider does not support sending yet.');
     const accounts:CalendarSourceAccounts={sourceAccountId,targetAccountId,sourceVendor:account.vendorId,targetVendor:target.vendorId,resourcePattern:''};
     await this.checkCalendarSourceAccounts(accounts);
     const provider=account.account as Required<Pick<GatekeeperUser,'getMailSendSource'>>;
@@ -1874,8 +1898,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         [project,request].some(value => typeof value !== "string" || !value || value.length > 255 || /[\x00\r\n]/.test(value))) throw new Error("Invalid mail selection.");
     if (typeof query !== "string" || !query.trim() || new TextEncoder().encode(query).byteLength > 1024 || /[\x00\r\n]/.test(query)) throw new Error("Invalid mail query.");
     const sourceAccount = this.storage.connectedAccounts.get(sourceAccountId);
-    const targetAccount = this.storage.connectedAccounts.get(targetAccountId);
-    if (!sourceAccount || !targetAccount || targetAccount.vendorId !== "mnemos" || !areCredentialsValid(targetAccount)) throw new Error("The selected mail account is unavailable.");
+    if (!sourceAccount) throw new Error("The selected mail account is unavailable.");
+    const [targetAccount] = await this.receiver(targetAccountId, 'mail', "The selected mail account is unavailable.");
     const accounts: CalendarSourceAccounts = {sourceAccountId,targetAccountId,sourceVendor:sourceAccount.vendorId,targetVendor:targetAccount.vendorId,resourcePattern:""};
     await this.checkCalendarSourceAccounts(accounts);
     const sourceOwner = sourceAccount.account as Required<Pick<GatekeeperUser,"getMailReadSource">>;

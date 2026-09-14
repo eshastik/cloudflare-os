@@ -1,3 +1,4 @@
+import { HUMAN_SESSION_MS } from "./human-session.ts";
 import type { AccountStorage } from "./account-session.ts";
 
 /** Operator configuration. Never construct this from callback query parameters. */
@@ -83,7 +84,7 @@ export class LoginFlow {
       const started = Date.now();
       const credential = await this.#json(this.#config.iamOrigin + "/v1/session/credential", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.#config.iamClientSecret }, body: JSON.stringify({ state: pending.state, id_token: provider.id_token }) });
       this.#check(pending.generation, "consuming");
-      if (typeof credential.access_token !== "string" || !credential.access_token || /\s/.test(credential.access_token) || credential.token_type !== "Bearer" || !Number.isInteger(credential.expires_in) || credential.expires_in <= 0 || credential.expires_in > 900) throw failure();
+      if (typeof credential.access_token !== "string" || !credential.access_token || /\s/.test(credential.access_token) || credential.token_type !== "Bearer" || !Number.isInteger(credential.expires_in) || credential.expires_in <= 0 || credential.expires_in > HUMAN_SESSION_MS / 1000) throw failure();
       return { token: credential.access_token, expiresAt: started + credential.expires_in * 1000 };
     } finally { this.#finish(pending.generation); }
   }

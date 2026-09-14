@@ -143,6 +143,8 @@ export function boundAgentCatalog(
 
 // Describes a connected user account on an external service, for display purposes.
 export type AccountDescription = {
+  /** Provider-reported source read failures; these are diagnostics, never access grants. */
+  sourceErrors?: Array<"mail" | "calendar" | "drive">;
   /** Supports diagnostic activity delivery only after the user selects this account as the recipient. */
   receivesWorkspaceActivity?: boolean;
   // User's display name, e.g. "John Doe". This is a non-unique name that is human-readable.
@@ -233,6 +235,16 @@ export type SupportedResource = {
   //
   // If omitted/false, the resource type is not separately grantable.
   grantable?: boolean;
+
+  /** Declares this resource type as the account's inbound side for host-transferred sources of one
+   * kind. The Workshop hands mail, calendar or drive sources from other accounts only to an account
+   * declaring the matching kind (see GatekeeperUser.acceptMailReadSource, acceptCalendarReadSource,
+   * captureDriveImport and their registration and draft counterparts), issues the human draft
+   * sender or creator to that account's management UI, and checks admin policy against this
+   * urlPattern when the account lists or transfers its own mailboxes, calendars or files. The
+   * Workshop names no vendor: whichever account declares a kind is its receiver. Declare at most
+   * one resource per kind: when several resources declare the same kind, the last one listed wins. */
+  receives?: 'mail' | 'calendar' | 'drive';
 }
 
 /** Removes every trailing slash from a string in linear time. */
@@ -598,6 +610,8 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Read an authorized proposal, including current required decisions. */
   review(id: string): Promise<import('./publication-review').PublicationReview>;
   /** Publish only this author's ready proposal at its exact heads; the service rechecks authorization atomically. */
+  /** Withdraw an unpublished review on the server; only its human author may cancel it. */
+  withdrawReview(id: string): Promise<void>;
   publishReview(scope: string, id: string): Promise<{ personal_head: string; shared_head: string; published: boolean; conflicted: boolean }>;
   /** List service scopes currently accessible to this account. */
   scopes(): Promise<{ scopes: { id: string; name: string }[] }>;

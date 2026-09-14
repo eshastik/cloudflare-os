@@ -14,10 +14,22 @@
     "test:browser": "pnpm run build:app && node --test __tests__/browser-csp.test.mjs"
   },
   "devDependencies": {
+    "@cloudflare/kumo": "2.9.0",
+    "@phosphor-icons/react": "2.1.10",
+    "@tailwindcss/vite": "4.3.3",
     "@types/node": "26.1.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
     "esbuild": "0.28.1",
     "jsdom": "26.1.0",
-    "miniflare": "5.20260801.0-alpha"
+    "miniflare": "5.20260801.0-alpha",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vite-plugin-singlefile": "2.3.3"
   },
   "dependencies": {
     "@gadgets/caldav-client": "workspace:*",

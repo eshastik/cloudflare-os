@@ -30,16 +30,16 @@ export default function DataTab() {
       <div className="flex items-center justify-between px-4 py-2 border-b border-kumo-fill bg-kumo-elevated">
         <div className="flex items-center gap-3">
           <span className="font-mono text-sm text-kumo-default">channels</span>
-          <Badge variant="secondary">{sampleDataRows.length} rows</Badge>
+          <Badge variant="secondary">Строк: {sampleDataRows.length}</Badge>
         </div>
         <div className="flex items-center gap-2">
           {selectedIds.size > 0 && (
             <span className="text-xs text-kumo-subtle">
-              {selectedIds.size} selected
+              Выбрано: {selectedIds.size}
             </span>
           )}
-          <Button variant="ghost" size="xs">Filter</Button>
-          <Button variant="ghost" size="xs">Sort</Button>
+          <Button variant="ghost" size="xs">Фильтр</Button>
+          <Button variant="ghost" size="xs">Сортировка</Button>
         </div>
       </div>
 
@@ -52,12 +52,12 @@ export default function DataTab() {
                 checked={selectedIds.size === sampleDataRows.length}
                 indeterminate={selectedIds.size > 0 && selectedIds.size < sampleDataRows.length}
                 onValueChange={toggleAll}
-                aria-label="Select all rows"
+                aria-label="Выбрать все строки"
               />
-              <Table.Head>Channel</Table.Head>
-              <Table.Head>Messages</Table.Head>
-              <Table.Head>Last Active</Table.Head>
-              <Table.Head>Status</Table.Head>
+              <Table.Head>Канал</Table.Head>
+              <Table.Head>Сообщения</Table.Head>
+              <Table.Head>Активность</Table.Head>
+              <Table.Head>Статус</Table.Head>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -66,7 +66,7 @@ export default function DataTab() {
                 <Table.CheckCell
                   checked={selectedIds.has(row.id)}
                   onValueChange={() => toggleRow(row.id)}
-                  aria-label={`Select ${row.channel}`}
+                  aria-label={`Выбрать ${row.channel}`}
                 />
                 <Table.Cell>
                   <span className="font-mono text-sm text-kumo-default">{row.channel}</span>
@@ -81,9 +81,9 @@ export default function DataTab() {
                 </Table.Cell>
                 <Table.Cell>
                   {row.unread ? (
-                    <Badge variant="primary">Unread</Badge>
+                    <Badge variant="primary">Непрочитано</Badge>
                   ) : (
-                    <Badge variant="secondary">Read</Badge>
+                    <Badge variant="secondary">Прочитано</Badge>
                   )}
                 </Table.Cell>
               </Table.Row>
@@ -95,10 +95,10 @@ export default function DataTab() {
       {/* Footer */}
       <div className="px-4 py-2 border-t border-kumo-fill bg-kumo-elevated flex items-center justify-between">
         <span className="font-mono text-xs text-kumo-subtle">
-          {sampleDataRows.length} rows in channels
+          Строк в channels: {sampleDataRows.length}
         </span>
         <span className="font-mono text-xs text-kumo-subtle">
-          {sampleDataRows.reduce((sum, r) => sum + r.messages, 0).toLocaleString()} total messages
+          Всего сообщений: {sampleDataRows.reduce((sum, r) => sum + r.messages, 0).toLocaleString()}
         </span>
       </div>
     </div>

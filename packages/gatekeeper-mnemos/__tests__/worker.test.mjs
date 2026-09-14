@@ -269,7 +269,7 @@ test("Worker login installs the verified human and revocation fences an in-fligh
     };
     assert.equal((await finish(connect.url)).status, 200);
     const receipt = await (await call("/receipt")).json();
-    assert.equal(receipt.description.providesUi.title, "Mnemos");
+    assert.equal(receipt.description.providesUi.title, "Память");
     assert.equal(receipt.identity.subject.user_id, "alice");
     assert.equal(receipt.completions, 1);
     assert.ok(Date.parse(receipt.expiresAt) > Date.now());

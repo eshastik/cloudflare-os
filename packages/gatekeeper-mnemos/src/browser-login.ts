@@ -80,6 +80,6 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
     const state = url.searchParams.get("state")!, code = url.searchParams.get("code")!;
     if (!state || state.length > 512 || !code || code.length > 8192) return reject(400);
     await account(binding[0]).completeBrowserLogin(binding[1], state, code);
-    return new Response("Личность подтверждена в Mnemos. Вернитесь в CloudflareOS.", { headers: { ...headers, "Content-Type": "text/plain; charset=utf-8", "Set-Cookie": clearCookie } });
+    return new Response(null, { status: 303, headers: { ...headers, Location: callback.origin + "/gatekeepers/mnemos", "Set-Cookie": clearCookie } });
   } catch { return reject(403); }
 }

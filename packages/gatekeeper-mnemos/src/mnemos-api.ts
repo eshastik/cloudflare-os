@@ -494,6 +494,10 @@ export class MnemosAPI {
     if (!Number.isSafeInteger(version) || version < 0 || (side !== "before" && side !== "after")) throw new MnemosAPIError(400);
     return this.#request(`/v1/publication-reviews/${review}/nodes/${segment(node)}/download`, "POST", signal, { expected_version: version, side });
   }
+  withdrawPublicationReview(id: string, signal?: AbortSignal): Promise<void> {
+    head(id);
+    return this.#request(`/v1/publication-reviews/${id}/withdraw`, "POST", signal, {});
+  }
   recordReviewDecision(id: string, domain: string, version: number, approved: boolean, signal?: AbortSignal): Promise<void> {
     head(id); segment(domain);
     if (!Number.isSafeInteger(version) || version < 0 || typeof approved !== "boolean") throw new MnemosAPIError(400);
@@ -549,6 +553,21 @@ export class MnemosAPI {
     const params = new URLSearchParams({ project_id: projectId, q: query, limit: String(limit) });
     return this.#request(`/v1/search?${params}`, "GET", signal);
   }
+  createProject(name: string, slug: string, signal?: AbortSignal): Promise<{project: ProjectPage["projects"][number]}> {
+    return this.#request("/v1/projects", "POST", signal, {name, slug});
+  }
+  readWorkshopAgentScope(binding: string, signal?: AbortSignal) { return this.#request<WorkshopAgentConnection>(`/v1/agent-connections/${segment(binding)}/workshop-scope`, "GET", signal); }
+  updateWorkshopAgentScope(binding: string, expected: string[], projects: string[], signal?: AbortSignal) {
+    return this.#request<WorkshopAgentConnection>(`/v1/agent-connections/${segment(binding)}/workshop-scope`, "POST", signal, {expected_project_ids: expected, project_ids: projects});
+  }
+  /** Public MCP address of this account's configured service; contains no credential. */
+  /** Human administrator grant for an explicitly selected agent and project. */
+  setAgentProjectRight(principal: string, project: string, mode: 'read' | 'write', enabled: boolean, signal?: AbortSignal) {
+    segment(principal); segment(project);
+    if (!['read','write'].includes(mode) || typeof enabled !== 'boolean') throw new MnemosAPIError(400);
+    return this.#request('/v1/admin/rights' + (enabled ? '' : '/remove'), 'POST', signal, {kind:'anchor',principal_id:principal,project_id:project,class:'filesystem',mode});
+  }
+  externalAgentSetup() { return {resource: this.#origin + '/mcp', clientId: 'mnemos-cli'}; }
   whoAmI(signal?: AbortSignal): Promise<WhoAmI> {
     return this.#request("/v1/whoami", "GET", signal);
   }
@@ -760,6 +779,16 @@ export class MnemosAPI {
   revokeAgentConnection(bindingId: string, signal?: AbortSignal): Promise<unknown> {
     return this.#request(`/v1/agent-connections/${segment(bindingId)}/revoke`, "POST", signal);
   }
+  /** Связь синглтона Workshop (S14): повтор с тем же request_id возвращает ту же связь. */
+  provisionWorkshopAgent(requestId: string, connectionName: string, projectIds: string[], signal?: AbortSignal): Promise<WorkshopAgentConnection> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(requestId) || !connectionName.trim() || connectionName.length > 255 || projectIds.length === 0 || projectIds.length > 100) throw new MnemosAPIError(400);
+    for (const project of projectIds) segment(project);
+    return this.#request("/v1/agent-connections/workshop", "POST", signal, { request_id: requestId, connection_name: connectionName, project_ids: projectIds });
+  }
+  /** Короткоживущий credential агента по связи Workshop; значение не журналировать. */
+  issueAgentCredential(bindingId: string, signal?: AbortSignal): Promise<AgentCredential> {
+    return this.#request(`/v1/agent-connections/${segment(bindingId)}/credential`, "POST", signal);
+  }
   nodeHistory(projectId: string, nodeId: string, cursor = "", limit = 50, signal?: AbortSignal): Promise<NodeHistoryPage> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new MnemosAPIError(400);
     return this.#request(`/v1/projects/${segment(projectId)}/nodes/${segment(nodeId)}/history?cursor=${encodeURIComponent(cursor)}&limit=${limit}`, "GET", signal);
@@ -788,10 +817,12 @@ export class MnemosAPIError extends Error {
   readonly status: number;
   constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit") { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; }
 }
-export interface AgentConnectionPage { connections: { binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
+export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
+export interface WorkshopAgentConnection { binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; revoked: boolean; connection_name: string; project_ids: string[] }
+export interface AgentCredential { access_token: string; token_type: string; expires_in: number }
 export interface NodeHistoryPage { events: { event_id: string; head: string; recorded_at: string; exists: boolean; content_type?: string; observed: boolean; actor: string; on_behalf_of: string }[]; next_cursor?: string }
 
-export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string }
+export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string; capabilities?: string[] }
 export interface ProjectPage { projects: { id: string; name: string; slug: string }[] }
 
 export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; shared_deleted?: boolean }[]; next_cursor?: string; truncated: boolean }

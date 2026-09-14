@@ -21,6 +21,9 @@ vi.mock('./gatekeeperAppDownload', () => ({
 it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)('native open preserves the read/restore boundary: %s', async mode => {
   let prepared = false
   const calls: string[] = [], restored = vi.fn(), reconnect = vi.fn()
+  let finishBinding!: () => void
+  const binding = new Promise<void>(resolve => { finishBinding = resolve })
+  const onOpened = vi.fn(async () => { await binding })
   class Download extends RpcTarget {
     async issue() { calls.push('issue'); return { url: 'https://example.test/body', method: 'GET', size_bytes: 1, sha256_hex: '0'.repeat(64), content_type: 'application/json' } }
     async validate() { calls.push('validate'); if (mode === 'revoked') throw new Error('denied') }
@@ -45,12 +48,12 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
   let disconnected!: () => void
   const onRpcBroken = vi.fn((callback: () => void) => { disconnected = callback })
   const key = `mnemos-native-open:${location.pathname}:7`
-  sessionStorage.setItem(key, JSON.stringify({ accountId: 3, resourceUrl: 'https://example.test/document', publication: 'publication', revision: 4, label: 'Fixture', format: 'cloudflareos.spreadsheet', at: Date.now() }))
+  sessionStorage.setItem(key, JSON.stringify({ accountId: 3, resourceUrl: 'https://example.test/document', publication: 'publication', revision: 4, label: 'Fixture', scope: 'project', resource: 'document', format: 'cloudflareos.spreadsheet', at: Date.now() }))
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
   const flush = async () => { calls.push('flush'); return { format: 'cloudflareos.spreadsheet' as const, formatVersion: 1 as const, document: { revision: mode === 'changed' ? 5 : 4 } } }
   try {
-    await act(async () => { root.render(<NativeDocumentOpen gadget={{ getId: stub.getId, prepareNativeDocumentRead: stub.prepareNativeDocumentRead, readNativeDocument: stub.readNativeDocument, connectToGadget: stub.connectToGadget, onRpcBroken } as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" snapshotSource={{ current: flush }} reconnect={reconnect} />) })
+    await act(async () => { root.render(<NativeDocumentOpen gadget={{ getId: stub.getId, prepareNativeDocumentRead: stub.prepareNativeDocumentRead, readNativeDocument: stub.readNativeDocument, connectToGadget: stub.connectToGadget, onRpcBroken } as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" snapshotSource={{ current: flush }} reconnect={reconnect} onOpened={onOpened} />) })
     expect(document.body.textContent).toContain('Продолжить открытие: Fixture')
     expect(calls).toEqual([])
     const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Заменить содержимое редактора')
@@ -72,6 +75,9 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
     } else {
       expect(calls).toEqual(['flush', 'prepare', 'read', 'issue', 'validate', 'connect', 'validate', 'restore'])
       expect(restored).toHaveBeenCalledWith(expect.objectContaining({ format: 'cloudflareos.spreadsheet' }), 4)
+      expect(onOpened).toHaveBeenCalledWith({ accountId: 3, scope: 'project', resource: 'document' })
+      expect(reconnect).not.toHaveBeenCalled()
+      await act(async () => { finishBinding() })
       expect(reconnect).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBeNull()
     }
     if (mode !== 'restore') expect(restored).not.toHaveBeenCalled()
@@ -92,7 +98,7 @@ it.each([[false, false, false], [true, false, false], [false, true, false], [tru
   }
   Object.assign(useAuthenticatedApi().authenticatedApi, {
     subscribeConnectedAccounts: async (subscriber: any) => {
-      await subscriber.add(3, { displayName: 'Mnemos' }, {}, [], true, 'mnemos')
+      await subscriber.add(3, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory')
       await subscriber.ready()
       return { [Symbol.dispose]() {} }
     },
@@ -115,7 +121,7 @@ it.each([[false, false, false], [true, false, false], [false, true, false], [tru
   try {
     sessionStorage.clear()
     await act(async () => { root.render(<NativeDocumentOpen gadget={{ getId: async () => 8 } as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" snapshotSource={{ current: null }} reconnect={() => {}} />) })
-    await click('Открыть из Mnemos')
+    await act(async () => { await vi.waitFor(() => expect(document.querySelector('select[aria-label="Подключение Mnemos"]')).not.toBeNull()) })
     await choose('Подключение Mnemos', '3')
     await choose('Проект для открытия', 'project')
     await choose('Документ для открытия', 'doc')

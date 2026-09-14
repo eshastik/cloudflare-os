@@ -22,17 +22,17 @@ it('reads own accounts separately, reports partial data, clears revoked results 
  let revoked=false
  const dispose=vi.fn(),subscriptionDisposed=vi.fn()
  api.subscribeConnectedAccounts.mockImplementation(async(s:ConnectedAccountsSubscriber)=>{
-  for(let id=1;id<=4;id++)s.add(id,{displayName:`Account ${id}`,avatar:{url:''}},{displayName:'Mnemos',url:'https://memory.example'},[],true,'mnemos')
+  for(let id=1;id<=4;id++)s.add(id,{displayName:`Account ${id}`,avatar:{url:''},providesUi:{title:'Память'}},{displayName:'Память',url:'https://memory.example'},[],true,'memory')
   s.ready();return {[Symbol.dispose]:subscriptionDisposed}
  })
  api.getGatekeeperApp.mockImplementation(async(vendor:string,id:number)=>{
-  expect(vendor).toBe('mnemos');expect([1,2,3,4]).toContain(id)
+  expect(vendor).toBe('memory');expect([1,2,3,4]).toContain(id)
   return {iframeHtml:'',ui:{[Symbol.dispose]:dispose},organizationMetrics:{[Symbol.dispose]:dispose,async read(){if(revoked||id===4)throw Error('403');return metric(id<=2?'one':'two',id<=2?3:0)}}}
  })
  const container=document.createElement('div'),root=createRoot(container)
  const refresh=async()=>{await act(async()=>{container.querySelector('button')!.click()})}
  try{
-  await act(async()=>root.render(<OrganizationSummaryPanel/>));await refresh()
+  await act(async()=>root.render(<OrganizationSummaryPanel appId="memory"/>));await refresh()
   expect(container.textContent).toContain('Прочитано организаций: 2; повторных подключений: 1.')
   expect(container.textContent).toContain('организаций с завершённой работой — 1')
   expect(container.textContent).toContain('Свод неполный. Недоступны подключения: Account 4')

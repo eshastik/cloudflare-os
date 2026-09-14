@@ -2,8 +2,9 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 import NativeDocumentConflict from './NativeDocumentConflict'
-const { api, preview } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn() }, preview: { malformed: false } }))
+const { api, preview } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) }, preview: { malformed: false } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperNativeDocument: async (_origin: string, _ticket: unknown, _format: string, _signal: AbortSignal, validate: () => Promise<void>) => {
   await validate()
@@ -47,8 +48,9 @@ it.each(['success', 'failure', 'malformed', 'update', 'update-failure', 'locatio
     await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
   }
   try {
-    await act(async () => { root.render(<NativeDocumentConflict context={{}} format="cloudflareos.spreadsheet" />) })
-    await click('Конфликты Mnemos'); await choose('Проект конфликта', 'project')
+    await act(async () => { root.render(<NativeDocumentConflict format="cloudflareos.spreadsheet" />) })
+    await act(async () => { await vi.waitFor(() => expect(document.querySelector('select[aria-label="Проект конфликта"]')).not.toBeNull()) })
+    expect(button('Закрыть')).toBeDefined(); await choose('Проект конфликта', 'project')
     if (scenario.startsWith('update')) {
       expect(button('Получить общие правки')).toBeUndefined()
       await click('Подготовить получение общих правок')

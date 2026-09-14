@@ -2,9 +2,10 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 import { RpcStub, RpcTarget } from 'capnweb'
 import NativeDocumentPublication from './NativeDocumentPublication'
-const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn() } }))
+const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -42,13 +43,14 @@ it('requires current approvals, recovers a saved proposal and hides uncertain pu
   }
   const publish = 'Опубликовать согласованные изменения проекта'
   try {
-    await act(async () => root.render(<NativeDocumentPublication context={{}} />))
-    await click('Согласование Mnemos'); await choose()
+    let generation = 0
+    const reopen = async () => { await act(async () => root.render(<NativeDocumentPublication key={generation++} />)) }
+    await reopen(); await choose()
     expect(button(publish).disabled).toBe(true)
     await click('Отправить изменения проекта на согласование')
     expect(requests).toBe(1); expect(button(publish).disabled).toBe(true)
-    await click('Закрыть'); ready = true
-    await click('Согласование Mnemos'); await choose()
+    await click('Закрыть'); expect(document.querySelector('select')).toBeNull(); ready = true
+    await reopen(); await choose()
     expect(requests).toBe(1); expect(button(publish).disabled).toBe(false)
     head = 'c'.repeat(64); await click('Перечитать состояние')
     expect(document.body.textContent).toContain('Согласование устарело'); expect(button(publish).disabled).toBe(true)

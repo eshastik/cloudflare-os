@@ -2,9 +2,10 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 import { RpcStub, RpcTarget } from 'capnweb'
 import NativeDocumentParticipants from './NativeDocumentParticipants'
-const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn() } }))
+const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -45,9 +46,9 @@ it('rereads an uncertain invitation before revoking the actual current mode', as
     await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
   }
   try {
-    await act(async () => root.render(<NativeDocumentParticipants context={{}} format="cloudflareos.document" />))
-    await click('Участники Mnemos')
+    await act(async () => root.render(<NativeDocumentParticipants format="cloudflareos.document" />))
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('option[value="project"]')).not.toBeNull()) })
+    expect(document.querySelector('select[aria-label="Проект участников"]')).not.toBeNull()
     await choose('Проект участников', 'project'); await choose('Документ участников', 'doc')
     expect((document.querySelector('option[value="write"]') as HTMLOptionElement).disabled).toBe(true)
     await choose('Доступ: Мария', 'read'); await click('Применить')

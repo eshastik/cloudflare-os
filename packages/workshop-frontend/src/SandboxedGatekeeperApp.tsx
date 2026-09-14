@@ -117,6 +117,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     nativeDownloads?: GatekeeperUiFrame['nativeDownloads'],
     mailDraftSender?:GatekeeperUiFrame['mailDraftSender'],
     calendarDraftCreator?:GatekeeperUiFrame['calendarDraftCreator'],
+    private readonly navigateApprovals: () => void = () => {},
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
@@ -139,6 +140,18 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#openTarget = openTarget
     this.#openPrompt = openPrompt
     this.#resolveWorkspaceTitles = resolveWorkspaceTitles
+  }
+
+  /** Selected resource scope from the host URL; never an authorization grant. */
+  getSelectedProject(): string {
+    const value = new URLSearchParams(window.location.search).get('project') ?? ''
+    return value.length <= 255 ? value : ''
+  }
+
+  /** Opens the human inbox without granting approval authority to the frame. */
+  openApprovals(): void {
+    this.#uploadLifetime.signal.throwIfAborted()
+    this.navigateApprovals()
   }
 
   async createCalendarDraft(id:string,sha256:string){
@@ -441,6 +454,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
         frame.nativeDownloads,
         frame.mailDraftSender,
         frame.calendarDraftCreator,
+        () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
       )
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
@@ -486,7 +500,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
     // carrying a fresh stub (even with identical HTML) never keeps talking through the stale one.
   }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
-      present, resolveWorkspaceTitles, setOverlayPhase])
+      present, resolveWorkspaceTitles, setOverlayPhase, navigate])
 
   return (
     <iframe

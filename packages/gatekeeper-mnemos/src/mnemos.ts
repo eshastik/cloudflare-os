@@ -23,6 +23,8 @@ import type {TelegramManagement} from './telegram-management.ts';
 import {OfficeUpdateRecovery} from "./office-update-recovery.ts";
 export {TelegramBot} from './telegram-bot.ts';
 export {TelegramPoller} from './telegram-poller.ts';
+export { MnemosLibrary } from './agent-library.ts';
+import { MNEMOS_LIBRARY_TYPES } from './agent-library-types.ts';
 import {telegramRoute} from './telegram-bot.ts';
 import {DriveImportCapture} from "./drive-import-capture.ts";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
@@ -87,7 +89,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Vendor {
   }
   // Agent resource implementations are not registered until their rights and observations exist.
   async getSupportedResources(_options?: { userId?: string }): Promise<SupportedResource[]> { return [CALDAV_RESOURCE,IMAP_RESOURCE,WEBDAV_RESOURCE]; }
-  async getTypeScriptTypes(): Promise<string> { return ""; }
+  async getTypeScriptTypes(): Promise<string> { return MNEMOS_LIBRARY_TYPES; }
 }
 
 /** Human account capability, retained by Workshop rather than handed to agents. */
@@ -97,7 +99,12 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     const identity = await this.#account().connectionIdentity();
     return { displayName: identity.tenant_name || identity.subject.user_id,
       uniqueName: identity.connectionName, avatar: AVATAR,
-      receivesWorkspaceActivity: true, providesUi: { title: "Mnemos", icon: AVATAR } };
+      sourceErrors: await this.#account().sourceErrors(),
+      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Память", icon: AVATAR } };
+  }
+  /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
+  async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
+    return this.ctx.exports.MnemosLibrary({ props: { userObjectId: this.ctx.props.userObjectId } });
   }
   /** Forward diagnostic samples through the connected human account. */
   async recordWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> { await this.#account().recordWorkspaceActivity(stream, sequence, active); }
@@ -160,6 +167,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
 export interface MnemosVerifierApi extends GatekeeperUserVerifier {
   /** Recheck this exact publication with the observer's own account in the source's organization. */
   canReadPublication(resourceUrl: string, eventId: string, tenantId: string): Promise<boolean>;
+  /** Observer's connected account belongs to this organization; no document capability is implied. */
+  sameTenant(tenantId: string): Promise<boolean>;
 }
 
 /** Persistent verifier minted by the observer's connected account. */
@@ -167,6 +176,10 @@ export class MnemosVerifier extends WorkerEntrypoint<Env, { userObjectId: string
   async canReadPublication(resourceUrl: string, eventId: string, tenantId: string): Promise<boolean> {
     const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
     return account.canReadPublication(resourceUrl, eventId, tenantId);
+  }
+  async sameTenant(tenantId: string): Promise<boolean> {
+    const account = this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId));
+    return account.sameTenant(tenantId);
   }
 }
 
@@ -316,6 +329,14 @@ export class UserAccount extends DurableObject<Env> {
   async canReadPublication(resourceUrl: string, eventId: string, tenantId: string): Promise<boolean> {
     return this.#account().canReadPublication(resourceUrl, eventId, tenantId);
   }
+  /** Internal observer check: a live credential of the same organization. Disconnect keeps the owner but empties the token. */
+  async sameTenant(tenantId: string): Promise<boolean> {
+    if (typeof tenantId !== "string" || !tenantId) return false;
+    const storage = this.#operationStorage();
+    const record = storage.get<{ token?: string; expiresAt?: number }>('mnemosCredential');
+    if (!record?.token || !(typeof record.expiresAt === 'number' && record.expiresAt > Date.now())) return false;
+    return storedAccountOwner(storage)?.tenant === tenantId;
+  }
   /** Trusted factory: source coordinates and organization are immutable and server verified. */
   async nativeDocumentSource(resourceUrl: string, publication: string) {
     parseDocumentResource(this.#origins().apiOrigin, resourceUrl);
@@ -439,6 +460,25 @@ export class UserAccount extends DurableObject<Env> {
     }finally{session.dispose();}
   }
   #imap(){return new ImapAccounts(this.#connectionStorage(),imapServers(this.env.MNEMOS_IMAP_SERVERS),()=>this.#account().calendarEpoch(),undefined,(server,credential,validate)=>new SmtpClient(server,credential,connectSmtp,validate));}
+  /** Diagnostics are derived from this account's selected sources, without credentials. */
+  async sourceErrors(): Promise<Array<'mail'|'calendar'|'drive'>> {
+    const errors: Array<'mail'|'calendar'|'drive'> = [];
+    const checks = [
+      ['mail', () => this.listImapAccounts()],
+      ['calendar', () => this.listCalDAVAccounts()],
+      ['drive', () => this.listWebDAVAccounts()],
+    ] as const;
+    for (const [kind,read] of checks) {
+      try { if ((await read()).accounts.some(a => !a.enabled || !!a.last_error_at)) errors.push(kind); }
+      catch { errors.push(kind); }
+    }
+    const session = this.#account().session();
+    try {
+      try { if ((await session.listMailConnections("")).connections.some(c => !c.enabled || !!c.last_error_at) && !errors.includes('mail')) errors.push('mail'); } catch { if (!errors.includes('mail')) errors.push('mail'); }
+      try { if ((await session.listCalendarConnections("")).connections.some(c => !c.enabled || !!c.last_error_at) && !errors.includes('calendar')) errors.push('calendar'); } catch { if (!errors.includes('calendar')) errors.push('calendar'); }
+    } finally { session.dispose(); }
+    return errors;
+  }
   async listImapAccounts(){return this.#withCalendarOwner(async owner=>this.#imap().list(owner));}
   async connectImapAccount(input:ImapSetup){return this.#withCalendarOwner(owner=>this.#imap().connect(owner,input));}
   async removeImapAccount(id:string){return this.#withCalendarOwner(async owner=>this.#imap().remove(owner,id));}
@@ -775,12 +815,31 @@ export class UserAccount extends DurableObject<Env> {
       ...(storageOrigin ? { reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
 
   }
+  /** Связь синглтона Workshop (S15): имя агента для описания действия; связь заводится при первом обращении. */
+  async workshopAgent(): Promise<{ connectionName: string }> {
+    const agent = await this.#account().ensureWorkshopAgent(this.ctx.id.toString(), WORKSHOP_AGENT_NAME);
+    return { connectionName: agent.connectionName };
+  }
+  /** Путь записи черновика под агентским credential; bearer человека сюда не попадает. */
+  async startWorkshopAgent() {
+    const storageOrigin = this.#origins().storageOrigin;
+    if (storageOrigin) {
+      const url = new URL(storageOrigin);
+      if (url.protocol !== "https:" || url.origin !== storageOrigin) throw new Error("Invalid storage origin");
+    }
+    const agent = await this.#account().ensureWorkshopAgent(this.ctx.id.toString(), WORKSHOP_AGENT_NAME);
+    return { connectionName: agent.connectionName, ui: new RpcStub(new MnemosAgentDraftWriter(this.#account().agentSession())),
+      ...(storageOrigin ? { textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().agentSession())) } } : {}) };
+  }
   async revoke(): Promise<void> {
     this.ctx.storage.kv.delete("workshopCallback");
     this.#browser().cancel();
     this.ctx.storage.kv.put("loginRevocationEpoch", crypto.randomUUID());
     // Cancel pending proofs even when login configuration has been removed.
     LoginFlow.cancelStored(this.ctx.storage.kv);
+    // Связь Workshop отзывается до отключения, пока credential человека ещё принимается сервером.
+    // Потеря ответа не страшна: кэш агента уже очищен, а новый credential без человека не выпустить.
+    try { await this.#account().revokeWorkshopAgent(); } catch { /* связь на сервере доживёт до переподключения */ }
     this.#disconnectAccount();
     const results = await Promise.allSettled((this.ctx.storage.kv.get<string[]>('telegramBots') ?? [])
       .map(bot => this.#telegramBot(bot).revokeAccount(this.ctx.id.toString())));
@@ -931,6 +990,22 @@ class MnemosNativeDocumentDownload extends RpcTarget {
   async validate(): Promise<void> { await this.#reader.validateRead(); }
 }
 
+/** Имя связи агента: под ним запись видна в авторстве личного черновика (S14). */
+const WORKSHOP_AGENT_NAME = "Агент Workshop";
+
+/** Запись черновика синглтоном под агентским credential; методов чтения публикаций и публикации здесь нет. */
+class MnemosAgentDraftWriter extends RpcTarget {
+  async createPrivateDocument(project: string, request: import("./mnemos-api.ts").PrivateDocumentCreate) { return this.#session.createPrivateDocument(project,request); }
+  #session: MnemosAccountSession;
+  constructor(session: MnemosAccountSession) { super(); this.#session = session; }
+  async draftState(projectId: string) { return this.#session.draftState(projectId); }
+  async openDraft(projectId: string) { return this.#session.openDraft(projectId); }
+  async saveDraftDocument(projectId: string, nodeId: string, uploadId: string, expectedHead: string) {
+    return this.#session.saveDraftDocument(projectId, nodeId, uploadId, expectedHead);
+  }
+  [Symbol.dispose](): void { this.#session.dispose(); }
+}
+
 /** Host-only issuer. Never put this capability inside the iframe's ui object. */
 class MnemosTextUploadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
@@ -1016,6 +1091,10 @@ class MnemosAgentConsent extends RpcTarget {
 }
 
 class MnemosManagementSession extends RpcTarget implements TeamDocumentManagement, TelegramManagement, VoiceManagement {
+  async createProject(...args:Parameters<MnemosAccountSession["createProject"]>) { return this.#session.createProject(...args); }
+  async readWorkshopAgentScope(...args:Parameters<MnemosAccountSession["readWorkshopAgentScope"]>) { return this.#session.readWorkshopAgentScope(...args); }
+  async updateWorkshopAgentScope(...args:Parameters<MnemosAccountSession["updateWorkshopAgentScope"]>) { return this.#session.updateWorkshopAgentScope(...args); }
+
   async saveProjectSignalAssessment(...args:Parameters<MnemosAccountSession['saveProjectSignalAssessment']>){return this.#session.saveProjectSignalAssessment(...args);}
   async readPublishedProjectSignals(...args:Parameters<MnemosAccountSession['readPublishedProjectSignals']>){return this.#session.readPublishedProjectSignals(...args);}
   async publishProjectSignals(...args:Parameters<MnemosAccountSession['publishProjectSignals']>){return this.#session.publishProjectSignals(...args);}
@@ -1122,6 +1201,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async publishDraft(projectId: string, expectedHead: string, sharedHead: string, message: string) {
     return this.#session.publishDraft(projectId, expectedHead, sharedHead, message);
   }
+  async setAgentProjectRight(...args: Parameters<MnemosAccountSession["setAgentProjectRight"]>) { return this.#session.setAgentProjectRight(...args); }
+  async externalAgentSetup() { return this.#session.externalAgentSetup(); }
   async whoAmI() { return this.#session.whoAmI(); }
   /** Relay UI diagnostics through the human management session. */
   async recordUIReadiness(sample:Parameters<MnemosAccountSession["recordUIReadiness"]>[0]) { return this.#session.recordUIReadiness(sample); }

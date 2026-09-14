@@ -50,9 +50,12 @@ import {parseBudgetUSD, formatBudgetUSD} from "./budget-money.ts";
 import { startUIReadinessAttempt } from "./ui-readiness.ts";
 import { histogramPercentileBound } from "./latency.ts";
 import type { MnemosAccountSession, ManagedAgentRequest, ManagedTaskRequest } from "../src/account-session.ts";
-import { RpcTarget, newMessagePortRpcSession, type RpcStub } from "capnweb";
+import type { RpcTarget, RpcStub } from "capnweb";
 import type { AgentConnectionPage, WhoAmI, ProjectPage, NodePage, DocumentContent, DraftDocument, DraftState, DraftHead, PublicationResult, PublicationReview, PublicationReviewPage, PublicationPolicy, PolicyDomain, PolicyApproverPage, ProjectSearchPage, NodeHistoryPage } from "../src/mnemos-api.ts";
-interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement, CalendarDraftManagement, MailDraftManagement, RpcTarget, TelegramManagement, VoiceManagement {
+export interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement, CalendarDraftManagement, MailDraftManagement, RpcTarget, TelegramManagement, VoiceManagement {
+ createProject:MnemosAccountSession["createProject"];
+ readWorkshopAgentScope:MnemosAccountSession["readWorkshopAgentScope"];
+ updateWorkshopAgentScope:MnemosAccountSession["updateWorkshopAgentScope"];
  readCalendarConnection:MnemosAccountSession["readCalendarConnection"];
  readCalendarEvents:MnemosAccountSession["readCalendarEvents"];
  listCalendarConnections:MnemosAccountSession["listCalendarConnections"];
@@ -240,6 +243,10 @@ interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement,
   readProjectDocument(project: string, node: string): Promise<DocumentContent>;
   searchProject(project: string, query: string): Promise<ProjectSearchPage>;
   nodeHistory(project: string, node: string, cursor: string): Promise<NodeHistoryPage>;
+  /** Public setup parameters for connecting an external CLI to this organization. */
+  /** Explicitly grant or remove one agent's project permission. */
+  setAgentProjectRight: MnemosAccountSession["setAgentProjectRight"];
+  externalAgentSetup: MnemosAccountSession["externalAgentSetup"];
   whoAmI(): Promise<WhoAmI>;
   listProjects(): Promise<ProjectPage>;
   listVisibleDatabaseConnections:MnemosAccountSession["listVisibleDatabaseConnections"];
@@ -264,25 +271,27 @@ interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement,
   checkTrackerAssignee: MnemosAccountSession["checkTrackerAssignee"];
   revokeAgentConnection(id: string): Promise<void>;
 }
-class Frame extends RpcTarget {
-  setThemeMode(mode: string): void { document.documentElement.style.colorScheme = mode === "dark" ? "dark" : "light"; }
-}
-interface Host extends RpcTarget {
+export interface Host extends RpcTarget {
+  openApprovals(): Promise<void>;
+  getSelectedProject(): Promise<string>;
   saveMailAttachment(bytes:Uint8Array,filename:string):Promise<void>;
   createCalendarDraft(id:string,sha256:string):Promise<import('@gadgets/workshop-shared/calendar-draft').CalendarDraftExecution>;
   sendMailDraft(id:string,sha256:string):Promise<{state:'attempted'|'accepted';message_id?:string}>;
   uploadText(project: string, text: string): Promise<string>;
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
   downloadText(project: string, node: string, head: string, side: number): Promise<string>;
-  ui: RpcStub<Management>; subscribeTheme(frame: Frame): Promise<string> }
-const { port1, port2 } = new MessageChannel();
-const frame = new Frame();
-const host = newMessagePortRpcSession<Host>(port1, frame);
-window.parent.postMessage({ type: "handshake" }, "*", [port2]);
-host.subscribeTheme(frame).then(mode => frame.setThemeMode(mode)).catch(() => {});
+  ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string> }
+// Handshake с хостом и корневой элемент даёт вызывающий (оболочка на React): у фрейма одна RPC-сессия на всех.
+let host: RpcStub<Host>;
+let root: HTMLElement;
 let activeUIReadiness: ReturnType<typeof startUIReadinessAttempt> | null = null;
-window.addEventListener("visibilitychange", () => { if(document.hidden) activeUIReadiness?.finish("abandoned"); });
-window.addEventListener("pagehide", () => { activeUIReadiness?.finish("abandoned"); closed = true; host[Symbol.dispose](); }, { once: true });
+/** Монтирует прежние разделы в контейнер и начинает загрузку данных. */
+export function mountLegacy(container: HTMLElement, hostStub: RpcStub<Host>): void {
+  root = container; host = hostStub;
+  window.addEventListener("visibilitychange", () => { if(document.hidden) activeUIReadiness?.finish("abandoned"); });
+  window.addEventListener("pagehide", () => { activeUIReadiness?.finish("abandoned"); closed = true; host[Symbol.dispose](); }, { once: true });
+  void load(false);
+}
 let rows: AgentConnectionPage["connections"] = [], cursor = "", busy = false, closed = false, selected = "", notice = "";
 let identity: WhoAmI | null = null;
 let managedRequest: ManagedAgentRequest | null = null;
@@ -316,7 +325,6 @@ let comparison: { node: string; before: string | null; after: string | null } | 
 window.addEventListener("beforeunload", event => {
   if ((editor && (busy || editor.text !== editor.original)) || (policyEditor && (busy || policyEditor.dirty))) { event.preventDefault(); event.returnValue = ""; }
 });
-const root = document.getElementById("app")!;
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ""): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag); el.textContent = text; return el;
 }
@@ -367,6 +375,94 @@ let gitConnectionsView: GitConnectionsView | null = null;
 let workTemplateView: WorkTemplateView | null = null;
 let absenceTaskView: AbsenceTaskView | null = null;
 let teamBudgetView: TeamBudgetView | null = null;
+/** Разделы, которые открываются и с домашней страницы «Ещё», и из вкладок React (openLegacySection). */
+const openers = {
+  telegram: () => {telegramView=new TelegramView(root,host.ui,()=>{telegramView=null;render();});telegramView.render();void telegramView.list();},
+  imap: () => {imapAccountsView=new ImapAccountsView(root,host.ui,()=>{imapAccountsView=null;render();});void imapAccountsView.load();},
+  webdav: () => {webdavAccountsView=new WebDAVAccountsView(root,host.ui,()=>{webdavAccountsView=null;render();});void webdavAccountsView.load();},
+  caldav: () => {caldavAccountsView=new CalDAVAccountsView(root,host.ui,()=>{caldavAccountsView=null;render();});void caldavAccountsView.load();},
+  calendar: () => {calendarConnectionsView=new CalendarConnectionsView(root,host.ui,()=>{calendarConnectionsView=null;render();},(id,hash)=>host.createCalendarDraft(id,hash));void calendarConnectionsView.listConnections();},
+  mail: () => {mailConnectionsView=new MailConnectionsView(root,host.ui,()=>{mailConnectionsView=null;render();},(id,hash)=>host.sendMailDraft(id,hash),(bytes,filename)=>host.saveMailAttachment(bytes,filename));void mailConnectionsView.listConnections();},
+  databases: () => {databaseConnectionsView=new DatabaseConnectionsView(root,host.ui,projects,()=>{databaseConnectionsView=null;render();});void databaseConnectionsView.discover();},
+  git: () => {gitConnectionsView=new GitConnectionsView(root,host.ui,()=>{gitConnectionsView=null;render();},projects);void gitConnectionsView.load();},
+  operationAudit: () => {operationAuditView=new OperationAuditView(root,host.ui,()=>{operationAuditView=null;render();});void operationAuditView.load();},
+  policyAlerts: () => {policyAlertsView=new PolicyAlertsView(root,host.ui,()=>{policyAlertsView=null;render();});void policyAlertsView.load();},
+  signalInbox: () => {platformSignalInboxView=new PlatformSignalInboxView(root,host.ui,()=>{platformSignalInboxView=null;render();});void platformSignalInboxView.load();},
+  // С домашней страницы закрытие перечитывает метрики (раздел открыт из них); во вкладке достаточно перерисовки.
+  signalOwners: () => {platformSignalOwnersView=new PlatformSignalOwnersView(root,host.ui,()=>{platformSignalOwnersView=null;if(embedded)render();else void loadPlatformMetrics();});void platformSignalOwnersView.read();},
+  reindexBatch: () => {reindexBatchView=new ReindexBatchView(root,host.ui,projects,()=>{reindexBatchView=null;render();});void reindexBatchView.load();},
+  searchEvaluation: () => {searchEvaluation=new SearchEvaluation(root,host.ui,projects,()=>{searchEvaluation=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side));searchEvaluation.render();},
+  answerEvaluation: () => {answerEvaluation=new AnswerEvaluation(root,host.ui,projects,()=>{answerEvaluation=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side));answerEvaluation.render();},
+  uploadUsage: () => {uploadUsageView=new UploadUsageView(root,host.ui,()=>{uploadUsageView=null;render();});void uploadUsageView.load();},
+  roleMembership: () => {roleMembershipView=new RoleMembershipView(root,host.ui,()=>{roleMembershipView=null;render();});roleMembershipView.render();},
+  metrics: () => void loadPlatformMetrics(),
+  memory: () => void openMemoryEditor(),
+  budget: () => void openBudgetEditor(),
+  taskHistory: () => void openTaskHistory(),
+  collaborations: () => void openCollaborations(),
+  agentTask: () => render(),
+  absence: (project: string) => void openAbsenceEditor(project),
+  policy: (project: string) => void openPolicy(project),
+  tracker: (project: string) => void openTaskTracker(project),
+  centroid: (project: string, name: string) => {centroidView=new CentroidView(root,host.ui,project,name,()=>{centroidView=null;render();});void centroidView.load();},
+  engagement: (binding: string, name: string) => void openEngagementEditor(binding, name),
+};
+export type LegacySection =
+  | { kind: "telegram" | "imap" | "webdav" | "caldav" | "calendar" | "mail" | "databases" | "git" | "operationAudit" | "policyAlerts" | "signalInbox" | "signalOwners" | "reindexBatch" | "searchEvaluation" | "answerEvaluation" | "uploadUsage" | "roleMembership" | "metrics" | "memory" | "budget" | "taskHistory" | "collaborations" | "agentTask" }
+  | { kind: "absence" | "policy" | "tracker"; project: string }
+  | { kind: "centroid"; project: string; name: string }
+  | { kind: "engagement"; binding: string; name: string };
+/** Раздел, открытый из вкладки React: по его закрытии контейнер возвращается вкладке, а не домашней странице. */
+let embedded: { section: LegacySection; close: () => void } | null = null;
+/** Раздел, открытие которого отложено: открыватели молча выходят при busy, поэтому ждём конца текущей загрузки. */
+let embeddedPending: LegacySection | null = null;
+export function openLegacySection(section: LegacySection, close: () => void): void {
+  embedded = { section, close }; notice = "";
+  if (busy) { embeddedPending = section; render(); return; }
+  startSection(section);
+}
+function startSection(section: LegacySection): void {
+  switch (section.kind) {
+    case "absence": openers.absence(section.project); break;
+    case "policy": openers.policy(section.project); break;
+    case "tracker": openers.tracker(section.project); break;
+    case "centroid": openers.centroid(section.project, section.name); break;
+    case "engagement": openers.engagement(section.binding, section.name); break;
+    default: openers[section.kind]();
+  }
+}
+/** Вкладка ушла: сбросить всё, что раздел мог открыть, и вернуть контейнеру домашнюю страницу. */
+export function closeLegacySection(): void {
+  embedded = null; embeddedPending = null; notice = "";
+  uploadUsageView = null; centroidView = null; reindexBatchView = null; reindexView = null; policyAlertsView = null; platformSignalInboxView = null; platformSignalOwnersView = null; roleMembershipView = null;
+  telegramView = null; imapAccountsView = null; webdavAccountsView = null; caldavAccountsView = null; calendarConnectionsView = null; mailConnectionsView = null; databaseConnectionsView = null; operationAuditView = null; gitConnectionsView = null;
+  answerEvaluation = null; searchEvaluation = null; trackerView = null; absenceTaskView = null; teamBudgetView = null;
+  budgetEditor = null; taskHistory = null; collaborationView = null; absenceEditor = null; engagementEditor = null; memoryEditor = null; editor = null; policyEditor = null;
+  render();
+}
+function renderEmbeddedTail() {
+  const current = embedded!;
+  const closeButton = () => button("Закрыть раздел", () => { embedded = null; current.close(); });
+  const status = () => { const message = element("p", busy ? "Загрузка…" : notice); message.setAttribute("role", "status"); root.append(message); };
+  if (embeddedPending) {
+    if (busy) { status(); return; }
+    const pending = embeddedPending; embeddedPending = null;
+    startSection(pending);
+    // Открыватель сам перерисовал контейнер; если он ничего не открыл синхронно, ниже покажем состояние.
+    if (busy || uploadUsageView || centroidView || reindexBatchView || policyAlertsView || platformSignalInboxView || platformSignalOwnersView || roleMembershipView || telegramView || imapAccountsView || webdavAccountsView || caldavAccountsView || calendarConnectionsView || mailConnectionsView || databaseConnectionsView || operationAuditView || gitConnectionsView || answerEvaluation || searchEvaluation || trackerView) return;
+  }
+  if (current.section.kind === "metrics") {
+    root.append(button("Обновить метрики", () => void loadPlatformMetrics()));
+    if (metricsNotice) root.append(element("p", metricsNotice));
+    if (platformUsage) renderPlatformMetrics(platformUsage);
+    if (busy) status();
+    root.append(closeButton()); return;
+  }
+  if (current.section.kind === "agentTask") { renderAgentTask(); if (notice || busy) status(); root.append(closeButton()); return; }
+  if (busy) { status(); return; }
+  if (notice) { status(); root.append(closeButton()); return; }
+  embedded = null; current.close();
+}
 function render() {
  if(uploadUsageView){uploadUsageView.render();return;}
  if(centroidView){centroidView.render();return;}
@@ -400,7 +496,8 @@ function render() {
   if (workTemplateView) {workTemplateView.render();return;}
   if (absenceTaskView) {absenceTaskView.render(); return;}
   if (teamBudgetView) {teamBudgetView.render(); return;}
-  root.replaceChildren(element("h1", "Корпоративная память"));
+  root.replaceChildren();
+  if (!embedded) root.append(element("h1", "Корпоративная память"));
   if (budgetEditor) {renderBudgetEditor(); return;}
   if (taskHistory) { renderTaskHistory(); return; }
   if (collaborationView) { renderCollaborations(); return; }
@@ -409,6 +506,7 @@ function render() {
   if (memoryEditor) { renderMemoryEditor(); return; }
   if (editor) { renderEditor(editor); return; }
   if (policyEditor) { renderPolicyEditor(policyEditor); return; }
+  if (embedded) { renderEmbeddedTail(); return; }
   if (inboxOpen) { renderInbox(); return; }
   if (identity) root.append(element("p", `${identity.tenant_name} · ${identity.subject.user_id}`));
   if (identity) {
@@ -416,228 +514,18 @@ function render() {
     root.append(button("Оценка данных проекта",()=>{projectSignals=new ProjectSignalsView(root,host.ui,projects,()=>{projectSignals=null;render();},"",task=>{projectSignals=null;void openTaskTracker(task.project,"",task);});projectSignals.render();}));
     root.append(button("Организация и клиенты",()=>{businessOverview=new BusinessOverview(root,host.ui,projects,()=>{businessOverview=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side),source=>{businessOverview=null;teamBudgetView=new TeamBudgetView(root,host.ui,source.project,review=>{teamBudgetView=null;if(review)taskRequest=review;render();});const view=teamBudgetView;void view.load().then(()=>{if(teamBudgetView===view)view.prepareAnalytics(source);});},(project,view)=>{businessOverview=null;if(view==='expenses')openExpenses(project);else openAnswers(project);});businessOverview.render();}));
     root.append(button("Ответы агентов",()=>openAnswers()));
-    root.append(button("Оценка ответа",()=>{answerEvaluation=new AnswerEvaluation(root,host.ui,projects,()=>{answerEvaluation=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side));answerEvaluation.render();}));
-    root.append(button("Проверка поиска",()=>{searchEvaluation=new SearchEvaluation(root,host.ui,projects,()=>{searchEvaluation=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side));searchEvaluation.render();}));
     root.append(button("Качество агентов",()=>{agentQuality=new AgentQuality(root,host.ui,projects,()=>{agentQuality=null;render();},project=>{agentQuality=null;openAnswers(project);});agentQuality.render();}));
     root.append(button("Расходы по проектам",()=>openExpenses()));
-    root.append(button("Бюджет проекта", () => void openBudgetEditor()));
-    root.append(button("История задач агента", () => void openTaskHistory()));
-    root.append(button("Обращения и обсуждения", () => void openCollaborations()));
     root.append(button("Трекер проекта",()=>void openTaskTracker()));
     root.append(button("Перенос из Jira",()=>{corporateImportView=new CorporateImportView(root,host.ui,projects,()=>{corporateImportView=null;render();});corporateImportView.render();}));
     root.append(button("Перенос из Bitrix24",()=>{corporateImportView=new CorporateImportView(root,host.ui,projects,()=>{corporateImportView=null;render();},"bitrix");corporateImportView.render();}));
     root.append(button("Аудио",()=>{voiceView=new VoiceView(root,host.ui,()=>{voiceView=null;void host.ui.managedTaskRequest().then(task=>{taskRequest=task;render();}).catch(()=>{notice="Не удалось перечитать задачу агента.";render();});});voiceView.render();}));
-    root.append(button("Telegram",()=>{telegramView=new TelegramView(root,host.ui,()=>{telegramView=null;render();});telegramView.render();void telegramView.list();}));
-    root.append(button("Аккаунты почты Яндекс / iCloud / IMAP",()=>{imapAccountsView=new ImapAccountsView(root,host.ui,()=>{imapAccountsView=null;render();});void imapAccountsView.load();}));
-    root.append(button("Аккаунты WebDAV",()=>{webdavAccountsView=new WebDAVAccountsView(root,host.ui,()=>{webdavAccountsView=null;render();});void webdavAccountsView.load();}));
-    root.append(button("Аккаунты Яндекс / iCloud / CalDAV",()=>{caldavAccountsView=new CalDAVAccountsView(root,host.ui,()=>{caldavAccountsView=null;render();});void caldavAccountsView.load();}));
-    root.append(button("Состав групп и ролей",()=>{roleMembershipView=new RoleMembershipView(root,host.ui,()=>{roleMembershipView=null;render();});roleMembershipView.render();}));
-    root.append(button("Доступ к календарю",()=>{calendarConnectionsView=new CalendarConnectionsView(root,host.ui,()=>{calendarConnectionsView=null;render();},(id,hash)=>host.createCalendarDraft(id,hash));void calendarConnectionsView.listConnections();}));
-    root.append(button("Доступ к почте",()=>{mailConnectionsView=new MailConnectionsView(root,host.ui,()=>{mailConnectionsView=null;render();},(id,hash)=>host.sendMailDraft(id,hash),(bytes,filename)=>host.saveMailAttachment(bytes,filename));void mailConnectionsView.listConnections();}));
-    root.append(button("Подключения БД",()=>{databaseConnectionsView=new DatabaseConnectionsView(root,host.ui,projects,()=>{databaseConnectionsView=null;render();});void databaseConnectionsView.discover();}));
-    root.append(button("Журнал операций",()=>{operationAuditView=new OperationAuditView(root,host.ui,()=>{operationAuditView=null;render();});void operationAuditView.load();}));
-    root.append(button("Git-подключения",()=>{gitConnectionsView=new GitConnectionsView(root,host.ui,()=>{gitConnectionsView=null;render();},projects);void gitConnectionsView.load();}));
     root.append(button("Ресурсы проекта",()=>{resourceMapView=new ResourceMapView(root,host.ui,projects,()=>{resourceMapView=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side),(project,text)=>host.uploadText(project,text),(project,node)=>{resourceMapView=null;openProject=project;void openEditor(project,node);},source=>{resourceMapView=null;teamBudgetView=new TeamBudgetView(root,host.ui,source.project,review=>{teamBudgetView=null;if(review)taskRequest=review;render();});const view=teamBudgetView;void view.load().then(()=>{if(teamBudgetView===view)view.prepareObservability(source);});});resourceMapView.render();}));
     root.append(button("Рабочие шаблоны", () => {workTemplateView=new WorkTemplateView(root,host.ui,projects,()=>{workTemplateView=null;render();},(project,node,version,side)=>host.downloadText(project,node,version,side));workTemplateView.render();}));
-    root.append(button("Личная память агента", () => void openMemoryEditor()));
-    root.append(button("Мои загрузки",()=>{uploadUsageView=new UploadUsageView(root,host.ui,()=>{uploadUsageView=null;render();});void uploadUsageView.load();}));
-    root.append(button("Массовый пересчёт индекса",()=>{reindexBatchView=new ReindexBatchView(root,host.ui,projects,()=>{reindexBatchView=null;render();});void reindexBatchView.load();}));
-    root.append(button("Предупреждения политики",()=>{policyAlertsView=new PolicyAlertsView(root,host.ui,()=>{policyAlertsView=null;render();});void policyAlertsView.load();}));
-    root.append(button("Уведомления платформы",()=>{platformSignalInboxView=new PlatformSignalInboxView(root,host.ui,()=>{platformSignalInboxView=null;render();});void platformSignalInboxView.load();}));
-    root.append(button("Метрики платформы", () => void loadPlatformMetrics()));
+    // Метрики остаются и здесь: их проверяет прежний тест app.test.mjs; вкладка «Организация» открывает тот же раздел.
+    if (identity.capabilities?.includes("platform.metrics.read")) root.append(button("Метрики платформы", () => openers.metrics()));
     if (metricsNotice) root.append(element("p", metricsNotice));
-    if (platformUsage) {
-      root.append(element("p", `Завершённые публикации: ${platformUsage.shared_publications}`));
-      root.append(element("p", `Вошедшие пользователи за 24 часа: ${platformUsage.authenticated_users_24h}`));
-      root.append(element("p", `Успешные входы за 24 часа: ${platformUsage.human_logins_24h} (включая повторные входы)`));
-      root.append(element("p", `Данные на ${new Date(platformUsage.recorded_at).toLocaleString()}`));
-      if (platformUsage.signals) {
-        root.append(element("h3", "Сигналы состояния платформы"));
-        root.append(button("Ответственные за сигналы",()=>{platformSignalOwnersView=new PlatformSignalOwnersView(root,host.ui,()=>{platformSignalOwnersView=null;void loadPlatformMetrics();});void platformSignalOwnersView.read();}));
-        root.append(element("p", "По последним проверкам. Отсутствие свежих данных требует проверки мониторинга и не означает исправность платформы."));
-        const signalNames = {dependencies:"Зависимости API", "external.readiness":"Внешняя доступность", "external.login":"Внешний вход", "external.read":"Внешнее чтение", "external.save":"Внешнее сохранение"};
-        const reasons = {check_unavailable:"проверка недоступна",source_unavailable:"источник наблюдений недоступен",observations_missing:"наблюдений нет",observations_stale:"наблюдения устарели",check_failed:"последняя проверка неуспешна",check_passed:"последняя проверка успешна"};
-        for (const signal of platformUsage.signals) {
-          const state = {ok:"Исправно по последней проверке",firing:"Тревога",unknown:"Неизвестно"}[signal.state];
-          const owner = platformUsage.signal_owners?.find(row=>row.signal_key===signal.key);
-          root.append(element("p", owner ? `Ответственный: ${owner.owner_id ? (owner.owner_name || owner.owner_id) + (owner.owner_active ? "" : " — неактивен") : "не назначен"}.` : "Сведения об ответственном недоступны."));
-          root.append(element("p", `${signalNames[signal.key]}: ${state} — ${reasons[signal.reason]}.${signal.observed_at ? " Наблюдение: " + new Date(signal.observed_at).toLocaleString() + "." : ""}`));
-        }
-      }
-      const attempts = platformUsage.workflow_attempts;
-      if (attempts) {
-        root.append(element("p", "Попытки по этапам — записанные операции API с известным сценарием, включая дошедшие до API вызовы MCP. Обращения без сценария и ошибки до отправки в API здесь не учтены."));
-        if (!attempts.length) root.append(element("p", "Связанные попытки ещё не записаны."));
-        const names = {open:"Открытие",save:"Сохранение",review:"Согласование",publish:"Публикация"};
-        for (const row of attempts) {
-          const result = row.status>=500 ? "ошибка сервера" : row.status>=400 ? "отказ" : "ответ без ошибки";
-          const context = row.deployment;
-          root.append(element("p", context ? `Контекст попыток: окружение ${context.environment || "неизвестно"}; релиз ${context.release || "неизвестен"}; исходники ${context.source_revision || "неизвестны"}${context.source_modified ? " (с локальными изменениями)" : ""}; схема ${context.schema_version}.` : "Контекст этих попыток не сохранён; текущий релиз к ним не применяется."));
-          root.append(element("p", `${names[row.operation]}: ${row.attempts} попыток в ${row.workflows} сценариях; ${result}, HTTP ${row.status}, ${row.outcome}; среднее ${row.mean_duration_ms.toFixed(1)} мс. Последнее наблюдение: ${new Date(row.last_observed_at).toLocaleString()}.`));
-        }
-      }
-      const deployment = platformUsage.deployment;
-      if (deployment) {
-        root.append(element("p", `Текущий сервис метрик: окружение — ${deployment.environment || 'не указано'}, релиз — ${deployment.release || 'не указан'}, схема — ${deployment.schema_version}.`));
-        root.append(element("p", `Исходная ревизия: ${deployment.source_revision || 'неизвестна'}${deployment.source_modified === true ? ' (сборка с незакоммиченными изменениями)' : deployment.source_modified === null ? ' (состояние изменений неизвестно)' : ''}.`));
-        root.append(element("p", "Эти сведения относятся к запущенному storage-api. Исторические события и клиентские замеры могут относиться к другим версиям; эта строка не присваивает им текущий релиз."));
-      }
-      const workflow = platformUsage.workflow;
-      if (workflow) {
-        root.append(element("p", `Сценарии работы: открыто — ${workflow.opened}, сохранено — ${workflow.saved}, отправлено на согласование — ${workflow.reviewed}, опубликовано — ${workflow.published}.`));
-        root.append(element("p", workflow.opened ? `Дошли от открытия до публикации: ${(workflow.published / workflow.opened * 100).toFixed(1)}%.` : "Долю завершения пока нельзя рассчитать: наблюдавшихся открытий нет."));
-        root.append(element("p", `Сценарии без наблюдавшегося начала: ${workflow.opening_unobserved}; в эту воронку не включены.`));
-        if (workflow.first_observed_at) root.append(element("p", `Накопленные наблюдения с ${new Date(workflow.first_observed_at).toLocaleString()}. Согласование и публикация относятся к одному сценарию, повторы не добавляют завершений.`));
-      }
-      const stages = platformUsage.review_stages;
-      if (stages) {
-        root.append(element("p", `Согласования: ${stages.submitted} кандидатов. Текущие решения: ожидают — ${stages.awaiting_decisions}, отклонены — ${stages.rejected}, полностью одобрены — ${stages.approved}.`));
-        root.append(element("p", `Подтверждённые публикации согласованных кандидатов: ${stages.published}. Исторические кандидаты без сведений о завершении: ${stages.historical_completion_unknown}.`));
-        const decisions = stages.decisions;
-        if (decisions) {
-          root.append(element("p", `Полная история решений: ${decisions.tracked_candidates} кандидатов. Прежние кандидаты без полной истории: ${decisions.historical_candidates}; в показатели ответов и возвратов не включены.`));
-          root.append(element("p", decisions.responded_candidates
-            ? `Возвращены на доработку до публикации: ${decisions.returned_candidates} из ${decisions.responded_candidates} кандидатов, получивших ответ (${(decisions.returned_candidates / decisions.responded_candidates * 100).toFixed(1)}%). Последующее одобрение не стирает возврат.`
-            : "Доля возвратов пока не определена: кандидатов с полной историей и полученным ответом нет."));
-          for (const [label, duration] of [["До первого ответа назначенного согласующего", decisions.first_response], ["До первого полного одобрения кандидата", decisions.full_approval]] as const) {
-            root.append(element("p", duration.samples
-              ? `${label}: ${duration.samples} замеров; среднее ${(duration.mean_ms! / 1000).toFixed(1)} с, p50 ${(duration.p50_ms! / 1000).toFixed(1)} с, p95 ${(duration.p95_ms! / 1000).toFixed(1)} с, p99 ${(duration.p99_ms! / 1000).toFixed(1)} с.`
-              : `${label}: подтверждённых измерений пока нет.`));
-          }
-          root.append(element("p", "Отсчёт от отправки на согласование. Первый ответ — одобрение или отказ по назначенной паре согласующий/направление; полное одобрение — один замер на кандидата. События после публикации исключены. Отзыв решения сохраняется в истории, но сам по себе не считается отказом. Ожидание по другим типам командных задач сюда не входит."));
-        }
-        const timing = stages.timing;
-        if (timing) {
-          const seconds = (ms: number) => (ms / 1000).toFixed(1);
-          root.append(element("p", timing.completed_samples
-            ? `От отправки на согласование до публикации: ${timing.completed_samples} завершённых кандидатов; среднее ${seconds(timing.mean_completion_ms!)} с, p50 ${seconds(timing.p50_completion_ms!)} с, p95 ${seconds(timing.p95_completion_ms!)} с, p99 ${seconds(timing.p99_completion_ms!)} с.`
-            : "Время от отправки на согласование до публикации: подтверждённых измерений пока нет."));
-          root.append(element("p", `Неопубликованные кандидаты, ожидающие решений: ${timing.pending_candidates}. ` + (timing.oldest_pending_ms === null
-            ? "Возраст ожидания не измерен."
-            : `Самый старый отправлен ${seconds(timing.oldest_pending_ms)} с назад.`)));
-          root.append(element("p", "Календарное время включает паузы и ожидание публикации автором. Это не активное время согласующего. Выборка накопительная; перцентили точные, по завершённым кандидатам. Возраст ожидающих считается от отправки, в том числе после изменения решения."));
-        }
-        root.append(element("p", "Повторы не добавляют кандидатов. Решения могут меняться после публикации; её подтверждение сохраняется. Начало редактирования и личные сохранения в эти числа не входят."));
-      }
-      const versions = platformUsage.ui_readiness_versions;
-      if (versions) {
-        const details = element("details");
-        details.append(element("summary", `Готовность по версиям коллектора: ${versions.total_groups} групп`));
-        details.append(element("p", "Версия коллектора определяется по собранному скрипту CloudflareOS или панели Mnemos. Она не идентифицирует редактируемый код native-документа. Старые и неопознанные сборки отмечены отдельно. Контекст API относится к приёму первого конечного результата, для ожидающей загрузки — к приёму начала; это не версия всех серверов, участвовавших в загрузке."));
-        if (versions.truncated) details.append(element("p", "Показаны 100 групп с наиболее свежими наблюдениями; список неполный. Общие показатели ниже включают все версии."));
-        for (const row of versions.groups) {
-          const name = {"mnemos.management":"Панель Mnemos","cloudflareos.shell":"Оболочка CloudflareOS","cloudflareos.document":"Docs","cloudflareos.spreadsheet":"Sheets","cloudflareos.presentation":"Slides"}[row.surface];
-          details.append(element("p", `${name}; коллектор ${row.client_version || 'неизвестен'}; ${row.outcome}: ${row.samples} за 24 часа.`));
-          const receiver = row.deployment;
-          details.append(element("p", receiver ? `Принимающий API: ${receiver.environment || "окружение неизвестно"}; релиз ${receiver.release || "неизвестен"}; схема ${receiver.schema_version}; исходники ${receiver.source_revision || "неизвестны"}${receiver.source_modified ? " (с локальными изменениями)" : ""}.` : "Версия принимающего API не сохранена."));
-          if (row.p50_ms !== null) details.append(element("p", `В этой группе: p50 — ${row.p50_ms} мс; p95 — ${row.p95_ms} мс; p99 — ${row.p99_ms} мс.`));
-        }
-        root.append(details);
-      }
-      root.append(element("p", "Общие показатели готовности ниже объединяют все версии коллектора."));
-      const uiReadiness=platformUsage.ui_readiness;
-      root.append(element("p", "Оболочка CloudflareOS: от начала навигации до загруженных данных сессии, конфигурации, навигации и отрисовки каркаса. Измеряется автоматическое восстановление входа; ручной вход и онбординг исключены. Содержимое открытой страницы и документа измеряется отдельно. Если JavaScript или подтверждённая сессия не запустились, отчёт может отсутствовать."));
-      root.append(element("p", "Docs, Sheets и Slides: от запроса кода редактора до отрисовки загруженного документа. Время открытия оболочки сюда не входит. Для старых редакторов требуется обновление кода; отсутствие измерений не означает отказ."));
-      root.append(element("p", "Готовность панели Mnemos: от начала загрузки начальных данных до их отрисовки и доступных действий. Загрузка оболочки и нативных редакторов сюда не входит."));
-      if (!uiReadiness?.length) root.append(element("p", "Полученных измерений готовности панели пока нет."));
-      else {
-        const surfaces={"mnemos.management":"Панель Mnemos","cloudflareos.shell":"Оболочка CloudflareOS","cloudflareos.document":"Docs","cloudflareos.spreadsheet":"Sheets","cloudflareos.presentation":"Slides"};
-        const names={pending:"загрузка идёт",ready:"готово",error:"ошибка загрузки",timeout:"истекло время ожидания",abandoned:"пользователь ушёл или скрыл панель",unconfirmed:"результат не подтверждён"};
-        for(const row of uiReadiness){
-          root.append(element("p", `${surfaces[row.surface]}: ${names[row.outcome]} — ${row.samples} за 24 часа.`));
-          if(row.p50_ms!==null && row.p95_ms!==null && row.p99_ms!==null) root.append(element("p", `Длительность до этого результата: p50 — ${row.p50_ms} мс; p95 — ${row.p95_ms} мс; p99 — ${row.p99_ms} мс.`));
-        }
-      }
-      const external = platformUsage.external;
-      if (external) {
-        root.append(element("p", "Внешние проверки за последние 24 часа. Доля успешных попыток не означает непрерывную доступность. Зависимые шаги после ошибки не выполняются."));
-        const names = {readiness:"Готовность",login:"Вход",read:"Чтение",save:"Сохранение"};
-        if (external.versions) {
-          const versions = external.versions;
-          const details = element("details");
-          details.append(element("summary", `Внешние проверки по версиям наблюдателя: ${versions.total_groups} групп`));
-          details.append(element("p", "Метки наблюдателя и контекст проверяемого API показаны отдельно. Для готовности версия API берётся из того же ответа; при сетевом сбое и в старых записях она неизвестна. Общие показатели ниже объединяют все группы."));
-          if (versions.truncated) details.append(element("p", "Показаны 100 недавно наблюдавшихся групп; список неполный."));
-          for (const row of versions.groups) {
-            details.append(element("p", `${names[row.operation]}; окружение ${row.environment || "неизвестно"}; релиз наблюдателя ${row.observer_release || "неизвестен"}; код ${row.observer_version || "неизвестен"}: ${row.successes} из ${row.samples} успешно.`));
-            const target = row.target_deployment;
-            details.append(element("p", target ? `Проверяемый API: ${target.environment || "окружение неизвестно"}; релиз ${target.release || "неизвестен"}; схема ${target.schema_version}; исходники ${target.source_revision || "неизвестны"}${target.source_modified ? " (с локальными изменениями)" : ""}.` : "Версия проверяемого сервиса не сохранена."));
-            const q = row.duration_percentiles_ms;
-            if (q) details.append(element("p", `В этой группе: p50 — ${q.p50.toFixed(1)} мс; p95 — ${q.p95.toFixed(1)} мс; p99 — ${q.p99.toFixed(1)} мс.`));
-          }
-          root.append(details);
-        }
-        for (const op of external.operations) {
-          if (op.source_status !== "ready") {
-            root.append(element("p", `${names[op.operation]}: наблюдения недоступны (${op.source_status}).`));
-            continue;
-          }
-          const totals = op.samples ? `${op.successes} из ${op.samples} успешно (${(op.successes / op.samples * 100).toFixed(1)}%); ошибок — ${op.samples - op.successes}` : "попыток за сутки нет";
-          const last = op.last_observed_at ? `Последняя проверка: ${new Date(op.last_observed_at).toLocaleString()}, ${op.last_success ? "успешно" : op.last_outcome}.` : "Проверок ещё не было.";
-          const stale = op.stale ? " Данные устарели или ещё не поступали." : "";
-          root.append(element("p", `${names[op.operation]}: ${totals}. ${last}${stale}`));
-          const latency = op.duration_percentiles_ms;
-          if (latency) root.append(element("p", `Задержки проверки «${names[op.operation]}» по ${op.samples} попыткам: p50 — ${latency.p50.toFixed(1)} мс; p95 — ${latency.p95.toFixed(1)} мс; p99 — ${latency.p99.toFixed(1)} мс. Включая неуспешные попытки.`));
-          if (op.mean_duration_ms !== null) root.append(element("p", `Средняя длительность проверки: ${op.mean_duration_ms.toFixed(1)} мс.`));
-        }
-      } else root.append(element("p", "Внешние проверки не подключены."));
-      const readiness = platformUsage.readiness;
-      if (readiness) {
-        root.append(element("p", `Готовность API: ${readiness.ready ? "готов" : "не готов"}. Проверено ${new Date(readiness.checked_at).toLocaleString()}.`));
-        if (!readiness.ready) root.append(element("p", `Причины недоступности: ${readiness.reasons.join(", ")}`));
-      } else root.append(element("p", "Текущая готовность API не проверена."));
-      root.append(element("p", "p50, p95 и p99 описывают длительность половины, 95% и 99% измеренных попыток. Для API показаны границы корзин; внешние проверки используют сохранённые значения. Это не время готовности интерфейса."));
-      const service = platformUsage.service;
-      if (service) {
-        root.append(element("p", `Запросы API с ${new Date(service.started_at).toLocaleString()} по ${new Date(service.observed_at).toLocaleString()}. Счётчики обнуляются при перезапуске процесса.`));
-        root.append(element("p", "Коды результатов включают ожидаемые отказы доступа. Задержки измерены по завершённым запросам; это не показатель непрерывной доступности."));
-        if (!service.operations.length) root.append(element("p", "Завершённых запросов пока нет."));
-        const rows = element("ul");
-        for (const op of service.operations) {
-          const latency = ([50,95,99] as const).map(p=>`p${p} по корзинам — ${histogramPercentileBound(op,p)}`).join("; ");
-          rows.append(element("li", `${op.surface} ${op.method}: ${op.requests} запросов; среднее ${(op.duration_seconds / op.requests * 1000).toFixed(1)} мс; ${latency}. Результаты: ${Object.entries(op.outcomes).map(([code, count]) => `${code}: ${count}`).join(", ")}`));
-        }
-        root.append(rows);
-      } else root.append(element("p", "Измерения запросов API недоступны."));
-      const work = platformUsage.organization_work;
-      if (work) {
-        const collaboration = work.collaboration;
-        if (collaboration) {
-          root.append(element("p", "Поручения соисполнителям, созданные за последние 24 часа. Ответ — первое сообщение адресата или его владельца; собственные сообщения отправителя исключены. Время календарное, включая ожидание человека."));
-          root.append(element("p", `Поручений — ${collaboration.requests}; ответили — ${collaboration.first_response.samples}; пока без ответа — ${collaboration.requests-collaboration.first_response.samples}.`));
-          root.append(element("p", `Результатов — ${collaboration.results}; получили первую проверку — ${collaboration.first_review.samples}; без сохранённой проверки — ${collaboration.results-collaboration.first_review.samples}.`));
-          for (const [label,timing] of [["До первого ответа",collaboration.first_response],["От результата до первой проверки",collaboration.first_review]] as const) {
-            root.append(element("p", timing.samples ? `${label}: ${timing.samples} измерений; p50 — ${timing.p50_seconds!.toFixed(1)} с; p95 — ${timing.p95_seconds!.toFixed(1)} с; p99 — ${timing.p99_seconds!.toFixed(1)} с.` : `${label}: завершённых измерений нет; длительность неизвестна.`));
-          }
-          root.append(element("p", collaboration.reviewed_requests ? `Доработка запрошена у ${collaboration.reworked_requests} из ${collaboration.reviewed_requests} проверенных поручений (${(100*collaboration.reworked_requests/collaboration.reviewed_requests).toFixed(1)}%). Повторные решения не увеличивают число поручений.` : "Доля поручений с доработкой неизвестна: проверенных результатов нет."));
-        } else root.append(element("p", "Время ответа и проверки поручений пока недоступно."));
-        root.append(element("p", "Результаты этой организации: публикации документов и принятые поручения учитываются отдельно. Поручение считается один раз по первой приёмке результата; последующие доработки не добавляют завершений."));
-        for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: ${period.publications} публикаций в ${period.projects} проектах; ${period.has_completed_publication ? "есть подтверждённый результат" : "публикации не зарегистрированы"}.`));
-        if (work.periods.every(p=>p.completed_projects!==undefined)) {
-          for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: проектов с завершённой работой — ${period.completed_projects}; организация ${period.has_completed_work ? "имеет подтверждённый результат" : "не имеет зарегистрированных завершений"}.`));
-          root.append(element("p", "Проект с публикацией и принятым поручением учитывается один раз. Это свод текущей организации; отдельные результаты не складываются в число уникальных задач."));
-        } else root.append(element("p", "Объединённый свод завершённых проектов недоступен."));
-        if (work.first_acceptance_at !== undefined) {
-          for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: впервые принятых поручений — ${period.accepted_requests}, проектов — ${period.accepted_request_projects}.`));
-          if (work.first_acceptance_at) root.append(element("p", `Первая сохранённая приёмка поручения: ${new Date(work.first_acceptance_at).toLocaleString()}.`));
-        } else root.append(element("p", "Данные о принятых поручениях недоступны."));
-        root.append(element("p", "Это сохранённые приёмки поручений людям и агентам, а не число запусков моделей или текущих статусов задач трекера."));
-        if (work.first_publication_at) root.append(element("p", `Первая сохранённая публикация: ${new Date(work.first_publication_at).toLocaleString()}. Более ранняя история может быть неизвестна.`));
-      }
-      const periods = platformUsage.activity_windows;
-      if (periods) {
-        root.append(element("p", `Наблюдаемая активность: первые сохранённые сигналы — ${new Date(periods.first_observed_at).toLocaleString()}. Это не подтверждает непрерывное покрытие всех сотрудников.`));
-        for (const period of periods.windows) {
-          root.append(element("p", period.reporting_users ? `За ${period.days} дн.: активных людей — ${period.active_users}; телеметрия от ${period.reporting_users}.` : `За ${period.days} дн.: телеметрия не поступала; активность неизвестна.`));
-          if (Date.parse(periods.observed_at) - Date.parse(periods.first_observed_at) < period.days * 86400000) root.append(element("p", `История наблюдений короче ${period.days} дн.; полный период пока не накоплен.`));
-        }
-      } else root.append(element("p", "Активность за день, неделю и месяц пока неизвестна: нет полученных сигналов."));
-      const a = platformUsage.workspace_activity;
-      if (a) {
-        root.append(element("p", `Активность команды за 24 часа: ${a.active_users} пользователей · ${a.sessions} рабочих сессий · ${(a.active_seconds / 60).toFixed(1)} мин активности`));
-        root.append(element("p", `Телеметрия получена от ${a.reporting_users} пользователей; длительность наблюдаемых сессий — ${(a.session_seconds / 60).toFixed(1)} мин.`));
-      } else root.append(element("p", "Данные активности команды ещё не поступали. Отправку можно настроить в своём профиле CloudflareOS."));
-    }
+    if (platformUsage) renderPlatformMetrics(platformUsage);
     renderManagedAgent();
     renderAgentTask();
     root.append(button("Согласования", () => { inboxOpen = true; void loadInbox(false); }));
@@ -874,7 +762,6 @@ function renderHistory(current: NonNullable<typeof history>) {
   if (current.page.next_cursor) section.append(button("Следующая страница истории", () => void loadHistory(current.project, current.node, current.name, current.page.next_cursor)));
   root.append(section);
 }
-void load(false);
 
 function renderEditor(current: Editor) {
   root.append(element("h2", "Личный черновик"));
@@ -1786,4 +1673,198 @@ function openExpenses(project='') {
   expenseOverview=null;teamBudgetView=new TeamBudgetView(root,host.ui,id,review=>{teamBudgetView=null;if(review)taskRequest=review;render();},requester);void teamBudgetView.load();
  },{project,answers:openAnswers});
  void expenseOverview.load();
+}
+
+/** Текст метрик платформы; вынесен, чтобы вкладка «Организация» показывала его без домашней страницы «Ещё». */
+function renderPlatformMetrics(platformUsage: NonNullable<Awaited<ReturnType<MnemosAccountSession["readPlatformMetrics"]>>>) {
+      root.append(element("p", `Завершённые публикации: ${platformUsage.shared_publications}`));
+      root.append(element("p", `Вошедшие пользователи за 24 часа: ${platformUsage.authenticated_users_24h}`));
+      root.append(element("p", `Успешные входы за 24 часа: ${platformUsage.human_logins_24h} (включая повторные входы)`));
+      root.append(element("p", `Данные на ${new Date(platformUsage.recorded_at).toLocaleString()}`));
+      if (platformUsage.signals) {
+        root.append(element("h3", "Сигналы состояния платформы"));
+        root.append(button("Ответственные за сигналы",()=>{platformSignalOwnersView=new PlatformSignalOwnersView(root,host.ui,()=>{platformSignalOwnersView=null;void loadPlatformMetrics();});void platformSignalOwnersView.read();}));
+        root.append(element("p", "По последним проверкам. Отсутствие свежих данных требует проверки мониторинга и не означает исправность платформы."));
+        const signalNames = {dependencies:"Зависимости API", "external.readiness":"Внешняя доступность", "external.login":"Внешний вход", "external.read":"Внешнее чтение", "external.save":"Внешнее сохранение"};
+        const reasons = {check_unavailable:"проверка недоступна",source_unavailable:"источник наблюдений недоступен",observations_missing:"наблюдений нет",observations_stale:"наблюдения устарели",check_failed:"последняя проверка неуспешна",check_passed:"последняя проверка успешна"};
+        for (const signal of platformUsage.signals) {
+          const state = {ok:"Исправно по последней проверке",firing:"Тревога",unknown:"Неизвестно"}[signal.state];
+          const owner = platformUsage.signal_owners?.find(row=>row.signal_key===signal.key);
+          root.append(element("p", owner ? `Ответственный: ${owner.owner_id ? (owner.owner_name || owner.owner_id) + (owner.owner_active ? "" : " — неактивен") : "не назначен"}.` : "Сведения об ответственном недоступны."));
+          root.append(element("p", `${signalNames[signal.key]}: ${state} — ${reasons[signal.reason]}.${signal.observed_at ? " Наблюдение: " + new Date(signal.observed_at).toLocaleString() + "." : ""}`));
+        }
+      }
+      const attempts = platformUsage.workflow_attempts;
+      if (attempts) {
+        root.append(element("p", "Попытки по этапам — записанные операции API с известным сценарием, включая дошедшие до API вызовы MCP. Обращения без сценария и ошибки до отправки в API здесь не учтены."));
+        if (!attempts.length) root.append(element("p", "Связанные попытки ещё не записаны."));
+        const names = {open:"Открытие",save:"Сохранение",review:"Согласование",publish:"Публикация"};
+        for (const row of attempts) {
+          const result = row.status>=500 ? "ошибка сервера" : row.status>=400 ? "отказ" : "ответ без ошибки";
+          const context = row.deployment;
+          root.append(element("p", context ? `Контекст попыток: окружение ${context.environment || "неизвестно"}; релиз ${context.release || "неизвестен"}; исходники ${context.source_revision || "неизвестны"}${context.source_modified ? " (с локальными изменениями)" : ""}; схема ${context.schema_version}.` : "Контекст этих попыток не сохранён; текущий релиз к ним не применяется."));
+          root.append(element("p", `${names[row.operation]}: ${row.attempts} попыток в ${row.workflows} сценариях; ${result}, HTTP ${row.status}, ${row.outcome}; среднее ${row.mean_duration_ms.toFixed(1)} мс. Последнее наблюдение: ${new Date(row.last_observed_at).toLocaleString()}.`));
+        }
+      }
+      const deployment = platformUsage.deployment;
+      if (deployment) {
+        root.append(element("p", `Текущий сервис метрик: окружение — ${deployment.environment || 'не указано'}, релиз — ${deployment.release || 'не указан'}, схема — ${deployment.schema_version}.`));
+        root.append(element("p", `Исходная ревизия: ${deployment.source_revision || 'неизвестна'}${deployment.source_modified === true ? ' (сборка с незакоммиченными изменениями)' : deployment.source_modified === null ? ' (состояние изменений неизвестно)' : ''}.`));
+        root.append(element("p", "Эти сведения относятся к запущенному storage-api. Исторические события и клиентские замеры могут относиться к другим версиям; эта строка не присваивает им текущий релиз."));
+      }
+      const workflow = platformUsage.workflow;
+      if (workflow) {
+        root.append(element("p", `Сценарии работы: открыто — ${workflow.opened}, сохранено — ${workflow.saved}, отправлено на согласование — ${workflow.reviewed}, опубликовано — ${workflow.published}.`));
+        root.append(element("p", workflow.opened ? `Дошли от открытия до публикации: ${(workflow.published / workflow.opened * 100).toFixed(1)}%.` : "Долю завершения пока нельзя рассчитать: наблюдавшихся открытий нет."));
+        root.append(element("p", `Сценарии без наблюдавшегося начала: ${workflow.opening_unobserved}; в эту воронку не включены.`));
+        if (workflow.first_observed_at) root.append(element("p", `Накопленные наблюдения с ${new Date(workflow.first_observed_at).toLocaleString()}. Согласование и публикация относятся к одному сценарию, повторы не добавляют завершений.`));
+      }
+      const stages = platformUsage.review_stages;
+      if (stages) {
+        root.append(element("p", `Согласования: ${stages.submitted} кандидатов. Текущие решения: ожидают — ${stages.awaiting_decisions}, отклонены — ${stages.rejected}, полностью одобрены — ${stages.approved}.`));
+        root.append(element("p", `Подтверждённые публикации согласованных кандидатов: ${stages.published}. Исторические кандидаты без сведений о завершении: ${stages.historical_completion_unknown}.`));
+        const decisions = stages.decisions;
+        if (decisions) {
+          root.append(element("p", `Полная история решений: ${decisions.tracked_candidates} кандидатов. Прежние кандидаты без полной истории: ${decisions.historical_candidates}; в показатели ответов и возвратов не включены.`));
+          root.append(element("p", decisions.responded_candidates
+            ? `Возвращены на доработку до публикации: ${decisions.returned_candidates} из ${decisions.responded_candidates} кандидатов, получивших ответ (${(decisions.returned_candidates / decisions.responded_candidates * 100).toFixed(1)}%). Последующее одобрение не стирает возврат.`
+            : "Доля возвратов пока не определена: кандидатов с полной историей и полученным ответом нет."));
+          for (const [label, duration] of [["До первого ответа назначенного согласующего", decisions.first_response], ["До первого полного одобрения кандидата", decisions.full_approval]] as const) {
+            root.append(element("p", duration.samples
+              ? `${label}: ${duration.samples} замеров; среднее ${(duration.mean_ms! / 1000).toFixed(1)} с, p50 ${(duration.p50_ms! / 1000).toFixed(1)} с, p95 ${(duration.p95_ms! / 1000).toFixed(1)} с, p99 ${(duration.p99_ms! / 1000).toFixed(1)} с.`
+              : `${label}: подтверждённых измерений пока нет.`));
+          }
+          root.append(element("p", "Отсчёт от отправки на согласование. Первый ответ — одобрение или отказ по назначенной паре согласующий/направление; полное одобрение — один замер на кандидата. События после публикации исключены. Отзыв решения сохраняется в истории, но сам по себе не считается отказом. Ожидание по другим типам командных задач сюда не входит."));
+        }
+        const timing = stages.timing;
+        if (timing) {
+          const seconds = (ms: number) => (ms / 1000).toFixed(1);
+          root.append(element("p", timing.completed_samples
+            ? `От отправки на согласование до публикации: ${timing.completed_samples} завершённых кандидатов; среднее ${seconds(timing.mean_completion_ms!)} с, p50 ${seconds(timing.p50_completion_ms!)} с, p95 ${seconds(timing.p95_completion_ms!)} с, p99 ${seconds(timing.p99_completion_ms!)} с.`
+            : "Время от отправки на согласование до публикации: подтверждённых измерений пока нет."));
+          root.append(element("p", `Неопубликованные кандидаты, ожидающие решений: ${timing.pending_candidates}. ` + (timing.oldest_pending_ms === null
+            ? "Возраст ожидания не измерен."
+            : `Самый старый отправлен ${seconds(timing.oldest_pending_ms)} с назад.`)));
+          root.append(element("p", "Календарное время включает паузы и ожидание публикации автором. Это не активное время согласующего. Выборка накопительная; перцентили точные, по завершённым кандидатам. Возраст ожидающих считается от отправки, в том числе после изменения решения."));
+        }
+        root.append(element("p", "Повторы не добавляют кандидатов. Решения могут меняться после публикации; её подтверждение сохраняется. Начало редактирования и личные сохранения в эти числа не входят."));
+      }
+      const versions = platformUsage.ui_readiness_versions;
+      if (versions) {
+        const details = element("details");
+        details.append(element("summary", `Готовность по версиям коллектора: ${versions.total_groups} групп`));
+        details.append(element("p", "Версия коллектора определяется по собранному скрипту CloudflareOS или панели Mnemos. Она не идентифицирует редактируемый код native-документа. Старые и неопознанные сборки отмечены отдельно. Контекст API относится к приёму первого конечного результата, для ожидающей загрузки — к приёму начала; это не версия всех серверов, участвовавших в загрузке."));
+        if (versions.truncated) details.append(element("p", "Показаны 100 групп с наиболее свежими наблюдениями; список неполный. Общие показатели ниже включают все версии."));
+        for (const row of versions.groups) {
+          const name = {"mnemos.management":"Панель Mnemos","cloudflareos.shell":"Оболочка CloudflareOS","cloudflareos.document":"Docs","cloudflareos.spreadsheet":"Sheets","cloudflareos.presentation":"Slides"}[row.surface];
+          details.append(element("p", `${name}; коллектор ${row.client_version || 'неизвестен'}; ${row.outcome}: ${row.samples} за 24 часа.`));
+          const receiver = row.deployment;
+          details.append(element("p", receiver ? `Принимающий API: ${receiver.environment || "окружение неизвестно"}; релиз ${receiver.release || "неизвестен"}; схема ${receiver.schema_version}; исходники ${receiver.source_revision || "неизвестны"}${receiver.source_modified ? " (с локальными изменениями)" : ""}.` : "Версия принимающего API не сохранена."));
+          if (row.p50_ms !== null) details.append(element("p", `В этой группе: p50 — ${row.p50_ms} мс; p95 — ${row.p95_ms} мс; p99 — ${row.p99_ms} мс.`));
+        }
+        root.append(details);
+      }
+      root.append(element("p", "Общие показатели готовности ниже объединяют все версии коллектора."));
+      const uiReadiness=platformUsage.ui_readiness;
+      root.append(element("p", "Оболочка CloudflareOS: от начала навигации до загруженных данных сессии, конфигурации, навигации и отрисовки каркаса. Измеряется автоматическое восстановление входа; ручной вход и онбординг исключены. Содержимое открытой страницы и документа измеряется отдельно. Если JavaScript или подтверждённая сессия не запустились, отчёт может отсутствовать."));
+      root.append(element("p", "Docs, Sheets и Slides: от запроса кода редактора до отрисовки загруженного документа. Время открытия оболочки сюда не входит. Для старых редакторов требуется обновление кода; отсутствие измерений не означает отказ."));
+      root.append(element("p", "Готовность панели Mnemos: от начала загрузки начальных данных до их отрисовки и доступных действий. Загрузка оболочки и нативных редакторов сюда не входит."));
+      if (!uiReadiness?.length) root.append(element("p", "Полученных измерений готовности панели пока нет."));
+      else {
+        const surfaces={"mnemos.management":"Панель Mnemos","cloudflareos.shell":"Оболочка CloudflareOS","cloudflareos.document":"Docs","cloudflareos.spreadsheet":"Sheets","cloudflareos.presentation":"Slides"};
+        const names={pending:"загрузка идёт",ready:"готово",error:"ошибка загрузки",timeout:"истекло время ожидания",abandoned:"пользователь ушёл или скрыл панель",unconfirmed:"результат не подтверждён"};
+        for(const row of uiReadiness){
+          root.append(element("p", `${surfaces[row.surface]}: ${names[row.outcome]} — ${row.samples} за 24 часа.`));
+          if(row.p50_ms!==null && row.p95_ms!==null && row.p99_ms!==null) root.append(element("p", `Длительность до этого результата: p50 — ${row.p50_ms} мс; p95 — ${row.p95_ms} мс; p99 — ${row.p99_ms} мс.`));
+        }
+      }
+      const external = platformUsage.external;
+      if (external) {
+        root.append(element("p", "Внешние проверки за последние 24 часа. Доля успешных попыток не означает непрерывную доступность. Зависимые шаги после ошибки не выполняются."));
+        const names = {readiness:"Готовность",login:"Вход",read:"Чтение",save:"Сохранение"};
+        if (external.versions) {
+          const versions = external.versions;
+          const details = element("details");
+          details.append(element("summary", `Внешние проверки по версиям наблюдателя: ${versions.total_groups} групп`));
+          details.append(element("p", "Метки наблюдателя и контекст проверяемого API показаны отдельно. Для готовности версия API берётся из того же ответа; при сетевом сбое и в старых записях она неизвестна. Общие показатели ниже объединяют все группы."));
+          if (versions.truncated) details.append(element("p", "Показаны 100 недавно наблюдавшихся групп; список неполный."));
+          for (const row of versions.groups) {
+            details.append(element("p", `${names[row.operation]}; окружение ${row.environment || "неизвестно"}; релиз наблюдателя ${row.observer_release || "неизвестен"}; код ${row.observer_version || "неизвестен"}: ${row.successes} из ${row.samples} успешно.`));
+            const target = row.target_deployment;
+            details.append(element("p", target ? `Проверяемый API: ${target.environment || "окружение неизвестно"}; релиз ${target.release || "неизвестен"}; схема ${target.schema_version}; исходники ${target.source_revision || "неизвестны"}${target.source_modified ? " (с локальными изменениями)" : ""}.` : "Версия проверяемого сервиса не сохранена."));
+            const q = row.duration_percentiles_ms;
+            if (q) details.append(element("p", `В этой группе: p50 — ${q.p50.toFixed(1)} мс; p95 — ${q.p95.toFixed(1)} мс; p99 — ${q.p99.toFixed(1)} мс.`));
+          }
+          root.append(details);
+        }
+        for (const op of external.operations) {
+          if (op.source_status !== "ready") {
+            root.append(element("p", `${names[op.operation]}: наблюдения недоступны (${op.source_status}).`));
+            continue;
+          }
+          const totals = op.samples ? `${op.successes} из ${op.samples} успешно (${(op.successes / op.samples * 100).toFixed(1)}%); ошибок — ${op.samples - op.successes}` : "попыток за сутки нет";
+          const last = op.last_observed_at ? `Последняя проверка: ${new Date(op.last_observed_at).toLocaleString()}, ${op.last_success ? "успешно" : op.last_outcome}.` : "Проверок ещё не было.";
+          const stale = op.stale ? " Данные устарели или ещё не поступали." : "";
+          root.append(element("p", `${names[op.operation]}: ${totals}. ${last}${stale}`));
+          const latency = op.duration_percentiles_ms;
+          if (latency) root.append(element("p", `Задержки проверки «${names[op.operation]}» по ${op.samples} попыткам: p50 — ${latency.p50.toFixed(1)} мс; p95 — ${latency.p95.toFixed(1)} мс; p99 — ${latency.p99.toFixed(1)} мс. Включая неуспешные попытки.`));
+          if (op.mean_duration_ms !== null) root.append(element("p", `Средняя длительность проверки: ${op.mean_duration_ms.toFixed(1)} мс.`));
+        }
+      } else root.append(element("p", "Внешние проверки не подключены."));
+      const readiness = platformUsage.readiness;
+      if (readiness) {
+        root.append(element("p", `Готовность API: ${readiness.ready ? "готов" : "не готов"}. Проверено ${new Date(readiness.checked_at).toLocaleString()}.`));
+        if (!readiness.ready) root.append(element("p", `Причины недоступности: ${readiness.reasons.join(", ")}`));
+      } else root.append(element("p", "Текущая готовность API не проверена."));
+      root.append(element("p", "p50, p95 и p99 описывают длительность половины, 95% и 99% измеренных попыток. Для API показаны границы корзин; внешние проверки используют сохранённые значения. Это не время готовности интерфейса."));
+      const service = platformUsage.service;
+      if (service) {
+        root.append(element("p", `Запросы API с ${new Date(service.started_at).toLocaleString()} по ${new Date(service.observed_at).toLocaleString()}. Счётчики обнуляются при перезапуске процесса.`));
+        root.append(element("p", "Коды результатов включают ожидаемые отказы доступа. Задержки измерены по завершённым запросам; это не показатель непрерывной доступности."));
+        if (!service.operations.length) root.append(element("p", "Завершённых запросов пока нет."));
+        const rows = element("ul");
+        for (const op of service.operations) {
+          const latency = ([50,95,99] as const).map(p=>`p${p} по корзинам — ${histogramPercentileBound(op,p)}`).join("; ");
+          rows.append(element("li", `${op.surface} ${op.method}: ${op.requests} запросов; среднее ${(op.duration_seconds / op.requests * 1000).toFixed(1)} мс; ${latency}. Результаты: ${Object.entries(op.outcomes).map(([code, count]) => `${code}: ${count}`).join(", ")}`));
+        }
+        root.append(rows);
+      } else root.append(element("p", "Измерения запросов API недоступны."));
+      const work = platformUsage.organization_work;
+      if (work) {
+        const collaboration = work.collaboration;
+        if (collaboration) {
+          root.append(element("p", "Поручения соисполнителям, созданные за последние 24 часа. Ответ — первое сообщение адресата или его владельца; собственные сообщения отправителя исключены. Время календарное, включая ожидание человека."));
+          root.append(element("p", `Поручений — ${collaboration.requests}; ответили — ${collaboration.first_response.samples}; пока без ответа — ${collaboration.requests-collaboration.first_response.samples}.`));
+          root.append(element("p", `Результатов — ${collaboration.results}; получили первую проверку — ${collaboration.first_review.samples}; без сохранённой проверки — ${collaboration.results-collaboration.first_review.samples}.`));
+          for (const [label,timing] of [["До первого ответа",collaboration.first_response],["От результата до первой проверки",collaboration.first_review]] as const) {
+            root.append(element("p", timing.samples ? `${label}: ${timing.samples} измерений; p50 — ${timing.p50_seconds!.toFixed(1)} с; p95 — ${timing.p95_seconds!.toFixed(1)} с; p99 — ${timing.p99_seconds!.toFixed(1)} с.` : `${label}: завершённых измерений нет; длительность неизвестна.`));
+          }
+          root.append(element("p", collaboration.reviewed_requests ? `Доработка запрошена у ${collaboration.reworked_requests} из ${collaboration.reviewed_requests} проверенных поручений (${(100*collaboration.reworked_requests/collaboration.reviewed_requests).toFixed(1)}%). Повторные решения не увеличивают число поручений.` : "Доля поручений с доработкой неизвестна: проверенных результатов нет."));
+        } else root.append(element("p", "Время ответа и проверки поручений пока недоступно."));
+        root.append(element("p", "Результаты этой организации: публикации документов и принятые поручения учитываются отдельно. Поручение считается один раз по первой приёмке результата; последующие доработки не добавляют завершений."));
+        for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: ${period.publications} публикаций в ${period.projects} проектах; ${period.has_completed_publication ? "есть подтверждённый результат" : "публикации не зарегистрированы"}.`));
+        if (work.periods.every(p=>p.completed_projects!==undefined)) {
+          for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: проектов с завершённой работой — ${period.completed_projects}; организация ${period.has_completed_work ? "имеет подтверждённый результат" : "не имеет зарегистрированных завершений"}.`));
+          root.append(element("p", "Проект с публикацией и принятым поручением учитывается один раз. Это свод текущей организации; отдельные результаты не складываются в число уникальных задач."));
+        } else root.append(element("p", "Объединённый свод завершённых проектов недоступен."));
+        if (work.first_acceptance_at !== undefined) {
+          for (const period of work.periods) root.append(element("p", `За ${period.days} дн.: впервые принятых поручений — ${period.accepted_requests}, проектов — ${period.accepted_request_projects}.`));
+          if (work.first_acceptance_at) root.append(element("p", `Первая сохранённая приёмка поручения: ${new Date(work.first_acceptance_at).toLocaleString()}.`));
+        } else root.append(element("p", "Данные о принятых поручениях недоступны."));
+        root.append(element("p", "Это сохранённые приёмки поручений людям и агентам, а не число запусков моделей или текущих статусов задач трекера."));
+        if (work.first_publication_at) root.append(element("p", `Первая сохранённая публикация: ${new Date(work.first_publication_at).toLocaleString()}. Более ранняя история может быть неизвестна.`));
+      }
+      const periods = platformUsage.activity_windows;
+      if (periods) {
+        root.append(element("p", `Наблюдаемая активность: первые сохранённые сигналы — ${new Date(periods.first_observed_at).toLocaleString()}. Это не подтверждает непрерывное покрытие всех сотрудников.`));
+        for (const period of periods.windows) {
+          root.append(element("p", period.reporting_users ? `За ${period.days} дн.: активных людей — ${period.active_users}; телеметрия от ${period.reporting_users}.` : `За ${period.days} дн.: телеметрия не поступала; активность неизвестна.`));
+          if (Date.parse(periods.observed_at) - Date.parse(periods.first_observed_at) < period.days * 86400000) root.append(element("p", `История наблюдений короче ${period.days} дн.; полный период пока не накоплен.`));
+        }
+      } else root.append(element("p", "Активность за день, неделю и месяц пока неизвестна: нет полученных сигналов."));
+      const a = platformUsage.workspace_activity;
+      if (a) {
+        root.append(element("p", `Активность команды за 24 часа: ${a.active_users} пользователей · ${a.sessions} рабочих сессий · ${(a.active_seconds / 60).toFixed(1)} мин активности`));
+        root.append(element("p", `Телеметрия получена от ${a.reporting_users} пользователей; длительность наблюдаемых сессий — ${(a.session_seconds / 60).toFixed(1)} мин.`));
+      } else root.append(element("p", "Данные активности команды ещё не поступали. Отправку можно настроить в своём профиле CloudflareOS."));
 }

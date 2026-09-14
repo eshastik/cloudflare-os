@@ -7,6 +7,7 @@ import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import NativeDocumentSave from './NativeDocumentSave'
 
 const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn() } }))
+const drive = [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' as const }]
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -64,13 +65,13 @@ it.each(['existing', 'new-retry', 'new-reload', 'legacy-reload'])('saves native 
   const snapshotSource = { current: vi.fn(async () => snapshot) }
   class Empty extends RpcTarget {}
   api.subscribeConnectedAccounts.mockImplementation(async subscriber => {
-    subscriber.add(2, { displayName: 'First organization' }, null, [], true, 'mnemos')
-    subscriber.add(11, { displayName: 'Second organization' }, null, [], true, 'mnemos')
+    subscriber.add(2, { displayName: 'First organization', providesUi: { title: 'Память' } }, null, drive, true, 'memory')
+    subscriber.add(11, { displayName: 'Second organization', providesUi: { title: 'Память' } }, null, drive, true, 'memory')
     subscriber.ready()
     return new RpcStub(new Empty())
   })
   api.getGatekeeperApp.mockImplementation(async (id, accountId) => {
-    expect(id).toBe('mnemos')
+    expect(id).toBe('memory')
     expect(accountId).toBe(11)
     return { ui: new RpcStub(new Empty()), iframeHtml: '', nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Selector()) } }
   })
@@ -87,25 +88,26 @@ it.each(['existing', 'new-retry', 'new-reload', 'legacy-reload'])('saves native 
     const button = [...document.querySelectorAll('button')].find(b => b.textContent === label)
     expect(button).toBeDefined(); await act(async () => button!.click())
   }
+  const sectionReady = async () => { await act(async () => { await vi.waitFor(() => expect(document.querySelector('select[aria-label="Подключение для сохранения"]')).not.toBeNull()) }) }
   const choose = async (label: string, value: string) => {
     const select = document.querySelector(`select[aria-label="${label}"]`) as HTMLSelectElement
     await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
   }
   try {
     await act(async () => root.render(<NativeDocumentSave gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} />))
-    await click('Сохранить в Mnemos')
-    await choose('Подключение для сохранения Mnemos', '11')
+    await sectionReady()
+    await choose('Подключение для сохранения', '11')
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('option[value="project"]')).not.toBeNull()) })
-    await choose('Проект Mnemos', 'project')
+    await choose('Проект', 'project')
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('option[value="doc"]')).not.toBeNull()) })
     if (scenario !== 'existing') {
-      await choose('Документ Mnemos', '__new__')
+      await choose('Документ', '__new__')
       const input = document.querySelector('input[aria-label="Имя нового документа"]') as HTMLInputElement
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Новый план')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })
-    } else await choose('Документ Mnemos', 'doc')
+    } else await choose('Документ', 'doc')
     if (scenario === 'existing') await act(async () => { await vi.waitFor(() => expect(selections).toBe(1)) })
     expect(saves).toBe(0)
     await click(scenario === 'existing' ? 'Заменить в личном черновике' : 'Создать в личном черновике')
@@ -117,11 +119,11 @@ it.each(['existing', 'new-retry', 'new-reload', 'legacy-reload'])('saves native 
         await act(async () => root.unmount())
         root = createRoot(container)
         await act(async () => root.render(<NativeDocumentSave gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} />))
-        await click('Сохранить в Mnemos')
-        const account = document.querySelector('select[aria-label="Подключение для сохранения Mnemos"]') as HTMLSelectElement
+        await sectionReady()
+        const account = document.querySelector('select[aria-label="Подключение для сохранения"]') as HTMLSelectElement
         if (scenario === 'legacy-reload') {
           expect(account.value).toBe(''); expect(account.disabled).toBe(false)
-          await choose('Подключение для сохранения Mnemos', '11')
+          await choose('Подключение для сохранения', '11')
         } else { expect(account.value).toBe('11'); expect(account.disabled).toBe(true) }
         await act(async () => { await vi.waitFor(() => expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Продолжить создание')?.disabled).toBe(false)) })
         await click('Продолжить создание')

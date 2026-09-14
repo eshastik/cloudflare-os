@@ -56,6 +56,7 @@ import WorkspaceOpenErrorPage from './components/WorkspaceOpenErrorPage'
 import { useWorkspaceOpen } from './useWorkspaceOpen'
 import { reportIssue } from './errorReporting'
 import GadgetExportMenu from './GadgetExportMenu'
+import DocumentStatus from './DocumentStatus'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
@@ -166,15 +167,15 @@ function formatHeaderCost(cost: number) {
 function rightTabs(output?: BlueprintOutput): { value: RightTab; label: string }[] {
   return [
     { value: 'app', label: formatOf(output).noun },
-    { value: 'code', label: 'Code' },
-    { value: 'connections', label: 'Connections' },
+    { value: 'code', label: 'Код' },
+    { value: 'connections', label: 'Подключения' },
   ]
 }
 
 const ACTIVITY_TABS: { value: ActivityView; label: string }[] = [
-  { value: 'review', label: 'Needs review' },
-  { value: 'auto', label: 'Auto-approval' },
-  { value: 'history', label: 'History' },
+  { value: 'review', label: 'На проверку' },
+  { value: 'auto', label: 'Автоодобрение' },
+  { value: 'history', label: 'История' },
 ]
 
 // Names what the pane is showing. `icon` is for the workspace-level views (Activity); a workpiece
@@ -287,7 +288,7 @@ function PaneWorkpieceTabs({
             <span className="truncate">{gadget.title}</span>
             {gadget.chatId !== undefined && (
               <span className="flex-shrink-0 rounded-full bg-kumo-fill px-1.5 py-0.5 text-[10px] font-medium leading-none text-kumo-subtle">
-                Draft
+                Черновик
               </span>
             )}
           </button>
@@ -327,6 +328,10 @@ const CHAT_WIDTH_STORAGE_KEY = 'gadgets:workshop:chatWidth'
 const WORKSPACE_VIEW_STORAGE_KEY_PREFIX = 'gadgets:workshop:workspaceVisibility:'
 const APP_RAIL_EXPANDED_STORAGE_KEY = 'gadgets:workshop:appRailExpanded'
 const MIN_CHAT_WIDTH = 280
+/** Нативный формат документа по идентификатору вывода гаджета; для прочих гаджетов панели «Версия» нет. */
+function nativeFormatOf(outputId?: string) {
+  return outputId === 'document' ? 'cloudflareos.document' as const : outputId === 'spreadsheet' ? 'cloudflareos.spreadsheet' as const : outputId === 'presentation' ? 'cloudflareos.presentation' as const : null
+}
 const MIN_WORKSPACE_WIDTH = 400
 const DEFAULT_CHAT_WIDTH = 420
 const WORKSPACE_TRANSITION_MS = 200
@@ -405,10 +410,10 @@ function NoGadgetPlaceholder({ height }: { height: string }) {
     <div className="flex items-center justify-center px-6 text-center" style={{ height }}>
       <div className="max-w-[360px]">
         <p className="m-0 text-[15px] leading-[22px] font-semibold tracking-[-0.3px] text-kumo-default">
-          No gadgets yet
+          Гаджетов пока нет
         </p>
         <p className="mt-1.5 mb-0 text-[13px] leading-[19px] tracking-[-0.25px] text-kumo-subtle">
-          Ask the agent in chat to build something, and it will appear here.
+          Попросите агента в чате что-нибудь собрать — результат появится здесь.
         </p>
       </div>
     </div>
@@ -468,7 +473,7 @@ export default function GadgetEditor() {
       if (id) navigate({ to: '/workspace/$id', params: { id }, search: {}, replace: true })
     },
     onInvalidShareKey: () => {
-      toasts.add({ title: 'Invalid or expired share link.', variant: 'error' })
+      toasts.add({ title: 'Ссылка доступа неверна или истекла.', variant: 'error' })
     },
   })
   const [userInfo, setUserInfo] = useState<AiChatAuthorInfo | null>(null)
@@ -496,6 +501,8 @@ export default function GadgetEditor() {
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false)
   const [previewMode, _setPreviewMode] = useState(false)
+  // Панель «Версия» нативного документа монтируется порталом справа от колонки редактора.
+  const [versionPanelHost, setVersionPanelHost] = useState<HTMLDivElement | null>(null)
   const [workpieceRailExpanded, setWorkpieceRailExpanded] = useState(getInitialAppRailExpanded)
   const workpieceRailWidth = workpieceRailExpanded
     ? WORKPIECE_RAIL_EXPANDED_WIDTH
@@ -1187,7 +1194,7 @@ export default function GadgetEditor() {
     try {
       await target.setTitle(title)
     } catch {
-      toasts.add({ title: 'Failed to rename gadget', variant: 'error' })
+      toasts.add({ title: 'Не удалось переименовать гаджет. Попробуйте ещё раз.', variant: 'error' })
     } finally {
       target[Symbol.dispose]()
     }
@@ -1223,7 +1230,7 @@ export default function GadgetEditor() {
       await overseer.stub.setTitle(titleInput.trim())
       updateTitle(titleInput.trim())
       setIsEditingTitle(false)
-    } catch { toasts.add({ title: 'Failed to update title', variant: 'error' }) }
+    } catch { toasts.add({ title: 'Не удалось сохранить название. Попробуйте ещё раз.', variant: 'error' }) }
   }
   const handleCancelEdit = () => {
     setTitleInput(metadata?.title || '')
@@ -1246,7 +1253,7 @@ export default function GadgetEditor() {
       await overseer.stub.deleteSelf()
       navigate({ to: '/' })
     } catch {
-      toasts.add({ title: 'Failed to delete workspace', variant: 'error' })
+      toasts.add({ title: 'Не удалось удалить пространство. Попробуйте ещё раз.', variant: 'error' })
       setIsDeleting(false)
       setDeleteDialogOpen(false)
     }
@@ -1277,10 +1284,10 @@ export default function GadgetEditor() {
         </p>
         <div className="flex items-center gap-2">
           <WorkshopButton tone="secondary" onClick={handleGoToWorkspaces}>
-            Go to workspaces
+            К пространствам
           </WorkshopButton>
           <WorkshopButton tone="primary" onClick={retryOpen}>
-            Try again
+            Попробовать ещё раз
           </WorkshopButton>
         </div>
       </div>
@@ -1295,7 +1302,7 @@ export default function GadgetEditor() {
       <div className="min-h-screen flex items-center justify-center bg-kumo-base">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-kumo-subtle">Loading workspace…</p>
+          <p className="text-sm text-kumo-subtle">Загрузка пространства…</p>
         </div>
         {observerConfig && (
           <ObserverConfigModal
@@ -1338,7 +1345,7 @@ export default function GadgetEditor() {
         <div className="flex items-center gap-2 min-w-0">
           <Link
             to="/"
-            aria-label="Home"
+            aria-label="Главная"
             className="flex-shrink-0 hover:opacity-80 transition-opacity"
           >
             <SiteLogo size={22}>
@@ -1365,14 +1372,14 @@ export default function GadgetEditor() {
                 onClick={handleSaveTitle}
                 disabled={!titleInput.trim()}
                 className="!h-7 !w-7 hover:text-kumo-brand disabled:opacity-30"
-                aria-label="Save workspace title"
+                aria-label="Сохранить название"
               >
                 <Check size={14} />
               </WorkshopIconButton>
               <WorkshopIconButton
                 onClick={handleCancelEdit}
                 className="!h-7 !w-7"
-                aria-label="Cancel title edit"
+                aria-label="Отменить правку названия"
               >
                 <X size={14} />
               </WorkshopIconButton>
@@ -1385,8 +1392,8 @@ export default function GadgetEditor() {
               <WorkshopIconButton
                 onClick={() => setIsEditingTitle(true)}
                 className="!h-7 !w-7 flex-shrink-0"
-                title="Rename workspace"
-                aria-label="Rename workspace"
+                title="Переименовать пространство"
+                aria-label="Переименовать пространство"
               >
                 <Pencil size={16} />
               </WorkshopIconButton>
@@ -1395,7 +1402,7 @@ export default function GadgetEditor() {
 
           {metadata.owner && (
             <span className="text-xs text-kumo-inactive flex-shrink-0">
-              by {metadata.owner.name}
+              автор: {metadata.owner.name}
             </span>
           )}
         </div>
@@ -1422,14 +1429,14 @@ export default function GadgetEditor() {
 
           {connectionLost && (
             <span className="text-xs text-kumo-warning px-2 py-0.5 rounded-full bg-kumo-warning-tint border border-kumo-warning/20">
-              Reconnecting…
+              Переподключение…
             </span>
           )}
 
           <WorkshopIconButton
             onClick={() => setShareModalOpen(true)}
-            title="Share workspace"
-            aria-label="Share workspace"
+            title="Поделиться пространством"
+            aria-label="Поделиться пространством"
           >
             <ShareNetwork size={15} />
           </WorkshopIconButton>
@@ -1437,8 +1444,8 @@ export default function GadgetEditor() {
           <WorkshopIconButton
             onClick={() => setBlueprintModalOpen(true)}
             disabled={!selectedGadgetStub}
-            title="Blueprints"
-            aria-label="Blueprints"
+            title="Шаблоны"
+            aria-label="Шаблоны"
           >
             <Blueprint size={16} />
           </WorkshopIconButton>
@@ -1447,8 +1454,8 @@ export default function GadgetEditor() {
             <WorkshopIconButton
               danger
               onClick={() => setDeleteDialogOpen(true)}
-              title="Delete workspace"
-              aria-label="Delete workspace"
+              title="Удалить пространство"
+              aria-label="Удалить пространство"
             >
               <Trash size={16} />
             </WorkshopIconButton>
@@ -1524,7 +1531,7 @@ export default function GadgetEditor() {
                 <div className="absolute inset-0 flex items-center justify-center bg-kumo-base">
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-6 h-6 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-kumo-subtle">Loading conversation…</p>
+                    <p className="text-sm text-kumo-subtle">Загрузка беседы…</p>
                   </div>
                 </div>
               )}
@@ -1563,7 +1570,7 @@ export default function GadgetEditor() {
           >
             <div className="flex min-w-0 flex-1 items-center overflow-hidden">
               {paneShowsActivity ? (
-                <PaneLabel icon={Pulse} title="Activity" />
+                <PaneLabel icon={Pulse} title="Активность" />
               ) : visibleGadgets.length > 1 ? (
                 <PaneWorkpieceTabs
                   gadgets={visibleGadgets}
@@ -1574,7 +1581,7 @@ export default function GadgetEditor() {
                 <PaneLabel
                   output={selectedGadgetSummary.output}
                   title={selectedGadgetSummary.title}
-                  badge={selectedGadgetSummary.chatId !== undefined ? 'Draft' : undefined}
+                  badge={selectedGadgetSummary.chatId !== undefined ? 'Черновик' : undefined}
                 />
               )}
             </div>
@@ -1601,12 +1608,23 @@ export default function GadgetEditor() {
                   ))}
               </div>
 
+              {!paneShowsActivity && selectedGadgetStub && nativeFormatOf(selectedGadgetSummary?.output?.id) && (
+                <DocumentStatus
+                  key={`${selectedGadgetId}:${previewChatId ?? 'workspace'}`}
+                  gadget={selectedGadgetStub}
+                  format={nativeFormatOf(selectedGadgetSummary?.output?.id)!}
+                  snapshotSource={nativeSnapshotSource}
+                  chatId={previewChatId}
+                  disabled={activeTab !== 'app' || previewMode}
+                  panelHost={versionPanelHost}
+                  onCollapseChat={() => setChatWidth(MIN_CHAT_WIDTH)}
+                />
+              )}
+
               {!paneShowsActivity && (
                 <GadgetExportMenu
                   gadget={selectedGadgetStub}
-                  gadgetTitle={selectedGadgetSummary?.title ?? 'Gadget'}
-                  outputId={selectedGadgetSummary?.output?.id}
-                  snapshotSource={nativeSnapshotSource}
+                  gadgetTitle={selectedGadgetSummary?.title ?? 'Гаджет'}
                   chatId={previewChatId}
                   disabled={activeTab !== 'app' || previewMode}
                 />
@@ -1614,10 +1632,10 @@ export default function GadgetEditor() {
 
               {!paneShowsActivity && (
                 <WorkshopIconButton
-                  aria-label="Enter full screen"
+                  aria-label="На весь экран"
                   title={activeTab === 'app' && !previewMode
-                    ? 'Full screen'
-                    : `Full screen is available in ${formatOf(selectedGadgetSummary?.output).noun} view`}
+                    ? 'На весь экран'
+                    : `На весь экран — только во вкладке «${formatOf(selectedGadgetSummary?.output).noun}»`}
                   onClick={enterGadgetFullscreen}
                   disabled={activeTab !== 'app' || previewMode}
                 >
@@ -1626,8 +1644,8 @@ export default function GadgetEditor() {
               )}
 
               <WorkshopIconButton
-                aria-label={paneShowsActivity ? 'Close activity' : 'Close gadget pane'}
-                title="Close"
+                aria-label={paneShowsActivity ? 'Закрыть активность' : 'Закрыть панель гаджета'}
+                title="Закрыть"
                 onClick={closeWorkspacePane}
               >
                 <X size={16} />
@@ -1651,7 +1669,7 @@ export default function GadgetEditor() {
               tabIndex={isGadgetFullscreen ? -1 : undefined}
               role={isGadgetFullscreen ? 'dialog' : undefined}
               aria-modal={isGadgetFullscreen ? true : undefined}
-              aria-label={isGadgetFullscreen ? 'Gadget full screen' : undefined}
+              aria-label={isGadgetFullscreen ? 'Гаджет на весь экран' : undefined}
               className={
                 activeTab !== 'app' || previewMode
                   ? 'hidden'
@@ -1684,7 +1702,7 @@ export default function GadgetEditor() {
                   className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 transform"
                 >
                   <div className="rounded-full border border-kumo-line bg-kumo-base/90 px-4 py-1.5 text-[13px] leading-[18px] text-kumo-default shadow-md backdrop-blur-sm">
-                    Press <kbd className="rounded border border-kumo-line bg-kumo-elevated px-1.5 py-0.5 text-[11px] font-medium">Esc</kbd> to exit full screen
+                    Нажмите <kbd className="rounded border border-kumo-line bg-kumo-elevated px-1.5 py-0.5 text-[11px] font-medium">Esc</kbd>, чтобы выйти из полноэкранного режима
                   </div>
                 </div>
               )}
@@ -1730,6 +1748,7 @@ export default function GadgetEditor() {
 
             </div>
           </div>
+          <div ref={setVersionPanelHost} className="relative flex shrink-0" />
           </div>
         </div>
 
@@ -1793,8 +1812,8 @@ export default function GadgetEditor() {
 
       <DeleteConfirmationDialog
         open={deleteDialogOpen}
-        title="Delete workspace?"
-        description={<>This removes <span className="font-medium text-kumo-default">{metadata.title}</span>. You can&apos;t undo this.</>}
+        title="Удалить пространство?"
+        description={<>Пространство <span className="font-medium text-kumo-default">{metadata.title}</span> будет удалено. Отменить это нельзя.</>}
         isDeleting={isDeleting}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteConfirm}

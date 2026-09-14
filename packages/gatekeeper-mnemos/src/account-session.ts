@@ -1,3 +1,4 @@
+import { HUMAN_SESSION_MS } from "./human-session.ts";
 import {validateUploadUsage} from './upload-usage.ts';
 import {CentroidRequests} from './centroid.ts';
 import {ReindexBatches,type ReindexBatch} from './reindex-batch.ts';
@@ -30,7 +31,7 @@ import { validActivityWindows } from "./activity-periods.ts";
 import { validExternalSnapshot } from "./external-metrics.ts";
 import { validServiceSnapshot } from "./service-metrics.ts";
 import { SelectedDocumentReader, parseDocumentResource, type DocumentResource } from "./document-resource.ts";
-import { MnemosAPI, MnemosAPIError, type UIReadinessSample, type AgentTaskOutcome, type TeamBudgetCreate, type AgentConnectionPage, type AgentConsentPreview, type PolicyDomain, type PrivateDocumentCreate, type PrivateParticipantMode } from "./mnemos-api.ts";
+import { MnemosAPI, MnemosAPIError, type UIReadinessSample, type AgentTaskOutcome, type TeamBudgetCreate, type AgentConnectionPage, type AgentConsentPreview, type AgentCredential, type PolicyDomain, type PrivateDocumentCreate, type PrivateParticipantMode } from "./mnemos-api.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 
 interface CredentialRecord { token: string; generation: string; expiresAt: number; owner?: StoredAccountOwner; epoch?: string; audit_account_id?: string; connection_audit?: ConnectionAuditEvent[] }
@@ -72,19 +73,84 @@ const TASK_HISTORY_PREFIX = "mnemosTaskHistory:";
 interface FinishedTask {request: ManagedTaskRequest; next: string}
 const MANAGED_REQUEST = "mnemosManagedAgentRequest";
 const KEY = "mnemosCredential";
+/** Связь синглтона Workshop (S14/S15): без credential, привязана к эпохе подключения. */
+const AGENT_KEY = "mnemosWorkshopAgent";
+/** Кэш короткоживущего агентского credential; отдельный ключ, чтобы запись связи токена не содержала. */
+const AGENT_CREDENTIAL_KEY = "mnemosWorkshopAgentCredential";
+/** Credential обновляется заранее, чтобы запись не упёрлась в истечение посреди загрузки. */
+const AGENT_REFRESH_MARGIN_MS = 10_000;
+interface WorkshopAgentRecord { bindingId: string; connectionName: string; epoch: string }
+interface WorkshopAgentCredential { bindingId: string; token: string; expiresAt: number }
+
+/** request_id связи: стабилен для аккаунта в пределах эпохи подключения, меняется после отключения. */
+async function workshopAgentRequestId(accountId: string, epoch: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`workshop-agent\0${accountId}\0${epoch}`)));
+  return btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 /** Internal account helper; never a UI or agent RPC target. */
 export class MnemosAccount {
   #storage: AccountStorage;
   #origin: string;
   #fetch: typeof fetch;
-  constructor(storage: AccountStorage, origin: string, fetcher: typeof fetch = fetch) {
-    this.#storage = storage; this.#origin = origin; this.#fetch = fetcher;
+  #clock: () => number;
+  constructor(storage: AccountStorage, origin: string, fetcher: typeof fetch = fetch, clock: () => number = Date.now) {
+    this.#storage = storage; this.#origin = origin; this.#fetch = fetcher; this.#clock = clock;
   }
+  /** Связь Workshop заводится один раз на эпоху подключения; scope — проекты, доступные человеку сейчас. */
+  async ensureWorkshopAgent(accountId: string, connectionName: string): Promise<{ bindingId: string; connectionName: string }> {
+    const epoch = this.calendarEpoch();
+    if (!epoch) throw new MnemosAPIError(401);
+    const existing = this.#storage.get<WorkshopAgentRecord>(AGENT_KEY);
+    if (existing && existing.epoch === epoch) return { bindingId: existing.bindingId, connectionName: existing.connectionName };
+    const requestId = await workshopAgentRequestId(accountId, epoch);
+    const human = this.session();
+    try {
+      const projects = (await human.listProjects()).projects.map(project => project.id);
+      const connection = await human.provisionWorkshopAgent(requestId, connectionName, projects);
+      if (connection.revoked) throw new MnemosAPIError(403);
+      if (this.calendarEpoch() !== epoch) throw new MnemosAPIError(401);
+      const record: WorkshopAgentRecord = { bindingId: connection.binding_id, connectionName: connection.connection_name, epoch };
+      this.#storage.put(AGENT_KEY, record);
+      return { bindingId: record.bindingId, connectionName: record.connectionName };
+    } finally { human.dispose(); }
+  }
+  /** Сессия под агентским credential: выпуск и обновление идут по связи через сессию человека, токен наружу не выходит. */
+  agentSession(): MnemosAccountSession {
+    const record = this.#storage.get<WorkshopAgentRecord>(AGENT_KEY);
+    const human = this.#storage.get<CredentialRecord>(KEY);
+    if (!record || !human?.token || !(human.expiresAt > Date.now())) throw new MnemosAPIError(401);
+    const valid = () => {
+      const current = this.#storage.get<WorkshopAgentRecord>(AGENT_KEY), owner = this.#storage.get<CredentialRecord>(KEY);
+      return current?.bindingId === record.bindingId && current.epoch === record.epoch && !!owner?.token && owner.expiresAt > Date.now();
+    };
+    const client = new MnemosAPI(this.#origin, async () => {
+      if (!valid()) throw new MnemosAPIError(401);
+      const cached = this.#storage.get<WorkshopAgentCredential>(AGENT_CREDENTIAL_KEY);
+      if (cached?.bindingId === record.bindingId && cached.expiresAt - AGENT_REFRESH_MARGIN_MS > this.#clock()) return cached.token;
+      const session = this.session();
+      let credential: AgentCredential;
+      try { credential = await session.issueAgentCredential(record.bindingId); } finally { session.dispose(); }
+      if (credential.token_type !== "Bearer" || typeof credential.access_token !== "string" || !credential.access_token || !Number.isSafeInteger(credential.expires_in) || credential.expires_in <= 0) throw new MnemosAPIError(502);
+      if (!valid()) throw new MnemosAPIError(401);
+      this.#storage.put(AGENT_CREDENTIAL_KEY, { bindingId: record.bindingId, token: credential.access_token, expiresAt: this.#clock() + credential.expires_in * 1000 } satisfies WorkshopAgentCredential);
+      return credential.access_token;
+    }, this.#fetch);
+    return new MnemosAccountSession(client, valid, this.#storage);
+  }
+  /** Отзыв связи на сервере и очистка кэша; локальная очистка идёт первой, чтобы потеря ответа не оставила credential. */
+  async revokeWorkshopAgent(): Promise<void> {
+    const record = this.#storage.get<WorkshopAgentRecord>(AGENT_KEY);
+    this.#clearWorkshopAgent();
+    if (!record) return;
+    const session = this.session();
+    try { await session.revokeAgentConnection(record.bindingId); } finally { session.dispose(); }
+  }
+  #clearWorkshopAgent(): void { this.#storage.delete(AGENT_KEY); this.#storage.delete(AGENT_CREDENTIAL_KEY); }
   // Only credentials from the trusted server connection flow enter here.
   // Ownership is established by Mnemos, then kept immutable across reconnects.
-  async connect(token: string, expiresAt = Date.now() + 900000): Promise<void> {
-    if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 900000) throw new MnemosAPIError(400);
+  async connect(token: string, expiresAt = Date.now() + HUMAN_SESSION_MS): Promise<void> {
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + HUMAN_SESSION_MS) throw new MnemosAPIError(400);
     const generationBeforeProbe = this.#storage.get<CredentialRecord>(KEY)?.generation;
     const identity = await new MnemosAPI(this.#origin, async () => token, this.#fetch).whoAmI();
     if (this.#storage.get<CredentialRecord>(KEY)?.generation !== generationBeforeProbe) throw new MnemosAPIError(409);
@@ -134,6 +200,7 @@ export class MnemosAccount {
     // One write fences both in-flight sessions and external account capabilities.
     this.#saveCredential({ token: "", generation: crypto.randomUUID(), expiresAt: 0,
       owner: storedAccountOwner(this.#storage), epoch: crypto.randomUUID() }, "disconnected");
+    this.#clearWorkshopAgent();
   }
   #saveCredential(record: CredentialRecord, phase: "connected"|"disconnected"|"epoch-initialized") {
     const previous = this.#storage.get<CredentialRecord>(KEY);
@@ -393,6 +460,11 @@ export class MnemosAccountSession {
     const preview = await this.readPublicationReview(review);
     if (preview.candidate_id !== review || preview.decision_version !== version || !preview.domains.some(domain => domain.node_ids.includes(node))) throw new MnemosAPIError(403);
   }
+  async withdrawPublicationReview(id: string) {
+    this.#check();
+    await this.#client.withdrawPublicationReview(id, this.#lifetime.signal);
+    this.#check();
+  }
   async recordReviewDecision(id: string, domain: string, version: number, approved: boolean) {
     this.#check();
     await this.#client.recordReviewDecision(id, domain, version, approved, this.#lifetime.signal);
@@ -449,6 +521,17 @@ export class MnemosAccountSession {
     const ticket = await this.#client.beginNativeUpload(projectId, size, checksum, this.#lifetime.signal);
     this.#check(); return ticket;
   }
+  async createProject(name: string, slug: string) {
+    this.#check(); const result = await this.#client.createProject(name, slug, this.#lifetime.signal); this.#check(); return result;
+  }
+  async readWorkshopAgentScope(binding: string) { this.#check(); const result=await this.#client.readWorkshopAgentScope(binding,this.#lifetime.signal); this.#check(); return result; }
+  async updateWorkshopAgentScope(binding: string, expected: string[], projects: string[]) {
+    this.#check(); const result = await this.#client.updateWorkshopAgentScope(binding, expected, projects, this.#lifetime.signal); this.#check(); return result;
+  }
+  /** Connection instructions are scoped to the currently authenticated organization. */
+  /** Explicit human action; the API checks principal.manage and current grant validity. */
+  async setAgentProjectRight(principal: string, project: string, mode: 'read' | 'write', enabled: boolean) { await this.whoAmI(); const out=await this.#client.setAgentProjectRight(principal,project,mode,enabled,this.#lifetime.signal); this.#check(); return out; }
+  async externalAgentSetup() { await this.whoAmI(); return this.#client.externalAgentSetup(); }
   async whoAmI() {
     this.#check();
     const identity = await this.#client.whoAmI(this.#lifetime.signal);
@@ -1257,6 +1340,19 @@ export class MnemosAccountSession {
     this.#check();
     await this.#client.revokeAgentConnection(bindingId, this.#lifetime.signal);
     this.#check();
+  }
+  async provisionWorkshopAgent(requestId: string, connectionName: string, projectIds: string[]) {
+    this.#check();
+    const connection = await this.#client.provisionWorkshopAgent(requestId, connectionName, projectIds, this.#lifetime.signal);
+    this.#check();
+    if (typeof connection.binding_id !== "string" || !connection.binding_id || typeof connection.connection_name !== "string") throw new MnemosAPIError(502);
+    return connection;
+  }
+  /** Только для агентской сессии аккаунта; значение наружу не отдаётся. */
+  async issueAgentCredential(bindingId: string) {
+    this.#check();
+    const credential = await this.#client.issueAgentCredential(bindingId, this.#lifetime.signal);
+    this.#check(); return credential;
   }
   dispose(): void { this.#lifetime.abort(); }
 }

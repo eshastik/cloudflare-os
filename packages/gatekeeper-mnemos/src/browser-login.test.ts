@@ -46,7 +46,7 @@ test("HTTP callback requires the browser cookie and rejects ambiguous inputs bef
   assert.equal((await run(`${callback}?state=state&code=code`, stored, "POST")).status, 405);
   assert.equal(completions, 0);
   const done = await run(`${callback}?state=state&code=code`, stored);
-  assert.equal(done.status, 200); assert.equal(completions, 1); assert.equal(starts, 1);
+  assert.equal(done.status, 303); assert.equal(done.headers.get("Location"), "https://connector.example/gatekeepers/mnemos"); assert.equal(completions, 1); assert.equal(starts, 1);
   assert.ok(done.headers.get("Set-Cookie")!.includes("Max-Age=0"));
   assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
 });

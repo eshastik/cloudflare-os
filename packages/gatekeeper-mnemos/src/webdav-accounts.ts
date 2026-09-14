@@ -1,10 +1,12 @@
+import { sourceHealth, observeSourceRead } from './source-health.ts';
+import type { SourceLoadHealth } from './source-health.ts';
 import {ConnectionAuditStorage} from './connection-audit-storage.ts';
 import {WebDAVImportReader,type WebDAVServer,type WebDAVCredential} from '@gadgets/webdav-client';
 import type {AccountStorage} from './account-session.ts';
 
 export interface WebDAVOwner {tenant:string;owner:string;epoch:string;}
 export interface WebDAVSetup {request:string;server:string;username:string;password:string;}
-export interface WebDAVAccountInfo {id:string;server:string;username:string;enabled:boolean;}
+export interface WebDAVAccountInfo extends SourceLoadHealth {id:string;server:string;username:string;enabled:boolean;}
 /** Owner-only management surface; passwords are write-only input. */
 export interface WebDAVManagement {
  listWebDAVAccounts():Promise<{servers:Array<{id:string;title:string;url:string}>;accounts:WebDAVAccountInfo[]}>;
@@ -13,7 +15,7 @@ export interface WebDAVManagement {
 }
 interface Server extends WebDAVServer {id:string;title:string;}
 interface Record {id:string;owner:WebDAVOwner;server:string;serverKey:string;credential:WebDAVCredential;generation:string;enabled:boolean;}
-export const WEBDAV_RESOURCE={urlPattern:'mnemos://webdav/files/*',title:'Файлы WebDAV',description:'Чтение выбранных файлов из личных подключений WebDAV.'};
+export const WEBDAV_RESOURCE={urlPattern:'mnemos://webdav/files/*',title:'Файлы WebDAV',description:'Чтение выбранных файлов из личных подключений WebDAV.',receives:'drive' as const};
 const denied=()=>Error('WebDAV account unavailable.');
 const id=(value:unknown):string=>{if(typeof value!=='string'||!/^[a-f0-9-]{36}$/.test(value))throw denied();return value;};
 const serverKey=(server:Server)=>JSON.stringify([server.id,server.url]);
@@ -39,7 +41,7 @@ export class WebDAVAccounts {
  #read(key:string){return this.storage.get<Record>('webdavAccount:'+id(key));}
  #owned(record:Record|undefined,owner:WebDAVOwner){if(!record||record.owner.tenant!==owner.tenant||record.owner.owner!==owner.owner||record.owner.epoch!==owner.epoch||this.epoch()!==owner.epoch)throw denied();return record;}
  #server(key:string){const server=this.servers.find(s=>s.id===key);if(!server)throw denied();return server;}
- #info(record:Record):WebDAVAccountInfo{return {id:record.id,server:record.server,username:record.credential.username,enabled:record.enabled};}
+ #info(record:Record):WebDAVAccountInfo{return {...sourceHealth(this.storage,'webdav',record.id,record.generation),id:record.id,server:record.server,username:record.credential.username,enabled:record.enabled};}
  list(owner:WebDAVOwner){
   if(this.epoch()!==owner.epoch)throw denied();
   return {servers:this.servers.map(({id,title,url})=>({id,title,url})),accounts:(this.storage.get<string[]>(this.#index(owner))??[]).map(key=>this.#read(key)).filter((v):v is Record=>!!v).map(v=>this.#info(this.#owned(v,owner)))};
@@ -72,6 +74,8 @@ export class WebDAVAccounts {
  validate(key:string,generation:string){this.#source(key,generation);}
  async read(key:string,generation:string,file:string){
   const {record,server}=this.#source(key,generation),validate=async()=>{this.validate(key,generation)};
+  return observeSourceRead(this.storage,'webdav',key,generation,async()=>{
   const snapshot=await new WebDAVImportReader(server,record.credential,validate,this.fetcher).snapshot(file);await validate();return snapshot;
+  });
  }
 }

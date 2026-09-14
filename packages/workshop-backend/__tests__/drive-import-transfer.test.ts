@@ -10,7 +10,7 @@ it.each(['google','yandex'])('%s retains source and current policy on retry',asy
  const snapshot={provider:'google-drive',fileId:'file'};
  const source={validate:async()=>{},read:async()=>{reads++;duringRead();return snapshot}};
  const google={getDriveImportSource:async()=>{factories++;return {source,sourceKey:'epoch-one/file',resource:{urlPattern:pattern}}}};
- const mnemos={captureDriveImport:async(...args:any[])=>{
+ const mnemos={getSupportedResources:async()=>[{urlPattern:'mnemos://webdav/files/*',title:'WebDAV',description:'',receives:'drive' as const}],captureDriveImport:async(...args:any[])=>{
   posts.push(args.slice(0,4));
   if(!saved){await args[4].read();saved=true}
   if(lost){lost=false;throw Error('lost reply')}
@@ -30,4 +30,23 @@ it.each(['google','yandex'])('%s retains source and current policy on retry',asy
  targetLive=false;await expect(user.captureDriveImport(7,8,'file','project','request')).rejects.toThrow('unavailable');
  targetLive=true;sourceLive=true;saved=false;duringRead=()=>{sourceLive=false};
  await expect(user.captureDriveImport(7,8,'file','project','new-request')).rejects.toThrow('unavailable');
+});
+
+const driveReceiver=(declared:boolean)=>({
+ getSupportedResources:async()=>[{urlPattern:'memory://files/*',title:'Files',description:'',...(declared?{receives:'drive' as const}:{})}],
+ captureDriveImport:async()=>({node_id:'node',head:'head'}),
+ listDriveImportAccounts:async()=>[{id:'own',name:'Own'}],
+});
+it('hands drive imports to any vendor declaring a receiving resource and refuses an undeclared one apart from an unavailable account',async()=>{
+ const records=new Map();
+ const source={validate:async()=>{},read:async()=>({provider:'google-drive',fileId:'file'})};
+ const google={getDriveImportSource:async()=>({source,sourceKey:'epoch/file',resource:{urlPattern:'https://drive.google.com/file/:fileId/*'}})};
+ const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
+ Object.assign(user,{env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(DEFAULT_ADMIN_CONFIG)}},storage:{connectedAccounts:{get:(id:number)=>id===7?{id,account:google,vendorId:'google'}:id===8?{id,account:driveReceiver(true),vendorId:'memory'}:id===9?{id,account:driveReceiver(false),vendorId:'other'}:undefined}},ctx:{id:{toString:()=> 'user'},storage:{kv:{get:(key:string)=>records.get(key),put:(key:string,value:unknown)=>records.set(key,value)}},exports:{DriveImportLease:({props}:any)=>new DriveImportGuard(props.source,()=>user.checkCalendarSourceAccounts(props.accounts))}}});
+ await expect(user.captureDriveImport(7,8,'file','project','request')).resolves.toEqual({node_id:'node',head:'head'});
+ await expect(user.listDriveImportAccounts(8)).resolves.toEqual([{id:'own',name:'Own'}]);
+ const refused=await user.captureDriveImport(7,9,'file','project','request').catch((error:Error)=>error.message);
+ expect(refused).toBe('This account does not receive drive sources.');
+ await expect(user.listDriveImportAccounts(9)).rejects.toThrow('does not receive drive sources');
+ await expect(user.captureDriveImport(7,99,'file','project','request')).rejects.toThrow('unavailable');
 });

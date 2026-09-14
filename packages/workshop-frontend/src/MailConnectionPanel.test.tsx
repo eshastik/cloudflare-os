@@ -5,6 +5,7 @@ import {expect,it,vi} from 'vitest'
 import MailConnectionPanel from './MailConnectionPanel'
 
 const api=vi.hoisted(()=>({subscribeConnectedAccounts:vi.fn(),prepareMailConnection:vi.fn(),registerMailSelection:vi.fn(),listMailFolders:vi.fn()}))
+const mail=[{urlPattern:'https://memory.example/mail',description:'',title:'',receives:'mail' as const}]
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:api,currentUser:{type:'user',id:'alice'}})}))
 ;(globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true
 
@@ -13,7 +14,7 @@ it('allows correcting preparation failure and retains a pending registration on 
  api.listMailFolders.mockResolvedValue({folders:[{id:'team',name:'Team',hasChildren:false},{id:'wrong',name:'Wrong',hasChildren:false}],truncated:false})
  const disposed=vi.fn()
  api.subscribeConnectedAccounts.mockImplementation(async s=>{
-  for(const [id,vendor] of [[7,'google'],[8,'mnemos']] as const)s.add(id,{displayName:vendor},{},[],true,vendor)
+  for(const [id,vendor] of [[7,'google'],[8,'memory']] as const)s.add(id,{displayName:vendor},{},vendor==='memory'?mail:[],true,vendor)
   return {[Symbol.dispose]:disposed}
  })
  api.prepareMailConnection.mockRejectedValueOnce(Error('bad mail')).mockResolvedValue({selection_id:'selection',query:'label:team'})
@@ -29,7 +30,7 @@ it('allows correcting preparation failure and retains a pending registration on 
  }
  try{
   await act(async()=>root.render(<MailConnectionPanel/>))
-  await fill('Почтовый аккаунт','7');await fill('Аккаунт Mnemos','8');await fill('Проект Mnemos','project');await act(async()=>container.querySelectorAll<HTMLInputElement>('input[type=radio]')[1].click())
+  await fill('Почтовый аккаунт','7');await fill('Аккаунт-получатель','8');await fill('Проект','project');await act(async()=>container.querySelectorAll<HTMLInputElement>('input[type=radio]')[1].click())
   await click('Подключить почту')
   expect(api.registerMailSelection).not.toHaveBeenCalled()
   await click('Изменить выбор');await act(async()=>container.querySelector<HTMLInputElement>('input[type=radio]')!.click());await click('Подключить почту')
@@ -51,7 +52,7 @@ it('allows correcting preparation failure and retains a pending registration on 
 
 it('selects a concrete Outlook subfolder before transferring authority',async()=>{
  vi.clearAllMocks();sessionStorage.clear()
- api.subscribeConnectedAccounts.mockImplementation(async s=>{for(const [id,vendor] of [[9,'microsoft'],[8,'mnemos']] as const)s.add(id,{displayName:vendor},{},[],true,vendor);return {[Symbol.dispose]:()=>{}}})
+ api.subscribeConnectedAccounts.mockImplementation(async s=>{for(const [id,vendor] of [[9,'microsoft'],[8,'memory']] as const)s.add(id,{displayName:vendor},{},vendor==='memory'?mail:[],true,vendor);return {[Symbol.dispose]:()=>{}}})
  api.listMailFolders.mockImplementation(async(_id,parent)=>({folders:parent?[{id:'child',name:'Team',hasChildren:false}]:[{id:'inbox',name:'Inbox',hasChildren:true}],truncated:false}))
  api.prepareMailConnection.mockResolvedValue({selection_id:'outlook-selection',query:'folder:child'})
  api.registerMailSelection.mockResolvedValue({connection_id:'outlook-connection',enabled:true})
@@ -60,7 +61,7 @@ it('selects a concrete Outlook subfolder before transferring authority',async()=
  const fill=async(label:string,value:string)=>{const el=container.querySelector(`[aria-label="${label}"]`) as HTMLInputElement;await act(async()=>{Object.getOwnPropertyDescriptor(el.tagName==='INPUT'?HTMLInputElement.prototype:HTMLSelectElement.prototype,'value')!.set!.call(el,value);el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('input',{bubbles:true}))})}
  try{
   await act(async()=>root.render(<MailConnectionPanel/>))
-  await fill('Почтовый аккаунт','9');await fill('Аккаунт Mnemos','8');await fill('Проект Mnemos','project')
+  await fill('Почтовый аккаунт','9');await fill('Аккаунт-получатель','8');await fill('Проект','project')
   expect(button('Подключить почту').disabled).toBe(true)
   await act(async()=>button('Открыть вложенные папки: Inbox').click())
   expect(api.listMailFolders).toHaveBeenLastCalledWith(9,'inbox')
@@ -73,7 +74,7 @@ it('selects a concrete Outlook subfolder before transferring authority',async()=
 
 it('selects an IMAP folder inside the same Mnemos account',async()=>{
  vi.clearAllMocks();sessionStorage.clear();
- api.subscribeConnectedAccounts.mockImplementation(async s=>{s.add(8,{displayName:'Mnemos'},{},[],true,'mnemos');return {[Symbol.dispose]:()=>{}}});
+ api.subscribeConnectedAccounts.mockImplementation(async s=>{s.add(8,{displayName:'Память'},{},mail,true,'memory');return {[Symbol.dispose]:()=>{}}});
  api.listMailFolders.mockResolvedValue({folders:[{id:'mailbox',name:'owner — INBOX',hasChildren:false}],truncated:false});
  api.prepareMailConnection.mockResolvedValue({selection_id:'imap-selection',query:'folder'});
  api.registerMailSelection.mockResolvedValue({connection_id:'imap-connection',enabled:true});
@@ -81,7 +82,7 @@ it('selects an IMAP folder inside the same Mnemos account',async()=>{
  const fill=async(label:string,value:string)=>{const el=container.querySelector(`[aria-label="${label}"]`) as HTMLInputElement;await act(async()=>{Object.getOwnPropertyDescriptor(el.tagName==='INPUT'?HTMLInputElement.prototype:HTMLSelectElement.prototype,'value')!.set!.call(el,value);el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('input',{bubbles:true}));});};
  try{
   await act(async()=>root.render(<MailConnectionPanel/>));
-  await fill('Почтовый аккаунт','8');await fill('Аккаунт Mnemos','8');await fill('Проект Mnemos','project');
+  await fill('Почтовый аккаунт','8');await fill('Аккаунт-получатель','8');await fill('Проект','project');
   expect(container.textContent).toContain('Папка почты');expect(api.listMailFolders).toHaveBeenCalledWith(8,'');
   await act(async()=>container.querySelector<HTMLInputElement>('input[type="radio"]')!.click());
   await act(async()=>[...container.querySelectorAll('button')].find(b=>b.textContent==='Подключить почту')!.click());
@@ -89,3 +90,17 @@ it('selects an IMAP folder inside the same Mnemos account',async()=>{
   expect(container.textContent).toContain('imap-connection');
  }finally{await act(async()=>root.unmount());container.remove();}
 });
+
+it('does not read account zero when the source selection is empty', async () => {
+ vi.clearAllMocks(); sessionStorage.clear()
+ api.subscribeConnectedAccounts.mockImplementation(async s => {
+  s.add(0, {displayName:'Memory'}, {}, [{receives:'mail'}], true, 'memory')
+  return {[Symbol.dispose]:()=>{}}
+ })
+ const container=document.createElement('div'); const root=createRoot(container)
+ try {
+  await act(async()=>root.render(<MailConnectionPanel/>))
+  expect(api.listMailFolders).not.toHaveBeenCalled()
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+ } finally {await act(async()=>root.unmount())}
+})

@@ -39,7 +39,7 @@ function HomePage() {
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {
-  useDocumentTitle("Home");
+  useDocumentTitle("Главная");
 
   const { authenticatedApi } = useAuthenticatedApi();
   const navigate = useNavigate();
@@ -69,7 +69,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
         // Toast unless it's a connection error (reconnect refetches); a do-reset here already
         // survived the Worker's same-colo retry, so the user should hear about it.
         if (classifyRpcError(err) !== "connection") {
-          toasts.add({ title: "Couldn't load AI models", variant: "error" });
+          toasts.add({ title: "Не удалось загрузить список моделей. Обновите страницу.", variant: "error" });
         }
       });
     return () => {
@@ -129,7 +129,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
           provisionalOverseerRef.current = null;
         }
         if (!transient) {
-          toasts.add({ title: "Failed to create workspace", variant: "error" });
+          toasts.add({ title: "Не удалось создать пространство. Попробуйте ещё раз.", variant: "error" });
         }
         throw err;
       }
@@ -172,10 +172,10 @@ export function HomePageContent({ prompt }: HomeSearch) {
         {/* Hero */}
         <header className="text-center">
           <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
-            What are we working on?
+            Над чем работаем?
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Ask a question, create an output, or create an app that works with your tools and data.
+            Задайте вопрос, создайте документ или приложение, которое работает с вашими инструментами и данными.
           </p>
         </header>
 

@@ -3,6 +3,7 @@ import {useEffect,useState} from 'react'
 import type {DriveImportReceipt} from '@gadgets/workshop-shared/drive-import'
 import {useAuthenticatedApi} from './AuthContext'
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
+import {openNativeWritesFrame} from './accountCapabilities'
 import NativeOfficeImport from './NativeOfficeImport'
 import {driveAttemptKey,type DriveCaptureAttempt} from './driveCaptureAttempt'
 
@@ -18,11 +19,10 @@ export default function DriveOfficeImport({owner,attempt,receipt,onBusy,onCreate
   setState(null);setError('')
   if(!format)return
   let closed=false;let held:Frame=null
-  authenticatedApi.getGatekeeperApp('mnemos',attempt.target).then(frame=>{
+  openNativeWritesFrame(authenticatedApi,attempt.target).then(frame=>{
    if(closed){disposeGatekeeperFrame(frame);return}
-   held=frame
-   if(frame?.nativeWrites)setState({frame});else setError('Откройте подключение Mnemos заново для разбора файла.')
-  }).catch(()=>{if(!closed)setError('Не удалось открыть разбор файла. Проверьте подключение Mnemos.')})
+   held=frame;setState({frame})
+  }).catch(()=>{if(!closed)setError('Не удалось открыть разбор файла. Проверьте подключение аккаунта-получателя.')})
   return()=>{closed=true;disposeGatekeeperFrame(held)}
  },[authenticatedApi,attempt.target,format])
  if(!format)return <p>Разбор этого формата здесь пока не поддерживается. Исходная копия сохранена.</p>

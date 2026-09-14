@@ -25,7 +25,7 @@ test("persisted login carries PKCE and server secrets never enter the browser UR
       case config.iamOrigin + "/v1/session/credential":
         assert.deepEqual(JSON.parse(String(init?.body)), { state: "state", id_token: "provider-proof" });
         assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer " + config.iamClientSecret);
-        return Response.json({ access_token: "human-token", token_type: "Bearer", expires_in: 900 });
+        return Response.json({ access_token: "human-token", token_type: "Bearer", expires_in: 2592000 });
       default: throw new Error("unexpected destination");
     }
   };

@@ -1,3 +1,4 @@
+import type {SourceLoadHealth} from './source-health.ts';
 import type {MailMessage} from '@gadgets/workshop-shared/mail-message';
 import type {MailReadRequest} from '@gadgets/workshop-shared/mail-search';
 /** Common human mailbox query; uses the same selection and authorization as agent reads. */
@@ -6,7 +7,7 @@ export type MailMessageQuery = Pick<MailReadRequest,'limit'|'cursor'|'search'|'a
 export interface MailMessagePage {provider:string;query_sha256:string;messages:MailMessage[];attachment?:import('@gadgets/workshop-shared/mail-attachment').MailAttachmentChunk;truncated:boolean;next_cursor?:string;}
 
 /** Public connection receipt; no service credential or bridge handle. */
-export interface MailConnectionInfo {
+export interface MailConnectionInfo extends SourceLoadHealth {
   connection_id: string;
   project_id: string;
   provider: string;

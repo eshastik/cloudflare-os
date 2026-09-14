@@ -621,3 +621,57 @@ test("owner credential and epoch change atomically and legacy accounts preserve 
   const foreign = new MnemosAccount(legacy, 'https://memory.example', async () => Response.json({subject:{tenant_id:'org',user_id:'other'}}));
   await assert.rejects(foreign.connect('foreign'));
 });
+
+test("S15: связь Workshop заводится один раз по стабильному request_id; credential кэшируется до истечения и обновляется по той же связи", async () => {
+  const kv = storage();
+  let now = 1_000_000; const clock = () => now;
+  const provisions: Record<string, unknown>[] = []; const bearers: string[] = []; let issued = 0; let revoked = 0;
+  const account = new MnemosAccount(kv, "https://memory.example", async (url, init) => {
+    const path = new URL(String(url)).pathname, bearer = new Headers(init?.headers).get("Authorization") ?? "";
+    if (path === "/v1/whoami") return Response.json(human);
+    if (path === "/v1/projects") return Response.json({ projects: [{ id: "p1", name: "Продажи", slug: "s" }, { id: "p2", name: "Архив", slug: "a" }] });
+    if (path === "/v1/agent-connections/workshop") {
+      assert.equal(bearer, "Bearer human-token");
+      const body = JSON.parse(String(init?.body)); provisions.push(body);
+      return Response.json({ binding_id: "b1", agent_principal_id: "agent-b1", runtime_id: "workshop", runtime_agent_id: "b1", revoked: false, connection_name: body.connection_name, project_ids: body.project_ids });
+    }
+    if (path === "/v1/agent-connections/b1/credential") {
+      assert.equal(bearer, "Bearer human-token");
+      return Response.json({ access_token: `agent-${++issued}`, token_type: "Bearer", expires_in: 60 });
+    }
+    if (path === "/v1/agent-connections/b1/revoke") { revoked++; return Response.json({}); }
+    if (path === "/v1/projects/p1/draft/state") { bearers.push(bearer); return Response.json({ personal_exists: true, personal_head: "a".repeat(64), shared_head: "c".repeat(64) }); }
+    return new Response("not found", { status: 404 });
+  }, clock);
+  // Без подключённого аккаунта связи нет.
+  await assert.rejects(account.ensureWorkshopAgent("account-1", "Агент Workshop"));
+  await account.connect("human-token");
+  const first = await account.ensureWorkshopAgent("account-1", "Агент Workshop");
+  const second = await account.ensureWorkshopAgent("account-1", "Агент Workshop");
+  assert.deepEqual(first, { bindingId: "b1", connectionName: "Агент Workshop" });
+  assert.deepEqual(second, first);
+  assert.equal(provisions.length, 1);
+  assert.equal(String(provisions[0].request_id).length, 43);
+  assert.match(String(provisions[0].request_id), /^[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(provisions[0].project_ids, ["p1", "p2"]);
+
+  const agent = account.agentSession();
+  await agent.draftState("p1"); await agent.draftState("p1");
+  assert.deepEqual(bearers, ["Bearer agent-1", "Bearer agent-1"]);
+  assert.equal(issued, 1);
+  now += 45_000; await agent.draftState("p1");
+  assert.equal(issued, 1, "credential переиспользуется до истечения");
+  now += 10_000; await agent.draftState("p1");
+  assert.equal(issued, 2, "credential обновлён по той же связи после истечения");
+  assert.equal(bearers.at(-1), "Bearer agent-2");
+  // Токен не хранится нигде, кроме записи кэша под своим ключом, и не попадает в запись связи.
+  assert.ok(!JSON.stringify(kv.get("mnemosWorkshopAgent")).includes("agent-2"));
+
+  // Отзыв аккаунта: связь отозвана на сервере, кэш очищен, агентская сессия отвергает следующие обращения.
+  await account.revokeWorkshopAgent();
+  assert.equal(revoked, 1);
+  await assert.rejects(agent.draftState("p1"));
+  assert.throws(() => account.agentSession());
+  assert.equal(kv.get("mnemosWorkshopAgentCredential"), undefined);
+  assert.equal(bearers.length, 4);
+});

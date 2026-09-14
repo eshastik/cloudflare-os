@@ -1,5 +1,6 @@
+import type {SourceLoadHealth} from './source-health.ts';
 /** Public connection receipt; no service credential or bridge handle. */
-export interface CalendarConnectionInfo {
+export interface CalendarConnectionInfo extends SourceLoadHealth {
   connection_id: string;
   project_id: string;
   provider: string;

@@ -65,7 +65,8 @@ function getBackendHost(): string {
 
   // When opening the Vite dev server directly (localhost:3000), the backend is at localhost:8787.
   // Otherwise, the API is on the same host as the frontend.
-  return window.location.hostname === 'localhost' ? 'localhost:8787' : window.location.host;
+  return import.meta.env.DEV && window.location.hostname === 'localhost' && window.location.port === '3000'
+    ? 'localhost:8787' : window.location.host;
 }
 
 function startConnection(): RpcStub<PublicApi> {

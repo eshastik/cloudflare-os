@@ -11,7 +11,7 @@ it('transfers only owned accounts and retains current policy checks around saved
  const resource={urlPattern:'https://mail.google.com/mail/*',title:'Calendar',description:''};
  const source={validate:async()=>{},metadata:async()=>({provider:'google',query:'label:team'}),readSelection:async()=>{duringRead();return {provider:'google',query:'label:team',messages_json:'[]',truncated:false};}} as Fetcher<MailReadSource>;
  const google={getMailReadSource:async(id:string)=>{factoryCalls++;expect(id).toBe('label:team');return {source,sourceKey:'account-calendar-generation',resource};}} as Fetcher<GatekeeperUser>;
- const mnemos={acceptMailReadSource:async(project:string,request:string,key:string,received:MailReadSource)=>{acceptCalls++;expect([project,request]).toEqual(['project','request']);expect(key).toBe('[7,"account-calendar-generation"]');saved=received;await received.validate();return {selection_id:'selection',query:'label:team'};}} as Fetcher<GatekeeperUser>;
+ const mnemos={getSupportedResources:async()=>[{urlPattern:'mnemos://imap/mailboxes/*',title:'IMAP',description:'',receives:'mail' as const}],acceptMailReadSource:async(project:string,request:string,key:string,received:MailReadSource)=>{acceptCalls++;expect([project,request]).toEqual(['project','request']);expect(key).toBe('[7,"account-calendar-generation"]');saved=received;await received.validate();return {selection_id:'selection',query:'label:team'};}} as Fetcher<GatekeeperUser>;
  const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
  Object.assign(user,{
   env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(config)}},
@@ -44,11 +44,11 @@ it('transfers only owned accounts and retains current policy checks around saved
 it('registers through an owned, valid, enabled Mnemos account only',async()=>{
  let config=DEFAULT_ADMIN_CONFIG,expired=false;
  const calls:unknown[][]=[];
- const account={registerMailSelection:async(...args:unknown[])=>{calls.push(args);return {connection_id:'connection'};}};
+ const account={getSupportedResources:async()=>[{urlPattern:'mnemos://imap/mailboxes/*',title:'IMAP',description:'',receives:'mail' as const}],registerMailSelection:async(...args:unknown[])=>{calls.push(args);return {connection_id:'connection'};}};
  const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
  Object.assign(user,{
   env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(config)}},
-  storage:{connectedAccounts:{get:(id:number)=>id===8?{id,account,vendorId:'mnemos',credentialsExpired:expired}:id===7?{id,account,vendorId:'google'}:undefined}},
+  storage:{connectedAccounts:{get:(id:number)=>id===8?{id,account,vendorId:'mnemos',credentialsExpired:expired}:id===7?{id,account:{...account,getSupportedResources:async()=>[]},vendorId:'google'}:undefined}},
  });
  for(const id of [0,NaN,99,7])await expect(user.registerMailSelection(id,'project','request','selection')).rejects.toThrow();
  expired=true;await expect(user.registerMailSelection(8,'project','request','selection')).rejects.toThrow('unavailable');
@@ -62,7 +62,7 @@ it('registers through an owned, valid, enabled Mnemos account only',async()=>{
 it.each(['google','microsoft'])('lists %s folders only for the owner and rechecks account and policy after provider IO',async(vendor)=>{
  const pattern=vendor==='google'?'https://mail.google.com/*':'https://graph.microsoft.com/v1.0/me/mailFolders/*';
  let config=DEFAULT_ADMIN_CONFIG,live=true,expired=false,calls=0,hook=()=>{};
- const account={listMailFolders:async(parent:string)=>{calls++;expect(parent).toBe('parent');hook();return {folders:[{id:'child',name:'Team',hasChildren:false}],truncated:false}}};
+ const account={getSupportedResources:async()=>[],listMailFolders:async(parent:string)=>{calls++;expect(parent).toBe('parent');hook();return {folders:[{id:'child',name:'Team',hasChildren:false}],truncated:false}}};
  const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
  Object.assign(user,{env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(config)}},storage:{connectedAccounts:{get:(id:number)=>id===9&&live?{id,account,vendorId:vendor,credentialsExpired:expired}:undefined}}});
  await expect(user.listMailFolders(99,'parent')).rejects.toThrow();
@@ -80,7 +80,7 @@ it.each(['google','microsoft','mnemos'])('explicit %s send resolves the saved ow
  const outcome=vendor==='mnemos'?{accepted:true}:{message_id:'sent'};
  const source={validate:async()=>{},send:async()=>{sends++;return outcome}};
  const provider={getMailSendSource:async(query:string)=>{expect(query).toBe('label:team');return {source,sourceKey:key,resource:{urlPattern:'https://mail.google.com/mail/*'}}}};
- const receiver={prepareMailDraftSend:async()=>({sourceKey:coordinates,query:'label:team'}),sendMailDraft:async(id:string,hash:string,saved:string,cap:typeof source)=>{expect([id,hash,saved]).toEqual(['draft','a'.repeat(64),coordinates]);return {state:'accepted',...await cap.send()}}};
+ const receiver={getSupportedResources:async()=>[{urlPattern:'mnemos://imap/mailboxes/*',title:'IMAP',description:'',receives:'mail' as const}],prepareMailDraftSend:async()=>({sourceKey:coordinates,query:'label:team'}),sendMailDraft:async(id:string,hash:string,saved:string,cap:typeof source)=>{expect([id,hash,saved]).toEqual(['draft','a'.repeat(64),coordinates]);return {state:'accepted',...await cap.send()}}};
  Object.assign(user,{env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(config)}},storage:{connectedAccounts:{get:(id:number)=>id===8&&vendor==='mnemos'?{id,account:{...provider,...receiver},vendorId:vendor}:id===7?{id,account:provider,vendorId:vendor}:id===8?{id,account:receiver,vendorId:'mnemos'}:undefined}},ctx:{id:{toString:()=> 'human'},exports:{MailSendLease:({props}:any)=>{const lease=Object.create(MailSendLease.prototype);Object.assign(lease,{ctx:{props,exports:{UserDurableObject:{idFromString:()=> 'human',get:()=>user}}}});return lease;}}}});
  await expect(user.sendMailDraft(99,'draft','a'.repeat(64))).rejects.toThrow('unavailable');
  key='substituted';await expect(user.sendMailDraft(8,'draft','a'.repeat(64))).rejects.toThrow('changed');expect(sends).toBe(0);
@@ -90,10 +90,10 @@ it.each(['google','microsoft','mnemos'])('explicit %s send resolves the saved ow
 
 it('transfers an IMAP source within the same owned Mnemos account and retains revocation checks',async()=>{
  let config=DEFAULT_ADMIN_CONFIG,live=true;
- const resource={urlPattern:'mnemos://imap/mailboxes/*',title:'IMAP',description:''};
+ const resource={urlPattern:'mnemos://imap/mailboxes/*',title:'IMAP',description:'',receives:'mail' as const};
  const source={validate:async()=>{if(!live)throw Error('revoked')},metadata:async()=>({provider:'imap',query:'folder'}),readSelection:async()=>({provider:'imap',query:'folder',messages_json:'[]',truncated:false})};
  let saved:MailReadSource|undefined;
- const account={getMailReadSource:async(query:string)=>{expect(query).toBe('folder:mailbox');return {source,sourceKey:'generation',resource}},acceptMailReadSource:async(_project:string,_request:string,key:string,received:MailReadSource)=>{expect(key).toBe('[8,"generation"]');saved=received;await received.validate();return {selection_id:'selected',query:'folder'}},listMailFolders:async()=>({folders:[{id:'mailbox',name:'INBOX',hasChildren:false}],truncated:false})};
+ const account={getSupportedResources:async()=>[resource],getMailReadSource:async(query:string)=>{expect(query).toBe('folder:mailbox');return {source,sourceKey:'generation',resource}},acceptMailReadSource:async(_project:string,_request:string,key:string,received:MailReadSource)=>{expect(key).toBe('[8,"generation"]');saved=received;await received.validate();return {selection_id:'selected',query:'folder'}},listMailFolders:async()=>({folders:[{id:'mailbox',name:'INBOX',hasChildren:false}],truncated:false})};
  const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
  Object.assign(user,{env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(config)}},storage:{connectedAccounts:{get:(id:number)=>id===8?{id,account,vendorId:'mnemos'}:undefined}},ctx:{id:{toString:()=> 'user-id'},exports:{MailSourceLease:({props}:any)=>new MailSourceGuard(props.source,()=>user.checkCalendarSourceAccounts(props.accounts))}}});
  await expect(user.listMailFolders(8,'')).resolves.toMatchObject({folders:[{id:'mailbox'}]});
@@ -101,4 +101,23 @@ it('transfers an IMAP source within the same owned Mnemos account and retains re
  await expect(saved!.validate()).resolves.toBeUndefined();live=false;await expect(saved!.validate()).rejects.toThrow('revoked');live=true;
  config={...DEFAULT_ADMIN_CONFIG,disabledResources:{mnemos:[resource.urlPattern]}};
  await expect(saved!.validate()).rejects.toThrow('disabled');await expect(user.listMailFolders(8,'')).rejects.toThrow('disabled');
+});
+
+const mailReceiver=(declared:boolean)=>({
+ getSupportedResources:async()=>[{urlPattern:'memory://mail/*',title:'Mail',description:'',...(declared?{receives:'mail' as const}:{})}],
+ acceptMailReadSource:async()=>({selection_id:'selected',query:'label:team'}),
+ registerMailSelection:async()=>({connection_id:'connection'}),
+});
+it('hands mail sources to any vendor declaring a receiving resource and refuses an undeclared one apart from an unavailable account',async()=>{
+ const resource={urlPattern:'https://mail.google.com/mail/*',title:'Mail',description:''};
+ const source={validate:async()=>{},metadata:async()=>({provider:'google',query:'label:team'}),readSelection:async()=>({provider:'google',query:'label:team',messages_json:'[]',truncated:false})};
+ const google={getMailReadSource:async()=>({source,sourceKey:'generation',resource})};
+ const user=Object.create(UserDurableObject.prototype) as UserDurableObject;
+ Object.assign(user,{env:{BLUEPRINTS:{get:async()=>serializeAdminConfig(DEFAULT_ADMIN_CONFIG)}},storage:{connectedAccounts:{get:(id:number)=>id===7?{id,account:google,vendorId:'google'}:id===8?{id,account:mailReceiver(true),vendorId:'memory'}:id===9?{id,account:mailReceiver(false),vendorId:'other'}:undefined}},ctx:{id:{toString:()=> 'user-id'},exports:{MailSourceLease:({props}:any)=>new MailSourceGuard(props.source,()=>user.checkCalendarSourceAccounts(props.accounts))}}});
+ await expect(user.prepareMailConnection(7,8,'label:team','project','request')).resolves.toMatchObject({selection_id:'selected'});
+ await expect(user.registerMailSelection(8,'project','request','selection')).resolves.toEqual({connection_id:'connection'});
+ const refused=await user.prepareMailConnection(7,9,'label:team','project','request').catch((error:Error)=>error.message);
+ expect(refused).toBe('This account does not receive mail sources.');
+ await expect(user.registerMailSelection(9,'project','request','selection')).rejects.toThrow('does not receive mail sources');
+ await expect(user.prepareMailConnection(7,99,'label:team','project','request')).rejects.toThrow('unavailable');
 });

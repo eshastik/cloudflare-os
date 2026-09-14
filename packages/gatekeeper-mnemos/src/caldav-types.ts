@@ -1,7 +1,8 @@
+import type { SourceLoadHealth } from './source-health.ts';
 /** Human input. The password is never returned or persisted by the browser. */
 export interface CalDAVSetup {request:string;server:string;username:string;password:string;}
 /** Safe account summary, without credentials or provider resource URLs. */
-export interface CalDAVAccountInfo {id:string;server:string;username:string;enabled:boolean;calendars:Array<{id:string;title:string}>;}
+export interface CalDAVAccountInfo extends SourceLoadHealth {id:string;server:string;username:string;enabled:boolean;calendars:Array<{id:string;title:string}>;}
 /** Owner-only management surface within the Mnemos screen. */
 export interface CalDAVManagement {
  /** Check invitation support for one calendar owned by the current human, without writing. */

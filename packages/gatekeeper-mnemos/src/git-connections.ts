@@ -1,4 +1,5 @@
-export interface GitConnection {connection_id:string;owner_id:string;provider:"github"|"gitlab";api_base:string;account_id:string;account_login:string;name:string;revision:number;enabled:boolean}
+import type {SourceLoadHealth} from './source-health.ts';
+export interface GitConnection extends SourceLoadHealth {connection_id:string;owner_id:string;provider:"github"|"gitlab";api_base:string;account_id:string;account_login:string;name:string;revision:number;enabled:boolean}
 export interface GitConnectionPage {connections:GitConnection[];next_cursor?:string}
 export interface GitRepository {id:string;name:string;default_branch:string}
 export interface GitRepositoryPage {repositories:GitRepository[];next_page?:number}

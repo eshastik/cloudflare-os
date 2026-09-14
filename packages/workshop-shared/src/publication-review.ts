@@ -13,6 +13,8 @@ export interface PublicationReview {
   /** Compare-and-set version for decisions. */
   decision_version: number;
   /** Whether rights, policy or branch changes have invalidated this proposal. */
+  /** The author cancelled this review; its decisions cannot authorize publication. */
+  withdrawn?: boolean;
   stale: boolean;
   /** Whether every required current approval has been recorded. */
   ready: boolean;

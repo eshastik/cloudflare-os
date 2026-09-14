@@ -1,3 +1,4 @@
+import { sourceHealth, observeSourceRead } from './source-health.ts';
 import {ConnectionAuditStorage} from './connection-audit-storage.ts';
 import {CalDAVClient,type CalDAVServer,type CalDAVCredential} from '@gadgets/caldav-client';
 import type {AccountStorage} from './account-session.ts';
@@ -6,7 +7,7 @@ import type {CalendarDraftContent} from './calendar-drafts.ts';
 interface Owner {tenant:string;owner:string;epoch:string;}
 interface Server extends CalDAVServer {id:string;title:string;provider:'apple'|'yandex'|'caldav';}
 interface Record {id:string;owner:Owner;server:string;serverKey:string;credential?:CalDAVCredential;generation:string;enabled:boolean;calendars:Array<{id:string;url:string;title:string}>;}
-export const CALDAV_RESOURCE={urlPattern:'mnemos://caldav/calendars/*',title:'Календари CalDAV',description:'Личные подключения Яндекс, iCloud и корпоративных календарей; права агентам выдаются отдельно.'};
+export const CALDAV_RESOURCE={urlPattern:'mnemos://caldav/calendars/*',title:'Календари CalDAV',description:'Личные подключения Яндекс, iCloud и корпоративных календарей; права агентам выдаются отдельно.',receives:'calendar' as const};
 const serverKey=(server:Server)=>JSON.stringify([server.provider,server.url,[...server.origins].sort(),server.icloud===true]);
 const denied=()=>Error('CalDAV account unavailable.');
 const id=(value:unknown)=>{if(typeof value!=='string'||!/^[a-f0-9-]{36}$/.test(value))throw denied();return value;};
@@ -24,7 +25,7 @@ export class CalDAVAccounts {
  #index(owner:Owner){return 'caldavAccounts:'+JSON.stringify(owner);}
  #read(key:string){return this.#storage.get<Record>('caldavAccount:'+id(key));}
  #owned(record:Record|undefined,owner:Owner){if(!record||record.owner.tenant!==owner.tenant||record.owner.owner!==owner.owner||record.owner.epoch!==owner.epoch||this.#epoch()!==owner.epoch)throw denied();return record;}
- #info(record:Record):CalDAVAccountInfo{return {id:record.id,server:record.server,username:record.credential?.username??'',enabled:record.enabled,calendars:record.calendars.map(({id,title})=>({id,title}))};}
+ #info(record:Record):CalDAVAccountInfo{return {...sourceHealth(this.#storage,'caldav',record.id,record.generation),id:record.id,server:record.server,username:record.credential?.username??'',enabled:record.enabled,calendars:record.calendars.map(({id,title})=>({id,title}))};}
  #server(key:string){const server=this.#servers.find(value=>value.id===key);if(!server)throw denied();return server;}
  list(owner:Owner){if(this.#epoch()!==owner.epoch)throw denied();return {servers:this.#servers.map(({id,title,url})=>({id,title,url})),accounts:(this.#storage.get<string[]>(this.#index(owner))??[]).map(key=>this.#read(key)).filter((record):record is Record=>!!record).map(record=>this.#info(this.#owned(record,owner)))};}
  async connect(owner:Owner,input:CalDAVSetup){
@@ -53,7 +54,9 @@ export class CalDAVAccounts {
  metadata(calendarId:string,generation:string){const {calendar,server}=this.#source(calendarId,generation);return {provider:server.provider,calendar_id:calendar.id,title:calendar.title,time_zone:'UTC'};}
  async readWindow(calendarId:string,generation:string,input:Parameters<CalDAVClient['readWindow']>[1]){
   const {record,calendar,server}=this.#source(calendarId,generation),validate=async()=>{this.validate(calendarId,generation)};
+  return observeSourceRead(this.#storage,'caldav',record.id,generation,async()=>{
   const result=await new CalDAVClient(server,record.credential!,validate,this.#fetch).readWindow(calendar.url,input);await validate();return {calendar_id:calendarId,time_zone:'UTC',events_json:JSON.stringify(result.events),truncated:result.truncated};
+  });
  }
  async checkScheduling(owner:Owner,calendarId:string){const selected=this.select(owner,calendarId);const {record,calendar,server}=this.#source(calendarId,selected.generation);const validate=async()=>{this.#owned(this.#read(record.id),owner);this.validate(calendarId,selected.generation);};const result=await new CalDAVClient(server,record.credential!,validate,this.#fetch).scheduling(calendar.url);await validate();return {calendar_id:calendarId,available:result.available};}
  async create(calendarId:string,generation:string,content:CalendarDraftContent){const {record,calendar,server}=this.#source(calendarId,generation),validate=async()=>{this.validate(calendarId,generation)};return new CalDAVClient(server,record.credential!,validate,this.#fetch).create(calendar.url,content);}

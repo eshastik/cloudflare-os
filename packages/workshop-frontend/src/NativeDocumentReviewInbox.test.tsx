@@ -2,9 +2,10 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 import { RpcStub, RpcTarget } from 'capnweb'
 import NativeDocumentReviewInbox from './NativeDocumentReviewInbox'
-const { api, download } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn() }, download: vi.fn() }))
+const { api, download } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) }, download: vi.fn() }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperNativeReview: download }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -50,8 +51,8 @@ it('clears preview on uncertain decisions and rereads the actual decision versio
     expect(b).toBeDefined(); expect(b.disabled).toBe(false); await act(async () => b.click())
   }
   try {
-    await act(async () => root.render(<NativeDocumentReviewInbox context={{}} format="cloudflareos.document" />))
-    await click('На согласование мне')
+    await act(async () => root.render(<NativeDocumentReviewInbox format="cloudflareos.document" />))
+    expect([...document.querySelectorAll('button')].some(b => b.textContent === 'Перечитать согласования')).toBe(true)
     await act(async () => { await vi.waitFor(() => expect(document.body.textContent).toContain('Разработка')) })
     await click('Открыть согласование'); await click('Проверить документ 1')
     expect(document.body.textContent).toContain('Документа не было.')

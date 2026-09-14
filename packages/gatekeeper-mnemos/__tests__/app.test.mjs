@@ -134,6 +134,9 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
     beforeParse(window) {
       for (const key of ["ReadableStream", "WritableStream", "TransformStream", "TextEncoder", "TextDecoder", "Request", "Response", "Headers"]) window[key] = globalThis[key];
       window.confirm = () => true;
+      // Оболочке на React (Kumo) нужны наблюдатель размера и медиазапросы; в jsdom их нет.
+      window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+      window.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
       window.MessageChannel = class extends MessageChannel {
         constructor() { super(); ports.push(this.port1, this.port2); }
       };
@@ -143,7 +146,8 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
       };
     },
   });
-  const button = text => [...dom.window.document.querySelectorAll("button")].find(b => b.textContent === text);
+  // Прежние разделы живут в контейнере #legacy под вкладкой «Ещё»; кнопки ищутся только там.
+  const button = text => [...dom.window.document.querySelectorAll("#legacy button")].find(b => b.textContent === text);
   try {
     await until(() => button("Отозвать доступ")).catch(error => { error.message += ": " + dom.window.document.body.textContent.slice(0,400) + " reads=" + reads; throw error; });
     await until(()=>uiReadiness.some(s=>s.outcome==="ready"));
@@ -320,7 +324,7 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
     button("Закрыть настройки").click(); policyFailure = false;
 
     const search = query => {
-      const input = dom.window.document.querySelector('input[type="search"]');
+      const input = dom.window.document.querySelector('#legacy input[type="search"]');
       input.value = query; input.dispatchEvent(new dom.window.Event("input"));
       button("Найти").click();
     };
@@ -440,7 +444,8 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
     button("Отозвать доступ").click(); assert.equal(writes, 0);
     const confirm = button("Подтвердить отзыв"); confirm.click(); confirm.click();
     await until(() => dom.window.document.body.textContent.includes("Доступ отозван"));
-    assert.equal(writes, 1); assert.equal(reads, 2);
+    // Три чтения: загрузка прежних разделов, вкладка «Моя работа» при старте и перечитывание после отзыва.
+    assert.equal(writes, 1); assert.equal(reads, 3);
     assert.equal(dom.window.document.documentElement.style.colorScheme, "dark");
     assert.equal(button("Отозвать доступ"), undefined);
   } finally {

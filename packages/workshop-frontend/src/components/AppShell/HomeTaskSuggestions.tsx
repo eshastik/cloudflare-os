@@ -24,43 +24,43 @@ type TaskSuggestion = {
 const SUGGESTIONS: TaskSuggestion[] = [
   {
     id: 'one-on-one',
-    label: 'Write a 1:1 pre-read',
-    description: 'A doc with a snapshot, things to inspect, and one ask',
+    label: 'Подготовить материалы к встрече 1:1',
+    description: 'Документ: текущая картина, что проверить и одна просьба',
     icon: FileText,
     prompt:
-      'Create a document to prepare for my next 1:1 with a direct report: a current snapshot, a coaching frame, things to inspect, carryover items from last time, and one clear ask.',
+      'Создай документ для подготовки к моей следующей встрече 1:1 с сотрудником: текущая картина, рамка для разговора, что проверить, что перенесено с прошлого раза и одна чёткая просьба.',
   },
   {
     id: 'team-meeting',
-    label: 'Build a team meeting deck',
-    description: 'Slides with progress, risks, and what needs a decision',
+    label: 'Собрать презентацию к встрече команды',
+    description: 'Слайды: прогресс, риски и что требует решения',
     icon: Presentation,
     prompt:
-      'Create a slide deck for my next team meeting: where things stand, what shipped, risks and blockers, and the decisions I need from the room. Ask me what the team is working on first.',
+      'Создай презентацию к следующей встрече команды: где мы сейчас, что выпущено, риски и блокеры, какие решения мне нужны от участников. Сначала спроси, над чем работает команда.',
   },
   {
     id: 'insights',
-    label: 'Find insights in my data',
-    description: 'Turn a spreadsheet or CSV into trends and recommendations',
+    label: 'Найти закономерности в данных',
+    description: 'Таблица или CSV превращается в тренды и рекомендации',
     icon: ChartLineUp,
     prompt:
-      'Turn a dataset I will share (a spreadsheet, CSV, or pasted table) into a narrative analysis: key trends, anomalies, the "so what", and concrete recommendations.',
+      'Преврати данные, которые я пришлю (таблицу, CSV или вставленный текст), в связный разбор: ключевые тренды, аномалии, выводы и конкретные рекомендации.',
   },
   {
     id: 'workflow',
-    label: 'Automate a workflow',
-    description: 'Trigger an agent when a new email arrives',
+    label: 'Автоматизировать процесс',
+    description: 'Запускать агента при новом письме',
     icon: Lightning,
     prompt:
-      'Create an agent workflow that runs automatically when a new email arrives: read the message, decide what to do, and take action or draft a reply. Ask me which inbox to watch and what it should handle.',
+      'Создай процесс с агентом, который запускается при новом письме: прочитать письмо, решить, что делать, и выполнить действие или подготовить черновик ответа. Спроси, какой ящик отслеживать и какие письма обрабатывать.',
   },
   {
     id: 'app',
-    label: 'Build a quick tool',
-    description: 'A small interactive app, calculator, or dashboard',
+    label: 'Сделать небольшой инструмент',
+    description: 'Маленькое приложение, калькулятор или панель',
     icon: AppWindow,
     prompt:
-      'Build a small interactive tool I can use right here — a calculator, dashboard, or explorer. Ask me what it should do, then create it.',
+      'Собери небольшой интерактивный инструмент прямо здесь — калькулятор, панель или обозреватель данных. Спроси, что он должен делать, и создай его.',
   },
 ]
 
@@ -122,9 +122,9 @@ export default function HomeTaskSuggestions({
   const visible = useMemo(pickSuggestions, [])
 
   return (
-    <section aria-label="Example tasks" className="flex flex-col gap-1">
+    <section aria-label="Примеры задач" className="flex flex-col gap-1">
       <h3 className="px-1 pb-1 text-[12px] font-medium uppercase tracking-[0.06em] text-kumo-inactive">
-        Get started
+        С чего начать
       </h3>
       <ul className="flex flex-col gap-0.5">
         {visible.map((suggestion) => (

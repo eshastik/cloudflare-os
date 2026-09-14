@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Dialog } from '@cloudflare/kumo'
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient, NativeEditorUpdate as Update } from '@gadgets/workshop-shared/api'
 import type { NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
@@ -33,7 +32,7 @@ export default function NativeEditorUpdate({ gadget, format, snapshotSource, dis
       await gadget.applyNativeEditorUpdate(update.codeVersion, update.revision)
       if (!signal.aborted) { setUpdate(null); setOpen(false); onUpdated() }
     } catch {
-      if (!signal.aborted) setError('Обновление не подтверждено. Проверьте сохранение документа и завершите предложенные изменения кода. Закройте диалог и откройте его заново перед повтором.')
+      if (!signal.aborted) setError('Обновление не подтверждено. Проверьте сохранение документа и завершите предложенные изменения кода. Закройте раздел и откройте его заново перед повтором.')
     } finally { if (!signal.aborted) setBusy(false) }
   }
 
@@ -48,20 +47,20 @@ export default function NativeEditorUpdate({ gadget, format, snapshotSource, dis
   }
 
   if (!update?.changedFiles.length && !open) return null
-  return <>
-    <WorkshopButton disabled={disabled} onClick={() => { void show() }}>Обновить редактор</WorkshopButton>
-    <Dialog.Root open={open} onOpenChange={value => { if (!value && !busy) setOpen(false) }}>
-      <Dialog className="bg-kumo-base p-5" size="base">
-        <Dialog.Title className="text-lg font-medium">Обновить редактор</Dialog.Title>
-        <p className="my-3 text-sm">Будет установлен редактор из текущей версии платформы. Собственные изменения его кода будут заменены. Сохранённое содержимое документа останется в его хранилище.</p>
-        <p className="my-3 text-sm">Редактор перезапустится. Перед обновлением участникам нужно завершить ввод и дождаться сохранения своих правок.</p>
-        {update && <p className="my-3 text-sm">Ревизия {update.revision}. Файлы: {update.changedFiles.join(', ') || 'изменений нет'}.</p>}
-        {error && <p role="alert" className="my-3 text-sm text-kumo-danger">{error}</p>}
-        <div className="flex justify-end gap-2 mt-4">
-          <WorkshopButton disabled={busy} onClick={() => setOpen(false)}>Отмена</WorkshopButton>
-          <WorkshopButton tone="primary" disabled={busy || !update?.changedFiles.length || !!error} onClick={() => { void apply() }}>{busy ? 'Подготовка…' : 'Сохранить ввод и обновить'}</WorkshopButton>
-        </div>
-      </Dialog>
-    </Dialog.Root>
-  </>
+  return <section className="flex flex-col gap-2 rounded-xl border border-kumo-line bg-kumo-base p-3 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">
+    <div className="flex items-center justify-between gap-2">
+      <span className="font-medium">Доступно обновление редактора</span>
+      {!open && <WorkshopButton disabled={disabled} onClick={() => { void show() }}>Обновить редактор</WorkshopButton>}
+    </div>
+    {open && <>
+      <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Будет установлен редактор из текущей версии платформы. Собственные изменения его кода будут заменены. Сохранённое содержимое документа останется в его хранилище.</p>
+      <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Редактор перезапустится. Перед обновлением участникам нужно завершить ввод и дождаться сохранения своих правок.</p>
+      {update && <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Ревизия {update.revision}. Файлы: {update.changedFiles.join(', ') || 'изменений нет'}.</p>}
+      {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <WorkshopButton disabled={busy} onClick={() => setOpen(false)}>Отмена</WorkshopButton>
+        <WorkshopButton tone="primary" className="!h-8" disabled={busy || !update?.changedFiles.length || !!error} onClick={() => { void apply() }}>{busy ? 'Подготовка…' : 'Сохранить ввод и обновить'}</WorkshopButton>
+      </div>
+    </>}
+  </section>
 }

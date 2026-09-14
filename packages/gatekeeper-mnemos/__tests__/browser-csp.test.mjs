@@ -39,26 +39,46 @@ test("Chrome allows the app RPC but blocks network and unapproved inline code", 
     await writeFile(page, `<body data-ready="no" data-network="no" data-inline="no" data-evil="no"><script>${script}</script></body>`);
     const markers = ['data-ready="yes"','data-network="blocked"','data-inline="blocked"','data-evil="no"'];
     await new Promise((resolve, reject) => {
-      const child = spawn(process.env.CHROME_BINARY || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${join(dir,"profile")}`, "--virtual-time-budget=3000", "--dump-dom", `file://${page}`], { detached:true, stdio:["ignore","pipe","pipe"] });
-      let output = "", diagnostics = "", evidence = false, stopped = false;
-      const stop = () => {
-        if(stopped)return; stopped=true;
-        try { process.kill(-child.pid,"SIGTERM"); } catch {}
-        child.stdout.destroy();child.stderr.destroy();
+      const child = spawn(process.env.CHROME_BINARY || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${join(dir,"profile")}`, "--remote-debugging-port=0", `file://${page}`], { detached:true, stdio:["ignore","ignore","pipe"] });
+      let diagnostics="",socket,started=false,finished=false,body="missing";
+      const pending=new Map();let sequence=0;
+      const finish=(error)=>{
+        if(finished)return;finished=true;clearTimeout(timer);
+        for(const {reject} of pending.values())reject(error || new Error("browser closed"));pending.clear();
+        socket?.close();try{process.kill(-child.pid,"SIGTERM")}catch{}child.stderr.destroy();
+        if(error)reject(error);else resolve();
       };
-      const timer=setTimeout(()=>{stop();reject(new Error(`Chrome did not produce CSP/RPC evidence before timeout; body=${output.match(/<body[^>]*>/)?.[0] || "missing"}; stderr=${diagnostics}`));},10000);
-      child.on("error",error=>{clearTimeout(timer);stop();reject(error);});
-      child.stdout.on("data",chunk=>{
-        output+=chunk.toString();
-        if(output.length>4<<20){clearTimeout(timer);stop();reject(new Error("Browser output limit"));return;}
-        const body=output.match(/<body[^>]*>/)?.[0] || "";
-        if(markers.every(marker=>body.includes(marker))){evidence=true;stop();}
+      const timer=setTimeout(()=>finish(new Error(`Chrome readiness timeout: ${body}`)),10000);
+      child.once("error",finish);
+      child.once("exit",()=>{if(!finished)finish(new Error(`Chrome exited before readiness: ${body}`))});
+      child.stderr.on("data",chunk=>{
+        diagnostics=(diagnostics+chunk.toString()).slice(-4096);
+        const endpoint=diagnostics.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1];
+        if(!endpoint||started)return;started=true;
+        void (async()=>{
+          socket=new WebSocket(endpoint);
+          await new Promise((yes,no)=>{socket.addEventListener("open",yes,{once:true});socket.addEventListener("error",no,{once:true})});
+          socket.addEventListener("message",event=>{
+            const result=JSON.parse(String(event.data)),callback=pending.get(result.id);
+            if(callback){pending.delete(result.id);result.error?callback.reject(new Error(result.error.message)):callback.resolve(result.result)}
+          });
+          const call=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}))});
+          let session;
+          while(!finished){
+            if(!session){
+              const {targetInfos}=await call("Target.getTargets");
+              const target=targetInfos.find(t=>t.type==='page'&&t.url===`file://${page}`);
+              if(target)session=(await call("Target.attachToTarget",{targetId:target.targetId,flatten:true})).sessionId;
+            }
+            if(session){
+              const {result}=await call("Runtime.evaluate",{expression:"document.body?.outerHTML.slice(0,200)",returnByValue:true},session);
+              body=result.value??"missing";
+              if(markers.every(marker=>body.includes(marker))){finish();return}
+            }
+            await new Promise(resolve=>setTimeout(resolve,50));
+          }
+        })().catch(finish);
       });
-      child.once("exit",()=>{
-        clearTimeout(timer);stop();
-        if(evidence)resolve();else reject(new Error(`Chrome exited without CSP/RPC evidence; body=${output.match(/<body[^>]*>/)?.[0] || "missing"}; stderr=${diagnostics}`));
-      });
-      child.stderr.on("data", chunk => { diagnostics = (diagnostics + chunk.toString()).slice(-4096); });
     });
 
   } finally { await rm(dir,{recursive:true,force:true}); }

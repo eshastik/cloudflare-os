@@ -128,6 +128,7 @@ export class NativeWriteSelector extends RpcTarget {
     return this.#session.restoreDraftContent(project, node, publication, expectedHead);
   }
   async requestReview(project: string, personal: string, shared: string) { return this.#session.requestPublicationReview(project, personal, shared); }
+  async withdrawReview(id: string) { return this.#session.withdrawPublicationReview(id); }
   async review(id: string) { return this.#session.readPublicationReview(id); }
   async publishReview(project: string, id: string) { return this.#session.publishReview(project, id); }
   async scopes() {

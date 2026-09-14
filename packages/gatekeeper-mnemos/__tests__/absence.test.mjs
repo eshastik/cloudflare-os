@@ -23,10 +23,14 @@ test('absence consent: lost save requires reread; disable uses saved terms despi
  const ports=[];let peer;
  const dom=new JSDOM(await readFile(new URL('../src/generated/app.txt',import.meta.url),'utf8'),{runScripts:'dangerously',pretendToBeVisual:true,beforeParse(window){
   for(const key of ['ReadableStream','WritableStream','TransformStream','TextEncoder','TextDecoder','Request','Response','Headers'])window[key]=globalThis[key];
+  // Оболочке на React (Kumo) нужны наблюдатель размера и медиазапросы; в jsdom их нет.
+  window.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
+  window.matchMedia=()=>({matches:false,media:'',addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
   window.MessageChannel=class extends MessageChannel{constructor(){super();ports.push(this.port1,this.port2)}};
   window.postMessage=(_m,_o,transferred)=>{peer=newMessagePortRpcSession(transferred[0],new Host())};
  }});
- const button=text=>[...dom.window.document.querySelectorAll('button')].find(b=>b.textContent===text);
+ // Прежние разделы живут в контейнере #legacy под вкладкой «Ещё»; кнопки ищутся только там.
+ const button=text=>[...dom.window.document.querySelectorAll('#legacy button')].find(b=>b.textContent===text);
  const until=async(predicate)=>{const end=Date.now()+2000;while(!predicate()){if(Date.now()>end)throw new Error('UI state timeout: '+dom.window.document.body.textContent.slice(0,300));await new Promise(r=>setTimeout(r,5))}};
  try{
   await until(()=>button('Project')&&!button('Project').disabled);button('Project').click();
