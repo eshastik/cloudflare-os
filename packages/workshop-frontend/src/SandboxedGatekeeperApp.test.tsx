@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /* eslint-disable react/react-in-jsx-scope */
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   createMemoryHistory,
@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document";
 import SandboxedGatekeeperApp from "./SandboxedGatekeeperApp";
+import { prepareForLogout } from "./authNavigation";
 
 vi.mock("./ThemeContext", () => ({
   useTheme: () => ({ resolvedThemeMode: "light" }),
@@ -30,13 +31,17 @@ const listGadgets = vi.fn<() => Promise<{ id: string; title: string }[]>>(async 
   { id: WORKSPACE_ID, title: "Daily Brief" },
 ]);
 
-vi.mock("./AuthContext", () => ({
-  useAuthenticatedApi: () => ({ authenticatedApi: { listGadgets } }),
-}));
+vi.mock("./AuthContext", () => {
+  let authenticatedApi:{listGadgets:typeof listGadgets}|undefined;
+  return {useAuthenticatedApi:()=>({authenticatedApi:authenticatedApi??={listGadgets}})};
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 interface TestHost extends RpcTarget {
+  setUnsavedChanges(dirty: boolean): Promise<void>;
+  getSelectedSection(): Promise<string>;
+  openSection(section:string): Promise<void>;
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
   openPrompt(prompt: string): Promise<void>;
@@ -102,6 +107,15 @@ describe("SandboxedGatekeeperApp navigation", () => {
       }),
     );
 
+    const confirmLeave = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await host!.setUnsavedChanges(true);
+    await act(async () => {
+      await host!.openWorkspace(WORKSPACE_ID, 2);
+      await vi.waitFor(() => expect(confirmLeave).toHaveBeenCalledOnce());
+    });
+    expect(router.state.location.pathname).toBe("/");
+    // После успешного сохранения оболочка разрешает тот же переход без нового вопроса.
+    await host!.setUnsavedChanges(false);
     await act(async () => {
       await host!.openWorkspace(WORKSPACE_ID, 2);
       await vi.waitFor(() =>
@@ -139,6 +153,74 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await vi.waitFor(() => expect(router.state.location.pathname).toBe("/"));
     });
     expect(router.state.location.search).toEqual({ prompt: "Create a daily brief." });
+    await host!.setUnsavedChanges(true);
+    confirmLeave.mockReturnValue(true);
+    await act(async () => {
+      await host!.openWorkspace(WORKSPACE_ID);
+      await vi.waitFor(() => expect(router.state.location.pathname).toBe(`/workspace/${WORKSPACE_ID}`));
+    });
+    const prompts = confirmLeave.mock.calls.length;
+    confirmLeave.mockReturnValue(false);
+    prepareForLogout();
+    await act(async () => {
+      await host!.openPrompt("После выхода");
+      await vi.waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    });
+    expect(confirmLeave).toHaveBeenCalledTimes(prompts);
+
+  });
+  it("открывает раздел в том же приложении и сохраняет выбранное подключение", async () => {
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute({ component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId" });
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: ["/gatekeepers/mnemos?account=8&section=projects"] }), routeTree: rootRoute.addChildren([appRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const {port1,port2} = new MessageChannel(); host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", {data:{type:"handshake"}, origin:"null", source:iframe.contentWindow,ports:[port2]}));
+    window.history.replaceState(null,"","/?section=projects");
+    expect(await host.getSelectedSection()).toBe("projects");
+    await expect(host.openSection("../admin")).rejects.toThrow("Некорректный раздел");
+    const confirmLeave = vi.spyOn(window,"confirm").mockReturnValue(false);
+    await host.setUnsavedChanges(true);
+    await act(async () => { await host!.openSection("documents"); await vi.waitFor(()=>expect(confirmLeave).toHaveBeenCalledOnce()); });
+    expect(router.state.location.search).toEqual({account:8,section:"projects"});
+    await act(async () => { void router.navigate({to:"/gatekeepers/$appId",params:{appId:"mnemos"},search:{account:9,section:"projects"}}); await vi.waitFor(()=>expect(confirmLeave).toHaveBeenCalledTimes(2)); });
+    expect(confirmLeave).toHaveBeenCalledTimes(2);
+    expect(router.state.location.search).toEqual({account:8,section:"projects"});
+    await host.setUnsavedChanges(false);
+
+    await act(async () => { await host!.openSection("documents"); await vi.waitFor(() => expect(router.state.location.search).toEqual({account:8,section:"documents"})); });
+    expect(router.state.location.pathname).toBe("/gatekeepers/mnemos");
+    window.history.replaceState(null,"","/");
+  });
+  it("смена организации отменяет ожидающий drop и очищает его состояние", async () => {
+    let issued=0;
+    class Issuer extends RpcTarget {issue(){issued++;throw Error("unexpected upload")} submit(){throw Error("unexpected submit")}}
+    const first={iframeHtml:"<!doctype html><title>First</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    const second={...first,iframeHtml:"<!doctype html><title>Second</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://other.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    let replaceFrame:(frame:GatekeeperUiFrame)=>void=()=>{};
+    const rootRoute=createRootRoute({component:()=>{const [frame,setFrame]=useState(first);replaceFrame=setFrame;return <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>}});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:rootRoute.addChildren([createRoute({getParentRoute:()=>rootRoute,path:"/"})])});
+    window.history.replaceState(null,"","/?section=intake");
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const connect=()=>{const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]}));};
+    connect();
+    let finish:((file:File)=>void)|undefined;
+    const transfer={items:[{kind:"file",getAsFile:()=>null,webkitGetAsEntry:()=>({name:"Закрытая папка.txt",isFile:true,isDirectory:false,file:(done:(file:File)=>void)=>{finish=done}})}]};
+    const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:transfer});
+    await act(async()=>container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event));
+    expect(finish).toBeDefined();
+    const oldHost=host;
+    await act(async()=>replaceFrame(second));oldHost?.[Symbol.dispose]();connect();
+    await act(async()=>{finish!(new File(["private"],"Закрытая папка.txt"));await Promise.resolve();});
+    expect(issued).toBe(0);
+    expect(container.textContent).not.toContain("Читаем файлы");
+    expect(container.textContent).not.toContain("Закрытая папка");
+    expect(container.querySelector("progress")).toBeNull();
+    window.history.replaceState(null,"","/");
   });
   it("uploads through the real host port and cancels transfer when the frame closes", async () => {
     const { webcrypto } = await vi.importActual<{ webcrypto: Crypto }>("node:crypto");

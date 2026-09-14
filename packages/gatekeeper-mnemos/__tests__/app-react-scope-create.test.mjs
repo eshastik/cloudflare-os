@@ -12,7 +12,7 @@ test('permissions hide modules; refreshing exposes authorized project creation a
  try{
   await app.open('Проекты');await app.until(()=>app.text().includes('Доступных проектов нет.'),'empty projects');
   assert.equal(app.button('Создать проект'),undefined);assert.equal(app.tab('Организация'),undefined);
-  capabilities=['project.create','platform.metrics.read'];app.button('Обновить права').click();
+  capabilities=['project.create','platform.metrics.read'];app.button('Обновить').click();
   await app.until(()=>app.button('Создать проект'),'permission refreshed');
   app.button('Создать проект').click();await app.until(()=>app.document.querySelector('form[aria-label="Новый проект"]'),'create form');
   const inputs=app.document.querySelectorAll('form[aria-label="Новый проект"] input');app.type(inputs[0],'Новый проект команды');app.type(inputs[1],'new-team');

@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 import type { SupportedResource } from '@gadgets/workshop-shared/gatekeeper'
 import GatekeeperAppPage from './GatekeeperAppPage'
 
-const api = vi.hoisted(() => ({ getGatekeeperApp: vi.fn(), subscribeConnectedAccounts: vi.fn(), reconnectAccount: vi.fn() }))
+const api = vi.hoisted(() => ({ getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(subscriber: ConnectedAccountsSubscriber) => Promise<Disposable>>(), reconnectAccount: vi.fn<(id: number) => Promise<{url: string}>>() }))
 const dispose = vi.hoisted(() => vi.fn<(frame: unknown) => void>())
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 vi.mock('./SandboxedGatekeeperApp', () => ({ default: () => <div>Opened application</div> }))
-vi.mock('./errorReporting', () => ({ reportIssue: vi.fn() }))
+vi.mock('./errorReporting', () => ({ reportIssue: vi.fn<() => void>() }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: dispose }))
 vi.mock('./OrganizationSummaryPanel', () => ({ default: ({ appId }: { appId: string }) => 'Свод организаций ' + appId }))
 vi.mock('./CalendarConnectionPanel', () => ({ default: () => 'Панель календаря' }))
@@ -31,11 +31,11 @@ const page = (key = 0) => <GatekeeperAppPage key={key} appId="memory" />
 async function chooseAccount(name: string) {
   const trigger = document.querySelector<HTMLElement>('[role="combobox"]')
   expect(trigger).not.toBeNull()
-  await act(async () => trigger!.click())
+  await React.act(async () => trigger!.click())
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === name)
   expect(option).toBeDefined()
   // Base UI принимает клик по опции только после pointerdown на ней; клик без него считается случайным.
-  await act(async () => { option!.dispatchEvent(new Event('pointerdown', { bubbles: true })); option!.click() })
+  await React.act(async () => { option!.dispatchEvent(new Event('pointerdown', { bubbles: true })); option!.click() })
 }
 
 it('opens the only account of the vendor at once, recovers with it, clears the error, and releases resources', async () => {
@@ -55,10 +55,10 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
   const click = async (label: string) => {
     const button = [...container.querySelectorAll('button')].find(b => b.textContent === label)
     expect(button).toBeDefined()
-    await act(async () => button!.click())
+    await React.act(async () => button!.click())
   }
   try {
-    await act(async () => root.render(page()))
+    await React.act(async () => root.render(page()))
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.querySelector('select')).toBeNull()
     expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory', 7)
@@ -78,7 +78,7 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
     expect(api.getGatekeeperApp).toHaveBeenCalledTimes(2)
     expect(subscriptionDisposed).toHaveBeenCalledOnce()
   } finally {
-    await act(async () => root.unmount())
+    await React.act(async () => root.unmount())
     container.remove(); errors.mockRestore()
   }
   expect(dispose).toHaveBeenCalledWith(frame)
@@ -90,12 +90,12 @@ it('shows the mail panel only for an account receiving mail and the summary only
   const click = async (label: string) => {
     const button = [...document.querySelectorAll('button')].find(b => b.textContent === label)
     expect(button).toBeDefined()
-    await act(async () => button!.click())
+    await React.act(async () => button!.click())
   }
   const render = async (resources: SupportedResource[], frame: object) => {
     api.subscribeConnectedAccounts.mockImplementation(async (s: ConnectedAccountsSubscriber) => { addAccount(s, 3, 'Org', 'memory', resources); s.ready(); return { [Symbol.dispose]: vi.fn<() => void>() } })
     api.getGatekeeperApp.mockResolvedValue(frame)
-    await act(async () => root.render(page(resources.length)))
+    await React.act(async () => root.render(page(resources.length)))
     expect(container.textContent).toContain('Opened application')
   }
   try {
@@ -107,14 +107,14 @@ it('shows the mail panel only for an account receiving mail and the summary only
     expect(document.body.textContent).not.toContain('Панель календаря')
     await click('Файлы')
     expect(document.body.textContent).toContain('Панель диска')
-    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Закрыть"]')!.click())
+    await React.act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Закрыть"]')!.click())
     await click('Свод организаций')
     expect(document.body.textContent).toContain('Свод организаций memory')
     await render([], { html: '' })
     expect(container.textContent).not.toContain('Панель почты')
     expect(container.textContent).not.toContain('Панель диска')
     expect(container.textContent).not.toContain('Свод организаций')
-  } finally { await act(async () => root.unmount()); container.remove() }
+  } finally { await React.act(async () => root.unmount()); container.remove() }
 })
 
 it('offers a Kumo account choice for several accounts, disposes a late frame after switching, and opens the remaining account after removal', async () => {
@@ -132,21 +132,36 @@ it('offers a Kumo account choice for several accounts, disposes a late frame aft
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
   try {
-    await act(async () => root.render(page()))
+    await React.act(async () => root.render(page()))
     expect(api.getGatekeeperApp).not.toHaveBeenCalled()
     expect(container.querySelector('select')).toBeNull()
     expect(container.textContent).toContain('Организация')
     await chooseAccount('Org 2')
     await chooseAccount('Org 11')
-    await act(async () => resolveFirst(first))
+    await React.act(async () => resolveFirst(first))
     expect(dispose).toHaveBeenCalledWith(first)
     expect(api.getGatekeeperApp.mock.calls).toEqual([['memory', 2], ['memory', 11]])
     expect(container.textContent).toContain('Opened application')
-    await act(async () => subscriber.remove(11))
+    await React.act(async () => subscriber.remove(11))
     expect(dispose).toHaveBeenCalledWith(second)
     expect(api.getGatekeeperApp.mock.calls[2]).toEqual(['memory', 2])
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.textContent).toContain('Opened application')
-  } finally { await act(async () => root.unmount()); container.remove() }
+  } finally { await React.act(async () => root.unmount()); container.remove() }
   expect(subscriptionDisposed).toHaveBeenCalledOnce()
 })
+
+it('прямая ссылка выбирает точное подключение, а селектор сообщает новое значение маршруту',async()=>{
+ api.subscribeConnectedAccounts.mockImplementation(async(s:ConnectedAccountsSubscriber)=>{addAccount(s,7,'Первая организация');addAccount(s,8,'Вторая организация');s.ready();return {[Symbol.dispose]:()=>{}}});
+ api.getGatekeeperApp.mockResolvedValue({html:'application'});
+ const change=vi.fn<() => void>();const container=document.createElement('div');document.body.append(container);const root=createRoot(container);
+ try {
+  await React.act(async()=>root.render(<GatekeeperAppPage appId="memory" section="documents" accountId={8} onAccountChange={change}/>));
+  expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory',8);
+  await chooseAccount('Первая организация');expect(change).toHaveBeenLastCalledWith(7);
+  await React.act(async()=>root.render(<GatekeeperAppPage appId="memory" section="documents" accountId={7} onAccountChange={change}/>));
+  expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory',7);
+  await React.act(async()=>root.render(<GatekeeperAppPage appId="memory" section="projects" accountId={8} onAccountChange={change}/>));
+  expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory',8);
+ }finally{await React.act(async()=>root.unmount());container.remove();}
+});

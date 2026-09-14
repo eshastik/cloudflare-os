@@ -1,3 +1,4 @@
+import { parseGatekeeperAppSection } from './gatekeeperAppNavigation'
 import { reportShellStage } from "./shellReadiness"
 import { useEffect, useState } from 'react'
 import type { GatekeeperAppInfo } from '@gadgets/workshop-shared/api'
@@ -53,7 +54,8 @@ export function useGatekeeperApps(): GatekeeperAppInfo[] {
     let cancelled = false
     request
       .then((list) => {
-        if (!cancelled) { setApps(list); setInitialization({api, state: "ready"}) }
+        if (!cancelled) { setApps(list.map(app => ({ ...app, sections: app.sections?.filter((section, index, sections) =>
+          parseGatekeeperAppSection(section.id) && section.title.trim() && sections.findIndex(item => item.id === section.id) === index) }))); setInitialization({api, state: "ready"}) }
       })
       .catch(() => { if (!cancelled) setInitialization({api, state: "error"}) })
     return () => {
@@ -65,5 +67,5 @@ export function useGatekeeperApps(): GatekeeperAppInfo[] {
     if (auth) reportShellStage("apps", initialization?.api === auth.authenticatedApi ? initialization.state : "loading", auth.authenticatedApi)
   }, [auth?.authenticatedApi, initialization])
 
-  return apps
+  return auth && initialization?.api === auth.authenticatedApi ? apps : []
 }

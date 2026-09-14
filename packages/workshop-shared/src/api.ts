@@ -664,6 +664,10 @@ export interface AuthenticatedApi extends RpcTarget {
 
 // Describes a gatekeeper's management app, for the Workshop nav + page.
 export type GatekeeperAppInfo = {
+  /** Подключение, которому принадлежат описание разделов и права. */
+  accountId?: number;
+  /** Название подключения для различения организаций одного сервиса. */
+  accountName?: string;
   // The vendor id (the GATEKEEPER_<ID> binding suffix, lowercased), used as the URL slug at
   // /gatekeepers/$id. This is the vendor, not a specific account: it assumes one management-UI
   // account per vendor per user, which holds for today's auto-provisioned singletons.
@@ -672,6 +676,8 @@ export type GatekeeperAppInfo = {
   title: string;
   // Optional icon.
   icon?: AvatarImage;
+  /** Разделы, доступные через интерфейс подключённого аккаунта. */
+  sections?: import("./gatekeeper").GatekeeperUiSection[];
 };
 
 // ---------------------------------------------------------------------------
@@ -768,7 +774,7 @@ export const MAX_SITE_NAME_LENGTH = 40;
 
 // What this deployment calls itself when the admin has not set a custom `siteName`. Also the
 // product's own name, so it appears in prose the server and UI address to the user.
-export const DEFAULT_SITE_NAME = "Cloudflare OS";
+export const DEFAULT_SITE_NAME = "Mnemos";
 
 // The name to display for this deployment. Accepts an unset or not-yet-loaded `siteName` so both
 // the server (reading admin config) and the client (reading ServerConfig) resolve it identically.

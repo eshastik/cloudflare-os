@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   applyThemeMode,
+  applyAccentColor, readAccentChoice, writeAccentChoice, resolveAccentColor, type AccentChoice,
   readThemeMode,
   resolveThemeMode,
   writeThemeMode,
@@ -10,6 +11,10 @@ import {
 } from './theme'
 
 interface ThemeContextValue {
+  accentColor: string
+  accentChoice: AccentChoice | null
+  accentSaved: boolean
+  setAccentChoice: (choice: AccentChoice) => void
   themeMode: ThemeMode
   resolvedThemeMode: ResolvedThemeMode
   setThemeMode: (mode: ThemeMode) => void
@@ -22,7 +27,11 @@ function getInitialThemeState() {
   return { themeMode, resolvedThemeMode: resolveThemeMode(themeMode) }
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({ children, deploymentAccentColor }: { children: ReactNode; deploymentAccentColor?: string | null }) {
+  const [accentChoice, setAccentChoiceState] = useState(readAccentChoice)
+  const [accentSaved, setAccentSaved] = useState(true)
+  const accentColor = resolveAccentColor(accentChoice, deploymentAccentColor)
+  useEffect(() => {applyAccentColor(accentColor)}, [accentColor])
   const [themeState, setThemeState] = useState(getInitialThemeState)
   const { themeMode, resolvedThemeMode } = themeState
 
@@ -44,13 +53,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [themeMode])
 
   const value = useMemo<ThemeContextValue>(() => ({
+    accentColor, accentChoice, accentSaved,
+    setAccentChoice: choice => {setAccentSaved(writeAccentChoice(choice));setAccentChoiceState(choice);applyAccentColor(resolveAccentColor(choice));},
     themeMode,
     resolvedThemeMode,
     setThemeMode: (mode) => {
       writeThemeMode(mode)
       setThemeState({ themeMode: mode, resolvedThemeMode: applyThemeMode(mode) })
     },
-  }), [themeMode, resolvedThemeMode])
+  }), [themeMode, resolvedThemeMode, accentColor, accentChoice, accentSaved])
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }

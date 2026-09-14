@@ -1,17 +1,8 @@
-// Runtime color theming.
-//
-// The base light/dark palettes are defined statically in styles.css via Tailwind `@theme` CSS
-// variables and `[data-mode="dark"]` overrides. Theme mode is applied on <html> so Kumo's semantic
-// tokens and native controls resolve consistently. We also let a deployment override the *accent*
-// family at runtime by setting those CSS variables on :root from an admin-chosen seed color.
-// Hover/lighter/selection shades are derived from the seed with CSS relative-color syntax
-// (`oklch(from <seed> ...)`), so the admin only picks one color.
-//
-// Only the accent-related variables are overridden at runtime; backgrounds, lines, and neutral text
-// follow the light/dark palettes selected by `data-mode` in styles.css. The seed is always a
-// validated hex string (see isHexColor), so interpolating it into the CSS strings below is safe.
+// Личная палитра меняет только акцентные токены. Светлая и тёмная основы остаются в styles.css.
+// Оттенки общие с панелью Mnemos и проверяются по числовому контрасту.
 
-import { isHexColor } from '@gadgets/workshop-shared/api'
+import { ACCENT_PALETTE, accentCSSVariables, isAccentChoice, isAccentHex, type AccentChoice } from '@gadgets/workshop-shared/accent-theme'
+export { ACCENT_PALETTE, type AccentChoice } from '@gadgets/workshop-shared/accent-theme'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ResolvedThemeMode = 'light' | 'dark'
@@ -61,37 +52,34 @@ export function applyStoredThemeMode(): ResolvedThemeMode {
   return applyThemeMode(readThemeMode())
 }
 
-// Variables derived from the seed, as (name -> value-template) pairs. `light-dark()` keeps custom
-// deployment accents mode-aware without needing to reapply them when the user toggles themes.
-function accentVars(seed: string): Record<string, string> {
-  return {
-    '--color-kumo-brand': `light-dark(${seed}, oklch(from ${seed} 0.45 c h))`,
-    // Slightly darker for hover/pressed states.
-    '--color-kumo-brand-hover': `light-dark(oklch(from ${seed} calc(l - 0.06) c h), oklch(from ${seed} 0.38 c h))`,
-    '--color-accent-100': `light-dark(${seed}, oklch(from ${seed} 0.45 c h))`,
-    // Lighter/brighter secondary accent.
-    '--color-accent-200': `light-dark(oklch(from ${seed} calc(l + 0.08) c h), oklch(from ${seed} 0.76 c h))`,
-    '--text-color-kumo-brand': `light-dark(${seed}, oklch(from ${seed} 0.76 c h))`,
-    '--text-color-kumo-link': `light-dark(${seed}, oklch(from ${seed} 0.76 c h))`,
-    // Soft tinted selection background + readable selection text.
-    '--color-selection-bg': `light-dark(oklch(from ${seed} 0.94 calc(c * 0.35) h), oklch(from ${seed} 0.28 calc(c * 0.45) h))`,
-    '--color-selection-text': `light-dark(oklch(from ${seed} calc(l - 0.06) c h), oklch(0.97 0.006 285))`,
-  }
-}
-
-const ALL_VARS = Object.keys(accentVars('#000'))
+const ALL_VARS = Object.keys(accentCSSVariables('#000000'))
 
 // Apply the accent color to the document root. Pass "" / invalid to clear back to the base theme.
 export function applyAccentColor(color: string | null | undefined): void {
   const root = document.documentElement
-  if (!color || !isHexColor(color)) {
+  if (!color || !isAccentHex(color)) {
     for (const v of ALL_VARS) root.style.removeProperty(v)
     return
   }
-  for (const [v, value] of Object.entries(accentVars(color))) {
+  for (const [v, value] of Object.entries(accentCSSVariables(color))) {
     root.style.setProperty(v, value)
   }
 }
 
 // The base/default accent, shown in the admin picker when no custom color is set.
-export const DEFAULT_ACCENT_COLOR = '#ff4801'
+export const DEFAULT_ACCENT_COLOR = '#21664f'
+
+const ACCENT_STORAGE_KEY = 'mnemos:accent-choice'
+/** Выбор действует в этом браузере. При первом посещении используется оформление организации. */
+export function readAccentChoice(): AccentChoice | null {
+  try { const value=window.localStorage.getItem(ACCENT_STORAGE_KEY);return isAccentChoice(value)?value:null; } catch { return null; }
+}
+/** Ошибка хранилища не мешает применить оформление в текущей вкладке. */
+export function writeAccentChoice(choice: AccentChoice): boolean {
+  if(!isAccentChoice(choice)) return false;
+  try {window.localStorage.setItem(ACCENT_STORAGE_KEY,choice);return true;}catch{return false;}
+}
+/** Личный выбор имеет приоритет над общим оформлением организации. */
+export function resolveAccentColor(choice: AccentChoice | null, deploymentColor?: string | null): string {
+  return ACCENT_PALETTE.find(option=>option.id===choice)?.color ?? (isAccentHex(deploymentColor)?deploymentColor:DEFAULT_ACCENT_COLOR);
+}

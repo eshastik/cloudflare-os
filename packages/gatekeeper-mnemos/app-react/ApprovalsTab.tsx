@@ -1,3 +1,4 @@
+import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import { useUi } from "./host.ts";
@@ -30,26 +31,29 @@ export function ApprovalRow({ item, data, busy, decide }: { item: PendingApprova
   const key = `${item.review.candidate_id}/${item.domain.domain_id}`;
   const approved = item.domain.decisions.filter(d => d.approved).length;
   const documents = item.domain.node_ids.map(id => names.get(`${item.review.project_id}/${id}`) ?? id).join(", ");
-  const pending = item.mine === null && !item.review.stale;
+  const [expanded, setExpanded] = useState(false);
+  const pending = item.mine === null && !item.review.stale && !item.review.withdrawn;
   return (
-    <Row className="items-start" data-review={item.review.candidate_id} data-decision="approve">
+    <div><Row className="items-start" data-review={item.review.candidate_id} data-decision="approve">
       <StatusBadge tone={item.review.stale ? "neutral" : "warning"}>{item.review.stale ? "Устарело" : "Согласование"}</StatusBadge>
       <RowText
         title={<>«{documents}» — ваше решение по направлению {item.domain.domain_id}</>}
         note={<>
           {projectName(data.projects, item.review.project_id)} · автор {item.review.author_id} · одобрений {approved} из {item.domain.approvers.length}
+          {item.review.withdrawn && " · автор отозвал предложение"}
           {item.review.stale && " · предложение устарело: права, политика или общая версия изменились"}
           {item.mine === true && " · вы одобрили"}
           {item.mine === false && " · вы отклонили"}
         </>}
       />
+      <Button variant="secondary" size="sm" onClick={() => setExpanded(!expanded)}>{expanded ? "Скрыть детали" : "Проверить изменения"}</Button>
       {pending && (
         <div className="flex shrink-0 gap-1.5">
           <Button variant="secondary" size="sm" disabled={busy === key} onClick={() => decide(item, false)}>Отклонить</Button>
           <Button variant="primary" size="sm" disabled={busy === key} onClick={() => decide(item, true)}>Одобрить</Button>
         </div>
       )}
-    </Row>
+    </Row>{expanded && <div className="border-b border-kumo-line p-4"><ReviewDetails key={`${item.review.candidate_id}/${item.review.decision_version}`} review={item.review} names={names} /></div>}</div>
   );
 }
 

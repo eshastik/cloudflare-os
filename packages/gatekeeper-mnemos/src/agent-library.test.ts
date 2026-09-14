@@ -193,7 +193,7 @@ function fixture(overrides: Partial<Fixture> = {}) {
 }
 
 function authorizer(state: Fixture, deny = false) {
-  const seen: { title: string; description: string; excludeObservers?: string[] }[] = [];
+  const seen: { title: string; description: string; excludeObservers?: string[]; workContext?: {projectName:string;resourceName?:string} }[] = [];
   const submitted: { action: number; description: { title: string; description: string; implementsRevert: boolean } }[] = [];
   const stub = {
     seen, submitted,
@@ -275,7 +275,12 @@ test("listProjects, searchProject, readDocument зовут authorizeObservation 
   assert.ok(state.calls.indexOf("authorize") < state.calls.indexOf("read:p1:n1"));
   const byId = await session.readDocument("p1", "n2");
   assert.equal(byId.document, "n2");
-  assert.equal(auth.seen.length, 4);
+  assert.equal(auth.seen.length, 7);
+  assert.deepEqual(auth.seen.flatMap(d=>d.workContext?[d.workContext]:[]), [
+    {projectName:"Продажи"},
+    {projectName:"Продажи",resourceName:"plan.md"},
+    {projectName:"Продажи",resourceName:"readme.md"},
+  ]);
   assert.ok(auth.seen.every(d => /Mnemos/.test(d.title)));
 
   const denied = authorizer(state, true);
@@ -291,13 +296,15 @@ test("listProjects, searchProject, readDocument зовут authorizeObservation 
 
 test("readDocument без права на проект → ошибка без credential в тексте", async () => {
   const { library, state } = fixture({ denyRead: true });
-  const session = await library.startSession(authorizer(state) as any);
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
   await assert.rejects(session.readDocument("p1", "docs/plan.md"), (error: Error) => {
     assert.ok(!error.message.includes(TOKEN));
     assert.ok(!/bearer|token/i.test(error.message));
     return true;
   });
   assert.ok(!state.calls.some(c => c.startsWith("read:")));
+  assert.ok(auth.seen.every(item => !item.workContext));
 });
 
 test("TD-177: ошибки readDocument до выдачи данных не различают «папка», «не найден», «нет доступа»", async () => {

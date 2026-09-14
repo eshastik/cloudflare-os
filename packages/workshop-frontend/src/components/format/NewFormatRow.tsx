@@ -1,10 +1,11 @@
 // "Start with a format": one click per standard output the deployment offers. Renders nothing when
 // it promotes none, which is the default.
 
+import { formatOf } from './formats'
 import { FormatGlyph } from './FormatVisuals'
 import { useOutputFormats } from './useOutputFormats'
 
-export default function NewFormatRow({ label = 'Start with', layout = 'stacked' }: { label?: string; layout?: 'stacked' | 'inline' }) {
+export default function NewFormatRow({ label = 'Создать', layout = 'stacked' }: { label?: string; layout?: 'stacked' | 'inline' }) {
   const { formats, creating, create } = useOutputFormats()
 
   if (formats.length === 0) return null
@@ -29,7 +30,7 @@ export default function NewFormatRow({ label = 'Start with', layout = 'stacked' 
               size="md"
               className={creating === format.blueprintId ? 'animate-pulse' : 'text-kumo-subtle'}
             />
-            {creating === format.blueprintId ? `Creating…` : `New ${format.output.noun}`}
+            {creating === format.blueprintId ? `Создание…` : formatOf(format.output).noun}
           </button>
         ))}
       </div>

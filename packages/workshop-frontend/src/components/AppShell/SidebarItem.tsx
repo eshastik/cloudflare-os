@@ -10,6 +10,10 @@ export type SidebarItemProps = {
   label: string
   to: LinkProps['to']
   params?: LinkProps['params']
+  search?: LinkProps['search']
+  section?: string
+  account?: number
+  matchDefaultAccount?: boolean
   trailing?: ReactNode
   collapsed?: boolean
   /** When true, match this item active when the current path starts with `to`. */
@@ -21,6 +25,10 @@ export default function SidebarItem({
   label,
   to,
   params,
+  search,
+  section,
+  account,
+  matchDefaultAccount=false,
   trailing,
   collapsed = false,
   matchPrefix = false,
@@ -34,16 +42,21 @@ export default function SidebarItem({
       target = target.replaceAll(`$${key}`, String(value))
     }
   }
-  const isActive = matchPrefix
+  const currentSection = useRouterState({ select: s => (s.location.search as {section?:string}).section })
+  const currentAccount = useRouterState({ select: s => (s.location.search as {account?:number}).account })
+  const pathActive = matchPrefix
     ? pathname === target || pathname.startsWith(target + '/')
     : pathname === target
 
+  const isActive = pathActive && (section === undefined || currentSection === section) && (account === undefined || currentAccount === account || (matchDefaultAccount && currentAccount === undefined))
+
   // Kept loose: the generated route-tree union is stricter than is convenient for a generic row.
-  const linkProps = { to, params } as unknown as LinkProps
+  const linkProps = { to, params, search } as unknown as LinkProps
 
   return (
     <Link
       {...linkProps}
+      aria-current={isActive ? 'page' : undefined}
       title={collapsed ? label : undefined}
       className={[
         'group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-[18px] tracking-[-0.25px] transition-colors',

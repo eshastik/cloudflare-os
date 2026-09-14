@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@cloudflare/kumo";
 import { ArrowLeft } from "@phosphor-icons/react";
-import { closeLegacySection, openLegacySection, type LegacySection } from "../app/main.ts";
+import { closeLegacySection, confirmLegacyNavigation, openLegacySection, type LegacySection } from "../app/main.ts";
 import { useLegacyContainer } from "./host.ts";
 
 export type { LegacySection };
@@ -31,7 +31,7 @@ export function LegacyPanel({ section, title, onClose }: { section: LegacySectio
   return (
     <section aria-label={title}>
       <div className="mb-3 flex items-center gap-3">
-        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={onClose}>К вкладке</Button>
+        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => { if (confirmLegacyNavigation()) onClose(); }}>Назад</Button>
         <h2 className="m-0 text-lg font-semibold text-kumo-strong">{title}</h2>
       </div>
       <div ref={box} />

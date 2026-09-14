@@ -1,3 +1,4 @@
+import { accentCSSVariables, isAccentHex, ACCENT_PALETTE } from "@gadgets/workshop-shared/accent-theme";
 export type ResolvedThemeMode = "light" | "dark";
 
 let current: ResolvedThemeMode = "light";
@@ -21,4 +22,10 @@ export function applyThemeMode(mode: string): void {
 export function subscribeThemeMode(listener: (mode: ResolvedThemeMode) => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
+}
+
+/** Хост передаёт только цвет оформления; это не меняет права и состояние документов. */
+export function applyAccentColor(color:string):void {
+  const safe=isAccentHex(color)?color:ACCENT_PALETTE[0].color;
+  for(const [name,value] of Object.entries(accentCSSVariables(safe))) document.documentElement.style.setProperty(name,value);
 }

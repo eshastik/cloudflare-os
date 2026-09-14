@@ -521,6 +521,25 @@ export class MnemosAccountSession {
     const ticket = await this.#client.beginNativeUpload(projectId, size, checksum, this.#lifetime.signal);
     this.#check(); return ticket;
   }
+  private async requireIntakeManager() {
+    const identity = await this.whoAmI();
+    if (!identity.capabilities?.includes("project.create")) throw new MnemosAPIError(403);
+  }
+  async beginInboxUpload(size: number, checksum: string) {await this.requireIntakeManager();const result=await this.#client.beginInboxUpload(size,checksum,this.#lifetime.signal);this.#check();return result;}
+  async submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number) {await this.requireIntakeManager();const result=await this.#client.submitInboxUpload(uploadId,sourcePath,modifiedAt,this.#lifetime.signal);this.#check();return result;}
+  async inboxStatus() {await this.requireIntakeManager();const result=await this.#client.inboxStatus(this.#lifetime.signal);this.#check();return result;}
+  async inboxAlerts(decided=false) {await this.requireIntakeManager();const result=await this.#client.inboxAlerts(decided,this.#lifetime.signal);this.#check();return result;}
+  async decideInboxAlert(id: string, decision: import("./intake.ts").IntakeDecision) {await this.requireIntakeManager();const result=await this.#client.decideInboxAlert(id,decision,this.#lifetime.signal);this.#check();return result;}
+  async replayInboxItem(hash: string, version: number) {await this.requireIntakeManager();const result=await this.#client.replayInboxItem(hash,version,this.#lifetime.signal);this.#check();return result;}
+  private async requirePeopleManager() {
+    const identity = await this.whoAmI();
+    if (!identity.capabilities?.includes("principal.manage")) throw new MnemosAPIError(403);
+  }
+  async listPeople() { await this.requirePeopleManager(); const result = await this.#client.listPeople(this.#lifetime.signal); this.#check(); return result; }
+  async createPerson(input: import("./admin-people.ts").AdminPersonCreate) { await this.requirePeopleManager(); const result = await this.#client.createPerson(input,this.#lifetime.signal); this.#check(); return result; }
+  async listPersonRights(principal: string) { await this.requirePeopleManager(); const result = await this.#client.listPersonRights(principal,this.#lifetime.signal); this.#check(); return result; }
+  async grantPersonRight(input: import("./admin-people.ts").AdminRight) { await this.requirePeopleManager(); const result = await this.#client.grantPersonRight(input,this.#lifetime.signal); this.#check(); return result; }
+  async removePersonRight(input: import("./admin-people.ts").AdminRight) { await this.requirePeopleManager(); const result = await this.#client.removePersonRight(input,this.#lifetime.signal); this.#check(); return result; }
   async createProject(name: string, slug: string) {
     this.#check(); const result = await this.#client.createProject(name, slug, this.#lifetime.signal); this.#check(); return result;
   }

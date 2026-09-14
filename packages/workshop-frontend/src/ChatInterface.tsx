@@ -1,3 +1,4 @@
+import CorporateWorkContext from "./CorporateWorkContext";
 import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
 import {
   Fragment,
@@ -169,7 +170,7 @@ function CreatedGadgetChatCard({
             <span className="mt-0.5 flex items-center gap-1.5 text-[12px] text-kumo-subtle">
               {gadget.isPending && (
                 <span className="rounded-full bg-kumo-fill px-1.5 py-0.5 text-[10px] font-medium leading-none">
-                  Draft
+                  Черновик
                 </span>
               )}
               <span>
@@ -209,9 +210,9 @@ type DraftChatState = {
 type ChatListScope = "direct" | "agents" | "all";
 
 const CHAT_LIST_SCOPE_LABELS: Record<ChatListScope, string> = {
-  all: "All",
-  direct: "Started by people",
-  agents: "Started by agents",
+  all: "Все",
+  direct: "Беседы сотрудников",
+  agents: "Беседы агентов",
 };
 
 const SHOW_THINKING_TRACES_KEY = "showThinkingTraces";
@@ -646,12 +647,12 @@ function getToolCallSummary(
       };
     case "setGadgetBinding":
       return {
-        verb: "Wired up",
+        verb: "Подключено",
         target: formatGadgetBindingTarget(tc.input.gadget, tc.input.name ?? tc.input.source),
       };
     // Obsolete predecessor of `setGadgetBinding`; appears only in old chat logs.
     case "saveCapsuleAsBinding":
-      return { verb: "Saved resource", target: tc.input.bindingName };
+      return { verb: "Ресурс сохранён", target: tc.input.bindingName };
     case "createGadget": {
 
       const output = outputOf?.(tc);
@@ -665,7 +666,7 @@ function getToolCallSummary(
         .map((line) => line.trim())
         .find((line) => line.length > 0);
       return {
-        verb: "Ran code",
+        verb: "Код выполнен",
         target: firstLine
           ? firstLine.length > 60
             ? `${firstLine.slice(0, 57)}…`
@@ -685,13 +686,13 @@ function getToolCallSummary(
       return { verb: "Fetched", target };
     }
     case "observeUserChanges":
-      return { verb: "Observed user changes" };
+      return { verb: "Правки пользователя проверены" };
     case "listBlueprints":
-      return { verb: "Listed blueprints" };
+      return { verb: "Шаблоны приложений получены" };
     case "listConnectableResources":
-      return { verb: "Listed connectable resources", target: tc.input.vendorId };
+      return { verb: "Доступные ресурсы получены", target: tc.input.vendorId };
     case "requestConnection":
-      return { verb: "Requested connection", target: tc.input.vendorId };
+      return { verb: "Подключение запрошено", target: tc.input.vendorId };
   }
   // Compile-time exhaustiveness check.
   const _exhaustive: never = tc;
@@ -736,7 +737,7 @@ function formatTimes(count: number): string {
 }
 
 function describeObservationCount(count: number): string {
-  return count === 1 ? "Read 1 resource" : `${count} resource reads`;
+  return count === 1 ? "Прочитан 1 ресурс" : `Прочитано ресурсов: ${count}`;
 }
 
 function describeToolCallCount(toolName: AiToolCall["toolName"], count: number): string {
@@ -746,17 +747,17 @@ function describeToolCallCount(toolName: AiToolCall["toolName"], count: number):
     case "writeFile":
       return `Wrote ${pluralize(count, "file")}`;
     case "editFile":
-      return count === 1 ? "Made 1 edit" : `Made ${count} edits`;
+      return count === 1 ? "Внесена 1 правка" : `Внесено правок: ${count}`;
     case "webFetch":
       return `Fetched ${pluralize(count, "page")}`;
     case "executeCode":
-      return count === 1 ? "Ran code" : `Ran code ${formatTimes(count)}`;
+      return count === 1 ? "Код выполнен" : `Код выполнен ${formatTimes(count)}`;
     case "describeBinding":
       return `Inspected ${pluralize(count, "binding")}`;
     case "setBindingHook":
       return `Connected ${pluralize(count, "binding")}`;
     case "setGadgetBinding":
-      return `Wired up ${pluralize(count, "binding")}`;
+      return `Подключено ${pluralize(count, "binding")}`;
     case "saveCapsuleAsBinding":
       return `Saved ${pluralize(count, "resource")}`;
     case "createGadget":
@@ -766,11 +767,11 @@ function describeToolCallCount(toolName: AiToolCall["toolName"], count: number):
     case "giveUp":
       return count === 1 ? "Stopped" : `Stopped ${count} times`;
     case "listBlueprints":
-      return `Listed blueprints`;
+      return `Шаблоны приложений получены`;
     case "listConnectableResources":
-      return `Listed connectable resources`;
+      return `Доступные ресурсы получены`;
     case "requestConnection":
-      return count === 1 ? "Requested a connection" : `Requested ${count} connections`;
+      return count === 1 ? "Запрошено подключение" : `Requested ${count} connections`;
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -814,31 +815,31 @@ function getToolIcon(
 function getProvisionalToolLabel(toolName: AiToolCall["toolName"] | null | undefined) {
   switch (toolName) {
     case "readFile":
-      return "Reading file";
+      return "Чтение файла";
     case "writeFile":
-      return "Writing file";
+      return "Запись файла";
     case "editFile":
-      return "Editing file";
+      return "Изменение файла";
     case "describeBinding":
-      return "Inspecting binding";
+      return "Проверка подключения";
     case "setBindingHook":
-      return "Connecting binding";
+      return "Подключение ресурса";
     case "setGadgetBinding":
-      return "Wiring up binding";
+      return "Настройка подключения";
     case "saveCapsuleAsBinding":
-      return "Saving resource";
+      return "Сохранение ресурса";
     case "createGadget":
-      return "Creating gadget";
+      return "Создание приложения";
     case "executeCode":
-      return "Running code";
+      return "Выполнение кода";
     case "webFetch":
-      return "Fetching web page";
+      return "Загрузка страницы";
     case "observeUserChanges":
-      return "Observing user changes";
+      return "Проверка правок пользователя";
     case "giveUp":
       return "Stopping";
     default:
-      return "Using tool";
+      return "Выполнение действия";
   }
 }
 
@@ -856,14 +857,14 @@ function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
     case "setBindingHook": return "Connecting";
     case "setGadgetBinding": return "Wiring up";
     case "saveCapsuleAsBinding": return "Saving";
-    case "createGadget": return "Creating gadget";
-    case "executeCode": return "Running code";
+    case "createGadget": return "Создание приложения";
+    case "executeCode": return "Выполнение кода";
     case "webFetch": return "Fetching";
-    case "observeUserChanges": return "Observing user changes";
+    case "observeUserChanges": return "Проверка правок пользователя";
     case "giveUp": return "Stopping";
-    case "listBlueprints": return "Listing blueprints";
-    case "listConnectableResources": return "Listing connectable resources";
-    case "requestConnection": return "Requesting a connection";
+    case "listBlueprints": return "Поиск шаблонов приложений";
+    case "listConnectableResources": return "Поиск доступных ресурсов";
+    case "requestConnection": return "Запрос подключения";
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -877,7 +878,7 @@ function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: n
     case "writeFile": return `Writing ${pluralize(count, "file")}`;
     case "editFile": return `Making ${count} edits`;
     case "webFetch": return `Fetching ${pluralize(count, "page")}`;
-    case "executeCode": return count === 1 ? "Running code" : `Running code ${formatTimes(count)}`;
+    case "executeCode": return count === 1 ? "Выполнение кода" : `Выполнение кода ${formatTimes(count)}`;
     case "describeBinding": return `Inspecting ${pluralize(count, "binding")}`;
     case "setBindingHook": return `Connecting ${pluralize(count, "binding")}`;
     case "setGadgetBinding": return `Wiring up ${pluralize(count, "binding")}`;
@@ -885,8 +886,8 @@ function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: n
     case "createGadget": return `Creating ${pluralize(count, "gadget")}`;
     case "observeUserChanges": return `Observing ${pluralize(count, "change set")}`;
     case "giveUp": return "Stopping";
-    case "listBlueprints": return "Listing blueprints";
-    case "listConnectableResources": return "Listing connectable resources";
+    case "listBlueprints": return "Поиск шаблонов приложений";
+    case "listConnectableResources": return "Поиск доступных ресурсов";
     case "requestConnection": return `Requesting ${pluralize(count, "connection")}`;
   }
   const _exhaustive: never = toolName;
@@ -909,7 +910,7 @@ function buildProvisionalToolSummary(
   );
 
   if (toolNames.length === 0) {
-    return { label: "Using tool", detailLines: [] };
+    return { label: "Выполнение действия", detailLines: [] };
   }
 
   if (toolNames.length > 1) {
@@ -1303,7 +1304,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
   if (!attachment) return null;
 
   const sizeLabel = formatAttachmentSize(attachment.size);
-  const title = attachment.name ?? "Attached file";
+  const title = attachment.name ?? "Прикреплённый файл";
   const modalWidthClass = isImage
     ? "w-[min(1120px,calc(100vw-32px))]"
     : "w-[min(520px,calc(100vw-32px))]";
@@ -1315,7 +1316,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
       className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
-      aria-label={`Preview ${title}`}
+      aria-label={`Просмотр: ${title}`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -1325,7 +1326,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
           type="button"
           onClick={onClose}
           className="absolute right-3 top-3 z-10 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle shadow-[0_1px_2px_rgba(0,0,0,0.05)] backdrop-blur-sm transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-base hover:text-kumo-default active:scale-[0.96]"
-          aria-label="Close preview"
+          aria-label="Закрыть просмотр"
         >
           <X size={18} />
         </button>
@@ -1345,16 +1346,16 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
                 </div>
                 <div className="text-[14px] font-medium text-kumo-default">{title}</div>
                 <div className="text-[12px] leading-5 text-kumo-subtle">
-                  {attachment.mimeType || "Unknown file type"}{sizeLabel ? ` · ${sizeLabel}` : ""}
+                  {attachment.mimeType || "Неизвестный тип файла"}{sizeLabel ? ` · ${sizeLabel}` : ""}
                 </div>
-                <div className="text-[12px] leading-5 text-kumo-inactive">This file can’t be previewed here.</div>
+                <div className="text-[12px] leading-5 text-kumo-inactive">Предпросмотр этого формата недоступен.</div>
                 {onDownload && (
                   <button
                     type="button"
                     onClick={() => onDownload(attachment)}
                     className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-kumo-line/70 bg-kumo-base px-3 py-1.5 text-[12px] font-medium text-kumo-default transition-colors hover:bg-kumo-tint/40"
                   >
-                    Download
+                    Скачать
                   </button>
                 )}
               </div>
@@ -1393,20 +1394,20 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
           {/* Kept in layout (not display:none) so lazy-loading actually triggers. */}
           <img
             src={objectUrl}
-            alt={attachment.name ?? "Attached image"}
+            alt={attachment.name ?? "Прикреплённое изображение"}
             loading="lazy"
             className="block h-full w-full object-cover"
             onLoad={() => setImageState("loaded")}
             onError={() => setImageState("error")}
           />
           {imageState !== "loaded" && (
-            <div className="absolute inset-0 grid place-items-center bg-kumo-elevated text-[11px] text-kumo-inactive">Loading image…</div>
+            <div className="absolute inset-0 grid place-items-center bg-kumo-elevated text-[11px] text-kumo-inactive">Загрузка изображения…</div>
           )}
         </>
       ) : (
         <div className="flex h-full w-full min-w-0 items-center justify-center gap-2 p-3 text-[12px] leading-4 text-kumo-subtle">
           <FileIcon size={20} className="shrink-0 text-kumo-inactive" />
-          <span className="min-w-0 truncate">{attachment.name ?? "Attached file"}</span>
+          <span className="min-w-0 truncate">{attachment.name ?? "Прикреплённый файл"}</span>
         </div>
       )}
     </button>
@@ -1464,7 +1465,7 @@ const ToolCallDetails = memo(function ToolCallDetails(
       {tc.toolName === "executeCode" ? (
         <>
           <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">
-            Code
+            Код
           </span>
           <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
             {tc.input.code}
@@ -1472,7 +1473,7 @@ const ToolCallDetails = memo(function ToolCallDetails(
           {tc.output && (
             <>
               <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">
-                Output
+                Результат
               </span>
               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                 {tc.output}
@@ -1560,7 +1561,7 @@ const NestedToolCallRow = memo(function NestedToolCallRow({
           <span className="min-w-0 truncate">{label}</span>
           {tc.error && (
             <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-kumo-danger">
-              Error
+              Ошибка
             </span>
           )}
           <CaretRight
@@ -1679,7 +1680,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
             <span className="min-w-0 truncate">{group.label}</span>
             {group.hasError && (
               <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-kumo-danger">
-                Error
+                Ошибка
               </span>
             )}
             <CaretRight
@@ -2059,9 +2060,9 @@ export const ChatInput = ({
       setPendingAttachments((prev) => prev.map((attachment) => attachment.id === id ? {
         ...attachment,
         uploadState: "error",
-        error: err?.message || "Upload failed",
+        error: err?.message || "Не удалось загрузить файл",
       } : attachment));
-      toasts.add({ title: err?.message || "Failed to upload attachment", variant: "error" });
+      toasts.add({ title: err?.message || "Не удалось загрузить вложение", variant: "error" });
     }
   };
 
@@ -2070,14 +2071,14 @@ export const ChatInput = ({
 
     const initialRoom = MAX_PENDING_ATTACHMENTS - pendingAttachmentsRef.current.length;
     if (initialRoom <= 0) {
-      toasts.add({ title: `You can attach up to ${MAX_PENDING_ATTACHMENTS} attachments`, variant: "error" });
+      toasts.add({ title: `Можно прикрепить не более ${MAX_PENDING_ATTACHMENTS} файлов`, variant: "error" });
       return;
     }
     const accepted = attachmentFiles.slice(0, initialRoom);
     if (attachmentFiles.length > initialRoom) {
       const title = initialRoom === 1
-        ? "Only the first attachment was attached"
-        : `Only the first ${initialRoom} attachments were attached`;
+        ? "Прикреплён только первый файл"
+        : `Прикреплены только первые ${initialRoom} файлов`;
       toasts.add({ title, variant: "error" });
     }
 
@@ -2090,18 +2091,18 @@ export const ChatInput = ({
     for (const result of prepared) {
       if (result.status === "rejected") {
         console.error("Failed to process chat attachment:", result.reason);
-        toasts.add({ title: result.reason?.message || "Failed to process attachment", variant: "error" });
+        toasts.add({ title: result.reason?.message || "Не удалось обработать вложение", variant: "error" });
         continue;
       }
 
       const { file, blob, mimeType } = result.value;
       if (pendingAttachmentsRef.current.length >= MAX_PENDING_ATTACHMENTS) {
-        toasts.add({ title: `You can attach up to ${MAX_PENDING_ATTACHMENTS} attachments`, variant: "error" });
+        toasts.add({ title: `Можно прикрепить не более ${MAX_PENDING_ATTACHMENTS} файлов`, variant: "error" });
         continue;
       }
       const totalPendingBytes = pendingAttachmentsRef.current.reduce((sum, attachment) => sum + attachment.blob.size, 0);
       if (totalPendingBytes + blob.size > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
-        toasts.add({ title: `Attached files must total ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES)} or less`, variant: "error" });
+        toasts.add({ title: `Общий размер файлов не должен превышать ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES)}`, variant: "error" });
         continue;
       }
       const id = crypto.randomUUID();
@@ -2294,11 +2295,11 @@ export const ChatInput = ({
 
     if (!inputValue.trim() && !selectedSlashCommand && readyAttachments.length === 0) return;
     if (hasUploadingAttachment) {
-      toasts.add({ title: "Please wait for attachment uploads to finish", variant: "error" });
+      toasts.add({ title: "Дождитесь загрузки вложений", variant: "error" });
       return;
     }
     if (hasFailedAttachment) {
-      toasts.add({ title: "Remove failed attachment uploads before sending", variant: "error" });
+      toasts.add({ title: "Удалите вложения с ошибкой загрузки перед отправкой", variant: "error" });
       return;
     }
 
@@ -2354,7 +2355,7 @@ export const ChatInput = ({
         // position 0 would mean the text no longer starts with "/".
         let parsed = parseSlashCommandInput(messageInput, 1);
         if (!parsed) {
-          toasts.add({ title: "Slash command is invalid", variant: "error" });
+          toasts.add({ title: "Команда недействительна", variant: "error" });
           return;
         }
         let match: SlashCommandChoice | null;
@@ -2366,7 +2367,7 @@ export const ChatInput = ({
           return;
         }
         if (!match) {
-          toasts.add({ title: "Choose a slash command", variant: "error" });
+          toasts.add({ title: "Выберите команду", variant: "error" });
           return;
         }
         slashCommand = match;
@@ -2384,7 +2385,7 @@ export const ChatInput = ({
       }
 
       if (slashCommand && (inputCapsules.length > 0 || readyAttachments.length > 0)) {
-        toasts.add({ title: "Slash commands cannot include resources or attachments", variant: "error" });
+        toasts.add({ title: "Команды не поддерживают ресурсы и вложения", variant: "error" });
         return;
       }
       let message: string | SlashCommandRequest = messageInput;
@@ -3036,7 +3037,7 @@ export const ChatInput = ({
               type="button"
               onClick={onDiscardConsoleLogs}
               className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full opacity-60 transition-opacity hover:bg-kumo-tint hover:opacity-100"
-              aria-label="Discard captured logs"
+              aria-label="Убрать журнал ошибок"
             >
               <X size={10} />
             </button>
@@ -3061,7 +3062,7 @@ export const ChatInput = ({
               <span className={`grid h-7 w-7 place-items-center rounded-full ${canAttachMore ? "bg-kumo-brand/12 text-kumo-brand" : "bg-kumo-warning/15 text-kumo-warning"}`}>
                 <FileIcon size={16} weight="duotone" />
               </span>
-              {canAttachMore ? "Drop files to attach" : "Messages are limited to 5 attachments"}
+              {canAttachMore ? "Перетащите файлы для прикрепления" : "К сообщению можно прикрепить до 5 файлов"}
             </div>
           </div>
         )}
@@ -3070,8 +3071,8 @@ export const ChatInput = ({
           <div className="px-4 pt-2 text-xs text-kumo-warning">
             {/* Composers without a chatKey (new-chat, home page) have no thread to check. */}
             {chatKey != null
-              ? "Connection hiccup — your message may not have been sent. Check the thread, then try again; if it keeps failing, reload the page."
-              : "Connection hiccup — your message may not have been sent. Try again; if it keeps failing, reload the page."}
+              ? "Связь прервалась. Сообщение могло не отправиться. Проверьте беседу перед повторной отправкой. Если ошибка повторяется, обновите страницу."
+              : "Связь прервалась. Сообщение могло не отправиться. Повторите попытку; если ошибка повторяется, обновите страницу."}
           </div>
         )}
         {/* Textarea */}
@@ -3152,10 +3153,10 @@ export const ChatInput = ({
                 isBlocked
                   ? blockedReason
                   : isAgentActive
-                    ? "Waiting for agent…"
+                    ? "Ожидаем агента…"
                     : newChat
                       ? "Начните новый разговор…"
-                      : "Ask a follow-up…"
+                      : "Что нужно сделать дальше?"
               }
               autoFocus={autoFocus}
               rows={minRows}
@@ -3259,19 +3260,19 @@ export const ChatInput = ({
             {pendingAttachments.map((attachment) => (
               <div key={attachment.id} className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg border border-kumo-line/70 bg-kumo-elevated">
                 {attachment.previewUrl ? (
-                  <img src={attachment.previewUrl} alt={attachment.name ?? "Attached file"} className="h-full w-full object-cover" />
+                  <img src={attachment.previewUrl} alt={attachment.name ?? "Прикреплённый файл"} className="h-full w-full object-cover" />
                 ) : (
                   <FileIcon size={22} className="text-kumo-inactive" />
                 )}
                 {attachment.uploadState === "uploading" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Uploading</div>
+                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Загрузка</div>
                 )}
                 {attachment.uploadState === "error" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Failed</div>
+                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Ошибка</div>
                 )}
                 <button
                   type="button"
-                  aria-label="Remove attachment"
+                  aria-label="Удалить вложение"
                   onClick={() => removeAttachment(attachment.id)}
                   className="absolute right-0.5 top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                 >
@@ -3285,13 +3286,23 @@ export const ChatInput = ({
         {/* Footer row: connection/options left, model + send right */}
         <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => attachmentInputRef.current?.click()}
+              aria-label="Прикрепить файл"
+              title="Прикрепить файл к сообщению"
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[13px] text-kumo-subtle hover:bg-kumo-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-kumo-brand"
+            >
+              <FileIcon size={16} />
+              <span className="hidden sm:inline">Файл</span>
+            </button>
             <DropdownMenu>
               <DropdownMenu.Trigger
                 render={
                   <button
                     type="button"
                     className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle"
-                    aria-label="Open chat options"
+                    aria-label="Настройки беседы"
                   >
                     <Plus size={18} />
                   </button>
@@ -3312,7 +3323,7 @@ export const ChatInput = ({
                       <Brain size={14} />
                     </span>
                     <span className="flex-1">
-                      {showThinkingTraces ? "Hide thinking" : "Show thinking"}
+                      {showThinkingTraces ? "Скрыть ход работы" : "Показать ход работы"}
                     </span>
                   </DropdownMenu.Item>
                 )}
@@ -3323,7 +3334,7 @@ export const ChatInput = ({
                   <span className="mr-2 inline-flex h-4 w-4 items-center justify-center text-kumo-inactive">
                     <FileIcon size={14} />
                   </span>
-                  <span className="flex-1">Upload file</span>
+                  <span className="flex-1">Прикрепить файл</span>
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu>
@@ -3345,7 +3356,7 @@ export const ChatInput = ({
                     <button
                       type="button"
                       className="group inline-flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 tracking-[-0.25px] text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-default focus-visible:bg-kumo-tint focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.97] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
-                      aria-label="Select model"
+                      aria-label="Выбрать модель"
                     >
                       <span className="min-w-0 truncate">{selectedModelLabel}</span>
                       <CaretDown
@@ -3389,7 +3400,7 @@ export const ChatInput = ({
                   onClick={onStop}
                   tone="primary"
                   className="!h-8 !w-8"
-                  aria-label="Stop agent"
+                  aria-label="Остановить выполнение"
                 >
                   <svg
                     width="14"
@@ -3406,7 +3417,7 @@ export const ChatInput = ({
                   disabled={!canSend}
                   tone="primary"
                   className="!h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-30"
-                  aria-label="Send message"
+                  aria-label="Отправить сообщение"
                 >
                   {/* Arrow-up icon */}
                   <svg
@@ -3578,8 +3589,8 @@ function getDiscardLabel(
   createdGadgetTitles?: string[],
 ): string {
   const base = isTrailing
-    ? "Discard changes from this response"
-    : "Discard changes from this response and later responses";
+    ? "Отменить изменения этого ответа"
+    : "Отменить изменения этого и последующих ответов";
   return base + describeCreatedGadgetDeletion(createdGadgetTitles);
 }
 
@@ -3588,8 +3599,8 @@ function getSavedEditsDiscardLabel(
   createdGadgetTitles?: string[],
 ): string {
   const base = isTrailing
-    ? "Discard saved edits"
-    : "Discard saved edits and later changes";
+    ? "Отменить сохранённые правки"
+    : "Отменить сохранённые и последующие правки";
   return base + describeCreatedGadgetDeletion(createdGadgetTitles);
 }
 
@@ -3628,14 +3639,14 @@ function DiscardPendingChangesPopover({
       >
         <div className="px-3.5 pb-2.5 pt-3">
           <Popover.Title className="text-[13px] font-medium leading-[18px] tracking-[-0.25px] text-kumo-default">
-            Discard all pending changes?
+            Отменить все непринятые изменения?
           </Popover.Title>
           <p className="mt-0.5 text-[11.5px] leading-4 tracking-[-0.15px] text-kumo-subtle">
             Return to the last accepted version. Any gadgets created by these changes will be
             permanently deleted. Pending changes can&apos;t be restored.
           </p>
           <p className="mt-2 border-t border-kumo-line pt-2 text-[11px] leading-[15px] tracking-[-0.1px] text-kumo-inactive">
-            Use the <ArrowUUpLeft size={12} className="mx-0.5 inline-block align-[-2px]" aria-hidden="true" /><span className="sr-only">undo arrow</span> under any agent response to discard from that turn onward.
+            Нажмите <ArrowUUpLeft size={12} className="mx-0.5 inline-block align-[-2px]" aria-hidden="true" /><span className="sr-only">стрелку отмены</span> под ответом агента, чтобы отменить работу начиная с этого шага.
           </p>
         </div>
         <div className="flex items-center justify-end gap-0.5 border-t border-kumo-line px-2 py-1.5">
@@ -3645,7 +3656,7 @@ function DiscardPendingChangesPopover({
             onClick={() => onOpenChange(false)}
             className="flex h-6 cursor-pointer items-center rounded-md px-2 text-[12px] font-medium tracking-[-0.15px] text-kumo-inactive transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Cancel
+            Отмена
           </button>
           <button
             type="button"
@@ -3653,7 +3664,7 @@ function DiscardPendingChangesPopover({
             onClick={onConfirm}
             className="flex h-6 cursor-pointer items-center rounded-md px-2 text-[12px] font-medium tracking-[-0.15px] text-kumo-default transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {isDiscarding ? "Discarding..." : "Discard changes"}
+            {isDiscarding ? "Отмена…" : "Отменить изменения"}
           </button>
         </div>
       </Popover.Content>
@@ -4088,7 +4099,7 @@ type ChatTimeBucket = "today" | "yesterday" | "thisWeek" | "earlier";
 const CHAT_TIME_BUCKET_LABELS: Record<ChatTimeBucket, string> = {
   today: "Today",
   yesterday: "Yesterday",
-  thisWeek: "Earlier this week",
+  thisWeek: "На этой неделе",
   earlier: "Earlier",
 };
 const CHAT_TIME_BUCKET_ORDER: ChatTimeBucket[] = [
@@ -4695,7 +4706,7 @@ function ChatInterface({
       }
     } catch (err: any) {
       console.error("Failed to download chat attachment:", err);
-      toasts.add({ title: err?.message || "Failed to download attachment", variant: "error" });
+      toasts.add({ title: err?.message || "Не удалось скачать вложение", variant: "error" });
     }
   }, [overseer, toasts]);
 
@@ -5104,7 +5115,7 @@ function ChatInterface({
           provisional.compacting = false;
           if (event.nothingToCompact) {
             toastsRef.current.add({
-              title: "Nothing to compact — there are no earlier messages to summarize.",
+              title: "Нет предыдущих сообщений для сокращения контекста.",
             });
           }
           break;
@@ -5239,7 +5250,7 @@ function ChatInterface({
       } catch (err) {
         if (!logRpcFailure("Failed to subscribe to chats:", err)) {
           reportIssue('chat.subscription-load', err)
-          toasts.add({ title: "Unable to load conversations", variant: "error" });
+          toasts.add({ title: "Не удалось загрузить беседы", variant: "error" });
         }
       }
     };
@@ -5350,8 +5361,8 @@ function ChatInterface({
       setProposedChangesVersion((prev) => prev + 1);
       forceUpdate();
     } catch (err) {
-      console.error("Failed to load earlier messages:", err);
-      toasts.add({ title: "Failed to load earlier messages", variant: "error" });
+      console.error("Не удалось загрузить предыдущие сообщения:", err);
+      toasts.add({ title: "Не удалось загрузить предыдущие сообщения", variant: "error" });
     } finally {
       setIsLoadingEarlier(false);
     }
@@ -5380,7 +5391,7 @@ function ChatInterface({
             message, model, capsules, attachments, formats);
         onNavigateToChatRef.current(newChatId);
       } else {
-        // Send message to existing chat.
+        // Отправить сообщение to existing chat.
         await overseer.sendChatMessage(
           selectedChatId,
           message,
@@ -5391,8 +5402,8 @@ function ChatInterface({
         );
       }
     } catch (err) {
-      if (!logRpcFailure("Failed to send message:", err, { reportSite: "chat.send" })) {
-        toasts.add({ title: "Failed to send message", variant: "error" });
+      if (!logRpcFailure("Не удалось отправить сообщение:", err, { reportSite: "chat.send" })) {
+        toasts.add({ title: "Не удалось отправить сообщение", variant: "error" });
       }
       throw err;
     }
@@ -5415,7 +5426,7 @@ function ChatInterface({
       onNavigateToChatRef.current(newChatId);
     } catch (err) {
       if (!logRpcFailure("Failed to create new chat:", err, { reportSite: "chat.new" })) {
-        toasts.add({ title: "Failed to start conversation", variant: "error" });
+        toasts.add({ title: "Не удалось начать беседу", variant: "error" });
       }
       throw err;
     }
@@ -5434,8 +5445,8 @@ function ChatInterface({
     try {
       await overseer.stopAgent(selectedChatId);
     } catch (err) {
-      console.error("Failed to stop agent:", err);
-      toasts.add({ title: "Failed to stop agent", variant: "error" });
+      console.error("Не удалось остановить агента:", err);
+      toasts.add({ title: "Не удалось остановить агента", variant: "error" });
     }
   };
 
@@ -5459,10 +5470,10 @@ function ChatInterface({
       }
 
       setIsEditingTitle(false);
-      toasts.add({ title: "Chat title updated successfully", variant: "success" });
+      toasts.add({ title: "Название беседы изменено", variant: "success" });
     } catch (err) {
-      console.error("Failed to update chat title:", err);
-      toasts.add({ title: "Failed to update chat title", variant: "error" });
+      console.error("Не удалось изменить название беседы:", err);
+      toasts.add({ title: "Не удалось изменить название беседы", variant: "error" });
     }
   };
 
@@ -5486,10 +5497,10 @@ function ChatInterface({
     setIsDeleting(true);
     try {
       await overseer.deleteChat(deleteTarget.id);
-      toasts.add({ title: "Chat deleted successfully", variant: "success" });
+      toasts.add({ title: "Беседа удалена", variant: "success" });
     } catch (err) {
-      console.error("Failed to delete chat:", err);
-      toasts.add({ title: "Failed to delete chat", variant: "error" });
+      console.error("Не удалось удалить беседу:", err);
+      toasts.add({ title: "Не удалось удалить беседу", variant: "error" });
     }
     setIsDeleting(false);
     setDeleteTarget(null);
@@ -5528,10 +5539,10 @@ function ChatInterface({
         bumpChatListVersion();
         forceUpdate();
       }
-      toasts.add({ title: "Chat title updated successfully", variant: "success" });
+      toasts.add({ title: "Название беседы изменено", variant: "success" });
     } catch (err) {
-      console.error("Failed to update chat title:", err);
-      toasts.add({ title: "Failed to update chat title", variant: "error" });
+      console.error("Не удалось изменить название беседы:", err);
+      toasts.add({ title: "Не удалось изменить название беседы", variant: "error" });
     }
   };
 
@@ -5544,10 +5555,10 @@ function ChatInterface({
 
     try {
       await overseer.mergeChanges(selectedChatId, mergeThrough, options);
-      toasts.add({ title: "Changes accepted", variant: "success" });
+      toasts.add({ title: "Изменения приняты", variant: "success" });
     } catch (err) {
-      console.error("Failed to accept changes:", err);
-      toasts.add({ title: "Failed to accept changes", variant: "error" });
+      console.error("Не удалось принять изменения:", err);
+      toasts.add({ title: "Не удалось принять изменения", variant: "error" });
     }
   };
 
@@ -5556,10 +5567,10 @@ function ChatInterface({
 
     try {
       await overseer.finalizeChatDraft(selectedChatId);
-      toasts.add({ title: "Changes saved", variant: "success" });
+      toasts.add({ title: "Изменения сохранены", variant: "success" });
     } catch (err) {
-      console.error("Failed to save changes:", err);
-      toasts.add({ title: "Failed to save changes", variant: "error" });
+      console.error("Не удалось сохранить изменения:", err);
+      toasts.add({ title: "Не удалось сохранить изменения", variant: "error" });
     }
   };
 
@@ -5570,10 +5581,10 @@ function ChatInterface({
       await overseer.discardChatDraftChanges(selectedChatId);
       draftRef.current.delete(selectedChatId);
       forceUpdate();
-      toasts.add({ title: "Changes discarded", variant: "success" });
+      toasts.add({ title: "Изменения отменены", variant: "success" });
     } catch (err) {
-      console.error("Failed to discard changes:", err);
-      toasts.add({ title: "Failed to discard changes", variant: "error" });
+      console.error("Не удалось отменить изменения:", err);
+      toasts.add({ title: "Не удалось отменить изменения", variant: "error" });
     }
   };
 
@@ -5594,10 +5605,10 @@ function ChatInterface({
       setDiscardChangesTarget((current) =>
         current?.chatId === target.chatId ? null : current,
       );
-      toasts.add({ title: "Pending changes discarded", variant: "success" });
+      toasts.add({ title: "Незавершённые изменения отменены", variant: "success" });
     } catch (err) {
-      console.error("Failed to discard pending changes:", err);
-      toasts.add({ title: "Failed to discard pending changes", variant: "error" });
+      console.error("Не удалось отменить незавершённые изменения:", err);
+      toasts.add({ title: "Не удалось отменить незавершённые изменения", variant: "error" });
     } finally {
       setDiscardingChangesChatIds((chatIds) => {
         const next = new Set(chatIds);
@@ -5688,10 +5699,10 @@ function ChatInterface({
 
     try {
       await overseer.revertChanges(selectedChatId, revertFrom);
-      toasts.add({ title: "Draft rewound", variant: "success" });
+      toasts.add({ title: "Предыдущая версия черновика восстановлена", variant: "success" });
     } catch (err) {
-      console.error("Failed to rewind draft:", err);
-      toasts.add({ title: "Failed to rewind draft", variant: "error" });
+      console.error("Не удалось восстановить черновик:", err);
+      toasts.add({ title: "Не удалось восстановить черновик", variant: "error" });
     }
   }, [overseer, selectedChatId, toasts]);
 
@@ -5764,7 +5775,7 @@ function ChatInterface({
       setConnectionAccept(null);
     } catch (err) {
       console.error("Failed to finalize connection:", err);
-      toasts.add({ title: "Failed to add connection", variant: "error" });
+      toasts.add({ title: "Не удалось добавить подключение", variant: "error" });
     } finally {
       gk[Symbol.dispose]();
       setProcessingConnections((prev) => {
@@ -5784,8 +5795,8 @@ function ChatInterface({
         setConnectionAccept(null);
       }
     } catch (err) {
-      console.error("Failed to deny connection:", err);
-      toasts.add({ title: "Failed to deny connection", variant: "error" });
+      console.error("Не удалось отклонить подключение:", err);
+      toasts.add({ title: "Не удалось отклонить подключение", variant: "error" });
     } finally {
       setProcessingConnections((prev) => {
         const next = new Set(prev);
@@ -5864,15 +5875,15 @@ function ChatInterface({
     try {
       await overseer.retryAgent(selectedChatId, selectedModel);
     } catch (err) {
-      console.error("Failed to retry agent:", err);
-      toasts.add({ title: "Failed to retry agent", variant: "error" });
+      console.error("Не удалось повторить выполнение:", err);
+      toasts.add({ title: "Не удалось повторить выполнение", variant: "error" });
     }
   };
 
   const handleCopyMessage = useCallback(async (message: string) => {
     const ok = await copyToClipboard(message);
     toasts.add({
-      title: ok ? "Copied message" : "Unable to copy message",
+      title: ok ? "Сообщение скопировано" : "Не удалось скопировать сообщение",
       variant: ok ? "success" : "error",
     });
   }, [toasts]);
@@ -6123,7 +6134,7 @@ function ChatInterface({
                   disabled={isProc}
                   className="cursor-pointer rounded-md px-2 py-1 font-medium text-kumo-inactive transition-colors duration-150 ease-out hover:text-kumo-danger focus-visible:text-kumo-danger focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Deny
+                  Отклонить
                 </button>
                 <button
                   type="button"
@@ -6131,7 +6142,7 @@ function ChatInterface({
                   disabled={isProc}
                   className="cursor-pointer rounded-md bg-kumo-brand px-3 py-1 font-medium text-white transition-[opacity,transform] duration-150 ease-out hover:opacity-90 focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Set up
+                  Подключить
                 </button>
               </div>
             )}
@@ -6154,10 +6165,10 @@ function ChatInterface({
     if (log.type === "bindHook") {
       const isDeleted = log.hookId === undefined;
       const stateLabel = isDeleted
-        ? "Deleted"
+        ? "Удалено"
         : log.enabled
-          ? "Enabled"
-          : "Disabled";
+          ? "Включено"
+          : "Выключено";
       const stateLabelCls = isDeleted
         ? "text-kumo-inactive"
         : log.enabled
@@ -6175,7 +6186,7 @@ function ChatInterface({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-medium text-kumo-default">
-                    Hook: {log.description.title}
+                    Автоматизация: {log.description.title}
                   </span>
                   <span className={`text-[12px] font-medium ${stateLabelCls}`}>
                     {stateLabel}
@@ -6299,7 +6310,7 @@ function ChatInterface({
       <>
         {autoApproveTarget &&
           !isTagAutoApproved(autoApproveTarget.gatekeeperId, autoApproveTarget.actionKind.tag) && (
-          <Tooltip content="Always approve this type of action on this connection, without future prompts." asChild>
+          <Tooltip content="Разрешать действия этого типа для данного подключения без повторного подтверждения." asChild>
             <span className="flex">
               <AlwaysApproveButton
                 onClick={() => setAutoApproveConfirm(autoApproveTarget)}
@@ -6445,7 +6456,7 @@ function ChatInterface({
               <button
                 type="button"
                 className="group flex h-8 -ml-1.5 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-kumo-tint/60 focus-visible:bg-kumo-tint/60 focus-visible:outline-none data-[popup-open]:bg-kumo-tint/60"
-                aria-label="Filter conversations"
+                aria-label="Фильтр бесед"
               >
                 <span className="text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
                   {CHAT_LIST_SCOPE_LABELS[chatListScope]}
@@ -6488,7 +6499,7 @@ function ChatInterface({
           </div>
         ) : chatList.length === 0 ? (
           <p className="text-sm text-kumo-inactive text-center py-8">
-            No conversations yet
+            Бесед пока нет
           </p>
         ) : (
           <div className="flex flex-col gap-1">
@@ -6504,7 +6515,7 @@ function ChatInterface({
                   onClick={() => setChatListScope("all")}
                   className="mt-2 cursor-pointer rounded-md px-2 py-1 text-[12px] leading-4 font-medium text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
                 >
-                  Show all
+                  Показать все
                 </button>
               </div>
             ) : (
@@ -6562,13 +6573,13 @@ function ChatInterface({
                         {!isRenaming && chat.activeAgent ? (
                           <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-brand">
                             <span className="h-1.5 w-1.5 rounded-full bg-kumo-brand animate-pulse" />
-                            Working
+                            В работе
                           </span>
                         ) : !isRenaming && chat.hasProposedChanges ? (
-                          <Tooltip content="This conversation has pending changes" asChild>
+                          <Tooltip content="В беседе есть непринятые изменения" asChild>
                             <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-warning">
                               <span className="h-1.5 w-1.5 rounded-full bg-kumo-warning" />
-                              Pending changes
+                              Непринятые изменения
                             </span>
                           </Tooltip>
                         ) : null}
@@ -6576,7 +6587,7 @@ function ChatInterface({
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-kumo-inactive">
                         {chat.spawnerName && (
                           <>
-                            <span className="truncate">Agent · {chat.spawnerName}</span>
+                            <span className="truncate">Агент · {chat.spawnerName}</span>
                             <span className="flex-shrink-0" aria-hidden="true">·</span>
                           </>
                         )}
@@ -6615,7 +6626,7 @@ function ChatInterface({
                             onClick={() => startListRename(chat.id, chat.title)}
                             className="!h-auto rounded-md !px-2.5 !py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-default transition-colors data-highlighted:bg-kumo-tint"
                           >
-                            Rename
+                            Переименовать
                           </DropdownMenu.Item>
                           <DropdownMenu.Item
                             icon={<Trash size={12} className="mr-2" />}
@@ -6623,7 +6634,7 @@ function ChatInterface({
                             onClick={() => handleDeleteChat(chat.id, chat.title)}
                             className="!h-auto rounded-md !px-2.5 !py-1.5 text-[12px] leading-4 tracking-[-0.2px] transition-colors data-highlighted:bg-kumo-danger-tint"
                           >
-                            Delete
+                            Удалить
                           </DropdownMenu.Item>
                         </DropdownMenu.Content>
                       </DropdownMenu>
@@ -6712,7 +6723,7 @@ function ChatInterface({
                     : "font-normal text-kumo-subtle hover:text-kumo-default"
                 }`}
               >
-                Chat
+                Беседа
               </button>
               <button
                 type="button"
@@ -6723,7 +6734,7 @@ function ChatInterface({
                     : "font-normal text-kumo-subtle hover:text-kumo-default"
                 }`}
               >
-                Connections
+                Подключения
               </button>
             </div>
           )}
@@ -6744,8 +6755,8 @@ function ChatInterface({
                   <WorkshopIconButton
                     onClick={() => onNavigateToChat(null)}
                     className="!h-8 !w-8 flex-shrink-0"
-                    title="Back to conversations"
-                    aria-label="Back to conversations"
+                    title="К беседам"
+                    aria-label="К беседам"
                   >
                     <CaretLeft size={14} />
                   </WorkshopIconButton>
@@ -6767,14 +6778,14 @@ function ChatInterface({
                         onClick={handleSaveChatTitle}
                         disabled={!titleInput.trim()}
                         className="!h-8 !w-8 hover:text-kumo-brand disabled:opacity-30"
-                        aria-label="Save chat title"
+                        aria-label="Сохранить название беседы"
                       >
                         <Check size={13} />
                       </WorkshopIconButton>
                       <WorkshopIconButton
                         onClick={handleCancelTitleEdit}
                         className="!h-8 !w-8"
-                        aria-label="Cancel title edit"
+                        aria-label="Отменить изменение названия"
                       >
                         <X size={13} />
                       </WorkshopIconButton>
@@ -6787,8 +6798,8 @@ function ChatInterface({
                       <WorkshopIconButton
                         onClick={() => setIsEditingTitle(true)}
                         className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive hover:text-kumo-subtle"
-                        title="Rename chat"
-                        aria-label="Rename chat"
+                        title="Переименовать беседу"
+                        aria-label="Переименовать беседу"
                       >
                         <Pencil size={11} />
                       </WorkshopIconButton>
@@ -6799,14 +6810,15 @@ function ChatInterface({
                     onClick={() => handleDeleteChat()}
                     danger
                     className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive"
-                    title="Delete chat"
-                    aria-label="Delete chat"
+                    title="Удалить беседу"
+                    aria-label="Удалить беседу"
                   >
                     <Trash size={14} />
                   </WorkshopIconButton>
                 </div>
               )}
 
+              <CorporateWorkContext messages={currentMessages} />
               {/* Messages */}
               <div
                 ref={messagesContainerRef}
@@ -6823,7 +6835,7 @@ function ChatInterface({
                   >
                     {isLoadingEarlier && (
                       <div className="mx-auto mb-6 text-[12px] leading-4 font-medium text-kumo-inactive">
-                        Loading earlier messages…
+                        Загрузка предыдущих сообщений…
                       </div>
                     )}
 
@@ -6838,7 +6850,7 @@ function ChatInterface({
                             <div className="flex items-center gap-3" role="separator">
                               <span className="h-px flex-1 bg-kumo-line/60" aria-hidden="true" />
                               <span className="flex-shrink-0 text-[11px] leading-4 font-medium tracking-[0.6px] text-kumo-inactive uppercase">
-                                Kept in full from here
+                                Отсюда сообщения сохранены полностью
                               </span>
                               <span className="h-px flex-1 bg-kumo-line/60" aria-hidden="true" />
                             </div>
@@ -6898,7 +6910,7 @@ function ChatInterface({
 
                         return (
                           <div key={entry.key} className={`${entryTopClass} mb-4 max-w-[860px]`}>
-                            <div className="flex items-center gap-3" role="separator" aria-label="Context compacted">
+                            <div className="flex items-center gap-3" role="separator" aria-label="Контекст сокращён">
                               <span className="h-px flex-1 bg-kumo-line" aria-hidden="true" />
                               <button
                                 type="button"
@@ -6907,7 +6919,7 @@ function ChatInterface({
                                 className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] leading-4 font-medium tracking-[0.6px] text-kumo-inactive uppercase transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
                               >
                                 <Brain size={13} aria-hidden="true" />
-                                Context compacted
+                                Контекст сокращён
                                 <CaretRight
                                   size={11}
                                   weight="bold"
@@ -7166,12 +7178,12 @@ function ChatInterface({
                                     : "opacity-0 group-hover/agentMessage:opacity-100 group-focus-within/agentMessage:opacity-100"
                                 }`}>
                                   {hasMessageText && (
-                                    <Tooltip content="Copy message" asChild>
+                                    <Tooltip content="Копировать сообщение" asChild>
                                       <button
                                         type="button"
                                         onClick={() => handleCopyMessage(msg.message)}
                                         className="flex cursor-pointer items-center rounded-md p-1 text-kumo-inactive transition-[color,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96]"
-                                        aria-label="Copy message"
+                                        aria-label="Копировать сообщение"
                                       >
                                         <Copy size={15} />
                                       </button>
@@ -7300,7 +7312,7 @@ function ChatInterface({
                                 <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-kumo-inactive" aria-hidden="true">
                                   <Plug size={16} />
                                 </span>
-                                <span>Used the gadget</span>
+                                <span>Использовано приложение</span>
                               </span>
                             </Tooltip>
                           </div>
@@ -7329,7 +7341,7 @@ function ChatInterface({
                                         </span>
                                         <span className="flex min-w-0 flex-1 items-center gap-1">
                                           <span className="min-w-0 truncate">
-                                            <span className="font-medium text-kumo-danger">Error: </span>
+                                            <span className="font-medium text-kumo-danger">Ошибка: </span>
                                             <span className="text-kumo-subtle">{msg.message}</span>
                                           </span>
                                           <CaretRight
@@ -7342,19 +7354,19 @@ function ChatInterface({
                                     </Tooltip>
                                   </button>
                                   {isLast && msg.code === "usage_limit" && (
-                                    <Tooltip content="Add credits to continue." asChild>
+                                    <Tooltip content="Пополните баланс для продолжения." asChild>
                                       <button
                                         type="button"
                                         onClick={() => setUsageModalOpen(true)}
                                         className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] leading-4 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98]"
                                       >
                                         <Lightning size={12} weight="bold" />
-                                        Continue
+                                        Продолжить
                                       </button>
                                     </Tooltip>
                                   )}
                                   {isLast && msg.code !== "usage_limit" && (
-                                    <Tooltip content="Retry the last action." asChild>
+                                    <Tooltip content="Повторить последнее действие." asChild>
                                       <button
                                         type="button"
                                         onClick={() => handleRetry()}
@@ -7362,7 +7374,7 @@ function ChatInterface({
                                         className="flex flex-shrink-0 cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] leading-4 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                                       >
                                         <ArrowsClockwise size={12} weight="bold" />
-                                        Retry
+                                        Повторить
                                       </button>
                                     </Tooltip>
                                   )}
@@ -7405,10 +7417,10 @@ function ChatInterface({
                       const latestAuthor = currentDraftState.latestAuthor;
                       const isUserAuthored = latestAuthor?.type === "user";
                       const title = isUserAuthored
-                        ? "Draft changes pending"
-                        : "Draft changes in progress";
+                        ? "Черновик ожидает решения"
+                        : "Черновик изменяется";
                       const description = isUserAuthored
-                        ? "Your edits are still a live draft."
+                        ? "Ваши изменения находятся в черновике."
                         : `${latestAuthor?.name ?? "The agent"} is editing changes for this gadget.`;
                       const lastDraftEntry =
                         currentDraftState.entries[
@@ -7437,24 +7449,24 @@ function ChatInterface({
                               </span>
                             </Tooltip>
                             <div className="flex flex-wrap items-center gap-2 text-[13px] leading-4">
-                              <Tooltip content="Throw away these draft edits." asChild>
+                              <Tooltip content="Отменить эти правки черновика." asChild>
                                 <button
                                   type="button"
                                   disabled={isAgentActive}
                                   onClick={handleDiscardDraftChanges}
                                   className="cursor-pointer rounded-md px-1 py-0.5 font-medium text-kumo-inactive transition-colors duration-150 ease-out hover:text-kumo-danger focus-visible:text-kumo-danger focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  Discard
+                                  Отменить
                                 </button>
                               </Tooltip>
-                              <Tooltip content="Save these edits as a draft version. They won't affect the gadget until you accept changes." asChild>
+                              <Tooltip content="Сохранить версию черновика. Для применения к приложению нужно принять изменения." asChild>
                                 <button
                                   type="button"
                                   disabled={isAgentActive}
                                   onClick={handleFinalizeDraftChanges}
                                   className="cursor-pointer rounded-md px-1 py-0.5 font-medium text-kumo-default transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default-hover focus-visible:text-kumo-default-hover focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                                 >
-                                  Save draft
+                                  Сохранить черновик
                                 </button>
                               </Tooltip>
                             </div>
@@ -7510,7 +7522,7 @@ function ChatInterface({
 
                           {showThinking && (
                             <div className={`inline-flex px-1.5 py-1 text-[14px] leading-5 tracking-[-0.25px] ${styles.thinkingShimmer}`}>
-                              Thinking
+                              Ход работы
                             </div>
                           )}
 
@@ -7570,7 +7582,7 @@ function ChatInterface({
                                         >
                                           {toolCall.code && (
                                             <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Code</span>
+                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Код</span>
                                               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                                                 {toolCall.code}
                                               </pre>
@@ -7578,7 +7590,7 @@ function ChatInterface({
                                           )}
                                           {toolCall.output && (
                                             <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Output</span>
+                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Результат</span>
                                               <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
                                                 {toolCall.output}
                                               </pre>
@@ -7623,9 +7635,9 @@ function ChatInterface({
                     onToggleThinkingTraces={toggleShowThinkingTraces}
                     blockedReason={
                       hasPendingConnectionRequest
-                        ? "Set up or deny the connection request above to continue."
+                        ? "Подключите или отклоните запрошенный ресурс для продолжения."
                         : hasPendingAwaitedAction
-                          ? "Approve or reject the pending action above to continue."
+                          ? "Подтвердите или отклоните ожидающее действие для продолжения."
                           : undefined
                     }
                     draftUpdateBanner={(() => {
@@ -7655,7 +7667,7 @@ function ChatInterface({
                         <div className="themed-surface-inset relative flex items-center gap-2 overflow-hidden rounded-t-[calc(1rem-1px)] border-b border-kumo-line bg-kumo-elevated px-3.5 py-2">
                           <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-kumo-brand/40 to-transparent" aria-hidden="true" />
                           <span className="min-w-0 flex-1 truncate text-[12px] font-medium leading-4 tracking-[-0.2px] text-kumo-default">
-                            Pending changes
+                            Непринятые изменения
                           </span>
                           <DiscardPendingChangesPopover
                             open={discardChangesTarget?.chatId === currentChatMetadata.id}
@@ -7670,10 +7682,10 @@ function ChatInterface({
                             onConfirm={handleDiscardPendingChanges}
                           />
                           <Tooltip content={isAgentActive
-                            ? "Wait for the agent to finish before accepting changes."
+                            ? "Дождитесь завершения работы агента перед принятием изменений."
                             : isDiscardingChanges
-                              ? "Wait for pending changes to finish discarding."
-                              : "Keep this draft and make it the gadget's current version."} asChild>
+                              ? "Дождитесь отмены изменений."
+                              : "Принять черновик как текущую версию приложения."} asChild>
                             <WorkshopButton
                               disabled={changesActionsDisabled}
                               onClick={() =>
@@ -7683,7 +7695,7 @@ function ChatInterface({
                               className="!h-7 !cursor-pointer !rounded-md !border-transparent !shadow-none gap-1 text-[12px]"
                             >
                               <Check size={11} weight="bold" />
-                              Accept changes
+                              Принять изменения
                             </WorkshopButton>
                           </Tooltip>
                         </div>
@@ -7711,8 +7723,8 @@ function ChatInterface({
 
       <DeleteConfirmationDialog
         open={deleteTarget !== null}
-        title="Delete conversation?"
-        description={<>This removes <span className="font-medium text-kumo-default">{deleteTarget?.title}</span>. You can&apos;t undo this.</>}
+        title="Удалить беседу?"
+        description={<>Беседа <span className="font-medium text-kumo-default">{deleteTarget?.title}</span> будет удалена. Восстановить её будет нельзя.</>}
         isDeleting={isDeleting}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);

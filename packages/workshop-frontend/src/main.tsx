@@ -9,7 +9,7 @@ import { ServerConfigContext, ServerConfigErrorContext } from './ServerConfigCon
 import { ThemeProvider } from './ThemeContext'
 import { createRouter } from './router'
 import AnnouncementBanner from './components/AnnouncementBanner'
-import { applyAccentColor, applyStoredThemeMode } from './theme'
+import { applyStoredThemeMode } from './theme'
 import './styles.css'
 import FrontendErrorBoundary from './FrontendErrorBoundary'
 import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
@@ -162,17 +162,14 @@ function AppWithConnection() {
     reportShellStage("config", serverConfigError ? "error" : configReadyFor?.api === rpcState.stub ? "ready" : "loading");
   }, [rpcState.stub, configReadyFor, serverConfigError]);
 
-  // Apply the deployment's admin-chosen accent color (overrides brand CSS vars at runtime).
-  useEffect(() => {
-    applyAccentColor(serverConfig?.accentColor ?? '');
-  }, [serverConfig?.accentColor]);
+
 
   useEffect(() => {
     return applySiteFavicon(serverConfig?.siteLogo?.url);
   }, [serverConfig]);
 
   return (
-    <ThemeProvider>
+    <ThemeProvider deploymentAccentColor={serverConfig?.accentColor}>
       <RpcContext.Provider value={rpcState}>
         <ServerConfigErrorContext.Provider value={serverConfigError}>
           <ServerConfigContext.Provider value={serverConfig}>

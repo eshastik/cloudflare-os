@@ -114,7 +114,7 @@ export function myApprovals(reviews: PublicationReview[], userId: string): Pendi
 }
 
 export function pendingCount(reviews: PublicationReview[], userId: string): number {
-  return myApprovals(reviews, userId).filter(item => item.mine === null && !item.review.stale).length;
+  return myApprovals(reviews, userId).filter(item => item.mine === null && !item.review.stale && !item.review.withdrawn).length;
 }
 
 /** Имена документов по «проект/узел» из общей и личной версий. */

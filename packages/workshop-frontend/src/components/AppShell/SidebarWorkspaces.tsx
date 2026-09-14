@@ -342,7 +342,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
       >
         {favorites.length === 0 ? (
           <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
-            Добавьте пространство в избранное, и оно останется здесь.
+            Закрепите нужную беседу, чтобы быстро вернуться к ней.
           </p>
         ) : (
           <div className="flex flex-col">
@@ -362,7 +362,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
 
       {/* Recent workspaces — no count here; the "Show all (N)" link already carries it. */}
       <SidebarSection
-        label="Недавние пространства"
+        label="Недавние беседы"
         open={recentOpen}
         onToggle={() => setRecentOpen((o) => !o)}
       >
@@ -374,7 +374,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
           </div>
         ) : recent.length === 0 ? (
           <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
-            {search ? 'Ничего не найдено.' : 'Пространств пока нет.'}
+            {search ? 'Ничего не найдено.' : 'Бесед пока нет.'}
           </p>
         ) : (
           <>

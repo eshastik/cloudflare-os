@@ -113,10 +113,10 @@ function platformConnectionTypes(siteName: string): ConnectionType[] {
   {
     id: 'ai-model',
     groupKey: 'platform:ai-model',
-    groupLabel: 'AI Model',
-    title: 'AI Model',
+    groupLabel: 'Модель ИИ',
+    title: 'Модель ИИ',
     vendor: siteName,
-    description: 'Expose a selected model through this connection.',
+    description: 'Дайте приложению доступ к выбранной модели.',
     icon: Sparkle,
     accent: '#f6edff',
     iconColor: '#7c3aed',
@@ -124,10 +124,10 @@ function platformConnectionTypes(siteName: string): ConnectionType[] {
   {
     id: 'agent-spawner',
     groupKey: 'platform:agent-spawner',
-    groupLabel: 'Agent',
-    title: 'Agent',
+    groupLabel: 'Агент',
+    title: 'Агент',
     vendor: siteName,
-    description: 'Allow this connection to start new AI agent conversations with selected tools.',
+    description: 'Разрешите запуск бесед с агентами, использующими выбранные инструменты.',
     icon: Robot,
     accent: '#f2f0ff',
     iconColor: '#7c3aed',
@@ -385,7 +385,7 @@ export default function GatekeeperModal({
       if (cancelled) return
       console.error('Failed to load models:', err)
       reportIssue('gatekeeper.models-load', err)
-      toasts.add({ title: "Couldn't load AI models", variant: 'error' })
+      toasts.add({ title: "Не удалось загрузить модели ИИ", variant: 'error' })
     })
 
     authenticatedApi.listGatekeeperVendors().then(vendors => {
@@ -395,7 +395,7 @@ export default function GatekeeperModal({
       if (cancelled) return
       console.error('Failed to load connection vendors:', err)
       reportIssue('gatekeeper.vendors-load', err)
-      toasts.add({ title: "Couldn't load connection options", variant: 'error' })
+      toasts.add({ title: "Не удалось загрузить варианты подключения", variant: 'error' })
     })
 
     return () => {
@@ -468,7 +468,7 @@ export default function GatekeeperModal({
   // Group connections by stable vendor key (e.g. all Google resources together).
   // Preserves the order in which a vendor's first item appears in the flat list.
   // Used to render a collapsible, grouped picker when the search box is empty.
-  // Platform types (AI Model, Agent) each have their own unique groupKey so
+  // Platform types (Модель ИИ, Agent) each have their own unique groupKey so
   // they remain single-item leaves rather than collapsing into one bucket
   // named after the site.
   const groupedConnections = useMemo(() => {
@@ -571,7 +571,7 @@ export default function GatekeeperModal({
           reportIssue('gatekeeper.configurator-start', error, {
             gatekeeperVendorId: selectedConnection?.vendorId,
           })
-          setConfiguratorError(error?.message || 'Could not start configurator.')
+          setConfiguratorError(error?.message || 'Не удалось открыть настройки.')
         }
       })
       .finally(() => {
@@ -600,7 +600,7 @@ export default function GatekeeperModal({
     } catch (error) {
       console.error('Failed to initiate connection:', error)
       reportIssue('gatekeeper.connect-start', error, { gatekeeperVendorId: vendorId })
-      toasts.add({ title: 'Failed to start connection flow', variant: 'error' })
+      toasts.add({ title: 'Не удалось начать подключение', variant: 'error' })
     } finally {
       setConnectingVendor(null)
     }
@@ -623,11 +623,11 @@ export default function GatekeeperModal({
       // The new grant arrives via subscribeConnectedAccounts(); the account's flag then clears and
       // the configurator loads automatically.
     } catch (error) {
-      console.error('Failed to request additional access:', error)
+      console.error('Не удалось запросить дополнительный доступ:', error)
       reportIssue('gatekeeper.resource-grant', error, {
         gatekeeperVendorId: selectedConnection?.vendorId,
       })
-      toasts.add({ title: 'Failed to request additional access', variant: 'error' })
+      toasts.add({ title: 'Не удалось запросить дополнительный доступ', variant: 'error' })
     } finally {
       setGrantingAccountId(null)
     }
@@ -644,7 +644,7 @@ export default function GatekeeperModal({
       reportIssue('gatekeeper.reconnect-start', error, {
         gatekeeperVendorId: selectedConnection?.vendorId,
       })
-      toasts.add({ title: 'Failed to start reconnect flow', variant: 'error' })
+      toasts.add({ title: 'Не удалось начать повторное подключение', variant: 'error' })
     } finally {
       setReconnectingAccountId(null)
     }
@@ -652,7 +652,7 @@ export default function GatekeeperModal({
 
   const handleCreateAiModel = async () => {
     if (!selectedModelId) {
-      toasts.add({ title: 'Please select an AI model', variant: 'warning' })
+      toasts.add({ title: 'Выберите модель ИИ', variant: 'warning' })
       return
     }
     setCreating(true)
@@ -666,11 +666,11 @@ export default function GatekeeperModal({
         transferred = true
         onClose()
       } else {
-        toasts.add({ title: 'Failed to create AI model connection', variant: 'error' })
+        toasts.add({ title: 'Не удалось подключить модель ИИ', variant: 'error' })
       }
     } catch (err) {
       console.error('Failed to create AI model gatekeeper:', err)
-      toasts.add({ title: 'Failed to create AI model connection', variant: 'error' })
+      toasts.add({ title: 'Не удалось подключить модель ИИ', variant: 'error' })
     } finally {
       if (gatekeeper && !transferred) gatekeeper[Symbol.dispose]()
       setCreating(false)
@@ -679,7 +679,7 @@ export default function GatekeeperModal({
 
   const handleCreateAgentSpawner = async () => {
     if (!spawnerDisplayName.trim()) {
-      toasts.add({ title: 'Please enter a display name', variant: 'warning' })
+      toasts.add({ title: 'Введите название', variant: 'warning' })
       return
     }
     if (spawnerEnvError) {
@@ -703,11 +703,11 @@ export default function GatekeeperModal({
         transferred = true
         onClose()
       } else {
-        toasts.add({ title: 'Failed to create agent spawner connection', variant: 'error' })
+        toasts.add({ title: 'Не удалось настроить запуск агентов', variant: 'error' })
       }
     } catch (err) {
       console.error('Failed to create agent spawner gatekeeper:', err)
-      toasts.add({ title: 'Failed to create agent spawner connection', variant: 'error' })
+      toasts.add({ title: 'Не удалось настроить запуск агентов', variant: 'error' })
     } finally {
       if (gatekeeper && !transferred) gatekeeper[Symbol.dispose]()
       setCreating(false)
@@ -736,11 +736,11 @@ export default function GatekeeperModal({
         transferred = true
         onClose()
       } else {
-        toasts.add({ title: 'Failed to create connection', variant: 'error' })
+        toasts.add({ title: 'Не удалось создать подключение', variant: 'error' })
       }
     } catch (err) {
       console.error('Failed to create resource gatekeeper:', err)
-      toasts.add({ title: err instanceof Error && err.message ? err.message : 'Failed to create connection', variant: 'error' })
+      toasts.add({ title: err instanceof Error && err.message ? err.message : 'Не удалось создать подключение', variant: 'error' })
     } finally {
       if (gatekeeper && !transferred) gatekeeper[Symbol.dispose]()
       setCreating(false)
@@ -780,8 +780,8 @@ export default function GatekeeperModal({
   }
 
   const createLabel = selectedConnection?.resourceUrlPattern
-    ? 'Add connection'
-    : 'Create connection'
+    ? 'Добавить подключение'
+    : 'Создать подключение'
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose() }}>
@@ -793,17 +793,17 @@ export default function GatekeeperModal({
         <div ref={headerRef} className="shrink-0 flex items-start justify-between gap-4 border-b border-kumo-line px-5 py-4">
           <div className="min-w-0">
             <Dialog.Title className="text-[17px] leading-6 font-medium tracking-[-0.35px] text-kumo-default">
-              {selectedConnection ? selectedConnection.title : 'Create New Connection'}
+              {selectedConnection ? selectedConnection.title : 'Новое подключение'}
             </Dialog.Title>
             <Dialog.Description className="mt-1 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
               {selectedConnection
                 ? selectedConnection.description
-                : 'Choose what this gadget should be able to use.'}
+                : 'Выберите ресурсы, которые сможет использовать приложение.'}
             </Dialog.Description>
           </div>
           <Dialog.Close
             render={(props) => (
-              <WorkshopIconButton {...props} aria-label="Close">
+              <WorkshopIconButton {...props} aria-label="Закрыть">
                 <X size={16} />
               </WorkshopIconButton>
             )}
@@ -819,7 +819,7 @@ export default function GatekeeperModal({
                 className="mb-4 inline-flex cursor-pointer items-center gap-1.5 text-[12px] leading-4 font-medium tracking-[-0.2px] text-kumo-subtle transition-colors hover:text-kumo-default"
               >
                 <CaretLeft size={13} />
-                All connection types
+                Все типы подключений
               </button>
 
               <div className="space-y-4">
@@ -893,7 +893,7 @@ export default function GatekeeperModal({
                 <input
                   value={searchText}
                   onChange={(event) => setSearchText(event.target.value)}
-                  placeholder="Search services, apps, data sources..."
+                  placeholder="Поиск сервисов, приложений и источников…"
                   autoFocus
                   className="h-10 w-full rounded-xl border border-kumo-line bg-kumo-base pl-9 pr-3 text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive shadow-none outline-none transition-[border-color,box-shadow] focus:border-kumo-ring focus:ring-2 focus:ring-kumo-ring/10"
                 />
@@ -905,7 +905,7 @@ export default function GatekeeperModal({
                 {isSearching ? (
                   filteredConnections.length === 0 ? (
                     <div className="px-4 py-8 text-center text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-                      No matching connection types.
+                      Подходящих подключений нет.
                     </div>
                   ) : filteredConnections.map((connection, index) => (
                     <ConnectionTypeRow
@@ -918,7 +918,7 @@ export default function GatekeeperModal({
                 ) : (
                   groupedConnections.length === 0 ? (
                     <div className="px-4 py-8 text-center text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-                      No connection types available.
+                      Доступных типов подключений нет.
                     </div>
                   ) : groupedConnections.map((group, index) => (
                     <ConnectionGroupRow
@@ -943,14 +943,14 @@ export default function GatekeeperModal({
             <div />
             <div className="flex shrink-0 items-center gap-2">
               <WorkshopButton onClick={() => setSelectedConnectionId(null)} disabled={creating} className="!h-9">
-                Back
+                Назад
               </WorkshopButton>
               <WorkshopButton
                 tone="primary"
                 onClick={handleCreate}
                 disabled={!canCreate || creating}
               >
-                {creating ? 'Creating...' : createLabel}
+                {creating ? 'Создаём…' : createLabel}
               </WorkshopButton>
             </div>
           </div>
@@ -1042,7 +1042,7 @@ function ConnectionGroupRow({
   const iconUrl = representative.logoUrl
 
   // For single-item groups the joined-titles string would just repeat the
-  // group label (e.g. "AI Model"), so fall back to the richer vendor +
+  // group label (e.g. "Модель ИИ"), so fall back to the richer vendor +
   // description subtitle used in the flat search results.
   const subtitle = items.length === 1
     ? `${representative.vendor} · ${representative.description}`

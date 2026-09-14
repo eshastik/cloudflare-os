@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { MessageChannel } from "node:worker_threads";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 
 export const REVIEW_MINE = "e".repeat(64);
@@ -79,8 +79,9 @@ export function defaultMethods(calls) {
   };
 }
 
-export async function mountMemoryApp(overrides = {}) {
+export async function mountMemoryApp(overrides = {}, options = {}) {
   const calls = [];
+  let selectedSection = options.section ?? "my-work", selectedProject = options.project ?? "";
   const methods = { ...defaultMethods(calls), ...overrides };
   // capnweb ищет методы цели на прототипе, а не среди собственных свойств экземпляра.
   class UI extends RpcTarget {}
@@ -89,13 +90,22 @@ export async function mountMemoryApp(overrides = {}) {
     #ui = new UI();
     get ui() { return this.#ui; }
     async subscribeTheme() { return "light"; }
-    async getSelectedProject() { return ""; }
+    async setUnsavedChanges(dirty) { calls.push(["setUnsavedChanges",dirty]); }
+    async getSelectedProject() { return selectedProject; }
+    async getSelectedSection() { return selectedSection; }
+    async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; if(project!==undefined) selectedProject=project; dispose(); mount(); },0); }
     async openApprovals() { calls.push(["openApprovals"]); }
     async downloadText() { return "текст"; }
+    async downloadReviewText(...args) {calls.push(["downloadReviewText",...args]); return args[3]==="before"?"Исходный текст":"Новая версия";}
   }
   let frame; const ports = [];
   const html = await readFile(new URL("../src/generated/app.txt", import.meta.url), "utf8");
-  const dom = new JSDOM(html, {
+  let dom, document;
+  function mount() {
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on("jsdomError", error => { if(error.type !== "css parsing") console.error(error); });
+  dom = new JSDOM(html, {
+    virtualConsole,
     runScripts: "dangerously",
     pretendToBeVisual: true,
     beforeParse(window) {
@@ -114,7 +124,9 @@ export async function mountMemoryApp(overrides = {}) {
       };
     },
   });
-  const { document } = dom.window;
+  document = dom.window.document;
+  }
+  mount();
   const text = () => document.querySelector("#root").textContent;
   const tabs = () => [...document.querySelectorAll('[role="tab"]')];
   const tab = name => tabs().find(t => t.textContent.startsWith(name));
@@ -128,8 +140,10 @@ export async function mountMemoryApp(overrides = {}) {
     }
   }
   async function open(name) {
-    await until(() => tab(name), `вкладка «${name}»`);
-    tab(name).click();
+    const names = {"Моя работа":"my-work","Входящие":"my-work","Проекты":"projects","Документы":"documents","Материалы":"documents","Согласования":"approvals","Источники":"sources","Агенты":"agents","Организация":"organization","Люди и доступ":"people","Приём данных":"intake","Рабочие шаблоны":"templates","Обзор работы":"analytics"};
+    assert.ok(names[name], `Неизвестный раздел: ${name}`);
+    dispose(); selectedSection=names[name]; selectedProject=""; mount();
+    await until(() => document.querySelector("#root h1") && document.querySelector("#root h1").textContent !== "Входящие" || selectedSection === "my-work" && document.querySelector("#root h1"), `раздел ${name}`);
   }
   // React сверяет значение со своим слепком, поэтому ввод ставится нативным сеттером, как это делает браузер.
   function type(input, value) {
@@ -140,8 +154,8 @@ export async function mountMemoryApp(overrides = {}) {
   function dispose() {
     dom.window.dispatchEvent(new dom.window.Event("pagehide"));
     frame?.[Symbol.dispose](); dom.window.close();
-    for (const port of ports) port.close();
+    for (const port of ports.splice(0)) port.close();
   }
-  await until(() => document.querySelector("h1")?.textContent === "Память", "заголовок «Память»");
-  return { dom, document, calls, text, tabs, tab, button, buttons, until, open, type, dispose };
+  await until(() => document.querySelector("#root h1"), "заголовок раздела");
+  return { get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
 }

@@ -1,3 +1,6 @@
+import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
+import {collectIntakeDrop, type IntakeDroppedFile} from "./intakeDrop"
+import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
 import {saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
@@ -15,11 +18,14 @@ import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/work
 import { useAuthenticatedApi } from './AuthContext'
 import {
   normalizeGatekeeperAppPrompt,
+  parseGatekeeperAppSection,
   parseGatekeeperAppWorkspaceTarget,
   type GatekeeperAppWorkspaceTarget,
 } from './gatekeeperAppNavigation'
 
 // A receiver, defined by the sandboxed app, that the host calls to push theme changes into the frame.
+interface AccentReceiver extends RpcTarget { setAccentColor(color: string): void }
+
 interface ThemeReceiver extends RpcTarget {
   setThemeMode(mode: ResolvedThemeMode): void
 }
@@ -89,14 +95,18 @@ class GatekeeperAppHostImpl extends RpcTarget {
   readonly #openTarget: OpenTarget
   readonly #openPrompt: OpenPrompt
   readonly #resolveWorkspaceTitles: ResolveWorkspaceTitles
+  readonly #inboxUploads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['inboxUploads']>['issuer']> } | undefined
   readonly #uploads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textUploads']>['issuer']> } | undefined
   readonly #uploadLifetime = new AbortController()
   readonly #downloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textDownloads']>['issuer']> } | undefined
   readonly #reviewDownloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['reviewDownloads']>['issuer']> } | undefined
   readonly #nativeDownloads: { storageOrigin: string; selector: RpcStub<NonNullable<GatekeeperUiFrame['nativeDownloads']>['selector']> } | undefined
+  #disposed = false
   #downloadBusy = false
   #uploadBusy = false
   #presenting = false
+  #accentColor = "#21664f"
+  #accentReceiver: RpcStub<AccentReceiver> | null = null
   #themeMode: ResolvedThemeMode
   #themeReceiver: RpcStub<ThemeReceiver> | null = null
   // Presentation changes are coalesced to a single apply per animation frame (see #applyPending).
@@ -117,12 +127,16 @@ class GatekeeperAppHostImpl extends RpcTarget {
     nativeDownloads?: GatekeeperUiFrame['nativeDownloads'],
     mailDraftSender?:GatekeeperUiFrame['mailDraftSender'],
     calendarDraftCreator?:GatekeeperUiFrame['calendarDraftCreator'],
+    private readonly navigateSection: (section: string, project?: string) => void = () => {},
     private readonly navigateApprovals: () => void = () => {},
+    inboxUploads?: GatekeeperUiFrame['inboxUploads'],
+    private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
     this.#mailDraftSender=mailDraftSender?(mailDraftSender as RpcStub<typeof mailDraftSender>).dup():undefined
     this.#nativeDownloads = nativeDownloads ? { storageOrigin: nativeDownloads.storageOrigin, selector: (nativeDownloads.selector as RpcStub<typeof nativeDownloads.selector>).dup() } : undefined
+    this.#inboxUploads = inboxUploads ? { storageOrigin: inboxUploads.storageOrigin, issuer: (inboxUploads.issuer as RpcStub<typeof inboxUploads.issuer>).dup() } : undefined
     this.#uploads = uploads ? { storageOrigin: uploads.storageOrigin, issuer: (uploads.issuer as RpcStub<typeof uploads.issuer>).dup() } : undefined
     this.#downloads = downloads ? { storageOrigin: downloads.storageOrigin, issuer: (downloads.issuer as RpcStub<typeof downloads.issuer>).dup() } : undefined
     this.#reviewDownloads = reviewDownloads ? { storageOrigin: reviewDownloads.storageOrigin, issuer: (reviewDownloads.issuer as RpcStub<typeof reviewDownloads.issuer>).dup() } : undefined
@@ -146,6 +160,19 @@ class GatekeeperAppHostImpl extends RpcTarget {
   getSelectedProject(): string {
     const value = new URLSearchParams(window.location.search).get('project') ?? ''
     return value.length <= 255 ? value : ''
+  }
+
+  /** Выбор экрана в URL хоста не даёт полномочий на данные. */
+  getSelectedSection(): string {
+    return parseGatekeeperAppSection(new URLSearchParams(window.location.search).get('section'))
+  }
+
+  /** Переход остаётся в текущем приложении и подключении. */
+  openSection(section: string, project?: string): void {
+    this.#uploadLifetime.signal.throwIfAborted()
+    const target = parseGatekeeperAppSection(section)
+    if (!target || (project !== undefined && (typeof project !== 'string' || project.length > 255))) throw new TypeError('Некорректный раздел')
+    this.navigateSection(target, project)
   }
 
   /** Opens the human inbox without granting approval authority to the frame. */
@@ -188,6 +215,62 @@ class GatekeeperAppHostImpl extends RpcTarget {
         (size, checksum) => uploads.issuer.issue(scope, size, checksum),
         this.#uploadLifetime.signal)
     } finally { this.#uploadBusy = false }
+  }
+
+  /** Файлы выбираются в хосте; фрейм получает только имена и результаты приёма. */
+  async pickInboxFiles(directory: boolean): Promise<PickedIntakeFile[]> {
+    if (typeof directory !== 'boolean' || !this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
+    this.#uploadBusy = true
+    const signal = this.#uploadLifetime.signal
+    try {
+      const files = await new Promise<File[]>((resolve, reject) => {
+        const input = document.createElement('input')
+        input.type = 'file'; input.multiple = true; input.webkitdirectory = directory
+        input.style.display = 'none'; document.body.append(input)
+        const cleanup = () => { input.remove(); signal.removeEventListener('abort', abort) }
+        const abort = () => { cleanup(); reject(Error('Загрузка отменена')) }
+        signal.addEventListener('abort', abort, { once: true })
+        input.addEventListener('change', () => { const selected = Array.from(input.files ?? []); cleanup(); resolve(selected) }, { once: true })
+        input.addEventListener('cancel', () => { cleanup(); resolve([]) }, { once: true })
+        input.click()
+      })
+      return await this.#uploadInboxFiles(files.map(file => ({file,path:file.webkitRelativePath || file.name})))
+    } finally { this.#uploadBusy = false }
+  }
+
+  /** Только доверенный обработчик drop передаёт настоящие File; RPC данные не проходят проверку экземпляра. */
+  async uploadDroppedInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void):Promise<PickedIntakeFile[]> {
+    if (!this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
+    this.#uploadBusy=true
+    try { return await this.#uploadInboxFiles(files,onProgress) }
+    finally {this.#uploadBusy=false}
+  }
+  async #uploadInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void):Promise<PickedIntakeFile[]> {
+    const signal=this.#uploadLifetime.signal
+    if(!Array.isArray(files)||files.length>10000)throw Error('Слишком много файлов')
+      const result: PickedIntakeFile[] = []
+      const uploads = this.#inboxUploads!
+      for (const {file,path} of files) {
+        signal.throwIfAborted()
+        if (!(file instanceof File) || typeof path !== "string" || path.length > 1024) throw Error("Некорректный файл")
+        try {
+          const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
+            const ticket = await uploads.issuer.issue(size, checksum)
+            if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) throw Error('Адрес хранилища не совпадает с настройкой установки')
+            signal.throwIfAborted()
+            return ticket
+          }, (url, options) => fetch(url, { ...options, signal }))
+          signal.throwIfAborted()
+          const receipt = await uploads.issuer.submit(uploadId, path, file.lastModified)
+          signal.throwIfAborted()
+          result.push({ path, uploadId, modifiedAt: file.lastModified, receipt })
+        } catch {
+          signal.throwIfAborted()
+          result.push({ path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' })
+        }
+        onProgress?.(result.length, files.length)
+      }
+      return result
   }
 
   // Revalidate access after S3 returns: a still-valid signed URL must not let an
@@ -289,6 +372,22 @@ class GatekeeperAppHostImpl extends RpcTarget {
     }
   }
 
+  subscribeAccent(receiver: RpcStub<AccentReceiver>): string {
+    this.#uploadLifetime.signal.throwIfAborted()
+    this.#accentReceiver?.[Symbol.dispose]()
+    this.#accentReceiver=receiver.dup()
+    return this.#accentColor
+  }
+
+  updateAccentColor(color:string) {
+    if(!/^#(?:[a-f0-9]{3}|[a-f0-9]{6})$/i.test(color))return
+    this.#accentColor=color
+    const receiver=this.#accentReceiver
+    if(receiver)Promise.resolve(receiver.setAccentColor(color)).catch(()=>{
+      if(this.#accentReceiver===receiver){receiver[Symbol.dispose]();this.#accentReceiver=null}
+    })
+  }
+
   // Queue a presentation change; the latest requested state is applied on the next frame.
   setPresenting(active: boolean): Promise<PresentAck> {
     return new Promise((resolve) => {
@@ -313,8 +412,15 @@ class GatekeeperAppHostImpl extends RpcTarget {
   }
 
   // Cancel the rate limiter's pending resume timer once this host is no longer in use.
+  setUnsavedChanges(dirty: boolean): void {
+    if (!this.#disposed && typeof dirty === "boolean") this.reportUnsavedChanges(dirty)
+  }
+
   dispose() {
+    this.#disposed = true
+    this.reportUnsavedChanges(false)
     this.#uploadLifetime.abort()
+    this.#inboxUploads?.issuer[Symbol.dispose]?.()
     this.#uploads?.issuer[Symbol.dispose]?.()
     this.#downloads?.issuer[Symbol.dispose]?.()
     this.#reviewDownloads?.issuer[Symbol.dispose]?.()
@@ -324,6 +430,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#disposeRateLimiter()
     this.#themeReceiver?.[Symbol.dispose]?.()
     this.#themeReceiver = null
+    this.#accentReceiver?.[Symbol.dispose]()
+    this.#accentReceiver=null
     if (this.#frameId !== null) {
       cancelAnimationFrame(this.#frameId)
       this.#frameId = null
@@ -350,12 +458,18 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const sessionRef = useRef<{ [Symbol.dispose]?(): void } | null>(null)
   const hostRef = useRef<GatekeeperAppHostImpl | null>(null)
+  const dirtyRef = useUnsavedFrameChanges()
   const connectedRef = useRef(false)
   const invalidatedRef = useRef(false)
+  const [dropState,setDropState]=useState({busy:false,active:false,done:0,total:0,message:""})
+  const dropBusy=useRef(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   const overlayRef = useRef<OverlayState>(null)
   // Push the Workshop's resolved light/dark mode to the app whenever it changes.
-  const { resolvedThemeMode } = useTheme()
+  const { resolvedThemeMode, accentColor } = useTheme()
+  const accentRef=useRef(accentColor)
+  accentRef.current=accentColor
+  useEffect(()=>{hostRef.current?.updateAccentColor(accentColor)},[accentColor])
   const themeModeRef = useRef(resolvedThemeMode)
   themeModeRef.current = resolvedThemeMode
   useEffect(() => {
@@ -454,8 +568,12 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
         frame.nativeDownloads,
         frame.mailDraftSender,
         frame.calendarDraftCreator,
+        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, ...(project === undefined ? {} : { project }) }) }) },
         () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
+        frame.inboxUploads,
+        dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
       )
+      host.updateAccentColor(accentRef.current)
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
       connectedRef.current = true
@@ -495,15 +613,46 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
       sessionRef.current = null
       hostRef.current?.dispose()
       hostRef.current = null
+      dropBusy.current=false
+      setDropState(previous=>previous.busy||previous.active||previous.total||previous.message?{busy:false,active:false,done:0,total:0,message:""}:previous)
       setOverlayPhase(null)
     }
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
     // carrying a fresh stub (even with identical HTML) never keeps talking through the stale one.
-  }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
+  }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.inboxUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
       present, resolveWorkspaceTitles, setOverlayPhase, navigate])
 
+  const intakeDrop=!!frame.inboxUploads && new URLSearchParams(window.location.search).get('section')==='intake'
+  const drop=async(event:React.DragEvent)=>{
+    event.preventDefault()
+    setDropState(previous=>({...previous,active:false}))
+    if(dropBusy.current||!hostRef.current)return
+    const targetHost=hostRef.current
+    const targetWindow=iframeRef.current?.contentWindow
+    dropBusy.current=true
+    setDropState({busy:true,active:false,done:0,total:0,message:'Читаем выбранную папку…'})
+    try {
+      const files=await collectIntakeDrop(event.dataTransfer)
+      if(hostRef.current!==targetHost)return
+      if(!files.length)throw Error('В перетаскивании нет файлов')
+      setDropState({busy:true,active:false,done:0,total:files.length,message:''})
+      const results=await targetHost.uploadDroppedInboxFiles(files,(done,total)=>{if(hostRef.current===targetHost)setDropState({busy:true,active:false,done,total,message:''})})
+      if(hostRef.current!==targetHost)return
+      const failed=results.filter(file=>file.error).length
+      setDropState({busy:false,active:false,done:results.length,total:files.length,message:failed?`Принято ${results.length-failed} из ${files.length}. Не подтверждены: ${results.filter(file=>file.error).map(file=>file.path).join(', ')}`:`Принято файлов: ${results.length}. Предложения появятся после разбора.`})
+      if(hostRef.current===targetHost)targetWindow?.postMessage({type:'mnemos-inbox-updated'},'*')
+    }catch {if(hostRef.current===targetHost)setDropState(previous=>({...previous,busy:false,message:'Не удалось завершить загрузку. Проверьте приёмную перед повтором.'}))}
+    finally{if(hostRef.current===targetHost)dropBusy.current=false}
+  }
+
   return (
-    <iframe
+    <div className="flex h-full min-h-0 flex-col">
+    {intakeDrop&&<div className="px-4 pt-4 sm:px-8"><div role="region" aria-label="Перетащите материалы организации" onDragOver={event=>{event.preventDefault();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}} onDragLeave={()=>setDropState(previous=>({...previous,active:false}))} onDrop={event=>void drop(event)} className={`rounded-xl border border-dashed p-5 text-center text-sm ${dropState.active?'border-kumo-brand bg-kumo-fill':'border-kumo-line bg-kumo-elevated'}`}>
+      <p className="m-0 font-medium">Перетащите сюда файлы или папку</p><p className="mb-0 mt-1 text-xs text-kumo-subtle">Или используйте кнопки выбора в приёмной ниже.</p>
+      {dropState.busy&&<div role="status" className="mt-3">{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-2 h-1 w-full" max={dropState.total||1} value={dropState.done}/></div>}
+      {dropState.message&&<p role="status" className="mb-0 mt-3 break-words">{dropState.message}</p>}
+    </div></div>}
+    <div className="min-h-0 flex-1"><iframe
       ref={iframeRef}
       srcDoc={frame.iframeHtml}
       // allow-scripts: run the app's JS. allow-modals: its beforeunload unsaved-changes guard. Not
@@ -512,6 +661,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
       allow="clipboard-write"
       title="Gatekeeper app"
       style={iframeStyleForOverlay(overlay)}
-    />
+    /></div></div>
   )
 }

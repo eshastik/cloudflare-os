@@ -1,3 +1,5 @@
+import { useState } from "react"
+import AppearanceSettings from "./AppearanceSettings"
 import { useNavigate } from '@tanstack/react-router'
 import { DropdownMenu } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../AuthContext'
@@ -7,6 +9,7 @@ import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from
 export default function UserMenu() {
   const { authenticatedApi, logout, currentUser, isAdmin } = useAuthenticatedApi()
   const navigate = useNavigate()
+  const [appearanceOpen, setAppearanceOpen] = useState(false)
 
   const avatarUrl = useAvatar(authenticatedApi, currentUser?.id)
 
@@ -15,13 +18,14 @@ export default function UserMenu() {
     : 'U'
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenu.Trigger
         render={
           <button
             className="w-7 h-7 cursor-pointer rounded-full flex items-center justify-center bg-kumo-tint hover:bg-kumo-fill transition-colors overflow-hidden"
-            title="Open profile menu"
-            aria-label="Open profile menu"
+            title="Открыть меню профиля"
+            aria-label="Открыть меню профиля"
           >
             {avatarUrl ? (
               <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -36,20 +40,21 @@ export default function UserMenu() {
           onClick={() => navigate({ to: '/profile' })}
           className={MENU_ITEM}
         >
-          Profile
+          Профиль
         </DropdownMenu.Item>
+        <DropdownMenu.Item onClick={() => setAppearanceOpen(true)} className={MENU_ITEM}>Оформление</DropdownMenu.Item>
         <DropdownMenu.Item
           onClick={() => navigate({ to: '/providers' })}
           className={MENU_ITEM}
         >
-          Providers
+          Подключения моделей
         </DropdownMenu.Item>
         {isAdmin && (
           <DropdownMenu.Item
             onClick={() => navigate({ to: '/admin' })}
             className={MENU_ITEM}
           >
-            Admin
+            Настройки платформы
           </DropdownMenu.Item>
         )}
         <DropdownMenu.Separator />
@@ -58,9 +63,11 @@ export default function UserMenu() {
           onClick={logout}
           className={MENU_ITEM_DANGER}
         >
-          Sign out
+          Выйти
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu>
+    {appearanceOpen && <AppearanceSettings open={appearanceOpen} onOpenChange={setAppearanceOpen} />}
+    </>
   )
 }

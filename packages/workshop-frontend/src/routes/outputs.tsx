@@ -99,7 +99,7 @@ function OutputMenu({
             <ArrowSquareOut size={13} className="mr-2" /> Открыть
           </DropdownMenu.Item>
           <DropdownMenu.Item onClick={onOpenWorkspace} className={MENU_ITEM}>
-            <Cube size={13} className="mr-2" /> Открыть пространство
+            <Cube size={13} className="mr-2" /> Открыть беседу
           </DropdownMenu.Item>
           {onRename && (
             <DropdownMenu.Item onClick={onRename} className={MENU_ITEM}>
@@ -119,9 +119,9 @@ function OutputMenu({
 
 // Secondary line under an output's title in the grid, where there's no room for meta columns.
 function subtitle(output: OutputSummary): string {
-  const parts = [output.workspaceTitle || 'Пространство без названия']
+  const parts = [output.workspaceTitle || 'Беседа без названия']
   if (output.owner) parts.push(`Поделился: ${output.owner.name}`)
-  parts.push(`Пространство активно ${formatRelativeTime(output.lastActive)}`)
+  parts.push(`Последняя активность ${formatRelativeTime(output.lastActive)}`)
   return parts.join(' · ')
 }
 
@@ -130,7 +130,7 @@ function OutputProvenance({ owner }: { owner?: OutputSummary['owner'] }) {
   return (
     <span
       className="flex w-52 items-center gap-1 truncate whitespace-nowrap"
-      title={owner ? `В пространстве, которым поделился ${owner.name}` : 'В вашем пространстве'}
+      title={owner ? `В беседе, которой поделился ${owner.name}` : 'В вашей беседе'}
     >
       {owner ? <ShareNetwork size={11} /> : <User size={11} />}
       <span className="truncate">{owner ? `Поделился: ${owner.name}` : 'Создано вами'}</span>
@@ -193,7 +193,7 @@ function OutputRow({
           {output.title || 'Без названия'}
         </p>
         <p className="mt-0.5 truncate text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
-          {formatOf(output.output).noun} · {output.workspaceTitle || 'Пространство без названия'}
+          {formatOf(output.output).noun} · {output.workspaceTitle || 'Беседа без названия'}
         </p>
       </div>
       {/* Fixed-width meta columns so rows line up like a table. */}
@@ -201,7 +201,7 @@ function OutputRow({
         <OutputProvenance owner={output.owner} />
         <span className="flex w-40 items-center justify-end gap-1 whitespace-nowrap">
           <Clock size={10} />
-          Пространство активно {formatRelativeTime(output.lastActive)}
+          Последняя активность {formatRelativeTime(output.lastActive)}
         </span>
       </div>
       <OutputMenu onOpen={onOpen} onOpenWorkspace={onOpenWorkspace}

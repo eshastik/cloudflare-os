@@ -4,6 +4,7 @@ import { ArrowLeft, CaretRight, Clock, FileText, MagnifyingGlass } from "@phosph
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
 import { documentRows, type DocumentRow, type MemoryData } from "./data.ts";
+import { LegacyPanel } from "./legacy.tsx";
 import { relativeTime } from "./time.ts";
 import { Eyebrow, Notice, Row, RowList, StatusBadge } from "./ui.tsx";
 
@@ -20,6 +21,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<{ query: string; hits: SearchHit[]; pending: boolean; failed: number; busy: boolean } | null>(null);
   const [times, setTimes] = useState<Map<string, string>>(new Map());
+  const [editing, setEditing] = useState(false);
   const [opened, setOpened] = useState<Opened | null>(null);
   const requested = useRef(new Set<string>());
   const mounted = useRef(true);
@@ -81,10 +83,13 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     return { projectId: hit.project_id, projectName: project?.name ?? hit.project_id, nodeId: hit.node_id, name: hit.name || hit.node_id, status: { tone: "success", label: "Опубликовано" } };
   }
 
+  if (opened && editing) return <LegacyPanel section={{kind: "document", project: opened.row.projectId, node: opened.row.nodeId}} title={opened.row.name} onClose={() => { setEditing(false); void data.reloadProjects(); }} />;
+
   if (opened) {
     return (
       <section aria-label="Содержимое документа">
         <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => setOpened(null)}>К списку</Button>
+        <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Открыть личный черновик</Button>
         <h2 className="mt-3 mb-1 text-lg font-semibold text-kumo-strong">Содержимое документа</h2>
         <p className="m-0 text-[12px] text-kumo-subtle">{opened.row.projectName} · {opened.row.name}</p>
         <div className="mt-3 rounded-xl border border-kumo-line bg-kumo-elevated p-4">

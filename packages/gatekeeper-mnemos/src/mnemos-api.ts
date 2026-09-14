@@ -1,3 +1,5 @@
+import { checkedIntakeSubmit, type IntakeReceipt, type IntakeStatus, type IntakeAlerts, type IntakeAlert, type IntakeDecision } from "./intake.ts";
+import { checkedAdminRight, type AdminPersonCreate, type AdminPerson, type AdminPeopleResult, type AdminRight, type AdminRights } from "./admin-people.ts";
 import type {CentroidResult} from './centroid.ts';
 import type {ReindexInventory} from './reindex-batch.ts';
 import type {ReindexResult} from './reindex.ts';
@@ -98,6 +100,23 @@ export class MnemosAPI {
     } catch { throw new MnemosAPIError(502); }
     finally { reader.releaseLock(); }
   }
+  beginInboxUpload(size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
+    if (!Number.isSafeInteger(size) || size < 0 || size > 64*1024*1024 || typeof checksum !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(checksum)) throw new MnemosAPIError(400);
+    return this.#request('/v1/inbox/uploads', 'POST', signal, {size_bytes:size,checksum_sha256:checksum});
+  }
+  submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {return this.#request('/v1/inbox','POST',signal,checkedIntakeSubmit(uploadId,sourcePath,modifiedAt));}
+  inboxStatus(signal?: AbortSignal): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200','GET',signal);}
+  inboxAlerts(decided=false,signal?: AbortSignal): Promise<IntakeAlerts> {return this.#request(`/v1/inbox/alerts?limit=200&decided=${decided ? 'true' : 'false'}`,'GET',signal);}
+  decideInboxAlert(id: string, decision: IntakeDecision, signal?: AbortSignal): Promise<{alert:IntakeAlert}> {return this.#request(`/v1/inbox/alerts/${segment(id)}`,'POST',signal,decision);}
+  replayInboxItem(hash: string, version: number, signal?: AbortSignal): Promise<{blob_sha256_hex:string;pipeline_version:number}> {
+    if (!/^[a-f0-9]{64}$/.test(hash) || !Number.isSafeInteger(version) || version<1) throw new MnemosAPIError(400);
+    return this.#request(`/v1/inbox/items/${hash}/replay`,'POST',signal,{pipeline_version:version});
+  }
+  listPeople(signal?: AbortSignal): Promise<{users: AdminPerson[]}> { return this.#request('/v1/admin/users', 'GET', signal); }
+  createPerson(input: AdminPersonCreate, signal?: AbortSignal): Promise<AdminPeopleResult> { return this.#request('/v1/admin/users', 'POST', signal, input); }
+  listPersonRights(principal: string, signal?: AbortSignal): Promise<AdminRights> { return this.#request(`/v1/admin/rights?principal_id=${encodeURIComponent(principal)}`, 'GET', signal); }
+  grantPersonRight(input: AdminRight, signal?: AbortSignal): Promise<{right: AdminRight}> { return this.#request('/v1/admin/rights', 'POST', signal, checkedAdminRight(input)); }
+  removePersonRight(input: AdminRight, signal?: AbortSignal): Promise<{outcome: string; right: AdminRight}> { return this.#request('/v1/admin/rights/remove', 'POST', signal, checkedAdminRight(input)); }
   listPrivateVersions(project:string,node:string,cursor='',signal?:AbortSignal):Promise<{versions:Array<{head:string;content_type:string;recorded_at:string}>;next_cursor?:string;limited?:boolean}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
   restorePrivateDraftContent(project:string,node:string,source:string,expectedHead:string,signal?:AbortSignal):Promise<DraftHead>{return this.#request(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/restore-private`,"POST",signal,{source_head:source,expected_head:expectedHead});}
   checkPrivateVersionRead(project: string, node: string, version: string, signal?: AbortSignal): Promise<{node_id: string; head: string}> {

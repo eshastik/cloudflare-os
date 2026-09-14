@@ -5,7 +5,7 @@ import { REVIEW_MINE, REVIEW_READY, mountMemoryApp } from "./app-react-harness.m
 test("«Моя работа»: вкладка по умолчанию, четыре блока, решения по типам, действия через RPC", async () => {
   const app = await mountMemoryApp();
   try {
-    assert.equal(app.tab("Моя работа").getAttribute("aria-selected"), "true", "вкладка по умолчанию");
+    assert.equal(app.document.querySelector("#root h1").textContent, "Входящие", "раздел по умолчанию");
     const block = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => block("Ждут моего решения")?.textContent.includes("Инженерия"), "согласование по направлению");
     app.button("Действия агентов — открыть очередь разрешений").click();

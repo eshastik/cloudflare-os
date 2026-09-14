@@ -1,3 +1,4 @@
+import { useAuthenticatedApi } from '../../AuthContext'
 import { Link } from '@tanstack/react-router'
 import {
   Blueprint,
@@ -40,6 +41,7 @@ export default function Sidebar({
   onToggleCollapsed: () => void
 }) {
   const siteName = useSiteName()
+  const { isAdmin } = useAuthenticatedApi()
   // Gatekeeper-served management apps the user can reach now (one per gatekeeper that provides a UI
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
@@ -112,78 +114,54 @@ export default function Sidebar({
 
       <SidebarWorkspacesProvider>
         {/* Pinned top stack. shrink-0 keeps it from squishing when the lists below grow. */}
-        <div className="flex shrink-0 flex-col gap-3 pt-3">
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pt-3">
           {/* Primary nav */}
           <nav className="flex flex-col gap-0.5 px-2">
             <SidebarItem
               to="/"
-              label="Главная"
+              label="Новый чат"
               icon={<House size={14} weight="regular" />}
               collapsed={collapsed}
             />
             <SidebarItem
               to="/workspaces"
-              label="Пространства"
+              label="Беседы"
               icon={<SquaresFour size={14} weight="regular" />}
               collapsed={collapsed}
             />
-            <SidebarItem
-              to="/blueprints"
-              label="Шаблоны"
-              icon={<Blueprint size={14} weight="regular" />}
-              collapsed={collapsed}
-            />
-            <SidebarItem
-              to="/outputs"
-              label="Результаты"
-              icon={<Stack size={14} weight="regular" />}
-              collapsed={collapsed}
-            />
-            {/* Gatekeeper management apps (e.g. the Context Library), listed dynamically. */}
-            {gatekeeperApps.map((app) => {
-              // Escape the icon URL for safe interpolation into a CSS url("…") string.
-              const maskUrl = app.icon
-                ? `url("${app.icon.url.replace(/[\\"]/g, '\\$&')}")`
-                : undefined
-              return (
-              <SidebarItem
-                key={app.id}
-                to="/gatekeepers/$appId"
-                params={{ appId: app.id }}
-                label={app.title}
-                icon={
-                  maskUrl ? (
-                    // Render the (monochrome) app icon as a CSS mask filled with the row's current
-                    // text color, so it tints like the Phosphor icons — subtle by default, accent
-                    // when active, darker on hover.
-                    <span
-                      aria-hidden
-                      className="h-3.5 w-3.5 bg-current"
-                      style={{
-                        maskImage: maskUrl,
-                        WebkitMaskImage: maskUrl,
-                        maskRepeat: 'no-repeat',
-                        WebkitMaskRepeat: 'no-repeat',
-                        maskPosition: 'center',
-                        WebkitMaskPosition: 'center',
-                        maskSize: 'contain',
-                        WebkitMaskSize: 'contain',
-                      }}
-                    />
-                  ) : (
-                    <BookOpen size={14} weight="regular" />
-                  )
-                }
-                collapsed={collapsed}
-              />
-              )
+            {gatekeeperApps.filter(app => !app.sections?.length).map(app => (
+              <SidebarItem key={`${app.id}:${app.accountId}`} to="/gatekeepers/$appId" params={{ appId: app.id }} search={{account:app.accountId}} account={app.accountId}
+                label={app.title} icon={<BookOpen size={14} />} collapsed={collapsed} />
+            ))}
+            {gatekeeperApps.map(app => {
+              const sections = app.sections ?? []
+              const managesOrganization = sections.some(section => section.id === 'people' || section.id === 'intake')
+              const renderSection = (section: typeof sections[number]) => <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`}
+                to="/gatekeepers/$appId" params={{ appId: app.id }} search={{ section: section.id, account:app.accountId }} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1}
+                label={section.title} icon={<BookOpen size={14} />} collapsed={collapsed} />
+              const core = sections.filter(section => ['my-work', 'documents'].includes(section.id))
+              const administration = sections.filter(section => section.group === 'manage' || managesOrganization && ['projects', 'sources'].includes(section.id))
+              const extra = sections.filter(section => !core.includes(section) && !administration.includes(section))
+              return <div key={`${app.id}:${app.accountId}`} className="space-y-0.5">
+                {!collapsed&&gatekeeperApps.filter(other=>other.id===app.id).length>1&&<p className="px-2.5 pt-3 text-xs font-semibold">{app.accountName||app.title}</p>}
+                {core.map(renderSection)}
+                {administration.length > 0 && <div className="mt-3 space-y-0.5">
+                  {!collapsed && <p className="px-2.5 py-1 text-[11px] font-medium text-kumo-subtle">Управление организацией</p>}
+                  {administration.map(renderSection)}
+                </div>}
+                {extra.length > 0 && <details className="mt-2" open={collapsed || undefined}>
+                  <summary className="cursor-pointer rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Рабочие инструменты">{collapsed ? '•••' : 'Рабочие инструменты'}</summary>
+                  {extra.map(renderSection)}
+                </details>}
+              </div>
             })}
-            <SidebarItem
-              to="/explore"
-              label="Обзор"
-              icon={<Compass size={14} weight="regular" />}
-              collapsed={collapsed}
-            />
+            <SidebarItem to="/outputs" label="Результаты бесед" icon={<Stack size={14} />} collapsed={collapsed} />
+            <details className="mt-2" open={collapsed || undefined}>
+              <summary className="cursor-pointer rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Приложения">{collapsed ? '◇' : 'Приложения'}</summary>
+              <SidebarItem to="/blueprints" label="Сохранённые приложения" icon={<Blueprint size={14} />} collapsed={collapsed} />
+              <SidebarItem to="/explore" label="Каталог приложений" icon={<Compass size={14} />} collapsed={collapsed} />
+            </details>
+            {isAdmin && <SidebarItem to="/admin" label="Настройки платформы" icon={<SquaresFour size={14} />} collapsed={collapsed} />}
           </nav>
 
           {/* Workspace tools: search. Pinned so it's always reachable. */}

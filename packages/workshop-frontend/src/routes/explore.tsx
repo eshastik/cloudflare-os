@@ -7,7 +7,7 @@ export const Route = createFileRoute('/explore')({
 })
 
 function ExplorePage() {
-  useDocumentTitle('Обзор')
+  useDocumentTitle('Каталог приложений')
 
   return <BlueprintsPage />
 }

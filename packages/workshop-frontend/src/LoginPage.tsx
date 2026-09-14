@@ -26,7 +26,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
   const serverConfigError = useServerConfigError()
   const siteName = useSiteName()
   const connectionLost = useConnectionLost()
-  useDocumentTitle('Sign in')
+  useDocumentTitle('Войти')
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -45,10 +45,10 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
           window.location.reload()
         }
       } else {
-        setError('Invalid username or password')
+        setError('Неверный логин или пароль')
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError('Не удалось войти. Проверьте подключение и повторите попытку.')
     } finally {
       setLoading(false)
     }
@@ -66,9 +66,9 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
           className="min-h-screen flex flex-col items-center justify-center gap-4 bg-kumo-base px-4"
         >
           <p className="text-sm text-kumo-danger text-center">
-            Couldn&apos;t load deployment settings.
+            Не удалось загрузить настройки платформы.
           </p>
-          <Button variant="secondary" onClick={() => window.location.reload()}>Reload</Button>
+          <Button variant="secondary" onClick={() => window.location.reload()}>Обновить</Button>
         </div>
       )
     }
@@ -76,7 +76,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-kumo-base px-4">
         <Loader size="lg" />
         <p className="text-sm text-kumo-subtle text-center">
-          {connectionLost ? "Can't reach the server. Retrying…" : 'Loading…'}
+          {connectionLost ? "Нет связи с сервером. Повторяем подключение…" : 'Загрузка…'}
         </p>
       </div>
     )
@@ -107,7 +107,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
             </div>
           </SiteLogo>
           <h1 className="text-xl font-semibold text-kumo-default">{siteName}</h1>
-          <p className="text-sm text-kumo-subtle mt-1">Sign in to your account</p>
+          <p className="text-sm text-kumo-subtle mt-1">Войдите в рабочий аккаунт</p>
         </div>
 
         {passwordAuthEnabled && (
@@ -115,18 +115,18 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
             {/* Username / password form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
-                label="Username"
+                label="Логин"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoFocus
                 autoComplete="username"
                 disabled={loading}
-                placeholder="your-username"
+                placeholder="Ваш логин"
               />
 
               <Input
                 type="password"
-                label="Password"
+                label="Пароль"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
@@ -145,16 +145,16 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
                 loading={loading}
                 className="w-full justify-center"
               >
-                Sign in
+                Войти
               </Button>
             </form>
 
-            <p className="text-center text-sm text-kumo-subtle mt-6">
-              Don't have an account?{' '}
+            {serverConfig.signupsEnabled && <p className="text-center text-sm text-kumo-subtle mt-6">
+              Нет аккаунта?{' '}
               <Link to="/signup" className="text-kumo-brand hover:underline font-medium">
-                Create one
+                Создать аккаунт
               </Link>
-            </p>
+            </p>}
           </>
         )}
 
@@ -164,7 +164,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
             {passwordAuthEnabled && (
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px flex-1 bg-kumo-line" />
-                <span className="text-xs text-kumo-subtle">or</span>
+                <span className="text-xs text-kumo-subtle">или</span>
                 <div className="h-px flex-1 bg-kumo-line" />
               </div>
             )}

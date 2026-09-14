@@ -53,6 +53,17 @@ import type { MnemosAccountSession, ManagedAgentRequest, ManagedTaskRequest } fr
 import type { RpcTarget, RpcStub } from "capnweb";
 import type { AgentConnectionPage, WhoAmI, ProjectPage, NodePage, DocumentContent, DraftDocument, DraftState, DraftHead, PublicationResult, PublicationReview, PublicationReviewPage, PublicationPolicy, PolicyDomain, PolicyApproverPage, ProjectSearchPage, NodeHistoryPage } from "../src/mnemos-api.ts";
 export interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement, CalendarDraftManagement, MailDraftManagement, RpcTarget, TelegramManagement, VoiceManagement {
+ beginInboxUpload: MnemosAccountSession["beginInboxUpload"];
+ submitInboxUpload: MnemosAccountSession["submitInboxUpload"];
+ inboxStatus: MnemosAccountSession["inboxStatus"];
+ inboxAlerts: MnemosAccountSession["inboxAlerts"];
+ decideInboxAlert: MnemosAccountSession["decideInboxAlert"];
+ replayInboxItem: MnemosAccountSession["replayInboxItem"];
+ listPeople: MnemosAccountSession["listPeople"];
+ createPerson: MnemosAccountSession["createPerson"];
+ listPersonRights: MnemosAccountSession["listPersonRights"];
+ grantPersonRight: MnemosAccountSession["grantPersonRight"];
+ removePersonRight: MnemosAccountSession["removePersonRight"];
  createProject:MnemosAccountSession["createProject"];
  readWorkshopAgentScope:MnemosAccountSession["readWorkshopAgentScope"];
  updateWorkshopAgentScope:MnemosAccountSession["updateWorkshopAgentScope"];
@@ -272,6 +283,11 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   revokeAgentConnection(id: string): Promise<void>;
 }
 export interface Host extends RpcTarget {
+  setUnsavedChanges(dirty: boolean): void;
+  subscribeAccent(frame: RpcTarget): string;
+  getSelectedSection(): string;
+  pickInboxFiles(directory: boolean): Promise<import("../src/intake.ts").PickedIntakeFile[]>;
+  openSection(section: string, project?: string): void;
   openApprovals(): Promise<void>;
   getSelectedProject(): Promise<string>;
   saveMailAttachment(bytes:Uint8Array,filename:string):Promise<void>;
@@ -322,9 +338,20 @@ let inboxOpen = false, inboxCursor = "";
 let inboxRows: PublicationReview[] = [], inboxReview: PublicationReview | null = null;
 const comparedNodes = new Set<string>();
 let comparison: { node: string; before: string | null; after: string | null } | null = null;
-window.addEventListener("beforeunload", event => {
-  if ((editor && (busy || editor.text !== editor.original)) || (policyEditor && (busy || policyEditor.dirty))) { event.preventDefault(); event.returnValue = ""; }
-});
+export function hasUnsavedLegacyChanges(): boolean {
+  return !!((editor && (busy || editor.text !== null && editor.text !== editor.original)) || (policyEditor && (busy || policyEditor.dirty)));
+}
+let reportedDirty: boolean | undefined;
+function reportUnsavedChanges(): void {
+  const dirty = hasUnsavedLegacyChanges();
+  if (!host || reportedDirty === dirty) return;
+  reportedDirty = dirty;
+  void host.setUnsavedChanges(dirty).catch(() => { reportedDirty = undefined; });
+}
+export function confirmLegacyNavigation(): boolean {
+  return !hasUnsavedLegacyChanges() || window.confirm("Есть несохранённые изменения. Уйти и потерять их?");
+}
+// Уход со страницы проверяет host: iframe beforeunload не видит переходы оболочки.
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ""): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag); el.textContent = text; return el;
 }
@@ -377,6 +404,17 @@ let absenceTaskView: AbsenceTaskView | null = null;
 let teamBudgetView: TeamBudgetView | null = null;
 /** Разделы, которые открываются и с домашней страницы «Ещё», и из вкладок React (openLegacySection). */
 const openers = {
+  signalsOverview: ()=>{signalsOverview=new SignalsOverview(root,host.ui,()=>{signalsOverview=null;render();},project=>{signalsOverview=null;projectSignals=new ProjectSignalsView(root,host.ui,projects,()=>{projectSignals=null;render();},project,task=>{projectSignals=null;void openTaskTracker(task.project,"",task);});void projectSignals.published();});void signalsOverview.load();},
+  projectSignals: ()=>{projectSignals=new ProjectSignalsView(root,host.ui,projects,()=>{projectSignals=null;render();},"",task=>{projectSignals=null;void openTaskTracker(task.project,"",task);});projectSignals.render();},
+  businessOverview: ()=>{businessOverview=new BusinessOverview(root,host.ui,projects,()=>{businessOverview=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side),source=>{businessOverview=null;teamBudgetView=new TeamBudgetView(root,host.ui,source.project,review=>{teamBudgetView=null;if(review)taskRequest=review;render();});const view=teamBudgetView;void view.load().then(()=>{if(teamBudgetView===view)view.prepareAnalytics(source);});},(project,view)=>{businessOverview=null;if(view==='expenses')openExpenses(project);else openAnswers(project);});businessOverview.render();},
+  agentAnswers: ()=>openAnswers(),
+  agentQuality: ()=>{agentQuality=new AgentQuality(root,host.ui,projects,()=>{agentQuality=null;render();},project=>{agentQuality=null;openAnswers(project);});agentQuality.render();},
+  expenses: ()=>openExpenses(),
+  jiraImport: ()=>{corporateImportView=new CorporateImportView(root,host.ui,projects,()=>{corporateImportView=null;render();});corporateImportView.render();},
+  bitrixImport: ()=>{corporateImportView=new CorporateImportView(root,host.ui,projects,()=>{corporateImportView=null;render();},"bitrix");corporateImportView.render();},
+  voice: ()=>{voiceView=new VoiceView(root,host.ui,()=>{voiceView=null;void host.ui.managedTaskRequest().then(task=>{taskRequest=task;render();}).catch(()=>{notice="Не удалось перечитать задачу агента.";render();});});voiceView.render();},
+  resourceMap: ()=>{resourceMapView=new ResourceMapView(root,host.ui,projects,()=>{resourceMapView=null;render();},(project,node,head,side)=>host.downloadText(project,node,head,side),(project,text)=>host.uploadText(project,text),(project,node)=>{resourceMapView=null;openProject=project;void openEditor(project,node);},source=>{resourceMapView=null;teamBudgetView=new TeamBudgetView(root,host.ui,source.project,review=>{teamBudgetView=null;if(review)taskRequest=review;render();});const view=teamBudgetView;void view.load().then(()=>{if(teamBudgetView===view)view.prepareObservability(source);});});resourceMapView.render();},
+  workTemplates: () => {workTemplateView=new WorkTemplateView(root,host.ui,projects,()=>{workTemplateView=null;render();},(project,node,version,side)=>host.downloadText(project,node,version,side));workTemplateView.render();},
   telegram: () => {telegramView=new TelegramView(root,host.ui,()=>{telegramView=null;render();});telegramView.render();void telegramView.list();},
   imap: () => {imapAccountsView=new ImapAccountsView(root,host.ui,()=>{imapAccountsView=null;render();});void imapAccountsView.load();},
   webdav: () => {webdavAccountsView=new WebDAVAccountsView(root,host.ui,()=>{webdavAccountsView=null;render();});void webdavAccountsView.load();},
@@ -408,7 +446,8 @@ const openers = {
   engagement: (binding: string, name: string) => void openEngagementEditor(binding, name),
 };
 export type LegacySection =
-  | { kind: "telegram" | "imap" | "webdav" | "caldav" | "calendar" | "mail" | "databases" | "git" | "operationAudit" | "policyAlerts" | "signalInbox" | "signalOwners" | "reindexBatch" | "searchEvaluation" | "answerEvaluation" | "uploadUsage" | "roleMembership" | "metrics" | "memory" | "budget" | "taskHistory" | "collaborations" | "agentTask" }
+  | { kind: "signalsOverview" | "projectSignals" | "businessOverview" | "agentAnswers" | "agentQuality" | "expenses" | "jiraImport" | "bitrixImport" | "voice" | "resourceMap" | "workTemplates" | "telegram" | "imap" | "webdav" | "caldav" | "calendar" | "mail" | "databases" | "git" | "operationAudit" | "policyAlerts" | "signalInbox" | "signalOwners" | "reindexBatch" | "searchEvaluation" | "answerEvaluation" | "uploadUsage" | "roleMembership" | "metrics" | "memory" | "budget" | "taskHistory" | "collaborations" | "agentTask" }
+  | { kind: "document"; project: string; node: string }
   | { kind: "absence" | "policy" | "tracker"; project: string }
   | { kind: "centroid"; project: string; name: string }
   | { kind: "engagement"; binding: string; name: string };
@@ -423,6 +462,7 @@ export function openLegacySection(section: LegacySection, close: () => void): vo
 }
 function startSection(section: LegacySection): void {
   switch (section.kind) {
+    case "document": openProject = section.project; void openEditor(section.project, section.node); break;
     case "absence": openers.absence(section.project); break;
     case "policy": openers.policy(section.project); break;
     case "tracker": openers.tracker(section.project); break;
@@ -434,6 +474,7 @@ function startSection(section: LegacySection): void {
 /** Вкладка ушла: сбросить всё, что раздел мог открыть, и вернуть контейнеру домашнюю страницу. */
 export function closeLegacySection(): void {
   embedded = null; embeddedPending = null; notice = "";
+  signalsOverview = null; projectSignals = null; businessOverview = null; agentAnswers = null; agentQuality = null; expenseOverview = null; corporateImportView = null; voiceView = null; resourceMapView = null; workTemplateView = null;
   uploadUsageView = null; centroidView = null; reindexBatchView = null; reindexView = null; policyAlertsView = null; platformSignalInboxView = null; platformSignalOwnersView = null; roleMembershipView = null;
   telegramView = null; imapAccountsView = null; webdavAccountsView = null; caldavAccountsView = null; calendarConnectionsView = null; mailConnectionsView = null; databaseConnectionsView = null; operationAuditView = null; gitConnectionsView = null;
   answerEvaluation = null; searchEvaluation = null; trackerView = null; absenceTaskView = null; teamBudgetView = null;
@@ -464,6 +505,7 @@ function renderEmbeddedTail() {
   embedded = null; current.close();
 }
 function render() {
+  reportUnsavedChanges();
  if(uploadUsageView){uploadUsageView.render();return;}
  if(centroidView){centroidView.render();return;}
  if(reindexBatchView){reindexBatchView.render();return;}
@@ -777,7 +819,7 @@ function renderEditor(current: Editor) {
     const area = element("textarea"); area.setAttribute("aria-label", "Текст личного черновика"); area.value = current.text;
     area.setAttribute("aria-label", "Текст личного черновика"); area.rows = 20; area.style.width = "100%";
     area.disabled = busy || current.publishing !== null;area.readOnly=current.doc.conflicted;
-    area.addEventListener("input", () => { current.text = area.value; }); root.append(area);
+    area.addEventListener("input", () => { current.text = area.value; reportUnsavedChanges(); }); root.append(area);
     }
     if(current.doc.conflicted&&!current.uncertain&&current.side!==undefined&&!current.doc.terms[current.side]?.negative)root.append(button("Принять показанную сторону конфликта",()=>void resolveEditorSide()));
     if (!current.doc.conflicted && !current.uncertain && !current.publishing) {
@@ -810,7 +852,9 @@ function renderEditor(current: Editor) {
   if (notice || busy) { const status = element("p", busy ? "Загрузка…" : notice); status.setAttribute("role", "status"); root.append(status); }
   root.append(button("Закрыть редактор", () => {
     if (current.text !== current.original && !window.confirm("Закрыть редактор и потерять несохранённый текст?")) return;
-    editor = null; notice = ""; void readDocument(current.doc.node_id);
+    editor = null; notice = "";
+    if (embedded?.section.kind === "document") { const close = embedded.close; embedded = null; close(); }
+    else void readDocument(current.doc.node_id);
   }));
 }
 async function openEditor(project = openProject, node = documentContent?.node_id) {
@@ -1056,14 +1100,14 @@ function renderPolicyEditor(current: PolicyEditor) {
   current.policy.domains.forEach((domain, index) => {
     const group = element("fieldset"), legend = element("legend", `Направление ${index + 1}`); group.append(legend);
     const nameLabel = element("label", "Название направления"), name = element("input"); name.maxLength = 255; name.value = domain.domain_id; name.setAttribute("aria-label", `Название направления ${index + 1}`); name.disabled = busy || current.uncertain;
-    name.addEventListener("input", () => { domain.domain_id = name.value; current.dirty = true; }); nameLabel.append(name); group.append(nameLabel);
+    name.addEventListener("input", () => { domain.domain_id = name.value; current.dirty = true; reportUnsavedChanges(); }); nameLabel.append(name); group.append(nameLabel);
     const choose = (title: string, options: { id: string; name: string }[], selected: string[]) => {
       group.append(element("h3", title));
       const all = new Map(options.map(option => [option.id, option.name]));
       for (const id of selected) if (!all.has(id)) all.set(id, `${id} (не загружен или недоступен)`);
       for (const [id, text] of all) {
         const label = element("label", text), input = element("input"); input.type = "checkbox"; input.checked = selected.includes(id); input.disabled = busy || current.uncertain;
-        input.addEventListener("change", () => { const at = selected.indexOf(id); if (input.checked && at < 0) selected.push(id); else if (!input.checked && at >= 0) selected.splice(at, 1); current.dirty = true; });
+        input.addEventListener("change", () => { const at = selected.indexOf(id); if (input.checked && at < 0) selected.push(id); else if (!input.checked && at >= 0) selected.splice(at, 1); current.dirty = true; reportUnsavedChanges(); });
         label.prepend(input); const row = element("div"); row.append(label); group.append(row);
       }
     };
@@ -1072,15 +1116,15 @@ function renderPolicyEditor(current: PolicyEditor) {
     all.addEventListener("change", () => {
       domain.all_documents = all.checked;
       if (all.checked) domain.node_ids = [];
-      current.dirty = true; render();
+      current.dirty = true; reportUnsavedChanges(); render();
     });
     allLabel.prepend(all); group.append(allLabel);
     if (!domain.all_documents) choose("Документы", current.files.filter(file => !file.is_dir).map(file => ({ id: file.node_id, name: file.name })), domain.node_ids);
     choose("Обязательные согласующие", current.people.map(person => ({ id: person.principal_id, name: person.display_name || person.principal_id })), domain.approver_ids);
-    if (!current.uncertain) group.append(button("Удалить направление", () => { current.policy.domains.splice(index, 1); current.dirty = true; render(); }));
+    if (!current.uncertain) group.append(button("Удалить направление", () => { current.policy.domains.splice(index, 1); current.dirty = true; reportUnsavedChanges(); render(); }));
     root.append(group);
   });
-  if (!current.uncertain) root.append(button("Добавить направление", () => { current.policy.domains.push({ domain_id: "", node_ids: [], approver_ids: [] }); current.dirty = true; render(); }), button("Сохранить настройки согласования", () => void savePolicy()));
+  if (!current.uncertain) root.append(button("Добавить направление", () => { current.policy.domains.push({ domain_id: "", node_ids: [], approver_ids: [] }); current.dirty = true; reportUnsavedChanges(); render(); }), button("Сохранить настройки согласования", () => void savePolicy()));
   if (current.peopleCursor) root.append(button("Загрузить ещё людей", () => void morePolicyOptions("people")));
   if (current.fileCursor) root.append(button("Загрузить ещё документы", () => void morePolicyOptions("files")));
   root.append(button("Перечитать настройки", () => void openPolicy(current.policy.project_id)), button("Закрыть настройки", () => { if (current.dirty && !window.confirm("Закрыть настройки без сохранения?")) return; policyEditor = null; notice = ""; render(); }));

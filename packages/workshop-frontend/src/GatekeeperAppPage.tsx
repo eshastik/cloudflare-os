@@ -19,12 +19,14 @@ type UiAccount = { name: string; resources: SupportedResource[] }
 
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
-export default function GatekeeperAppPage({ appId }: { appId: string }) {
+export default function GatekeeperAppPage({ appId, section, project, accountId, onAccountChange }: { appId: string; section?: string; project?: string; accountId?:number; onAccountChange?:(account:number|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, UiAccount>>(new Map())
   const [ready, setReady] = useState(false)
+  const [readyFor,setReadyFor]=useState<{api:object;appId:string}|null>(null)
   const initialAccount = () => { const value = new URLSearchParams(window.location.search).get("account"); return value !== null && /^\d+$/.test(value) ? Number(value) : null }
   const [selected, setSelected] = useState<number | null>(initialAccount)
+  const requested=onAccountChange ? accountId??null : selected
   const [notice, setNotice] = useState('')
   useEffect(() => {
     let cancelled = false
@@ -41,29 +43,29 @@ export default function GatekeeperAppPage({ appId }: { appId: string }) {
         setAccounts(previous => { const next = new Map(previous); next.delete(id); return next })
         setSelected(previous => previous === id ? null : previous)
       },
-      ready() { if (!cancelled) setReady(true) },
+      ready() { if (!cancelled) {setReadyFor({api:authenticatedApi,appId});setReady(true)} },
     })
     authenticatedApi.subscribeConnectedAccounts(subscriber).then(value => {
       if (cancelled) value[Symbol.dispose]()
       else subscription = value
-    }).catch(() => { if (!cancelled) { setNotice('Не удалось загрузить подключения. Обновите страницу.'); setReady(true) } })
+    }).catch(() => { if (!cancelled) { setNotice('Не удалось загрузить подключения. Обновите страницу.'); setReadyFor({api:authenticatedApi,appId}); setReady(true) } })
     return () => { cancelled = true; subscription?.[Symbol.dispose]() }
   }, [authenticatedApi, appId])
 
-  if (!ready) return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">Загрузка…</div>
+  if (!ready || readyFor?.api!==authenticatedApi || readyFor.appId!==appId) return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">Загрузка…</div>
   const ids = [...accounts.keys()]
   // Один аккаунт открывается сразу. Ни одного в подписке — тоже сразу: принудительно заведённые
   // аккаунты в ней не показываются, и аккаунт по вендору выбирает сервер.
-  const current = ids.length > 1 ? selected : ids[0] ?? null
-  const open = ids.length <= 1 || (current !== null && accounts.has(current))
+  const current = requested ?? (ids.length===1 ? ids[0] : null)
+  const open = ids.length===0 || current!==null
   return <>
     {ids.length > 1 && <div className="px-4 pt-3">
-      <Select label="Организация" placeholder="Выберите подключение" value={current === null ? null : String(current)} onValueChange={value => setSelected(value ? Number(value) : null)}>
+      <Select label="Организация" placeholder="Выберите подключение" value={current === null ? null : String(current)} onValueChange={value => {const id=value?Number(value):null;if(onAccountChange)onAccountChange(id);else setSelected(id)}}>
         {ids.map(id => <Select.Option key={id} value={String(id)}>{accounts.get(id)!.name}</Select.Option>)}
       </Select>
     </div>}
     {notice && <p role="alert">{notice}</p>}
-    {open && <GatekeeperAppContent key={current ?? 'default'} appId={appId} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)!.resources} />}
+    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}`} appId={appId} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} />}
   </>
 }
 

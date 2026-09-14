@@ -1,3 +1,4 @@
+import { refreshAccountUiDescription } from "./account-ui-description";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
 import type {CalendarSourceAccounts} from "./calendar-source-lease.js";
 import { isUIReadinessSample, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
@@ -1363,7 +1364,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   // callers (gadget open, app nav) provision and read the accounts back in a single round trip to this
   // DO. Callers filter on `description.singleton` (ambient capsules / catalog) or
   // `description.providesUi` (management-UI listing).
-  async listProvidedAccounts(): Promise<ProvidedAccountInfo[]> {
+  // refreshUi обновляет только меню; описание аккаунта в хранилище не меняется.
+  async listProvidedAccounts(refreshUi = false): Promise<ProvidedAccountInfo[]> {
     await this.#ensureAutoProvisionedAccounts();
     let config = await readAdminConfig(this.env);
     let result: ProvidedAccountInfo[] = [];
@@ -1372,7 +1374,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       // A "disabled" ambient gatekeeper's account stays dormant: don't surface its singleton capsule
       // or management UI. (Its data is preserved, so re-enabling restores it.)
       if (rec.autoProvisioned && ambientGatekeeperMode(config, rec.vendorId) === "disabled") continue;
-      result.push({ accountId: rec.id, vendorId: rec.vendorId, description: rec.description });
+      const description = refreshUi
+          ? await refreshAccountUiDescription(rec.description, rec.account)
+          : rec.description;
+      result.push({ accountId: rec.id, vendorId: rec.vendorId, description });
     }
     return result;
   }

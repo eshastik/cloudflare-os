@@ -39,7 +39,7 @@ function HomePage() {
 }
 
 export function HomePageContent({ prompt }: HomeSearch) {
-  useDocumentTitle("Главная");
+  useDocumentTitle("Новая беседа");
 
   const { authenticatedApi } = useAuthenticatedApi();
   const navigate = useNavigate();
@@ -129,7 +129,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
           provisionalOverseerRef.current = null;
         }
         if (!transient) {
-          toasts.add({ title: "Не удалось создать пространство. Попробуйте ещё раз.", variant: "error" });
+          toasts.add({ title: "Не удалось начать беседу. Попробуйте ещё раз.", variant: "error" });
         }
         throw err;
       }
@@ -175,7 +175,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
             Над чем работаем?
           </h1>
           <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Задайте вопрос, создайте документ или приложение, которое работает с вашими инструментами и данными.
+            Опишите нужный результат или приложите файл. Mnemos поможет выполнить задачу с доступными вам данными и инструментами.
           </p>
         </header>
 

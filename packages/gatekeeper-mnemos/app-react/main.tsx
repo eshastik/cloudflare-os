@@ -4,10 +4,11 @@ import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 import { mountLegacy, type Host } from "../app/main.ts";
 import { HostProvider, makeHostContext } from "./host.ts";
 import MemoryPage from "./MemoryPage.tsx";
-import { applyThemeMode } from "./theme.ts";
+import { applyThemeMode, applyAccentColor } from "./theme.ts";
 import "./styles.css";
 
 class Frame extends RpcTarget {
+  setAccentColor(color: string): void { applyAccentColor(color); }
   setThemeMode(mode: string): void { applyThemeMode(mode); }
 }
 
@@ -24,11 +25,14 @@ function main() {
   const host = newMessagePortRpcSession<Host>(port1, frame);
   window.parent.postMessage({ type: "handshake" }, "*", [port2]);
   host.subscribeTheme(frame).then(applyThemeMode).catch(() => {});
+  host.subscribeAccent(frame).then(applyAccentColor).catch(() => {});
 
-  // Прежние разделы монтируются сразу, но скрыты до вкладки «Ещё»: их состояние и загрузка не зависят от React.
+  // Существующие редакторы сохраняют состояние; их контейнер показывается внутри соответствующего раздела.
   mountLegacy(legacy, host);
 
-  createRoot(root).render(
+  const renderer = createRoot(root);
+  window.addEventListener("pagehide", () => renderer.unmount(), { once: true });
+  renderer.render(
     <HostProvider value={makeHostContext(host, legacy)}>
       <TooltipProvider>
         <MemoryPage legacy={legacy} />

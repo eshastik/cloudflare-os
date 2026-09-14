@@ -12,15 +12,15 @@ export const Route = createFileRoute('/workspaces')({
 })
 
 function WorkspacesPage() {
-  useDocumentTitle('Пространства')
   const { approvals } = Route.useSearch()
+  useDocumentTitle(approvals ? 'Действия на согласовании' : 'Беседы')
   return (
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-6 sm:px-10">
       <header className="flex items-end justify-between gap-4 px-3 pb-3 pt-10">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Пространства</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">{approvals ? 'Действия на согласовании' : 'Беседы'}</h1>
           <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-            Каждое пространство изолировано: у него свои беседы, подключения и результаты.
+            {approvals ? 'Проверьте действия, которым требуется ваше разрешение.' : 'Продолжите работу с сохранёнными беседами, материалами и результатами.'}
           </p>
         </div>
         {/* "Create" just routes to Home (the new-workspace launcher) for now. */}
@@ -29,7 +29,7 @@ function WorkspacesPage() {
           className="press inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover"
         >
           <Plus size={14} weight="bold" />
-          Новое пространство
+          Новый чат
         </Link>
       </header>
       <div className="min-h-0 flex-1">

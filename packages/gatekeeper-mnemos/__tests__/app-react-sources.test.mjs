@@ -33,7 +33,7 @@ test("«Источники»: аккаунт, область, проект, ра
 
     [...group("Базы данных").querySelectorAll("button")].find(b => b.textContent === "Переподключить").click();
     await app.until(() => app.button("Закрыть подключения БД"), "прежний раздел подключений БД открыт внутри вкладки");
-    app.button("К вкладке").click();
+    app.button("Назад").click();
     await app.until(() => group("Базы данных"), "возврат к источникам");
 
     const origin = group("Импортированные копии");

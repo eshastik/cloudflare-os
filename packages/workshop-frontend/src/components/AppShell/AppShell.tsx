@@ -54,7 +54,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // phone it looks like nothing happened. Watching the pathname catches every navigation source
   // without prop-drilling a close callback through the whole rail. No-op on desktop, where the
   // drawer is never open.
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const pathname = useRouterState({ select: (s) => s.location.href })
   useEffect(() => {
     setMobileOpen(false)
   }, [pathname])

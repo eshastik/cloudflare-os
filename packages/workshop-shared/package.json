@@ -68,6 +68,10 @@
     "./calendar-draft": {
       "types": "./src/calendar-draft.ts",
       "import": "./src/calendar-draft.ts"
+    },
+    "./accent-theme": {
+      "types": "./src/accent-theme.ts",
+      "import": "./src/accent-theme.ts"
     }
   },
   "scripts": {

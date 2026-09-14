@@ -415,6 +415,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       excludeObservers: await this.#excludedObservers(),
     });
     const page = await this.#data(() => reader.searchProject(project, query));
+    await this.#recordWorkContext(queue, reader, project);
     return {
       hits: page.hits.map(hit => ({ document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
       indexPending: page.index_pending, degraded: page.degraded,
@@ -443,7 +444,21 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (!located || !publication) throw new Error(UNAVAILABLE);
     const content = await this.#quiet(() => reader.readProjectDocument(project, located.id));
     if (!content) throw new Error(UNAVAILABLE);
+    await this.#recordWorkContext(queue, reader, project, located.name !== located.id ? located.name : undefined, publication);
     return { document: content.node_id, name: located.name, text: content.text, mediaType: content.media_type, truncated: content.truncated };
+  }
+
+  /** Контекст фиксируется после успешного чтения; недоступное имя не подменяется ID. */
+  async #recordWorkContext(queue: RpcStub<ApprovalQueue>, reader: LibraryReader, project: string, resourceName?: string, publication?: Publication): Promise<void> {
+    const projects = await this.#quiet(() => reader.listProjects());
+    const projectName = projects?.projects.find(item => item.id === project)?.name;
+    if (!projectName) return;
+    await queue.authorizeObservation({
+      title: "Материалы Mnemos",
+      description: resourceName ? `Проект «${projectName}», документ «${resourceName}».` : `Поиск выполнен в проекте «${projectName}».`,
+      workContext: {projectName, ...(resourceName ? {resourceName} : {})},
+      excludeObservers: await this.#excludedObservers(publication),
+    });
   }
 
   /** Чтение, отвечающее null на любую неудачу, кроме отозванного аккаунта. */

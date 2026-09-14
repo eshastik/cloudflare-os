@@ -758,8 +758,7 @@ function ConnectorsPage() {
               Подключения
             </h1>
             <p className="mt-2 text-[14px] leading-[20px] font-normal tracking-[-0.25px] text-kumo-subtle">
-              Добавьте приложения и аккаунты, с которыми работают ваши пространства.
-              Подключите один раз и используйте в любой сборке.
+              Подключите рабочие сервисы и аккаунты, чтобы использовать их в беседах и приложениях.
             </p>
           </div>
           <ConnectorsHeroDiagram accounts={accounts} vendors={vendors} siteName={siteName} />

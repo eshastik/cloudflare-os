@@ -1,3 +1,4 @@
+import { managementSections } from "./management-sections.ts";
 import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
@@ -100,7 +101,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     return { displayName: identity.tenant_name || identity.subject.user_id,
       uniqueName: identity.connectionName, avatar: AVATAR,
       sourceErrors: await this.#account().sourceErrors(),
-      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Память", icon: AVATAR } };
+      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: managementSections(identity) } };
   }
   /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
   async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
@@ -812,7 +813,7 @@ export class UserAccount extends DurableObject<Env> {
       agentConsent: new RpcStub(new MnemosAgentConsent(this.#account().session())),
       ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin))) } } : {}),
       ...(storageOrigin ? { nativeDownloads: { storageOrigin, selector: new RpcStub(new MnemosNativeDocumentSelector(this.#account().session(), this.#origins().apiOrigin)) } } : {}),
-      ...(storageOrigin ? { reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
+      ...(storageOrigin ? { inboxUploads: {storageOrigin,issuer:new RpcStub(new MnemosInboxUploadIssuer(this.#account().session()))}, reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
 
   }
   /** Связь синглтона Workshop (S15): имя агента для описания действия; связь заводится при первом обращении. */
@@ -1007,6 +1008,14 @@ class MnemosAgentDraftWriter extends RpcTarget {
 }
 
 /** Host-only issuer. Never put this capability inside the iframe's ui object. */
+class MnemosInboxUploadIssuer extends RpcTarget {
+  #session: MnemosAccountSession;
+  constructor(session: MnemosAccountSession) {super();this.#session=session;}
+  async issue(size:number,checksum:string) {return this.#session.beginInboxUpload(size,checksum);}
+  async submit(uploadId:string,sourcePath:string,modifiedAt:number) {return this.#session.submitInboxUpload(uploadId,sourcePath,modifiedAt);}
+  [Symbol.dispose]():void {this.#session.dispose();}
+}
+
 class MnemosTextUploadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) { super(); this.#session = session; }
@@ -1203,6 +1212,17 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   }
   async setAgentProjectRight(...args: Parameters<MnemosAccountSession["setAgentProjectRight"]>) { return this.#session.setAgentProjectRight(...args); }
   async externalAgentSetup() { return this.#session.externalAgentSetup(); }
+  async beginInboxUpload(...args: Parameters<MnemosAccountSession["beginInboxUpload"]>) {return this.#session.beginInboxUpload(...args);}
+  async submitInboxUpload(...args: Parameters<MnemosAccountSession["submitInboxUpload"]>) {return this.#session.submitInboxUpload(...args);}
+  async inboxStatus(...args: Parameters<MnemosAccountSession["inboxStatus"]>) {return this.#session.inboxStatus(...args);}
+  async inboxAlerts(...args: Parameters<MnemosAccountSession["inboxAlerts"]>) {return this.#session.inboxAlerts(...args);}
+  async decideInboxAlert(...args: Parameters<MnemosAccountSession["decideInboxAlert"]>) {return this.#session.decideInboxAlert(...args);}
+  async replayInboxItem(...args: Parameters<MnemosAccountSession["replayInboxItem"]>) {return this.#session.replayInboxItem(...args);}
+  async listPeople(...args: Parameters<MnemosAccountSession["listPeople"]>) { return this.#session.listPeople(...args); }
+  async createPerson(...args: Parameters<MnemosAccountSession["createPerson"]>) { return this.#session.createPerson(...args); }
+  async listPersonRights(...args: Parameters<MnemosAccountSession["listPersonRights"]>) { return this.#session.listPersonRights(...args); }
+  async grantPersonRight(...args: Parameters<MnemosAccountSession["grantPersonRight"]>) { return this.#session.grantPersonRight(...args); }
+  async removePersonRight(...args: Parameters<MnemosAccountSession["removePersonRight"]>) { return this.#session.removePersonRight(...args); }
   async whoAmI() { return this.#session.whoAmI(); }
   /** Relay UI diagnostics through the human management session. */
   async recordUIReadiness(sample:Parameters<MnemosAccountSession["recordUIReadiness"]>[0]) { return this.#session.recordUIReadiness(sample); }

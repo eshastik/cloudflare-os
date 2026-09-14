@@ -171,7 +171,7 @@ export type AccountDescription = {
 
   // If set, this account has a full-page management UI (see GatekeeperUser.startAppUi). The Workshop
   // surfaces it as a nav entry / page using this title.
-  providesUi?: { title: string; icon?: AvatarImage };
+  providesUi?: { title: string; icon?: AvatarImage; sections?: GatekeeperUiSection[] };
 }
 
 // Describes metadata about a specific instance of a resource. Returned by Gatekeeper.describe().
@@ -402,6 +402,14 @@ export interface GatekeeperUploadTicket {
 export interface GatekeeperTextUploadIssuer extends RpcTarget {
   /** Issue a ticket for at most 256 KiB, with the host-computed size and checksum. */
   issue(scope: string, size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+}
+
+/** Приём файлов организации до выбора проекта; доступен только доверенному хосту. */
+export interface GatekeeperInboxUploadIssuer extends RpcTarget {
+  /** Выдать билет после проверки полномочия, размера, квоты и контрольной суммы. */
+  issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+  /** Передать метаданные приёмной сразу после загрузки и освободить квоту билетов. */
+  submit(uploadId: string, sourcePath: string, modifiedAt: number): Promise<{ outcome: string; enqueued: boolean }>;
 }
 
 /** Integrity metadata for one service-authorized text download. */
@@ -713,6 +721,14 @@ export type GatekeeperUiFrame = {
     storageOrigin: string;
     /** Authenticated issuer; never forwarded through host.ui. */
     issuer: RpcStub<GatekeeperTextDownloadIssuer>;
+  };
+
+  /** Загрузка файлов организации по выбору человека без участия чата. */
+  inboxUploads?: {
+    /** Разрешённый адрес хранилища из конфигурации установки. */
+    storageOrigin: string;
+    /** Проверяет полномочия при выдаче билета и передаче в приёмную. */
+    issuer: RpcStub<GatekeeperInboxUploadIssuer>;
   };
 
   /** Optional direct text upload, retained by the management-app host only. */
@@ -1533,6 +1549,14 @@ export interface ApprovalQueue extends ObservationAuthorizer {
 }
 
 export type ObservationDescription = {
+  /** Подтверждённый контекст прочитанных данных для интерфейса чата. Не выдаёт права и не меняет привязки. */
+  workContext?: {
+    /** Имя проекта из разрешённого каталога источника. */
+    projectName: string;
+    /** Имя фактически прочитанного ресурса; отсутствует при поиске по проекту. */
+    resourceName?: string;
+  };
+
   // Brief one-line summary of the observation, like an email subject line, to display in a list.
   title: string;
 
@@ -1730,4 +1754,14 @@ export interface HookInitiator<Hook extends RpcTarget> extends WorkerEntrypoint 
   // observation. Some hooks may even pass callbacks or interpret the return value in a way that
   // causes side effects, which should be registered as actions.
   startHook(): Promise<{callback: RpcStub<Hook>, approvalQueue: RpcStub<ApprovalQueue>}>;
+}
+
+/** Раздел интерфейса, объявленный подключённым аккаунтом; не предоставляет прав на операции. */
+export interface GatekeeperUiSection {
+  /** Стабильный идентификатор раздела для прямой ссылки. */
+  id: string;
+  /** Название раздела в основной навигации. */
+  title: string;
+  /** Группа повседневной работы или управления. */
+  group?: "work" | "manage";
 }

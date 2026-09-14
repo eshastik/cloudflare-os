@@ -30,3 +30,8 @@ export function normalizeGatekeeperAppPrompt(value: string): string {
   }
   return prompt;
 }
+
+/** Раздел — только выбор экрана; права продолжает проверять capability аккаунта. */
+export function parseGatekeeperAppSection(value: unknown): string {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(value) ? value : "";
+}

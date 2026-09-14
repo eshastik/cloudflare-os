@@ -33,11 +33,11 @@ test("«Проекты»: список, страница проекта с уч�
     app.button("Настроить согласования").click();
     await app.until(() => app.button("Сохранить настройки согласования"), "редактор правил открыт внутри вкладки");
     assert.ok(app.text().includes("Направление 1"));
-    app.button("К вкладке").click();
+    app.button("Назад").click();
     await app.until(() => section("Правила согласования"), "возврат на страницу проекта");
 
     app.button("Все документы проекта").click();
-    await app.until(() => app.tab("Документы").getAttribute("aria-selected") === "true", "переход к документам");
+    await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "переход к документам");
     // Кнопка проекта в «Документах» несёт счётчик документов, поэтому ищется по началу текста.
     await app.until(() => app.buttons().find(b => b.textContent.startsWith("Общий проект"))?.getAttribute("aria-current") === "true", "выбран тот же проект");
   } finally { app.dispose(); }

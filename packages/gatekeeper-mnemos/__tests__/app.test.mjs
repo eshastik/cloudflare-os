@@ -83,7 +83,7 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
       return this.managed;
     }
     async finishManagedAgentRequest(id) { assert.equal(id, this.managed.request_id); this.managed = null; }
-    async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Example team" }; }
+    async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Example team", capabilities: ["platform.metrics.read"] }; }
     async listProjects() { return { projects: [{ id: "one", name: "Shared project", slug: "shared" }] }; }
     async browseProject(id, cursor) { assert.equal(id, "one"); assert.equal(cursor, ""); return { nodes: [{ node_id: "doc", name: "Team note", is_dir: false }], truncated: false }; }
     async searchProject(project, query) {
@@ -146,7 +146,7 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
       };
     },
   });
-  // Прежние разделы живут в контейнере #legacy под вкладкой «Ещё»; кнопки ищутся только там.
+  // Существующие редакторы живут в контейнере #legacy; этот тест проверяет их поведение.
   const button = text => [...dom.window.document.querySelectorAll("#legacy button")].find(b => b.textContent === text);
   try {
     await until(() => button("Отозвать доступ")).catch(error => { error.message += ": " + dom.window.document.body.textContent.slice(0,400) + " reads=" + reads; throw error; });

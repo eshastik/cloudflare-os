@@ -38,7 +38,7 @@ export default function WorkspaceActivitySummary() {
     finally { if (generation.current === expected) setBusy(false); }
   }
   return <section>
-    <h2>Моя активность в CloudflareOS</h2>
+    <h2>Моя активность в Mnemos</h2>
     <button type="button" disabled={busy} onClick={() => void refresh()}>Обновить активность</button>
     {notice && <p role="status">{notice}</p>}
     {reporting && <div>

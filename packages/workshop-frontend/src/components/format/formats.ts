@@ -54,15 +54,20 @@ const WIREFRAME_FOR_ICON: Record<OutputIcon, FormatWireframe> = {
 // know, which is normal: a deployment can serve a format newer than the browser's cached bundle.
 export const GENERIC_OUTPUT: BlueprintOutput = {
   id: 'app',
-  noun: 'App',
-  plural: 'Apps',
+  noun: 'Приложение',
+  plural: 'Приложения',
   icon: 'appWindow',
 }
 
 // Resolve what to draw for a (possibly absent, possibly unrecognized) declared format.
 export function formatOf(output?: BlueprintOutput): BlueprintOutput {
   if (!output || !Object.hasOwn(FORMAT_ICONS, output.icon)) return GENERIC_OUTPUT
-  return output
+  // Переводим встроенные подписи, сохраняя названия пользовательских форматов.
+  const labels: Record<string, string> = {
+    Doc: 'Документ', Docs: 'Документы', Sheet: 'Таблица', Sheets: 'Таблицы',
+    Slides: 'Презентации', Slide: 'Презентация', App: 'Приложение', Apps: 'Приложения',
+  }
+  return { ...output, noun: labels[output.noun] ?? output.noun, plural: labels[output.plural] ?? output.plural }
 }
 
 export function wireframeOf(output?: BlueprintOutput): FormatWireframe {
