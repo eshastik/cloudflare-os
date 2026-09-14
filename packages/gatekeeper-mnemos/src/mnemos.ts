@@ -829,8 +829,8 @@ export class UserAccount extends DurableObject<Env> {
       if (url.protocol !== "https:" || url.origin !== storageOrigin) throw new Error("Invalid storage origin");
     }
     const agent = await this.#account().ensureWorkshopAgent(this.ctx.id.toString(), WORKSHOP_AGENT_NAME);
-    return { connectionName: agent.connectionName, bindingId: agent.bindingId, admin: new RpcStub(new MnemosAgentAdministration(this.#account().agentSession(), agent.bindingId)), ui: new RpcStub(new MnemosAgentDraftWriter(this.#account().agentSession())),
-      ...(storageOrigin ? { textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().agentSession())) } } : {}) };
+    return { connectionName: agent.connectionName, bindingId: agent.bindingId, personal: new RpcStub(new MnemosAgentPersonalReader(this.#account().agentSession())), admin: new RpcStub(new MnemosAgentAdministration(this.#account().agentSession(), agent.bindingId)), ui: new RpcStub(new MnemosAgentDraftWriter(this.#account().agentSession())),
+      ...(storageOrigin ? { textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().agentSession())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().agentSession())) } } : {}) };
   }
   /** Только доверенный callback очереди подтверждений; в агентскую сессию этот метод не передаётся. */
   async decideWorkshopAdmin(binding: string, operation: string, phase: "approve" | "reject", request: import("./admin-operations.ts").AdminOperationRequest) {
@@ -1007,6 +1007,14 @@ class MnemosAgentAdministration extends RpcTarget {
   constructor(session: MnemosAccountSession, binding: string) { super(); this.#session = session; this.#binding = binding; }
   async prepare(operation: string, request: import("./admin-operations.ts").AdminOperationRequest) { return this.#session.workshopAdminOperation(this.#binding, operation, "prepare", request); }
   async execute(operation: string, request: import("./admin-operations.ts").AdminOperationRequest) { return this.#session.workshopAdminOperation(this.#binding, operation, "execute", request); }
+  [Symbol.dispose](): void { this.#session.dispose(); }
+}
+
+class MnemosAgentPersonalReader extends RpcTarget {
+  #session: MnemosAccountSession;
+  constructor(session: MnemosAccountSession) { super(); this.#session = session; }
+  async list(project: string, cursor: string) { return this.#session.listPrivateDocuments(project, cursor); }
+  async read(project: string, node: string) { return this.#session.readDraftDocument(project, node); }
   [Symbol.dispose](): void { this.#session.dispose(); }
 }
 

@@ -6,7 +6,7 @@ import {
 } from "@gadgets/workshop-shared/gatekeeper";
 import {
   MnemosAPIError, type DocumentContent, type DraftDocument, type DraftDownloadTicket, type DraftHead, type DraftState,
-  type PrivateDocumentCreate, type NodeHistoryPage, type NodePage, type ProjectPage, type ProjectSearchPage, type UploadTicket,
+  type PrivateDocumentPage, type PrivateDocumentCreate, type NodeHistoryPage, type NodePage, type ProjectPage, type ProjectSearchPage, type UploadTicket,
 } from "./mnemos-api.ts";
 import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
@@ -49,6 +49,8 @@ export interface AgentDraftWriter {
 }
 /** Что отдаёт UserAccount.startWorkshopAgent(): имя связи, сессия и выдача загрузок под агентским credential. */
 export interface LibraryAgent {
+  personal?: { list(project: string, cursor: string): Promise<PrivateDocumentPage>; read(project: string, node: string): Promise<DraftDocument>; [Symbol.dispose](): void };
+  textDownloads?: LibraryApp["textDownloads"];
   connectionName: string;
   bindingId?: string;
   admin?: { prepare(operation: string, request: AdminOperationRequest): Promise<AdminOperation>; execute(operation: string, request: AdminOperationRequest): Promise<AdminOperation>; [Symbol.dispose](): void };
@@ -145,6 +147,8 @@ function release(value: unknown, depth = 0): void {
 }
 
 interface SessionCalls {
+  listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage>;
+  readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument>;
   proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, request: AdminOperationRequest): Promise<MnemosAdminProposal>;
   createDraft(queue: RpcStub<ApprovalQueue>, project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown"): Promise<MnemosDraftProposal>;
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
@@ -158,6 +162,8 @@ export class MnemosLibrarySession extends RpcTarget {
   #calls: SessionCalls;
   #queue: RpcStub<ApprovalQueue>;
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
+  async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
+  async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
   async listProjects(): Promise<MnemosProject[]> { return this.#calls.listProjects(this.#queue); }
   async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
   async proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write") { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "grant_project_access", person, project, domain, mode}); }
@@ -193,6 +199,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const queue = approvalQueue.dup();
     try {
       return new MnemosLibrarySession({
+        listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
+        readPersonalDocument: (q, project, node) => this.#readPersonalDocument(q, project, node),
         proposeAdmin: (q, id, request) => this.#proposeAdmin(q, id, request),
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
@@ -453,6 +461,40 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   }
   async #data<T>(read: () => Promise<T>): Promise<T> {
     try { return await read(); } catch (error) { throw failure(error); }
+  }
+
+  async #authorizePersonal(queue: RpcStub<ApprovalQueue>): Promise<void> {
+    await queue.authorizeObservation({ownerOnly: true, title: "Личные материалы Mnemos", description: "Чтение личных материалов владельца в пределах прав агента."});
+  }
+  async #listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage> {
+    identifier(project, "проект");
+    if (typeof cursor !== "string" || cursor.length > 2048) throw new Error("Некорректный курсор.");
+    await this.#authorizePersonal(queue);
+    const agent = await this.#agent();
+    try {
+      if (!agent.personal) throw new Error(UNAVAILABLE);
+      return await this.#data(() => agent.personal!.list(project, cursor));
+    } finally { release(agent); }
+  }
+  async #readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument> {
+    identifier(project, "проект"); identifier(node, "документ");
+    await this.#authorizePersonal(queue);
+    const agent = await this.#agent();
+    try {
+      if (!agent.personal || !agent.textDownloads) throw new Error(UNAVAILABLE);
+      const draft = await this.#data(() => agent.personal!.read(project, node));
+      if (!draft.exists || draft.conflicted || !TEXT_TYPES.has(draft.content_type ?? "")) throw new Error("Личный документ недоступен как текст или содержит конфликт.");
+      const {issuer, storageOrigin} = agent.textDownloads;
+      const ticket = await this.#data(() => issuer.issue(project, node, draft.head, 0));
+      if (ticket.node_id !== node || ticket.head !== draft.head || ticket.term_index !== 0 || ticket.method !== "GET" || ticket.size_bytes < 0 || ticket.size_bytes > CONTENT_LIMIT) throw new Error(UNAVAILABLE);
+      const response = await fetch(storageTarget(storageOrigin, ticket.url), {redirect: "manual", signal: AbortSignal.timeout(20000)});
+      if (!response.ok) { await response.body?.cancel(); throw new Error(UNAVAILABLE); }
+      const body = new Uint8Array(await response.arrayBuffer());
+      if (body.length !== ticket.size_bytes || (await sha256(body)).hex !== ticket.sha256_hex) throw new Error(UNAVAILABLE);
+      const latest = await this.#data(() => agent.personal!.read(project, node));
+      if (!latest.exists || latest.head !== draft.head) throw new Error("Личная версия изменилась. Повторите чтение.");
+      return {document: node, name: draft.terms[0]?.metadata?.name ?? node, text: new TextDecoder("utf-8", {fatal: true, ignoreBOM: false}).decode(body), mediaType: draft.content_type!, truncated: false};
+    } finally { release(agent); }
   }
 
   async #listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]> {

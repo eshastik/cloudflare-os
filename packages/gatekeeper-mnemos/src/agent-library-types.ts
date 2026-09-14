@@ -7,6 +7,13 @@ export const MNEMOS_LIBRARY_TYPES = `
  * Проект или доступ сотрудника сначала предлагается человеку в карточке подтверждения.
  */
 interface MnemosLibrary {
+  /** Личные документы владельца, включая загрузки. Только проекты в scope агента.
+   * cursor берётся из next_cursor; пустая строка начинает список. Не работает в общей беседе. */
+  listPersonalDocuments(project: string, cursor?: string): Promise<{head: string; documents: {node_id: string; name: string; content_type: string}[]; next_cursor: string}>;
+  /** Текст личной версии по node_id из listPersonalDocuments; без публикации и fallback.
+   * Только text/plain и text/markdown до 256 КиБ. Недоступность не означает отсутствие файла.
+   * При отказе по scope попросите владельца подключить проект в настройках агента. */
+  readPersonalDocument(project: string, node: string): Promise<MnemosDocument>;
   /** Предложить создание проекта. Сначала покажется короткое подтверждение человеку.
    * requestId — стабильный уникальный ключ: повтор с тем же ключом не создаёт второй проект.
    * slug — краткое имя латиницей, цифрами и дефисами. Дождитесь подтверждения результата. */

@@ -150,6 +150,12 @@ function fixture(overrides: Partial<Fixture> = {}) {
     [Symbol.dispose]() { state.calls.push("dispose:agent"); },
   };
   const agent = {
+    personal: {
+      async list(project: string, cursor: string) { state.calls.push(`agent:personal-list:${project}:${cursor}`); if(state.denyRead)throw new MnemosAPIError(403);return {head: HEAD_A, documents: [{node_id:"n1", name:"plan.md", content_type:"text/markdown"}], next_cursor:"next"}; },
+      async read(project: string, node: string) { state.calls.push(`agent:personal-read:${project}:${node}`); if(state.denyRead || state.agentRevoked)throw new MnemosAPIError(403);return reader.readDraftDocument(project,node); },
+      [Symbol.dispose]() {},
+    },
+    textDownloads: app.textDownloads,
     connectionName: AGENT_NAME,
     ui: agentUi,
     textUploads: { storageOrigin: STORAGE, issuer: {
@@ -468,4 +474,24 @@ test("старое административное предложение бе�
   await assert.rejects(library.applyAction(proposal.action), /старой версией/);
   await assert.rejects(library.rejectAction(proposal.action), /старой версией/);
   assert.equal(state.calls.some(c => c === "human:approve" || c === "human:reject" || c === "admin:execute"), false);
+});
+
+
+test("личный каталог и текст читаются агентом без опубликованной версии", async () => {
+  const {library, state} = fixture(); const q = authorizer(state); const session = await library.startSession(q as never);
+  const page = await session.listPersonalDocuments("p1", "cursor"); assert.equal(page.next_cursor, "next");
+  const doc = await session.readPersonalDocument("p1", "n1"); assert.equal(doc.text, BEFORE);
+  assert(state.calls.includes("agent:personal-list:p1:cursor")); assert(state.calls.includes("agent:personal-read:p1:n1"));
+  assert(!state.calls.includes("open")); assert(!state.calls.includes("startAppUi")); assert(!state.calls.some(c => c.startsWith("read:")));
+});
+
+test("отказ scope личного чтения не вызывает human fallback", async () => {
+  const {library, state} = fixture({denyRead:true}); const session = await library.startSession(authorizer(state) as never);
+  await assert.rejects(session.listPersonalDocuments("p1")); await assert.rejects(session.readPersonalDocument("p1","n1"));
+  assert(!state.calls.includes("open")); assert(!state.calls.some(c => c.startsWith("fetch:")));
+});
+
+test("наблюдение личных данных отклоняется до обращения к агенту", async () => {
+  const {library, state} = fixture(); const session = await library.startSession(authorizer(state,true) as never);
+  await assert.rejects(session.readPersonalDocument("p1","n1"), /Наблюдение/); assert(!state.calls.includes("startWorkshopAgent"));
 });
