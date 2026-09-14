@@ -51,9 +51,9 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
       <div>
         <p className="m-0 mb-1 text-xs text-kumo-subtle">{data.identity?.tenant_name || "Mnemos"}</p>
         <h1 className="m-0 text-2xl font-semibold tracking-tight text-kumo-default">{page ? page.title : "Раздел не найден"}</h1>
-        {page && <p className="mt-2 mb-0 max-w-[650px] text-sm text-kumo-subtle">{page.description}</p>}
+        {page && section!=="people" && <p className="mt-2 mb-0 max-w-[650px] text-sm text-kumo-subtle">{page.description}</p>}
       </div>
-      {section!=="intake"&&<Button variant="ghost" size="sm" onClick={() => void data.reloadProjects()}>Обновить</Button>}
+      {section!=="intake"&&section!=="people"&&<Button variant="ghost" size="sm" onClick={() => void data.reloadProjects()}>Обновить</Button>}
     </header>
     {notice && <p role="alert">{notice}</p>}
     {!section && <p>Выберите нужный раздел в основном меню.</p>}
