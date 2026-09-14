@@ -136,7 +136,7 @@ export interface SharingCaller {
 export class SharingManager {
   // `ownerProfileId` is stable for the lifetime of a gadget, so it's supplied once at
   // construction rather than per call.
-  constructor(private storage: SharingStorage, private ownerProfileId: string) {}
+  constructor(private storage: SharingStorage, private ownerProfileId: string, private assertSharingAllowed: () => void = () => {}) {}
 
   // ---------------------------------------------------------------------------------------
   // Sharing-state queries
@@ -220,12 +220,14 @@ export class SharingManager {
           created: new Date(),
           role,
         });
-        this.storage.collaborators.put(existing);
+        this.assertSharingAllowed();
+    this.storage.collaborators.put(existing);
       }
     } else {
       // New collaborator -- need full profile from their user DO.
       let profile = await opts.fetchProfile();
-      this.storage.collaborators.put({
+      this.assertSharingAllowed();
+    this.storage.collaborators.put({
         profile,
         addedBy: [{
           type: "shareKey",
@@ -297,7 +299,8 @@ export class SharingManager {
       } else {
         existing.addedBy.push(edge);
       }
-      this.storage.collaborators.put(existing);
+      this.assertSharingAllowed();
+    this.storage.collaborators.put(existing);
       return {
         profile: existing.profile,
         addedBy: existing.addedBy,
@@ -309,6 +312,7 @@ export class SharingManager {
       profile: opts.profile,
       addedBy: [edge],
     };
+    this.assertSharingAllowed();
     this.storage.collaborators.put(record);
     return {
       profile: record.profile,
@@ -372,6 +376,7 @@ export class SharingManager {
       target.addedBy = target.addedBy.filter(
           e => !(e.type === "user" && e.sharer === caller.profileId));
     }
+    this.assertSharingAllowed();
     this.storage.collaborators.put(target);
 
     this.#reRootKeptUsers(caller, baseline, new Set(keepUsers));
@@ -409,6 +414,7 @@ export class SharingManager {
 
     // The link is stored as its first key: the record is keyed by that key's hash.
     let { key, hash } = await this.#mintKey();
+    this.assertSharingAllowed();
     this.storage.shareKeys.put({
       id: hash,
       note: opts.note,
@@ -435,6 +441,7 @@ export class SharingManager {
     }
 
     let { key, hash } = await this.#mintKey();
+    this.assertSharingAllowed();
     this.storage.shareKeys.put({ id: hash, alias: link.id });
     return { key };
   }
@@ -661,7 +668,8 @@ export class SharingManager {
         created: new Date(),
         role: minRole(prior, callerRole),
       });
-      this.storage.collaborators.put(record);
+      this.assertSharingAllowed();
+    this.storage.collaborators.put(record);
     }
   }
 }

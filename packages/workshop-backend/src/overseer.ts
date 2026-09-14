@@ -735,6 +735,7 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // True if any past observation was authorized that had the `prohibitAllSharing` flag set
       // in its `ObservationDescription`.
       prohibitAllSharing: false,
+      ownerOnlyObservations: false,
     },
 
     collections: {
@@ -2685,15 +2686,17 @@ class OverseerImpl implements AgentHooks {
 
   async authorizeObservation(gatekeeperId: number, description: ObservationDescription,
                              caller: GatekeeperCaller): Promise<void> {
-    if (description.prohibitAllSharing) {
+    if (description.prohibitAllSharing || description.ownerOnly) {
       if ((await this.getSharingManager()).hasAnyShares()) {
+        if (description.ownerOnly) throw new Error("Личные материалы доступны только владельцу. Откройте беседу без других участников и ссылок общего доступа.");
         throw new Error(
             "This observation was blocked because it contains sensitive data that must only be " +
             "shown to the account owner, but this workspace is shared with other users. Try again " +
             "from a workspace that is not shared.");
       }
 
-      this.storage.prohibitAllSharing.put(true);
+      if (description.prohibitAllSharing) this.storage.prohibitAllSharing.put(true);
+      if (description.ownerOnly) this.storage.ownerOnlyObservations.put(true);
     }
 
     // Forward exclusion: the gatekeeper may name observers who must not see this observation. Since
@@ -6317,7 +6320,9 @@ class OverseerImpl implements AgentHooks {
   // Resolving the owner's profile ID may require an RPC on first use; thereafter it's cached.
   async getSharingManager(): Promise<SharingManager> {
     if (!this.#sharingManager) {
-      this.#sharingManager = new SharingManager(this.storage, await this.getOwnerProfileId());
+      this.#sharingManager = new SharingManager(this.storage, await this.getOwnerProfileId(), () => {
+        if (this.storage.prohibitAllSharing.get() || this.storage.ownerOnlyObservations.get()) throw new Error("Беседа содержит личные данные и недоступна другим участникам.");
+      });
     }
     return this.#sharingManager;
   }
@@ -6481,7 +6486,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     let role: CollaboratorRole = "build";
 
     if (!isOwner) {
-      if (this.impl.storage.prohibitAllSharing.get()) {
+      if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
         // `prohibitAllSharing` can only have been set when the gadget had no shares (see
         // `authorizeObservation`), and no new shares can be created while it's set, so any
         // non-owner reaching here is necessarily unauthorized.
@@ -6546,6 +6551,8 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       await this.impl.ensureObserver(profileId, clientUser, role, configureObservers);
     }
 
+    if (!isOwner && (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceAccessDenied);
+
     if (role === "use") {
       // "use" collaborators get a restricted capability exposing only the gadget UI.
       return new UseOverseerInterface(
@@ -6599,7 +6606,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
 
     // Caller must be the owner or a build collaborator.
     if (ownerId !== callerId) {
-      if (this.impl.storage.prohibitAllSharing.get()) {
+      if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
         return {
           accepted: false,
           message: "This workspace has sharing disabled, so only its owner can access it.",
@@ -7240,7 +7247,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       id: this.impl.ctx.id.toString(),
       title: this.impl.storage.title.get(),
       totalCost: this.impl.storage.totalCost.get(),
-      sharingProhibited: this.impl.storage.prohibitAllSharing.get(),
+      sharingProhibited: (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
       role: "build",
       defaultGadgetId: this.impl.defaultGadgetId,
     };
@@ -7259,7 +7266,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       id: this.impl.ctx.id.toString(),
       title: this.impl.storage.title.get(),
       totalCost: this.impl.storage.totalCost.get(),
-      sharingProhibited: this.impl.storage.prohibitAllSharing.get(),
+      sharingProhibited: (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
       role: "build",
       defaultGadgetId: this.impl.defaultGadgetId,
     };
@@ -7282,8 +7289,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       }
     };
     let sharingProhibitedSubscriber = {
-      update(value: boolean | undefined) {
-        metadata.sharingProhibited = value;
+      update: (_value: boolean | undefined) => {
+        metadata.sharingProhibited = this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get();
         callback(metadata).catch(unsubscribe);
       }
     };
@@ -7292,12 +7299,14 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       this.impl.storage.title.unsubscribe(titleSubscriber);
       this.impl.storage.totalCost.unsubscribe(costSubscriber);
       this.impl.storage.prohibitAllSharing.unsubscribe(sharingProhibitedSubscriber);
+      this.impl.storage.ownerOnlyObservations.unsubscribe(sharingProhibitedSubscriber);
       callback[Symbol.dispose]();
     };
 
     this.impl.storage.title.subscribe(titleSubscriber);
     this.impl.storage.totalCost.subscribe(costSubscriber);
     this.impl.storage.prohibitAllSharing.subscribe(sharingProhibitedSubscriber);
+    this.impl.storage.ownerOnlyObservations.subscribe(sharingProhibitedSubscriber);
 
     callback(metadata).catch(unsubscribe);
 
@@ -8714,10 +8723,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       return null;
     }
 
-    if (this.impl.storage.prohibitAllSharing.get()) {
+    if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
       throw new Error(
-          "This workspace has observed sensitive data. To prevent leaks, the workspace cannot be " +
-          "shared.");
+          "Беседа содержит личные данные. Добавить участников или создать ссылку общего доступа нельзя.");
     }
 
     return (await this.impl.getSharingManager()).addCollaborator({
@@ -8773,10 +8781,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async createShareLink(role: CollaboratorRole, note?: string)
       : Promise<{ key: string; linkId: string }> {
-    if (this.impl.storage.prohibitAllSharing.get()) {
+    if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
       throw new Error(
-          "This workspace has observed sensitive data. To prevent leaks, the workspace cannot be " +
-          "shared.");
+          "Беседа содержит личные данные. Добавить участников или создать ссылку общего доступа нельзя.");
     }
 
     return (await this.impl.getSharingManager())
@@ -8784,10 +8791,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async newShareLinkKey(linkId: string): Promise<{ key: string }> {
-    if (this.impl.storage.prohibitAllSharing.get()) {
+    if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
       throw new Error(
-          "This workspace has observed sensitive data. To prevent leaks, the workspace cannot be " +
-          "shared.");
+          "Беседа содержит личные данные. Добавить участников или создать ссылку общего доступа нельзя.");
     }
 
     return (await this.impl.getSharingManager())

@@ -1549,6 +1549,8 @@ export interface ApprovalQueue extends ObservationAuthorizer {
 }
 
 export type ObservationDescription = {
+  /** Личные данные владельца: запрещает совместный доступ к этой беседе, сохраняя действия владельца. */
+  ownerOnly?: boolean;
   /** Подтверждённый контекст прочитанных данных для интерфейса чата. Не выдаёт права и не меняет привязки. */
   workContext?: {
     /** Имя проекта из разрешённого каталога источника. */

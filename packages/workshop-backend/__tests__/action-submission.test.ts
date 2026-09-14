@@ -42,6 +42,38 @@ describe("повтор отправки действия в очередь", () 
     await impl.applyPendingAction(ordinary, profile, false, false);
     expect(apply).toHaveBeenCalledTimes(2);
   });
+  it("личное наблюдение запрещает совместную беседу и сохраняет изоляцию workspace после перезапуска", async () => {
+    const make = (durable = makeMockStorage()) => {
+      const ctx = {storage: durable, id: {toString: () => "workspace"}, exports: {UserDurableObject: {}}, waitUntil: () => {}} as unknown as DurableObjectState;
+      const impl = new OverseerDurableObject(ctx, {} as Cloudflare.Env)["impl"];
+      vi.spyOn(impl, "getOwnerProfileId").mockResolvedValue("owner");
+      return {impl, durable};
+    };
+    const {impl, durable} = make(); const sharing = await impl.getSharingManager();
+    const caller = {profileId:"owner", isOwner:true};
+    const link = await sharing.createShareLink({caller, role:"use"});
+    await expect(impl.authorizeObservation(3, {title:"Личное", description:"", ownerOnly:true}, {from:"agent",chatId:1})).rejects.toThrow(/Личные/);
+    sharing.revokeShareLink(caller, link.linkId, []);
+    await impl.authorizeObservation(3, {title:"Личное", description:"", ownerOnly:true}, {from:"agent",chatId:1});
+    expect(impl.storage.ownerOnlyObservations.get()).toBe(true); expect(impl.storage.prohibitAllSharing.get()).toBe(false);
+    await expect(sharing.createShareLink({caller,role:"use"})).rejects.toThrow(/личные/);
+    const restarted = make(durable).impl;
+    await expect((await restarted.getSharingManager()).createShareLink({caller,role:"build"})).rejects.toThrow(/личные/);
+    await impl.submitAction(3,42,description,{from:"agent",chatId:1});
+    expect([...impl.storage.actions.list()].filter(r=>r.type==="action")).toHaveLength(1);
+    const other = make().impl;
+    await expect((await other.getSharingManager()).createShareLink({caller,role:"use"})).resolves.toHaveProperty("key");
+  });
+  it("начатая выдача ссылки не обходит личное наблюдение во время mintKey", async () => {
+    const ctx = {storage: makeMockStorage(), id: {toString: () => "workspace"}, exports: {UserDurableObject: {}}, waitUntil: () => {}} as unknown as DurableObjectState;
+    const impl = new OverseerDurableObject(ctx, {} as Cloudflare.Env)["impl"];
+    vi.spyOn(impl,"getOwnerProfileId").mockResolvedValue("owner");
+    const sharing = await impl.getSharingManager();
+    const pending = sharing.createShareLink({caller:{profileId:"owner",isOwner:true},role:"use"});
+    await impl.authorizeObservation(3,{title:"Личное",description:"",ownerOnly:true},{from:"agent",chatId:1});
+    await expect(pending).rejects.toThrow(/личные/);
+    expect(sharing.hasAnyShares()).toBe(false);
+  });
   it("реальная очередь не выделяет новую карточку после потерянного ответа и восстановления DO", async () => {
     const storage = makeMockStorage();
     const ctx = {storage, id: {toString: () => "workspace"}, exports: {UserDurableObject: {}}, waitUntil: () => {}} as unknown as DurableObjectState;
