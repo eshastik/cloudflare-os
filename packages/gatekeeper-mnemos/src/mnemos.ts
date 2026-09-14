@@ -1031,6 +1031,10 @@ class MnemosTextDownloadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) { super(); this.#session = session; }
   async issue(projectId: string, nodeId: string, version: string, side: number) {
+    if(version.startsWith("private:")){
+      if(side!==0)throw new Error("Invalid private version side");
+      return this.#session.downloadPrivateVersion(projectId,nodeId,version.slice(8));
+    }
     if(version.startsWith("tracker-invitation:")){
       if(side!==0)throw new Error("Invalid tracker side");
       return this.#session.downloadInvitedTracker(projectId,nodeId,version.slice(19));
@@ -1049,6 +1053,9 @@ class MnemosTextDownloadIssuer extends RpcTarget {
     return this.#session.beginDraftDownload(projectId, nodeId, version, side);
   }
   async validate(projectId: string, nodeId: string, version: string): Promise<void> {
+    if(version.startsWith("private:")){
+      await this.#session.checkPrivateVersionRead(projectId,nodeId,version.slice(8));return;
+    }
     if(version.startsWith("tracker-invitation:")){
       await this.#session.validateInvitedTracker(projectId,nodeId,version.slice(19));return;
     }
@@ -1346,6 +1353,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readPersonalMemoryVersion() { return this.#session.readPersonalMemoryVersion(); }
   async readPersonalMemory() { return this.#session.readPersonalMemory(); }
   async setPersonalMemory(revision: number, project: string, node: string, head: string) { return this.#session.setPersonalMemory(revision, project, node, head); }
+  async listPrivateDocumentsForOwner(project: string, owner: string, cursor = "") { return this.#session.listPrivateDocumentsForOwner(project, owner, cursor); }
   async listPrivateDocuments(project: string, cursor = "") { return this.#session.listPrivateDocuments(project, cursor); }
   async listVisibleDatabaseConnections(){return this.#session.listVisibleDatabaseConnections();}
   async prepareSharedCorporateWorkflow(project:string,shown:Parameters<CorporateTaskCreation["prepareWorkflow"]>[2],plan:unknown,confirmed:boolean){return this.corporateTasks.prepareWorkflow(this.#session,project,shown,plan,confirmed);}

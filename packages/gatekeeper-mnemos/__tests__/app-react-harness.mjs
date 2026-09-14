@@ -95,7 +95,8 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async getSelectedSection() { return selectedSection; }
     async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; if(project!==undefined) selectedProject=project; dispose(); mount(); },0); }
     async openApprovals() { calls.push(["openApprovals"]); }
-    async downloadText() { return "текст"; }
+    async downloadFile(...args) { calls.push(["downloadFile",...args]); }
+    async downloadText(...args) { calls.push(["downloadText",...args]); return "текст"; }
     async downloadReviewText(...args) {calls.push(["downloadReviewText",...args]); return args[3]==="before"?"Исходный текст":"Новая версия";}
   }
   let frame; const ports = [];

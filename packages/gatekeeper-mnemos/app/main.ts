@@ -223,6 +223,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   readPersonalMemoryVersion: MnemosAccountSession["readPersonalMemoryVersion"];
   setPersonalMemory: MnemosAccountSession["setPersonalMemory"];
   listPrivateDocuments: MnemosAccountSession["listPrivateDocuments"];
+  listPrivateDocumentsForOwner: MnemosAccountSession["listPrivateDocumentsForOwner"];
   recordUIReadiness: MnemosAccountSession["recordUIReadiness"];
   readPlatformMetrics: MnemosAccountSession["readPlatformMetrics"];
   managedTaskRequest(): Promise<ManagedTaskRequest | null>;
@@ -295,6 +296,7 @@ export interface Host extends RpcTarget {
   sendMailDraft(id:string,sha256:string):Promise<{state:'attempted'|'accepted';message_id?:string}>;
   uploadText(project: string, text: string): Promise<string>;
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
+  downloadFile(project:string,node:string,version:string,filename:string):Promise<void>;
   downloadText(project: string, node: string, head: string, side: number): Promise<string>;
   ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string> }
 // Handshake с хостом и корневой элемент даёт вызывающий (оболочка на React): у фрейма одна RPC-сессия на всех.

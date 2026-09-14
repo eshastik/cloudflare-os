@@ -419,6 +419,10 @@ export class MnemosAPI {
     if (typeof cursor !== "string" || cursor.length > 2048) throw new MnemosAPIError(400);
     return this.#request(`/v1/projects/${segment(projectId)}/draft/documents?cursor=${encodeURIComponent(cursor)}`, "GET", signal);
   }
+  listPrivateDocumentsForOwner(projectId: string, owner: string, cursor = "", signal?: AbortSignal): Promise<PrivateDocumentPage> {
+    if (typeof cursor !== "string" || cursor.length > 2048) throw new MnemosAPIError(400);
+    return this.#request(`/v1/projects/${segment(projectId)}/draft/documents?owner=${segment(owner)}&cursor=${encodeURIComponent(cursor)}`, "GET", signal);
+  }
   readDraftDocument(projectId: string, nodeId: string, signal?: AbortSignal): Promise<DraftDocument> {
     return this.#request(`/v1/projects/${segment(projectId)}/draft/nodes/${segment(nodeId)}`, "GET", signal);
   }

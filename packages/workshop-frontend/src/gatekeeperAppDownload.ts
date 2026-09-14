@@ -11,6 +11,14 @@ export async function downloadGatekeeperText(
   return downloadVerifiedText(storageOrigin, ticket, signal, 262144)
 }
 
+/** Получает исходный файл и проверяет доступ перед сохранением на компьютер. */
+export async function downloadGatekeeperFile(storageOrigin:string,ticket:GatekeeperDownloadTicket,signal:AbortSignal,validateAccess:()=>Promise<void>):Promise<Uint8Array> {
+ const bytes=await downloadVerifiedBytes(storageOrigin,ticket,signal,64*1024*1024)
+ await validateAccess()
+ signal.throwIfAborted()
+ return bytes
+}
+
 async function downloadVerifiedBytes(
   storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal, maxBytes: number,
 ): Promise<Uint8Array> {

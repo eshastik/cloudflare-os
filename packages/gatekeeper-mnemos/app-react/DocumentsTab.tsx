@@ -5,6 +5,7 @@ import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
 import { documentRows, type DocumentRow, type MemoryData } from "./data.ts";
 import { LegacyPanel } from "./legacy.tsx";
+import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { relativeTime } from "./time.ts";
 import { Eyebrow, Notice, Row, RowList, StatusBadge } from "./ui.tsx";
 
@@ -18,6 +19,14 @@ type Opened = { row: DocumentRow; content: DocumentContent | null; error: string
 export default function DocumentsTab({ data, initialProject = "" }: { data: MemoryData; initialProject?: string }) {
   const ui = useUi();
   const host = useHost();
+  const [administrative, setAdministrative] = useState(false);
+  const [isAdministrator, setIsAdministrator] = useState(false);
+  useEffect(() => {
+    let current=true; setIsAdministrator(false);
+    const user=data.identity?.subject.user_id;
+    if(user) void ui.readPrincipalMembership("system:organization-admins",user).then(member=>{if(current)setIsAdministrator(member.enabled);},()=>{if(current)setIsAdministrator(false);});
+    return ()=>{current=false;};
+  },[ui,data.identity?.subject.user_id]);
   const [selected, setSelected] = useState(initialProject);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<{ query: string; hits: SearchHit[]; pending: boolean; failed: number; busy: boolean } | null>(null);
@@ -95,6 +104,8 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     return { projectId: hit.project_id, projectName: project?.name ?? hit.project_id, nodeId: hit.node_id, name: hit.name || hit.node_id, status: { tone: "success", label: "Опубликовано" } };
   }
 
+  if (administrative) return <AdministrativeDocuments data={data} initialProject={selected} onClose={()=>setAdministrative(false)} />;
+
   if (opened && editing) return <LegacyPanel section={{kind: "document", project: opened.row.projectId, node: opened.row.nodeId}} title={opened.row.name} onClose={() => { setEditing(false); void data.reloadProjects(); }} />;
 
   if (opened) {
@@ -127,6 +138,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
       </nav>
 
       <div className="min-w-0">
+        {isAdministrator && <div className="mb-3"><Button variant="secondary" onClick={()=>setAdministrative(true)}>Личные версии сотрудников</Button></div>}
         <form onSubmit={submitSearch} role="search" className="mb-3 flex items-center gap-3">
           <label className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-kumo-line bg-kumo-base px-3 text-kumo-inactive focus-within:border-kumo-ring">
             <MagnifyingGlass size={16} aria-hidden="true" />

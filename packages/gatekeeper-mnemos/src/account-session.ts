@@ -350,6 +350,13 @@ export class MnemosAccountSession {
     if (!Array.isArray(page.documents) || page.documents.length > 100 || typeof page.next_cursor !== "string" || page.documents.some(d => !d.node_id || typeof d.name !== "string")) throw new MnemosAPIError(502);
     return page;
   }
+  async listPrivateDocumentsForOwner(projectId: string, owner: string, cursor = "") {
+    this.#check();
+    const page = await this.#client.listPrivateDocumentsForOwner(projectId, owner, cursor, this.#lifetime.signal);
+    this.#check();
+    if (!Array.isArray(page.documents) || page.documents.length > 100 || typeof page.next_cursor !== "string" || page.documents.some(d => !d.node_id || typeof d.name !== "string") || (page.documents.length > 0 && !/^[a-f0-9]{64}$/.test(page.head))) throw new MnemosAPIError(502);
+    return page;
+  }
   async readDraftDocument(projectId: string, nodeId: string) {
     this.#check();
     const result = await this.#client.readDraftDocument(projectId, nodeId, this.#lifetime.signal);

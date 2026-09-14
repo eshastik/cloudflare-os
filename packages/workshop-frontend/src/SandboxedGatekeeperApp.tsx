@@ -1,7 +1,7 @@
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
 import {collectIntakeDrop, type IntakeDroppedFile} from "./intakeDrop"
 import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
-import {saveMailAttachment} from './saveMailAttachment'
+import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
@@ -13,7 +13,7 @@ import type { ResolvedThemeMode } from './theme'
 import { forwardTrustedFrameError } from './errorReporting'
 import { uploadGatekeeperText } from './gatekeeperAppUpload'
 import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
-import { downloadGatekeeperNativeDocument, downloadGatekeeperText } from './gatekeeperAppDownload'
+import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { useAuthenticatedApi } from './AuthContext'
 import {
@@ -275,6 +275,20 @@ class GatekeeperAppHostImpl extends RpcTarget {
 
   // Revalidate access after S3 returns: a still-valid signed URL must not let an
   // invalidated account reveal a late result through the host.
+  async downloadFile(scope:string,resource:string,version:string,filename:string):Promise<void> {
+    if(!this.#downloads||this.#downloadBusy||this.#uploadLifetime.signal.aborted||
+       [scope,resource,version].some(value=>typeof value!=='string'||!value||value.length>255)||
+       typeof filename!=='string'||filename.length>4096)throw new Error('Document download unavailable.')
+    this.#downloadBusy=true
+    try {
+      const downloads=this.#downloads
+      const ticket=await downloads.issuer.issue(scope,resource,version,0)
+      const bytes=await downloadGatekeeperFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
+      saveDocumentFile(bytes,filename)
+    }catch{throw new Error('Document download failed.')}
+    finally{this.#downloadBusy=false}
+  }
+
   async downloadText(scope: string, resource: string, version: string, side: number): Promise<string> {
     if (!this.#downloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
         [scope, resource, version].some(value => typeof value !== 'string' || !value || value.length > 255) ||

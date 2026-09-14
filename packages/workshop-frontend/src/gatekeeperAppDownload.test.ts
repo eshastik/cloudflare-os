@@ -1,6 +1,6 @@
 import { uploadGatekeeperOfficePreview } from './gatekeeperAppUpload'
 import { afterEach, expect, it, vi } from 'vitest'
-import { downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
+import { downloadGatekeeperFile, downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
 const origin = 'https://objects.example'
 afterEach(() => vi.unstubAllGlobals())
 
@@ -129,3 +129,14 @@ it('preserves presentation structure and denies access after revocation or Offic
   await expect(downloadGatekeeperOffice(origin, ticket, format, new AbortController().signal, async () => {})).rejects.toThrow()
   expect(fetch).not.toHaveBeenCalled()
 })
+
+it('сохраняет бинарный документ без перекодирования и повторно проверяет доступ', async () => {
+ const bytes=new Uint8Array([0,255,128,10]);
+ const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));
+ const ticket={url:origin+'/binary',method:'GET',size_bytes:bytes.length,sha256_hex:Array.from(digest,b=>b.toString(16).padStart(2,'0')).join('')};
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(bytes)));
+ const validate=vi.fn(async()=>{});
+ await expect(downloadGatekeeperFile(origin,ticket,new AbortController().signal,validate)).resolves.toEqual(bytes);
+ expect(validate).toHaveBeenCalledOnce();
+ await expect(downloadGatekeeperFile(origin,ticket,new AbortController().signal,async()=>{throw Error('revoked')})).rejects.toThrow('revoked');
+});
