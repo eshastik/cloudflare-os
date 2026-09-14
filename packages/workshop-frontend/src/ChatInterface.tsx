@@ -1,3 +1,4 @@
+import ChatIntakePanel from "./ChatIntakePanel";
 import { VoiceInput } from "./components/chat/VoiceInput";
 import CorporateWorkContext from "./CorporateWorkContext";
 import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
@@ -1388,7 +1389,7 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
       type="button"
       onClick={() => onPreview(attachment.id)}
       className="relative h-28 w-36 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-kumo-line/70 bg-kumo-elevated text-left transition-[border-color,background-color,transform] duration-150 ease-out hover:border-kumo-line hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40 active:scale-[0.98]"
-      aria-label={`Preview ${attachment.name ?? "attached file"}`}
+      aria-label={`Открыть ${attachment.name ?? "прикреплённый файл"}`}
     >
       {isImage && objectUrl && imageState !== "error" ? (
         <>
@@ -1845,6 +1846,8 @@ export const ChatInput = ({
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  useEffect(() => setIntakeOpen(false), [chatKey]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -3325,6 +3328,9 @@ export const ChatInput = ({
                   </span>
                   <span className="flex-1">Прикрепить файл</span>
                 </DropdownMenu.Item>
+                <DropdownMenu.Item onClick={() => setIntakeOpen(true)} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
+                  <FileIcon size={14} className="mr-2"/><span>Материалы организации</span>
+                </DropdownMenu.Item>
                 <DropdownMenu.Item onClick={handleAttachOpen} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
                   <Plug size={14} className="mr-2"/><span>{attachLabel ?? "Подключить источник"}</span>
                 </DropdownMenu.Item>
@@ -3410,6 +3416,7 @@ export const ChatInput = ({
         </div>
       </div>
 
+      {intakeOpen && <ChatIntakePanel onClose={() => { setIntakeOpen(false); composerTextareaRef.current?.focus(); }} />}
       <GatekeeperModal
         open={attachModalOpen}
         onClose={() => setAttachModalOpen(false)}

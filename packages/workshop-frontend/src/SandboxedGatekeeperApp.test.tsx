@@ -41,6 +41,7 @@ vi.mock("./AuthContext", () => {
 interface TestHost extends RpcTarget {
   setUnsavedChanges(dirty: boolean): Promise<void>;
   getSelectedSection(): Promise<string>;
+  getPresentationMode(): Promise<string>;
   openSection(section:string): Promise<void>;
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
@@ -195,6 +196,22 @@ describe("SandboxedGatekeeperApp navigation", () => {
     expect(router.state.location.pathname).toBe("/gatekeepers/mnemos");
     window.history.replaceState(null,"","/");
   });
+  it("приём рядом с беседой выбирает раздел без URL и закрывается только из своего фрейма", async () => {
+    const closed=vi.fn();
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new EmptyUi())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake onClosePanel={closed}/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/?chat=17"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const iframe=container.querySelector("iframe")!;
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:iframe.contentWindow,ports:[port2]}));
+    expect(await host.getSelectedSection()).toBe("intake");expect(await host.getPresentationMode()).toBe("panel");
+    expect(router.state.location.href).toBe("/?chat=17");
+    expect(container.querySelector('[aria-label="Перетащите материалы организации"]')).not.toBeNull();
+    window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:window}));expect(closed).not.toHaveBeenCalled();
+    window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:iframe.contentWindow}));expect(closed).toHaveBeenCalledOnce();
+  });
   it("смена организации отменяет ожидающий drop и очищает его состояние", async () => {
     let issued=0;
     class Issuer extends RpcTarget {issue(){issued++;throw Error("unexpected upload")} submit(){throw Error("unexpected submit")}}
@@ -221,6 +238,25 @@ describe("SandboxedGatekeeperApp navigation", () => {
     expect(container.textContent).not.toContain("Закрытая папка");
     expect(container.querySelector("progress")).toBeNull();
     window.history.replaceState(null,"","/");
+  });
+  it("закрытие приёма отменяет текущий PUT и сохраняет уже принятый файл", async()=>{
+    const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
+    const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
+    const submitted:string[]=[];let count=0;let signal:AbortSignal|undefined;
+    class Issuer extends RpcTarget {
+      issue(size:number,checksum:string){return {upload_id:String(++count),url:"https://storage.example/file",method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
+      submit(_id:string,path:string){submitted.push(path);return {outcome:"enqueued",enqueued:true};}
+    }
+    const request=vi.fn(async(_url:string,init:RequestInit)=>{expect(init.body).toBeInstanceOf(File);expect(init.credentials).toBe("omit");if(count===1)return new Response(null,{status:200});signal=init.signal as AbortSignal;return new Promise<Response>((_,reject)=>signal!.addEventListener("abort",()=>reject(Error("abort")),{once:true}));});vi.stubGlobal("fetch",request);
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
+    const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{files:[new File(["first"],"первый.txt"),new File(["second"],"второй.txt")],items:[]}});
+    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);await vi.waitFor(()=>expect(request).toHaveBeenCalledTimes(2));});
+    expect(submitted).toEqual(["первый.txt"]);
+    await act(async()=>root!.render(null));expect(signal?.aborted).toBe(true);expect(submitted).toEqual(["первый.txt"]);
   });
   it("uploads through the real host port and cancels transfer when the frame closes", async () => {
     const { webcrypto } = await vi.importActual<{ webcrypto: Crypto }>("node:crypto");

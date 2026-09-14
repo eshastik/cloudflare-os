@@ -93,6 +93,8 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async setUnsavedChanges(dirty) { calls.push(["setUnsavedChanges",dirty]); }
     async getSelectedProject() { return selectedProject; }
     async getSelectedSection() { return selectedSection; }
+    async getPresentationMode() { return options.presentationMode ?? "page"; }
+    async pickInboxFiles(directory) { calls.push(["pickInboxFiles",directory]); return options.pickedFiles ?? []; }
     async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; if(project!==undefined) selectedProject=project; dispose(); mount(); },0); }
     async openApprovals() { calls.push(["openApprovals"]); }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
@@ -120,6 +122,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
         constructor() { super(); ports.push(this.port1, this.port2); }
       };
       window.postMessage = (message, origin, transferred) => {
+        if(message.type === "mnemos-intake-close") { calls.push(["closeIntake"]); return; }
         assert.equal(message.type, "handshake"); assert.equal(origin, "*");
         frame = newMessagePortRpcSession(transferred[0], new Host());
       };
@@ -157,6 +160,6 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     frame?.[Symbol.dispose](); dom.window.close();
     for (const port of ports.splice(0)) port.close();
   }
-  await until(() => document.querySelector("#root h1"), "заголовок раздела");
+  await until(() => options.presentationMode === "panel" ? document.querySelector('[aria-label="Приём данных"]') : document.querySelector("#root h1"), "заголовок раздела");
   return { get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
 }

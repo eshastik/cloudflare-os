@@ -8,6 +8,7 @@ export interface IntakeStatus {
 }
 export interface IntakeAlert {
  id:string; blob_sha256_hex:string; pipeline_version:number; database:string; project:string;
+ placement_state?:"personal"|"shared"; personal_head?:string; owner_id?:string; result_project_id?:string; result_node_id?:string;
  suggested_project_name?:string; suggested_domain?:string; proposed_project_slug?:string;
  stage:string; reason:string; detail:string; candidates:string[]; paths:string[];
  status:string; placement:string; decided_by:string; note:string; raised_at:string; decided_at:string;

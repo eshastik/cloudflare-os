@@ -19,12 +19,12 @@ type UiAccount = { name: string; resources: SupportedResource[] }
 
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
-export default function GatekeeperAppPage({ appId, section, project, accountId, onAccountChange }: { appId: string; section?: string; project?: string; accountId?:number; onAccountChange?:(account:number|null)=>void }) {
+export default function GatekeeperAppPage({ appId, section, project, accountId, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, UiAccount>>(new Map())
   const [ready, setReady] = useState(false)
   const [readyFor,setReadyFor]=useState<{api:object;appId:string}|null>(null)
-  const initialAccount = () => { const value = new URLSearchParams(window.location.search).get("account"); return value !== null && /^\d+$/.test(value) ? Number(value) : null }
+  const initialAccount = () => { if (embeddedIntake) return null; const value = new URLSearchParams(window.location.search).get("account"); return value !== null && /^\d+$/.test(value) ? Number(value) : null }
   const [selected, setSelected] = useState<number | null>(initialAccount)
   const requested=onAccountChange ? accountId??null : selected
   const [notice, setNotice] = useState('')
@@ -65,11 +65,11 @@ export default function GatekeeperAppPage({ appId, section, project, accountId, 
       </Select>
     </div>}
     {notice && <p role="alert">{notice}</p>}
-    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}`} appId={appId} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} />}
+    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}`} appId={appId} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
   </>
 }
 
-function GatekeeperAppContent({ appId, accountId, resources }: { appId: string; accountId?: number; resources: SupportedResource[] }) {
+function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, onClosePanel, onIntakeDropReady }: { appId: string; accountId?: number; resources: SupportedResource[]; embeddedIntake: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // Wrap the frame in an object: it holds a `ui` RPC stub, and we never want useState's setter to
   // treat a stored value as an updater function.
@@ -123,8 +123,8 @@ function GatekeeperAppContent({ appId, accountId, resources }: { appId: string; 
   const drive = receives(resources, 'drive')
   // Fill the viewport below the header so the embedded app can manage its own internal layout.
   return (
-    <div style={{ height: 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
-      {(mail || calendar || drive || state.frame.organizationMetrics) && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-kumo-line px-4 py-2">
+    <div style={{ height: embeddedIntake ? '100%' : 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
+      {!embeddedIntake && (mail || calendar || drive || state.frame.organizationMetrics) && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-kumo-line px-4 py-2">
         {(mail || calendar || drive) && <Button variant="ghost" size="sm" onClick={() => setTool(mail ? 'mail' : calendar ? 'calendar' : 'drive')}><PlugsConnected size={16} />Подключения</Button>}
         {state.frame.organizationMetrics && <Button variant="ghost" size="sm" onClick={() => setTool('summary')}><ChartBar size={16} />Свод организаций</Button>}
       </div>}
@@ -150,7 +150,7 @@ function GatekeeperAppContent({ appId, accountId, resources }: { appId: string; 
           </div>
         </Dialog>
       </Dialog.Root>
-      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp frame={state.frame} gatekeeperVendorId={appId} /></div>
+      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp frame={state.frame} gatekeeperVendorId={appId} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} /></div>
     </div>
   )
 }

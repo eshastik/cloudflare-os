@@ -287,6 +287,8 @@ export interface Host extends RpcTarget {
   setUnsavedChanges(dirty: boolean): void;
   subscribeAccent(frame: RpcTarget): string;
   getSelectedSection(): string;
+  /** Представление рядом с беседой без изменения прав. */
+  getPresentationMode(): Promise<string>;
   pickInboxFiles(directory: boolean): Promise<import("../src/intake.ts").PickedIntakeFile[]>;
   openSection(section: string, project?: string): void;
   openApprovals(): Promise<void>;

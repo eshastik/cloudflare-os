@@ -131,6 +131,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly navigateApprovals: () => void = () => {},
     inboxUploads?: GatekeeperUiFrame['inboxUploads'],
     private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
+    private readonly embeddedIntake = false,
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
@@ -158,14 +159,19 @@ class GatekeeperAppHostImpl extends RpcTarget {
 
   /** Selected resource scope from the host URL; never an authorization grant. */
   getSelectedProject(): string {
+    if (this.embeddedIntake) return ""
     const value = new URLSearchParams(window.location.search).get('project') ?? ''
     return value.length <= 255 ? value : ''
   }
 
   /** Выбор экрана в URL хоста не даёт полномочий на данные. */
   getSelectedSection(): string {
+    if (this.embeddedIntake) return "intake"
     return parseGatekeeperAppSection(new URLSearchParams(window.location.search).get('section'))
   }
+
+  /** Режим представления не меняет полномочия фрейма. */
+  getPresentationMode(): string { return this.embeddedIntake ? "panel" : "page" }
 
   /** Переход остаётся в текущем приложении и подключении. */
   openSection(section: string, project?: string): void {
@@ -463,9 +469,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
 // Hosts a gatekeeper's full-page management SPA in a sandboxed, network-isolated iframe. The app
 // talks to the gatekeeper only through the `ui` capability carried over the MessagePort RPC session.
 // The iframe fills its parent container.
-export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
+export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embeddedIntake = false, onClosePanel, onIntakeDropReady }: {
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
+  embeddedIntake?: boolean,
+  onClosePanel?:()=>void,
+  onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void,
 }) {
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
@@ -544,6 +553,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     navigate({ to: '/', search: { prompt } })
   }, [navigate])
   // The gatekeeper capability is `any`: its method shape is gatekeeper-defined and opaque to us.
+  const closePanelRef = useRef(onClosePanel)
+  closePanelRef.current = onClosePanel
   const capabilityRef = useRef<any>(null)
   capabilityRef.current = frame.ui
 
@@ -586,6 +597,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
         () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
+        embeddedIntake,
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -600,6 +612,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow || event.origin !== 'null') return
       if (invalidatedRef.current) return
+      if (embeddedIntake && event.data?.type === 'mnemos-intake-close') { closePanelRef.current?.(); return }
       if (event.data?.type === 'gatekeeper-audio-cancel') {
         closeRecording?.()
         closeRecording = undefined
@@ -634,19 +647,19 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
     // carrying a fresh stub (even with identical HTML) never keeps talking through the stale one.
   }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.inboxUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
-      present, resolveWorkspaceTitles, setOverlayPhase, navigate])
+      present, resolveWorkspaceTitles, setOverlayPhase, navigate, embeddedIntake])
 
-  const intakeDrop=!!frame.inboxUploads && new URLSearchParams(window.location.search).get('section')==='intake'
-  const drop=async(event:React.DragEvent)=>{
-    event.preventDefault()
+  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || new URLSearchParams(window.location.search).get('section')==='intake')
+  const drop=async(transfer:DataTransfer)=>{
     setDropState(previous=>({...previous,active:false}))
-    if(dropBusy.current||!hostRef.current)return
+    if(dropBusy.current)return
+    if(!hostRef.current){setDropState(previous=>({...previous,message:"Приёмная ещё загружается. Повторите перетаскивание после загрузки."}));return}
     const targetHost=hostRef.current
     const targetWindow=iframeRef.current?.contentWindow
     dropBusy.current=true
     setDropState({busy:true,active:false,done:0,total:0,message:'Читаем выбранную папку…'})
     try {
-      const files=await collectIntakeDrop(event.dataTransfer)
+      const files=await collectIntakeDrop(transfer)
       if(hostRef.current!==targetHost)return
       if(!files.length)throw Error('В перетаскивании нет файлов')
       setDropState({busy:true,active:false,done:0,total:files.length,message:''})
@@ -659,9 +672,15 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId }: {
     finally{if(hostRef.current===targetHost)dropBusy.current=false}
   }
 
+  useEffect(()=>{
+    if(!embeddedIntake||!intakeDrop)return;
+    onIntakeDropReady?.(transfer=>{void drop(transfer)});
+    return()=>onIntakeDropReady?.(null);
+  });
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-    {intakeDrop&&<div className="px-4 pt-4 sm:px-8"><div role="region" aria-label="Перетащите материалы организации" onDragOver={event=>{event.preventDefault();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}} onDragLeave={()=>setDropState(previous=>({...previous,active:false}))} onDrop={event=>void drop(event)} className={`rounded-xl border border-dashed p-5 text-center text-sm ${dropState.active?'border-kumo-brand bg-kumo-fill':'border-kumo-line bg-kumo-elevated'}`}>
+    {intakeDrop&&<div className={embeddedIntake?"px-4 pt-3":"px-4 pt-4 sm:px-8"}><div role="region" aria-label="Перетащите материалы организации" onDragOver={event=>{event.preventDefault();event.stopPropagation();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}} onDragLeave={()=>setDropState(previous=>({...previous,active:false}))} onDrop={event=>{event.preventDefault();event.stopPropagation();void drop(event.dataTransfer)}} className={`rounded-xl border border-dashed p-5 text-center text-sm ${dropState.active?'border-kumo-brand bg-kumo-fill':'border-kumo-line bg-kumo-elevated'}`}>
       <p className="m-0 font-medium">Перетащите сюда файлы или папку</p><p className="mb-0 mt-1 text-xs text-kumo-subtle">Или используйте кнопки выбора в приёмной ниже.</p>
       {dropState.busy&&<div role="status" className="mt-3">{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-2 h-1 w-full" max={dropState.total||1} value={dropState.done}/></div>}
       {dropState.message&&<p role="status" className="mb-0 mt-3 break-words">{dropState.message}</p>}
