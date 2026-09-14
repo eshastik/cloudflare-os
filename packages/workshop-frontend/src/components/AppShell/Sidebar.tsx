@@ -9,6 +9,7 @@ import {
   MagnifyingGlass,
   SidebarSimple,
   SquaresFour,
+  GearSix,
   Stack,
 } from '@phosphor-icons/react'
 import { useSiteName } from '../../ServerConfigContext'
@@ -129,39 +130,23 @@ export default function Sidebar({
               icon={<SquaresFour size={14} weight="regular" />}
               collapsed={collapsed}
             />
-            {gatekeeperApps.filter(app => !app.sections?.length).map(app => (
-              <SidebarItem key={`${app.id}:${app.accountId}`} to="/gatekeepers/$appId" params={{ appId: app.id }} search={{account:app.accountId}} account={app.accountId}
-                label={app.title} icon={<BookOpen size={14} />} collapsed={collapsed} />
-            ))}
-            {gatekeeperApps.map(app => {
-              const sections = app.sections ?? []
-              const managesOrganization = sections.some(section => section.id === 'people' || section.id === 'intake')
-              const renderSection = (section: typeof sections[number]) => <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`}
-                to="/gatekeepers/$appId" params={{ appId: app.id }} search={{ section: section.id, account:app.accountId }} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1}
-                label={section.title} icon={<BookOpen size={14} />} collapsed={collapsed} />
-              const core = sections.filter(section => ['my-work', 'documents'].includes(section.id))
-              const administration = sections.filter(section => section.group === 'manage' || managesOrganization && ['projects', 'sources'].includes(section.id))
-              const extra = sections.filter(section => !core.includes(section) && !administration.includes(section))
-              return <div key={`${app.id}:${app.accountId}`} className="space-y-0.5">
-                {!collapsed&&gatekeeperApps.filter(other=>other.id===app.id).length>1&&<p className="px-2.5 pt-3 text-xs font-semibold">{app.accountName||app.title}</p>}
-                {core.map(renderSection)}
-                {administration.length > 0 && <div className="mt-3 space-y-0.5">
-                  {!collapsed && <p className="px-2.5 py-1 text-[11px] font-medium text-kumo-subtle">Управление организацией</p>}
-                  {administration.map(renderSection)}
-                </div>}
-                {extra.length > 0 && <details className="mt-2" open={collapsed || undefined}>
-                  <summary className="cursor-pointer rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Рабочие инструменты">{collapsed ? '•••' : 'Рабочие инструменты'}</summary>
-                  {extra.map(renderSection)}
-                </details>}
-              </div>
-            })}
-            <SidebarItem to="/outputs" label="Результаты бесед" icon={<Stack size={14} />} collapsed={collapsed} />
-            <details className="mt-2" open={collapsed || undefined}>
-              <summary className="cursor-pointer rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Приложения">{collapsed ? '◇' : 'Приложения'}</summary>
-              <SidebarItem to="/blueprints" label="Сохранённые приложения" icon={<Blueprint size={14} />} collapsed={collapsed} />
-              <SidebarItem to="/explore" label="Каталог приложений" icon={<Compass size={14} />} collapsed={collapsed} />
+            {gatekeeperApps.flatMap(app=>(app.sections??[]).filter(section=>section.id==='documents').map(section=>(
+              <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>
+            )))}
+            <details className="mt-2">
+              <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Управление и инструменты" title={collapsed?"Управление и инструменты":undefined}><GearSix size={14}/>{!collapsed&&'Управление и инструменты'}</summary>
+              {gatekeeperApps.map(app=>{
+                const sections=(app.sections??[]).filter(section=>section.id!=='documents');
+                return <div key={`${app.id}:${app.accountId}`}>
+                  {!app.sections?.length&&<SidebarItem to="/gatekeepers/$appId" params={{appId:app.id}} search={{account:app.accountId}} account={app.accountId} label={app.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>}
+                  {sections.map(section=><SidebarItem key={section.id} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>)}
+                </div>;
+              })}
+              <SidebarItem to="/outputs" label="Результаты бесед" icon={<Stack size={14}/>} collapsed={collapsed}/>
+              <SidebarItem to="/blueprints" label="Сохранённые приложения" icon={<Blueprint size={14}/>} collapsed={collapsed}/>
+              <SidebarItem to="/explore" label="Каталог приложений" icon={<Compass size={14}/>} collapsed={collapsed}/>
+              {isAdmin&&<SidebarItem to="/admin" label="Настройки платформы" icon={<SquaresFour size={14}/>} collapsed={collapsed}/>}
             </details>
-            {isAdmin && <SidebarItem to="/admin" label="Настройки платформы" icon={<SquaresFour size={14} />} collapsed={collapsed} />}
           </nav>
 
           {/* Workspace tools: search. Pinned so it's always reachable. */}

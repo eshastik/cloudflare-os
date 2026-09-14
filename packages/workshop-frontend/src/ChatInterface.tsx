@@ -1,3 +1,4 @@
+import { VoiceInput } from "./components/chat/VoiceInput";
 import CorporateWorkContext from "./CorporateWorkContext";
 import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
 import {
@@ -1843,6 +1844,7 @@ export const ChatInput = ({
   const [capsules, setCapsules] = useState<InputCapsule[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -2284,7 +2286,7 @@ export const ChatInput = ({
   });
 
   const handleSend = async () => {
-    if (sendInFlightRef.current || isSending || isBlocked) return;
+    if (sendInFlightRef.current || isSending || isBlocked || voiceBusy) return;
     setSendHiccup(null);
     const attachmentsSnapshot = pendingAttachments;
     const readyAttachments = attachmentsSnapshot
@@ -2973,9 +2975,6 @@ export const ChatInput = ({
     : consoleLogSeverity === "warn"
       ? "warning"
       : "log";
-  const selectedModelLabel = selectedModel == null
-    ? "Без агента"
-    : models.find((model) => model.id === selectedModel)?.name ?? selectedModel;
 
   const hasReadyAttachment = pendingAttachments.some(
     (attachment) => attachment.uploadState === "ready" && attachment.ref,
@@ -2983,7 +2982,7 @@ export const ChatInput = ({
   const hasUnreadyAttachment = pendingAttachments.some(
     (attachment) => attachment.uploadState !== "ready",
   );
-  const canSend = !isSending && !isAgentActive && !isBlocked &&
+  const canSend = !voiceBusy && !isSending && !isAgentActive && !isBlocked &&
     (inputValue.trim().length > 0 || selectedSlashCommand !== null || hasReadyAttachment) &&
     !hasUnreadyAttachment;
   const canAttachMore = pendingAttachments.length < MAX_PENDING_ATTACHMENTS;
@@ -3286,23 +3285,13 @@ export const ChatInput = ({
         {/* Footer row: connection/options left, model + send right */}
         <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => attachmentInputRef.current?.click()}
-              aria-label="Прикрепить файл"
-              title="Прикрепить файл к сообщению"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[13px] text-kumo-subtle hover:bg-kumo-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-kumo-brand"
-            >
-              <FileIcon size={16} />
-              <span className="hidden sm:inline">Файл</span>
-            </button>
             <DropdownMenu>
               <DropdownMenu.Trigger
                 render={
                   <button
                     type="button"
                     className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle"
-                    aria-label="Настройки беседы"
+                    aria-label="Вложения и настройки"
                   >
                     <Plus size={18} />
                   </button>
@@ -3336,38 +3325,11 @@ export const ChatInput = ({
                   </span>
                   <span className="flex-1">Прикрепить файл</span>
                 </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu>
-            <button
-              type="button"
-              onClick={handleAttachOpen}
-              className="inline-flex h-8 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-none tracking-[-0.25px] text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.97]"
-            >
-              <Plug size={15} className="flex-shrink-0" />
-              <span className={`leading-none ${styles.attachLabelText}`}>{attachLabel ?? "Добавить ресурс"}</span>
-            </button>
-          </div>
-
-          {/* Right actions */}
-          <div className="ml-auto flex min-w-0 flex-shrink items-center gap-1.5">
-              <DropdownMenu>
-                <DropdownMenu.Trigger
-                  render={
-                    <button
-                      type="button"
-                      className="group inline-flex h-8 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[13px] leading-5 tracking-[-0.25px] text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-default focus-visible:bg-kumo-tint focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.97] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default"
-                      aria-label="Выбрать модель"
-                    >
-                      <span className="min-w-0 truncate">{selectedModelLabel}</span>
-                      <CaretDown
-                        size={12}
-                        weight="bold"
-                        className="flex-shrink-0 text-kumo-inactive transition-transform duration-150 ease-out group-data-[popup-open]:rotate-180"
-                      />
-                    </button>
-                  }
-                />
-                <DropdownMenu.Content className="themed-floating-shadow-lg !z-[1100] !min-w-[190px] rounded-2xl border border-kumo-line/70 bg-kumo-base p-1">
+                <DropdownMenu.Item onClick={handleAttachOpen} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
+                  <Plug size={14} className="mr-2"/><span>{attachLabel ?? "Подключить источник"}</span>
+                </DropdownMenu.Item>
+                <div className="my-1 border-t border-kumo-line/70" />
+                <div className="px-2 py-1 text-[11px] text-kumo-inactive">Модель</div>
                   {models.map((model) => {
                     const active = selectedModel === model.id;
                     return (
@@ -3393,8 +3355,19 @@ export const ChatInput = ({
                       <Check size={12} weight="bold" className="ml-3 flex-shrink-0 text-kumo-inactive" />
                     )}
                   </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu>
+              </DropdownMenu.Content>
+            </DropdownMenu>
+
+          </div>
+
+          {/* Right actions */}
+          <div className="ml-auto flex min-w-0 flex-shrink items-center gap-1.5">
+
+              <VoiceInput key={chatKey ?? "new"} api={authenticatedApi} disabled={isBlocked || isSending || isAgentActive}
+                onBusyChange={setVoiceBusy} onText={(text) => {
+                  setInputValue(current => current + (current && !/\s$/.test(current) ? " " : "") + text);
+                  composerTextareaRef.current?.focus();
+                }} />
               {isAgentActive && onStop ? (
                 <WorkshopIconButton
                   onClick={onStop}
