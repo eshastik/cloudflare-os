@@ -4,7 +4,7 @@ const config = { MNEMOS_STT_API_KEY: "private-key", MNEMOS_STT_URL: "https://spe
 describe("Голосовой текст чата", () => {
   it("передаёт аудио только настроенному провайдеру и возвращает текст без выполнения", async () => {
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
-      expect(init.redirect).toBe("error");
+      expect(init.redirect).toBe("manual");
       const form = init.body as FormData;
       expect(form.get("model")).toBe("whisper-1");
       expect(await (form.get("file") as File).text()).toBe("audio");
@@ -28,6 +28,14 @@ describe("Голосовой текст чата", () => {
       await expect(transcribeChatVoice(cfg, bytes, type, fetcher)).rejects.toThrow();
     }
     expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("не следует перенаправлению с записью и ключом", async () => {
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(init.redirect).toBe("manual");
+      return new Response(null, { status: 307, headers: { Location: "https://other.example/" } });
+    });
+    await expect(transcribeChatVoice(config, new Uint8Array([1]), "audio/webm", fetcher)).rejects.toThrow("Не удалось распознать");
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("не раскрывает ответ провайдера или ключ в ошибке", async () => {
     const fetcher = vi.fn(async () => new Response("private-key provider internal", { status: 401 }));

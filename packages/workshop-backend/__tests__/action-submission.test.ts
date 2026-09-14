@@ -59,8 +59,13 @@ describe("повтор отправки действия в очередь", () 
     await expect(sharing.createShareLink({caller,role:"use"})).rejects.toThrow(/личные/);
     const restarted = make(durable).impl;
     await expect((await restarted.getSharingManager()).createShareLink({caller,role:"build"})).rejects.toThrow(/личные/);
-    await impl.submitAction(3,42,description,{from:"agent",chatId:1});
-    expect([...impl.storage.actions.list()].filter(r=>r.type==="action")).toHaveLength(1);
+    impl.storage.gatekeepers.put({id:3,creationSpec:{type:"ambient",vendorId:"mnemos",accountId:0}} as Parameters<typeof impl.storage.gatekeepers.put>[0]);
+    await impl.submitAction(3,42,{...description,ownerApprovalRequired:true},{from:"agent",chatId:1});
+    const action = [...impl.storage.actions.list()].find(r=>r.type==="action") as ActionRecord & {type:"action"};
+    const apply = vi.fn(async()=>{});
+    vi.spyOn(impl,"getGatekeeperFacet").mockReturnValue({applyAction:apply} as ReturnType<typeof impl.getGatekeeperFacet>);
+    await impl.applyPendingAction(action,{type:"user",id:"owner",name:"Владелец"},false,true);
+    expect(apply).toHaveBeenCalledOnce();
     const other = make().impl;
     await expect((await other.getSharingManager()).createShareLink({caller,role:"use"})).resolves.toHaveProperty("key");
   });

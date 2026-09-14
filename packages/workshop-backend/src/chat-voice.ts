@@ -35,7 +35,7 @@ export async function transcribeChatVoice(config: ChatVoiceConfig, bytes: Uint8A
   }
   let response: Response;
   try {
-    response = await fetcher(config.MNEMOS_STT_URL!, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(60_000) });
+    response = await fetcher(config.MNEMOS_STT_URL!, { method: "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(60_000) });
   } catch { throw new Error("Не удалось распознать запись. Попробуйте ещё раз."); }
   if (!response.ok) throw new Error("Не удалось распознать запись. Попробуйте ещё раз.");
   let result: unknown;
