@@ -495,3 +495,16 @@ test("наблюдение личных данных отклоняется до
   const {library, state} = fixture(); const session = await library.startSession(authorizer(state,true) as never);
   await assert.rejects(session.readPersonalDocument("p1","n1"), /Наблюдение/); assert(!state.calls.includes("startWorkshopAgent"));
 });
+
+
+test("подключение проекта остаётся owner-only предложением и повторяется одной карточкой", async () => {
+  const {library,state,admin} = fixture(); const q=authorizer(state); const session=await library.startSession(q as never);
+  const proposal=await session.proposeConnectProject("connect-intake","Проект приёмной");
+  assert.equal(proposal.status,"pending"); assert.equal(q.submitted.length,1);
+  assert.equal(q.submitted[0].description.title,"Подключить проект к агенту Mnemos");
+  assert.equal((q.submitted[0].description as {ownerApprovalRequired?:boolean}).ownerApprovalRequired,true);
+  await assert.rejects(admin.execute("connect-intake",{kind:"connect_project",project:"Проект приёмной"}));
+  await session.proposeConnectProject("connect-intake","Проект приёмной"); assert.equal(q.submitted.length,1);
+  await assert.rejects(session.proposeConnectProject("connect-intake","Другой проект"));
+  await library.applyAction(proposal.action); assert(state.calls.includes("human:approve")); assert(state.calls.includes("admin:execute"));
+});

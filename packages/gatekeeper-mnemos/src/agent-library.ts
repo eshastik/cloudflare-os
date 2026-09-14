@@ -165,6 +165,7 @@ export class MnemosLibrarySession extends RpcTarget {
   async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
   async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
   async listProjects(): Promise<MnemosProject[]> { return this.#calls.listProjects(this.#queue); }
+  async proposeConnectProject(requestId: string, project: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "connect_project", project}); }
   async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
   async proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write") { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "grant_project_access", person, project, domain, mode}); }
   async searchProject(project: string, query: string): Promise<MnemosSearchResult> { return this.#calls.searchProject(this.#queue, project, query); }
@@ -330,7 +331,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       this.ctx.storage.kv.put(`admin:${action}`, proposal);
       this.ctx.storage.kv.put(index, action);
       if (prepared.state === "pending" && !proposal.submitted) {
-        await queue.submitAction(action, {title: request.kind === "create_project" ? "Создать проект" : "Изменить доступ сотрудника", description: prepared.summary, implementsRevert: false, awaitDecision: true, ownerApprovalRequired: true});
+        await queue.submitAction(action, {title: request.kind === "create_project" ? "Создать проект" : request.kind === "connect_project" ? "Подключить проект к агенту Mnemos" : "Изменить доступ сотрудника", description: prepared.summary, implementsRevert: false, awaitDecision: true, ownerApprovalRequired: true});
         this.ctx.storage.kv.put(`admin:${action}`, {...this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)!, submitted: true});
       }
       return {action, summary: prepared.summary, status: prepared.state, ...(prepared.result ? {result: prepared.result} : {})};

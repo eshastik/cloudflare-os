@@ -17,3 +17,9 @@ test("административное предложение не допуск�
     {kind: "create_project", name: "Проект", slug: "project", owner_id: "other"},
   ]) assert.throws(() => checkedAdminOperation(input as AdminOperationRequest));
 });
+
+
+test("подключение проекта допускает только точный выбор проекта", () => {
+  assert.deepEqual(checkedAdminOperation({kind:"connect_project",project:"Приёмная"}), {kind:"connect_project",project:"Приёмная"});
+  for (const bad of [{kind:"connect_project",project:""},{kind:"connect_project",project:"p",person:"user"},{kind:"connect_project",project:"p",mode:"write"}]) assert.throws(()=>checkedAdminOperation(bad as never));
+});

@@ -1,5 +1,6 @@
 /** Ограниченное предложение агента: проект либо доступ существующего человека к файлам. */
 export type AdminOperationRequest =
+  | {kind: "connect_project"; project: string}
   | {kind: "create_project"; name: string; slug: string}
   | {kind: "grant_project_access"; person: string; project: string; domain?: string; mode: "read" | "write"};
 
@@ -19,6 +20,10 @@ export function checkedAdminOperation(input: AdminOperationRequest): AdminOperat
     if (typeof value !== "string" || (!empty && !value) || value.trim() !== value || new TextEncoder().encode(value).length > 255 || /[\u0000-\u001f]/.test(value)) throw new Error(`Некорректное значение: ${label}.`);
     return value;
   };
+  if (input.kind === "connect_project") {
+    if (Object.keys(input).some(k => !["kind", "project"].includes(k))) throw new Error("Лишние параметры подключения проекта.");
+    return {kind: input.kind, project: text(input.project, "проект")};
+  }
   if (input.kind === "create_project") {
     if (Object.keys(input).some(k => !["kind", "name", "slug"].includes(k))) throw new Error("Лишние параметры создания проекта.");
     const name = text(input.name, "название проекта"), slug = text(input.slug, "краткое имя");
