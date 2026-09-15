@@ -1063,6 +1063,12 @@ class MnemosTextDownloadIssuer extends RpcTarget {
       if(side!==0)throw new Error("Invalid tracker side");
       return this.#session.downloadInvitedTracker(projectId,nodeId,version.slice(19));
     }
+    if(version.startsWith("template-baseline:")){
+      if(side!==0)throw new Error("Invalid template side");
+      const {source,ticket}=await this.#session.beginTemplateProposalBaselineDownload(version.slice(18));
+      if(source.project_id!==projectId||source.node_id!==nodeId)throw new Error("Template source mismatch");
+      return ticket;
+    }
     if(version.startsWith("template-proposal:")){
       if(side!==0)throw new Error("Invalid template source side");
       const {source,ticket}=await this.#session.beginTemplateProposalDownload(version.slice(18));
@@ -1082,6 +1088,11 @@ class MnemosTextDownloadIssuer extends RpcTarget {
     }
     if(version.startsWith("tracker-invitation:")){
       await this.#session.validateInvitedTracker(projectId,nodeId,version.slice(19));return;
+    }
+    if(version.startsWith("template-baseline:")){
+      const source=await this.#session.readTemplateProposalBaseline(version.slice(18));
+      if(!source||source.project_id!==projectId||source.node_id!==nodeId)throw new Error("Template source mismatch");
+      return;
     }
     if(version.startsWith("template-proposal:")){
       const source=await this.#session.readTemplateProposalSource(version.slice(18));
@@ -1354,6 +1365,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
 
 
 
+  async readTemplateProposalBaseline(id:string){return this.#session.readTemplateProposalBaseline(id);}
   async readTemplateProposalSource(id:string){return this.#session.readTemplateProposalSource(id);}
   async readSavedTemplateDecision(id:string){return this.#session.readSavedTemplateDecision(id);}
   async saveTemplateDecision(id:string,input:Parameters<MnemosAccountSession["saveTemplateDecision"]>[1]){return this.#session.saveTemplateDecision(id,input);}

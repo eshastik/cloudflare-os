@@ -146,3 +146,20 @@ test('resolution validates explicit override instead of accepting shared fallbac
   return Response.json({selected_scope_id:'team',template_key:'spec',personal:{...version,revision:wrong?2:1}});
  });await account.connect('token');const session=account.session();assert.equal((await session.resolveWorkTemplate('team','spec',{template_id:'template',revision:1})).personal?.revision,1);wrong=true;await assert.rejects(session.resolveWorkTemplate('team','spec',{template_id:'template',revision:1}));
 });
+
+test('сравнение предложения запрашивает точную исходную версию каталога',async()=>{
+ const proposal={proposal_id:'proposal',request_id:'request',user_id:'author',agent_id:'',source_owner_id:'author',template_id:'template',template_revision:2,target_scope_id:'team',target_scope_revision:2,template_key:'spec',expected_catalogue_revision:7,message:'Обновить',scope_path:[{scope_id:'team',revision:2}],created_at:'2026-09-09T00:00:00Z'};
+ const shared={scope_id:'team',template_key:'spec',revision:7,proposal_id:'approved',approved_by:'reviewer',approved_at:'2026-09-09T00:00:00Z',source:version};
+ let mode='ok';const requests:string[]=[];
+ const account=new MnemosAccount(storage(),'https://memory.example',async(url,init)=>{
+  const path=new URL(String(url)).pathname;requests.push(String(url));
+  if(path.endsWith('/whoami'))return Response.json({subject:{tenant_id:'org',user_id:'reviewer'}});
+  if(mode==='revoked')return new Response('',{status:403});
+  if(path.endsWith('/template-promotions/proposal'))return Response.json({proposal});
+  if(path.endsWith('/download')){assert.deepEqual(JSON.parse(String(init?.body)),{revision:7});return Response.json({head:mode==='changed'?'f'.repeat(64):version.source_head,node_id:version.node_id,content_type:version.content_type,term_index:0,method:'GET',url:'https://objects.example/file',size_bytes:12,sha256_hex:'b'.repeat(64)})}
+  assert(String(url).endsWith('/template-scopes/team/templates/spec?revision=7'));return Response.json(shared);
+ });
+ await account.connect('token');const session=account.session();const out=await session.beginTemplateProposalBaselineDownload('proposal');assert.deepEqual(out.source,version);assert(!requests.some(url=>url.includes('revision=0')));
+ mode='changed';await assert.rejects(session.beginTemplateProposalBaselineDownload('proposal'));
+ mode='revoked';await assert.rejects(session.readTemplateProposalBaseline('proposal'));
+});

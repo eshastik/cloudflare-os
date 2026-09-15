@@ -8,6 +8,7 @@ function api(){let saved=null,decision=null;const writes=[];return {writes,
  async listTemplateProposals(){return {proposals:[{proposal,decision},{proposal:{...proposal,proposal_id:"own",user_id:"alice"}}],next_cursor:""};},
  async readTemplateProposal(){return {proposal,decision};},
  async readSavedTemplateDecision(){return saved;},
+ async readTemplateProposalBaseline(){return null;},
  async readTemplateProposalSource(){return {proposal_id:"q",source:{template_id:"template",revision:2,source_head:"a".repeat(64),project_id:"project",node_id:"doc",content_type:"text/plain"}};},
  async saveTemplateDecision(id,input){writes.push(input);saved={proposal:id,input};return saved;},
  async executeSavedTemplateDecision(){decision={approved:saved.input.approved};saved={...saved,receipt:decision};return saved;},
@@ -56,4 +57,23 @@ test("Предложенный Blueprint открывается отдельно
   assert.deepEqual(app.calls.find(([method])=>method==='openTemplateProposal'),['openTemplateProposal','project','doc','q']);
   assert.equal(backend.writes.length,0,'открытие не утверждает предложение');
  }finally{app.dispose();}
+});
+
+test('при недоступной общей версии нельзя одобрить неполное сравнение',async()=>{
+ const backend=api();backend.readTemplateProposalBaseline=async()=>{throw Error('forbidden')};
+ const app=await mountMemoryApp(backend,{section:'approvals'});
+ try{await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.button('Повторить проверку'),'отказ сравнения');app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),'Проверено');assert.equal(app.button('Одобрить шаблон').disabled,true);assert.equal(backend.writes.length,0)}finally{app.dispose()}
+});
+
+test('общая и предложенная версии видны рядом до принятия решения',async()=>{
+ const backend=api();backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:'text/plain'});
+ const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>version.startsWith('template-baseline:')?'Утверждённый текст':'Предлагаемый текст'});
+ try{
+  await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
+  await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
+  assert.match(app.document.querySelector('[aria-label="До изменений"]').textContent,/общая версия 7.*Утверждённый текст/);
+  assert.match(app.document.querySelector('[aria-label="Предложенная версия"]').textContent,/Предлагаемый текст/);
+  assert.deepEqual(app.calls.find(([method,_p,_n,version])=>method==='downloadText'&&version.startsWith('template-baseline:')),['downloadText','old-project','old-doc','template-baseline:q',0]);
+  assert.equal(backend.writes.length,0);
+ }finally{app.dispose()}
 });

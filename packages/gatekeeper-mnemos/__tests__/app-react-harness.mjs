@@ -103,7 +103,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
     async openApprovals() { calls.push(["openApprovals"]); }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
-    async downloadText(...args) { calls.push(["downloadText",...args]); return options.downloadText ?? "текст"; }
+    async downloadText(...args) { calls.push(["downloadText",...args]); return typeof options.downloadText === "function" ? options.downloadText(...args) : options.downloadText ?? "текст"; }
     async downloadReviewText(...args) {calls.push(["downloadReviewText",...args]); return args[3]==="before"?"Исходный текст":"Новая версия";}
   }
   let frame; const ports = [];

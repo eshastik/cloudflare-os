@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../app/template-source.ts',import.meta.url))],bundle:true,format:'esm',platform:'node',write:false});
-const {readTemplateProposalText}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {readTemplateProposalText,readTemplateBaselineText}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const source={proposal_id:'proposal',source:{template_id:'template',revision:2,source_head:'a'.repeat(64),project_id:'project',node_id:'node',content_type:'text/plain'}};
 test('template preview uses host capability and rechecks source after transfer',async()=>{
  let reads=0;const text='<script>Exact source</script>';
@@ -29,4 +29,16 @@ test('предпросмотр Blueprint показывает текст док�
   value.blueprint.archiveSHA256='0'.repeat(64);
   await assert.rejects(readTemplateProposalText({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(value)));
  }finally{dom.window.close();delete globalThis.document}
+});
+
+test('сравнение читает закреплённую общую версию и проверяет её после передачи',async()=>{
+ let reads=0;
+ const result=await readTemplateBaselineText({readTemplateProposalBaseline:async()=>{reads++;return source.source}},'proposal',async(...args)=>{assert.deepEqual(args,['project','node','template-baseline:proposal',0]);return 'Ранее утверждённый текст'});
+ assert.equal(result,'Ранее утверждённый текст');assert.equal(reads,3);
+ let called=false;assert.equal(await readTemplateBaselineText({readTemplateProposalBaseline:async()=>null},'proposal',async()=>{called=true}),null);assert.equal(called,false);
+});
+test('недоступная или изменившаяся исходная версия не попадает в сравнение',async()=>{
+ for(const mode of ['revoked','changed']){
+  let reads=0;await assert.rejects(readTemplateBaselineText({readTemplateProposalBaseline:async()=>{reads++;if(reads===3&&mode==='revoked')throw Error('denied');return reads===3?{...source.source,source_head:'b'.repeat(64)}:source.source}},'proposal',async()=>'old'));
+ }
 });

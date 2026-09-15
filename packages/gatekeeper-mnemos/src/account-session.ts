@@ -1202,6 +1202,8 @@ export class MnemosAccountSession {
 
 
   async readTemplateProposalSource(id:string){this.#check();const out=await this.#client.readTemplateProposalSource(id,this.#lifetime.signal);this.#check();return out;}
+  async readTemplateProposalBaseline(id:string){this.#check();const out=await this.#client.readTemplateProposalBaseline(id,this.#lifetime.signal);this.#check();return out;}
+  async beginTemplateProposalBaselineDownload(id:string){this.#check();const out=await this.#client.beginTemplateProposalBaselineDownload(id,this.#lifetime.signal);this.#check();return out;}
   async beginTemplateProposalDownload(id:string){this.#check();const out=await this.#client.beginTemplateProposalDownload(id,this.#lifetime.signal);this.#check();return out;}
   private templateReviewActions(){return new TemplateReviewActions(this.requestStorage,this.#client,()=>this.#check(),this.#lifetime.signal);}
   async readSavedTemplateDecision(id:string){return this.templateReviewActions().read(id);}

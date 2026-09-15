@@ -297,6 +297,21 @@ export class MnemosAPI {
     const out=await this.#request<TemplateProposalSource>(`/v1/template-promotions/${segment(id)}/source`,"GET",signal);
     if(!out||out.proposal_id!==id||!validWorkTemplate(out.source))throw new MnemosAPIError(502);return out;
   }
+  async readTemplateProposalBaseline(id:string,signal?:AbortSignal):Promise<WorkTemplateVersion|null>{
+    const {proposal}=await this.readTemplateProposal(id,signal);
+    if(!proposal.expected_catalogue_revision)return null;
+    const version=await this.readScopedWorkTemplate(proposal.target_scope_id,proposal.template_key,proposal.expected_catalogue_revision,signal);
+    return version.source;
+  }
+  async beginTemplateProposalBaselineDownload(id:string,signal?:AbortSignal){
+    const {proposal}=await this.readTemplateProposal(id,signal);
+    if(!proposal.expected_catalogue_revision)throw new MnemosAPIError(404);
+    const source=await this.readTemplateProposalBaseline(id,signal);
+    if(!source)throw new MnemosAPIError(404);
+    const ticket=await this.#request<DraftDownloadTicket&{content_type:string}>(`/v1/template-scopes/${segment(proposal.target_scope_id)}/templates/${segment(proposal.template_key)}/download`,"POST",signal,{revision:proposal.expected_catalogue_revision});
+    if(!ticket||ticket.head!==source.source_head||ticket.node_id!==source.node_id||ticket.term_index!==0||ticket.content_type!==source.content_type||ticket.method!=="GET"||!Number.isSafeInteger(ticket.size_bytes)||ticket.size_bytes<0||!/^[0-9a-f]{64}$/.test(ticket.sha256_hex)||typeof ticket.url!=="string")throw new MnemosAPIError(502);
+    return {source,ticket};
+  }
   async beginTemplateProposalDownload(id:string,signal?:AbortSignal){
     const source=await this.readTemplateProposalSource(id,signal);
     const ticket=await this.#request<DraftDownloadTicket&{content_type:string}>(`/v1/template-promotions/${segment(id)}/source/download`,"POST",signal,{});

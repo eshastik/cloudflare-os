@@ -322,7 +322,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     try {
       const downloads = this.#downloads
       const ticket = await downloads.issuer.issue(scope, resource, version, side)
-      const read = version.startsWith('template-proposal:') ? downloadGatekeeperTemplateText : downloadGatekeeperText
+      const read = (version.startsWith('template-proposal:')||version.startsWith('template-baseline:')) ? downloadGatekeeperTemplateText : downloadGatekeeperText
       const text = await read(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
       await downloads.issuer.validate(scope, resource, version)
       this.#uploadLifetime.signal.throwIfAborted()

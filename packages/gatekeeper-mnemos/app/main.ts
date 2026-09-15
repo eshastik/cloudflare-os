@@ -141,6 +141,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   readTrackerCreation:TrackerManagement["readTrackerCreation"];
   saveTrackerCreation:TrackerManagement["saveTrackerCreation"];
   executeTrackerCreation:TrackerManagement["executeTrackerCreation"];
+ readTemplateProposalBaseline:MnemosAccountSession["readTemplateProposalBaseline"];
  readTemplateProposalSource:MnemosAccountSession["readTemplateProposalSource"];
  readSavedTemplateDecision:MnemosAccountSession["readSavedTemplateDecision"];
  saveTemplateDecision:MnemosAccountSession["saveTemplateDecision"];
