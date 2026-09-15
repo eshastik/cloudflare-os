@@ -1,3 +1,4 @@
+import {MAX_BLUEPRINT_TEMPLATE_BYTES} from '@gadgets/workshop-shared/blueprint-template'
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document"
 import type { GatekeeperDownloadTicket, GatekeeperNativeReviewDownload } from "@gadgets/workshop-shared/gatekeeper"
@@ -9,6 +10,11 @@ export async function downloadGatekeeperText(
   signal: AbortSignal,
 ): Promise<string> {
   return downloadVerifiedText(storageOrigin, ticket, signal, 262144)
+}
+
+/** Снимок шаблона включает код гаджета, поэтому имеет отдельный предел размера. */
+export async function downloadGatekeeperTemplateText(storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal): Promise<string> {
+  return downloadVerifiedText(storageOrigin, ticket, signal, MAX_BLUEPRINT_TEMPLATE_BYTES)
 }
 
 /** Получает исходный файл и проверяет доступ перед сохранением на компьютер. */

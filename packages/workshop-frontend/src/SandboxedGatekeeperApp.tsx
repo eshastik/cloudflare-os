@@ -14,7 +14,7 @@ import type { ResolvedThemeMode } from './theme'
 import { forwardTrustedFrameError } from './errorReporting'
 import { uploadGatekeeperText } from './gatekeeperAppUpload'
 import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
-import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText } from './gatekeeperAppDownload'
+import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { useAuthenticatedApi } from './AuthContext'
 import {
@@ -313,7 +313,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
     try {
       const downloads = this.#downloads
       const ticket = await downloads.issuer.issue(scope, resource, version, side)
-      const text = await downloadGatekeeperText(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
+      const read = version.startsWith('template-proposal:') ? downloadGatekeeperTemplateText : downloadGatekeeperText
+      const text = await read(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
       await downloads.issuer.validate(scope, resource, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text

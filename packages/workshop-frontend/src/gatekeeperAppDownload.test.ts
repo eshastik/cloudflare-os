@@ -1,6 +1,6 @@
 import { uploadGatekeeperOfficePreview } from './gatekeeperAppUpload'
 import { afterEach, expect, it, vi } from 'vitest'
-import { downloadGatekeeperFile, downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
+import { downloadGatekeeperTemplateText, downloadGatekeeperFile, downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
 const origin = 'https://objects.example'
 afterEach(() => vi.unstubAllGlobals())
 
@@ -140,3 +140,14 @@ it('сохраняет бинарный документ без перекоди
  expect(validate).toHaveBeenCalledOnce();
  await expect(downloadGatekeeperFile(origin,ticket,new AbortController().signal,async()=>{throw Error('revoked')})).rejects.toThrow('revoked');
 });
+
+it('снимок шаблона имеет отдельный предел, обычное чтение остаётся ограниченным', async()=>{
+ const text='x'.repeat(300_000),bytes=new TextEncoder().encode(text)
+ const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('')
+ const ticket={url:origin+'/template',method:'GET',size_bytes:bytes.length,sha256_hex:hash}
+ vi.stubGlobal('fetch',vi.fn<typeof fetch>(async()=>new Response(bytes)))
+ const signal=new AbortController().signal
+ await expect(downloadGatekeeperTemplateText(origin,ticket,signal)).resolves.toBe(text)
+ await expect(downloadGatekeeperText(origin,ticket,signal)).rejects.toThrow('Document download failed.')
+ await expect(downloadGatekeeperTemplateText(origin,{...ticket,size_bytes:49*1024*1024},signal)).rejects.toThrow('Document download failed.')
+})
