@@ -10,6 +10,34 @@ export class BlueprintTemplates extends RpcTarget {
   async projects() { return this.session.listProjects() }
   async scopes(cursor = '') { return this.session.listTemplateScopes(cursor) }
   async templates(scope: string, cursor = '') { return this.session.listScopedWorkTemplates(scope, cursor) }
+  async apply(scope: string, template: string, revision: number, project: string, name: string, operation: string) {
+    if (!/^[a-f0-9-]{36}$/.test(operation)) throw new Error('Некорректная операция')
+    const key = `blueprint-application:${operation}`
+    const input = {scope, template, revision, project, name}
+    let saved = this.storage.get<{input: typeof input; action: string; document?: {node_id: string; head: string}}>(key)
+    if (saved && JSON.stringify(saved.input) !== JSON.stringify(input)) throw new Error('Операция уже относится к другому шаблону')
+    if (!saved) {
+      const {head} = await this.session.openDraft(project)
+      const previous = await this.session.readSavedTemplateAction(project)
+      const action = await this.session.saveTemplateAction(project, {kind:'create', template, scope,
+        input:{request_id:operation, revision, project_id:project, parent_id:'', name, expected_head:head, message:'Рабочая копия общего шаблона'}}, previous?.id ?? '')
+      saved = {input, action:action.id}
+      this.storage.put(key, saved)
+    }
+    let document = saved.document
+    if (!document) {
+      const result = await this.session.executeSavedTemplateAction(project, saved.action)
+      if (result.receipt?.kind !== 'create') throw new Error('Создание копии не подтверждено')
+      document = result.receipt.document
+      this.storage.put(key, {...saved, document})
+    }
+    const ticket = await this.session.downloadPrivateVersion(project, document.node_id, document.head)
+    if (ticket.content_type !== BLUEPRINT_TEMPLATE_MIME) throw new Error('Этот шаблон не является гаджетом')
+    return {ticket, node:document.node_id, head:document.head}
+  }
+  async validateApplication(project: string, node: string, head: string) {
+    await this.session.checkPrivateVersionRead(project, node, head)
+  }
   async prepare(project: string, title: string, purpose: string) {
     if (!title.trim() || title.length > 200 || !purpose.trim() || purpose.length > 2000) throw new Error('Укажите название и назначение шаблона')
     const { head } = await this.session.openDraft(project)

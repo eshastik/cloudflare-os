@@ -416,6 +416,13 @@ export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
   save(): Promise<GatekeeperTemplateVersion>;
 }
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  /** Утверждённые версии выбранного уровня; возвращается курсор следующей страницы. */
+  templates(scope: string, cursor?: string): Promise<{templates: {scope_id: string; template_key: string; revision: number; source: {title: string; purpose: string; content_type: string}}[]; next_cursor?: string}>;
+  /** Создаёт личную копию утверждённой версии в выбранном проекте. Повтор использует тот же идентификатор операции. */
+  apply(scope: string, template: string, revision: number, project: string, name: string, operation: string): Promise<{ticket: GatekeeperDownloadTicket; node: string; head: string}>;
+  /** Повторно проверяет чтение копии после загрузки её содержимого. */
+  validateApplication(project: string, node: string, head: string): Promise<void>;
+
   scopes(cursor?: string): Promise<{scopes: {scope_id: string; revision: number; level: "organization" | "department" | "group"; name: string; enabled: boolean}[]; next_cursor?: string}>;
   projects(): Promise<{projects: {id: string; name: string}[]}>;
   prepare(project: string, title: string, purpose: string): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
