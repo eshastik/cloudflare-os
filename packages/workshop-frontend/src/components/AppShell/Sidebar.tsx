@@ -4,6 +4,7 @@ import {
   Blueprint,
   BookOpen,
   Compass,
+  FolderOpen,
   Hexagon,
   House,
   MagnifyingGlass,
@@ -130,13 +131,13 @@ export default function Sidebar({
               icon={<SquaresFour size={14} weight="regular" />}
               collapsed={collapsed}
             />
-            {gatekeeperApps.flatMap(app=>(app.sections??[]).filter(section=>section.id==='documents').map(section=>(
-              <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>
+            {gatekeeperApps.flatMap(app=>(app.sections??[]).filter(section=>section.id==='projects'||section.id==='documents').toSorted((a,b)=>Number(b.id==='projects')-Number(a.id==='projects')).map(section=>(
+              <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={section.id==='projects'?<FolderOpen size={14}/>:<BookOpen size={14}/>} collapsed={collapsed}/>
             )))}
             <details className="mt-2">
               <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Управление и инструменты" title={collapsed?"Управление и инструменты":undefined}><GearSix size={14}/>{!collapsed&&'Управление и инструменты'}</summary>
               {gatekeeperApps.map(app=>{
-                const sections=(app.sections??[]).filter(section=>section.id!=='documents');
+                const sections=(app.sections??[]).filter(section=>section.id!=='documents'&&section.id!=='projects');
                 return <div key={`${app.id}:${app.accountId}`}>
                   {!app.sections?.length&&<SidebarItem to="/gatekeepers/$appId" params={{appId:app.id}} search={{account:app.accountId}} account={app.accountId} label={app.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>}
                   {sections.map(section=><SidebarItem key={section.id} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>)}

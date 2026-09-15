@@ -1,3 +1,4 @@
+import { BlueprintTemplates } from "./blueprint-templates.ts";
 import { managementSections } from "./management-sections.ts";
 import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
@@ -808,7 +809,7 @@ export class UserAccount extends DurableObject<Env> {
       const url = new URL(storageOrigin);
       if (url.protocol !== "https:" || url.origin !== storageOrigin) throw new Error("Invalid storage origin");
     }
-    return { iframeHtml: APP_HTML, ui: await this.openManagementSession(),
+    return { ...(storageOrigin ? { blueprintTemplates: { storageOrigin, selector: new RpcStub(new BlueprintTemplates(this.#account().session(), this.#operationStorage())) } } : {}), iframeHtml: APP_HTML, ui: await this.openManagementSession(),
       organizationMetrics: new RpcStub(new MnemosOrganizationMetrics(this.#account().session(),this.#origins().apiOrigin)),
       agentConsent: new RpcStub(new MnemosAgentConsent(this.#account().session())),
       ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin))) } } : {}),
@@ -1034,8 +1035,8 @@ class MnemosAgentDraftWriter extends RpcTarget {
 class MnemosInboxUploadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) {super();this.#session=session;}
-  async issue(size:number,checksum:string) {return this.#session.beginInboxUpload(size,checksum);}
-  async submit(uploadId:string,sourcePath:string,modifiedAt:number) {return this.#session.submitInboxUpload(uploadId,sourcePath,modifiedAt);}
+  async issue(size:number,checksum:string,project?:string) {return project ? this.#session.beginProjectUpload(project,size,checksum) : this.#session.beginInboxUpload(size,checksum);}
+  async submit(uploadId:string,sourcePath:string,modifiedAt:number,project?:string) {return project ? this.#session.submitProjectUpload(project,uploadId,sourcePath,modifiedAt) : this.#session.submitInboxUpload(uploadId,sourcePath,modifiedAt);}
   [Symbol.dispose]():void {this.#session.dispose();}
 }
 

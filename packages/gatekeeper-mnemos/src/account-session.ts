@@ -533,6 +533,18 @@ export class MnemosAccountSession {
     if (!identity.capabilities?.includes("project.create")) throw new MnemosAPIError(403);
   }
   async beginInboxUpload(size: number, checksum: string) {await this.requireIntakeManager();const result=await this.#client.beginInboxUpload(size,checksum,this.#lifetime.signal);this.#check();return result;}
+  async beginProjectUpload(projectId: string, size: number, checksum: string) {
+    this.#check();
+    const ticket = await this.#client.beginProjectUpload(projectId, size, checksum, this.#lifetime.signal);
+    this.#check();
+    return ticket;
+  }
+  async submitProjectUpload(projectId: string, uploadId: string, sourcePath: string, modifiedAt?: number) {
+    this.#check();
+    const result = await this.#client.submitProjectUpload(projectId, uploadId, sourcePath, modifiedAt, this.#lifetime.signal);
+    this.#check();
+    return result;
+  }
   async submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number) {await this.requireIntakeManager();const result=await this.#client.submitInboxUpload(uploadId,sourcePath,modifiedAt,this.#lifetime.signal);this.#check();return result;}
   async inboxStatus() {await this.requireIntakeManager();const result=await this.#client.inboxStatus(this.#lifetime.signal);this.#check();return result;}
   async inboxAlerts(decided=false) {await this.requireIntakeManager();const result=await this.#client.inboxAlerts(decided,this.#lifetime.signal);this.#check();return result;}
@@ -1205,6 +1217,7 @@ export class MnemosAccountSession {
   async listScopedWorkTemplates(scope:string,cursor=""){this.#check();const out=await this.#client.listScopedWorkTemplates(scope,cursor,this.#lifetime.signal);this.#check();return out;}
   async readScopedWorkTemplate(scope:string,key:string,revision:number){this.#check();const out=await this.#client.readScopedWorkTemplate(scope,key,revision,this.#lifetime.signal);this.#check();return out;}
   async listWorkTemplates(project:string,cursor="") {this.#check();const out=await this.#client.listWorkTemplates(project,cursor,this.#lifetime.signal);this.#check();return out;}
+  async saveWorkTemplateSnapshot(id:string,input:Parameters<MnemosAPI["saveWorkTemplate"]>[1]) {this.#check();const out=await this.#client.saveWorkTemplate(id,input,this.#lifetime.signal);this.#check();return out;}
   async readWorkTemplate(id:string,revision:number) {this.#check();const out=await this.#client.readWorkTemplate(id,revision,this.#lifetime.signal);this.#check();return out;}
   private templateActions(){return new TemplateActions(this.requestStorage,this.#client,()=>this.#check(),this.#lifetime.signal);}
   async readSavedTemplateAction(project:string){return this.templateActions().read(project);}

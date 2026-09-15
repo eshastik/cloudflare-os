@@ -1,3 +1,4 @@
+import type {NativeDocumentLaunch} from './nativeDocumentLaunch'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Plus, SidebarSimple, X } from '@phosphor-icons/react'
 import type { RpcStub } from 'capnweb'
@@ -15,6 +16,7 @@ import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 export type PanelSection = 'save' | 'conflict' | 'invite' | 'open' | 'bind'
 type Props = {
+  launch?: NativeDocumentLaunch; onLaunchConsumed?(): void
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
   status: DocumentStatusHandle; section: PanelSection | null; onSection(section: PanelSection | null): void; onClose(): void; onCollapseChat?(): void
 }
@@ -59,7 +61,7 @@ function Avatar({ name }: { name: string }) {
   return <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-kumo-fill text-[11px] font-semibold text-kumo-default">{initials}</span>
 }
 
-export default function DocumentVersionPanel({ gadget, format, snapshotSource, chatId, disabled, status, section, onSection, onClose, onCollapseChat }: Props) {
+export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget, format, snapshotSource, chatId, disabled, status, section, onSection, onClose, onCollapseChat }: Props) {
   const docked = useDocked()
   const { binding, data, model } = status
   const [comparison, setComparison] = useState<ReviewComparison | null>(null), [comparing, setComparing] = useState(false), [compareError, setCompareError] = useState('')
@@ -176,9 +178,10 @@ export default function DocumentVersionPanel({ gadget, format, snapshotSource, c
       </Section>}
 
       {chatId === undefined && <NativeDocumentOpen gadget={gadget} format={format} snapshotSource={snapshotSource} disabled={disabled} open={section === 'open'}
-        initialAccountId={binding?.accountId ?? undefined} initialScope={binding?.scope} initialResource={binding?.resource || undefined}
-        onOpened={result => status.bindAtEditorRevision({ accountId: result.accountId, scope: result.scope, resource: result.resource })}
-        onClose={() => onSection(null)} reconnect={() => window.location.reload()} />}
+        initialPublication={launch?.publication}
+        initialAccountId={launch?.accountId ?? binding?.accountId ?? undefined} initialScope={launch?.scope ?? binding?.scope} initialResource={launch?.resource ?? (binding?.resource || undefined)}
+        onOpened={async result => { await status.bindAtEditorRevision({ accountId: result.accountId, scope: result.scope, resource: result.resource }); onLaunchConsumed?.() }}
+        onClose={() => { onLaunchConsumed?.(); onSection(null) }} reconnect={() => window.location.reload()} />}
 
       <Section label="Согласование мне" name="inbox">
         <NativeDocumentReviewInbox format={format} closable={false} />

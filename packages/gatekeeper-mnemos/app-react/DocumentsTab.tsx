@@ -79,6 +79,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   async function open(row: DocumentRow) {
     setOpened({ row, content: null, error: "" });
     try {
+      if (await host.openNativeDocument(row.projectId, row.nodeId)) return;
       let content: DocumentContent;
       if (row.privateOnly) {
         const doc = await ui.readDraftDocument(row.projectId, row.nodeId);

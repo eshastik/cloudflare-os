@@ -66,7 +66,7 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
     {!section && <p>Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел недоступен с вашими текущими полномочиями."}</p> : <LegacySwitch state={tools}>
       {section === "my-work" && <MyWorkTab data={data} />}
-      {section === "projects" && <ProjectsTab initialProject={selectedProject} data={data} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("sources")} />}
+      {section === "projects" && <ProjectsTab initialProject={selectedProject} data={data} onSelectProject={project => open("projects", project)} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("sources")} />}
       {section === "documents" && <DocumentsTab data={data} initialProject={documentsProject} />}
       {section === "approvals" && <ApprovalsTab data={data} />}
       {section === "sources" && <SourcesTab data={data} />}

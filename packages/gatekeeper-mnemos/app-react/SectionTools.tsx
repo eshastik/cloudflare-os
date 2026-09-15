@@ -5,7 +5,6 @@ import type { SectionId } from "./navigation.ts";
 type Tool = {title:string; note:string; kind: Exclude<LegacySection, { project:string } | {binding:string}>["kind"]};
 const tools: Partial<Record<SectionId, Tool[]>> = {
   "my-work": [{ title:"Аудио", note:"Запись и расшифровка рабочих сообщений", kind:"voice" }],
-  projects: [{title:"Ресурсы проекта", note:"Связанные материалы и подготовка изменений",kind:"resourceMap"}],
   sources: [
     {title:"Перенос из Jira",note:"Задачи и структура проектов",kind:"jiraImport"},
     {title:"Перенос из Bitrix24",note:"Рабочие данные и подразделения",kind:"bitrixImport"},

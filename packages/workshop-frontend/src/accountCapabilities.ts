@@ -32,7 +32,7 @@ export async function listAccounts(api: Pick<Api, 'subscribeConnectedAccounts'>)
   return [...accounts.values()]
 }
 
-type StoreCapability = 'nativeWrites' | 'nativeDownloads'
+type StoreCapability = 'nativeWrites' | 'nativeDownloads' | 'blueprintTemplates'
 type StoreFrame<K extends StoreCapability> = Frame & { [P in K]: NonNullable<Frame[P]> }
 export type NativeWritesFrame = StoreFrame<'nativeWrites'>
 export type NativeDownloadsFrame = StoreFrame<'nativeDownloads'>
@@ -62,3 +62,5 @@ export async function openAgentConsentFrame(api: Api): Promise<{ frame: AgentCon
   }
   return null
 }
+
+export const openBlueprintTemplatesFrame = (api: Api, accountId: number) => openStoreFrame(api, 'blueprintTemplates', accountId)

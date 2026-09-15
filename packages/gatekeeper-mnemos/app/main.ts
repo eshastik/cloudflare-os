@@ -284,12 +284,14 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   revokeAgentConnection(id: string): Promise<void>;
 }
 export interface Host extends RpcTarget {
+  openNativeDocument(project: string, resource: string): Promise<boolean>;
+  openPrompt(prompt: string): void;
   setUnsavedChanges(dirty: boolean): void;
   subscribeAccent(frame: RpcTarget): string;
   getSelectedSection(): string;
   /** Представление рядом с беседой без изменения прав. */
   getPresentationMode(): Promise<string>;
-  pickInboxFiles(directory: boolean): Promise<import("../src/intake.ts").PickedIntakeFile[]>;
+  pickInboxFiles(directory: boolean, project?: string): Promise<import("../src/intake.ts").PickedIntakeFile[]>;
   openSection(section: string, project?: string): void;
   openApprovals(): Promise<void>;
   getSelectedProject(): Promise<string>;

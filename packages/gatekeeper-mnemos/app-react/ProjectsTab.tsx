@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@cloudflare/kumo";
-import { FileText } from "@phosphor-icons/react";
+import { FileText, UploadSimple } from "@phosphor-icons/react";
+import type { PickedIntakeFile } from "../src/intake.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
-import { useUi } from "./host.ts";
+import { useHost, useUi } from "./host.ts";
 import { agentEnvironment, documentRows, useLoad, type MemoryData, type ProjectData } from "./data.ts";
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
 import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
@@ -10,19 +11,19 @@ import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput }
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 const MATERIALS_LIMIT = 8;
 
-export default function ProjectsTab({ data, initialProject = "", onOpenDocuments, onOpenSources }: { initialProject?: string; data: MemoryData; onOpenDocuments(project: string): void; onOpenSources(): void }) {
+export default function ProjectsTab({ data, initialProject = "", onSelectProject, onOpenDocuments, onOpenSources }: { initialProject?: string; data: MemoryData; onSelectProject(project: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
   const legacy = useLegacySection();
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
-  const selected = data.projects.find(p => p.id === selectedId) ?? data.projects[0] ?? null;
+  const selected = selectedId ? data.projects.find(p => p.id === selectedId) ?? null : data.projects[0] ?? null;
 
   return (
     <LegacySwitch state={legacy}>
       <div className="grid grid-cols-[208px_minmax(0,1fr)] gap-6 max-md:grid-cols-1">
         <nav aria-label="Список проектов" className="flex flex-col gap-0.5">
-          <div className="px-2.5 pt-1 pb-2"><Eyebrow>Проекты организации</Eyebrow></div>
+          <div className="px-2.5 pt-1 pb-2"><Eyebrow>Мои проекты</Eyebrow></div>
           {data.projects.map(p => (
-            <button key={p.id} type="button" onClick={() => setSelectedId(p.id)} aria-current={selected?.id === p.id ? "true" : undefined}
+            <button key={p.id} type="button" onClick={() => { if (selected?.id !== p.id) { setSelectedId(p.id); onSelectProject(p.id); } }} aria-current={selected?.id === p.id ? "true" : undefined}
               className={`flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] leading-[18px] tracking-[-0.25px] ${selected?.id === p.id ? "bg-kumo-fill font-medium text-kumo-strong" : "text-kumo-default hover:bg-kumo-tint"}`}>
               <span className="min-w-0 flex-1 truncate">{p.name}</span>
             </button>
@@ -31,13 +32,13 @@ export default function ProjectsTab({ data, initialProject = "", onOpenDocuments
           {data.projectsError && <Notice tone="danger">{data.projectsError}</Notice>}
           {!data.projectsLoading && !data.projectsError && data.projects.length === 0 && <Notice>Доступных проектов нет.</Notice>}
           {data.identity?.capabilities?.includes("project.create") && <Button variant="secondary" size="sm" onClick={() => setCreating(true)}>Создать проект</Button>}
-          {creating && <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); }} onCancel={() => setCreating(false)} />}
+          {creating && <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />}
 
         </nav>
         <div className="min-w-0">
           {selected
             ? <ProjectPage key={selected.id} project={selected} data={data} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} openLegacy={legacy.open} />
-            : !data.projectsLoading && <Notice>Выберите проект слева.</Notice>}
+            : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
         </div>
       </div>
     </LegacySwitch>
@@ -46,6 +47,27 @@ export default function ProjectsTab({ data, initialProject = "", onOpenDocuments
 
 function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy }: { project: ProjectData; data: MemoryData; onOpenDocuments(): void; onOpenSources(): void; openLegacy: ReturnType<typeof useLegacySection>["open"] }) {
   const ui = useUi();
+  const host = useHost();
+  const [actionError, setActionError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploaded, setUploaded] = useState<PickedIntakeFile[]>([]);
+  useEffect(() => {
+    const refresh = (event: MessageEvent) => {
+      if (event.source === window.parent && event.data?.type === "mnemos-inbox-updated") void data.reloadProjects();
+    };
+    window.addEventListener("message", refresh);
+    return () => window.removeEventListener("message", refresh);
+  }, [data.reloadProjects]);
+  async function upload(directory: boolean) {
+    if (uploading) return;
+    setUploading(true); setActionError("");
+    try {
+      const result = await host.pickInboxFiles(directory, project.id);
+      if (result.length) { setUploaded(result); await data.reloadProjects(); }
+    } catch { setActionError("Загрузка не завершена. Проверьте материалы проекта перед повтором."); }
+    finally { setUploading(false); }
+  }
+
   const policy = useLoad(() => ui.readPublicationPolicy(project.id), "Политика согласования не прочитана: нет права или сервер отказал.", [ui, project.id]);
   const approvers = useLoad(() => ui.listPolicyApprovers(project.id, ""), "Список согласующих не прочитан.", [ui, project.id]);
   const mail = useLoad(() => ui.listMailConnections(""), "почта: сервер отказал", [ui]);
@@ -74,31 +96,31 @@ function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy
           <h2 className="m-0 text-lg font-semibold text-kumo-strong">{project.name}</h2>
           <p className="mt-1 mb-0 text-[12px] text-kumo-subtle">{materials.length}{project.truncated ? "+" : ""} документов · {work.length} обращений · {agents.length} ваших агентов</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "tracker", project: project.id }, "Трекер проекта")}>Трекер</Button>
-        <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "policy", project: project.id }, "Настройка согласований")}>Настроить согласования</Button>
+        <Button size="sm" onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}» (ID: ${project.id}).\n\n`).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
       </div>
-      {/* Роль в проекте ничего не разрешает сама по себе: каждое действие проверяет сервер. */}
-      <p className="mt-0 mb-4 text-[12px] text-kumo-subtle">Роли ниже взяты из политики согласования. Права на действия проверяет сервер при каждом обращении; роль их не заменяет.</p>
+      {actionError && <Notice tone="danger">{actionError}</Notice>}
 
-      <Block title="Участники и направления" count={members.length} empty={policy.error || approvers.error || "Участники не назначены: в политике согласования нет согласующих."}>
-        <RowList>
-          {members.map(member => (
-            <Row key={member.id}>
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-kumo-fill text-[11px] font-semibold text-kumo-subtle">{initials(member.name)}</span>
-              <RowText title={member.name} note={member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"} />
-              {member.domains.map(d => <StatusBadge key={d} tone="info">{d}</StatusBadge>)}
-            </Row>
-          ))}
-        </RowList>
-      </Block>
 
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" disabled={uploading} onClick={() => void upload(false)}><UploadSimple size={15} />Загрузить файлы</Button>
+        <Button variant="ghost" size="sm" disabled={uploading} onClick={() => void upload(true)}>Выбрать папку</Button>
+        {uploading && <span role="status" className="text-sm text-kumo-subtle">Загружаем в проект…</span>}
+      </div>
+      {uploaded.length > 0 && <div className="mb-5 text-sm" role="status">
+        <p className="text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
+        {uploaded.some(file => file.receipt?.placement_state === "personal") && <p>Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
+        {uploaded.filter(file => file.error).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
+      </div>}
       <Block title="Материалы" count={materials.length} empty={project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет."}
         actions={<Button variant="ghost" size="sm" onClick={onOpenDocuments}>Все документы проекта</Button>}>
         <RowList>
           {materials.slice(0, MATERIALS_LIMIT).map(row => (
             <Row key={row.nodeId} data-document={row.nodeId}>
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-kumo-line bg-kumo-elevated text-kumo-subtle"><FileText size={14} aria-hidden="true" /></span>
-              <RowText title={row.name} />
+              <button type="button" className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-kumo-default hover:underline" onClick={() => {
+                setActionError("");
+                void host.openNativeDocument(project.id, row.nodeId).then(opened => { if (!opened) onOpenDocuments(); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
+              }}>{row.name}</button>
               <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
             </Row>
           ))}
@@ -106,6 +128,15 @@ function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy
         {materials.length > MATERIALS_LIMIT && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показаны первые {MATERIALS_LIMIT}; остальные — во вкладке «Документы».</p>}
       </Block>
 
+      <details className="mt-6">
+        <summary className="cursor-pointer py-2 text-sm text-kumo-subtle">Участники и настройки проекта</summary>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "tracker", project: project.id }, "Трекер проекта")}>Трекер</Button>
+          <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "policy", project: project.id }, "Настройка согласований")}>Настроить согласования</Button>
+        </div>
+        <Block title="Участники и направления" count={members.length} empty={policy.error || approvers.error || "Участники не назначены."}>
+          <RowList>{members.map(member => <Row key={member.id}><RowText title={member.name} note={member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"} /></Row>)}</RowList>
+        </Block>
       <Block title="Текущая работа" count={work.length + (task ? 1 : 0)} empty={data.collaborationsError || "Текущей работы нет: обращений и задач агентов по проекту не найдено."}
         actions={<Button variant="ghost" size="sm" onClick={() => openLegacy({ kind: "collaborations" }, "Обращения и обсуждения")}>Обращения</Button>}>
         <RowList>
@@ -162,6 +193,7 @@ function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy
           ))}
         </RowList>
       </Block>
+      </details>
     </div>
   );
 }
@@ -173,10 +205,6 @@ function membersByDomain(policy: PublicationPolicy | null, names: Map<string, st
   }
   for (const id of names.keys()) if (!byId.has(id)) byId.set(id, []);
   return [...byId].map(([id, domains]) => ({ id, name: names.get(id) ?? id, domains })).sort((a, b) => b.domains.length - a.domains.length || a.name.localeCompare(b.name, "ru"));
-}
-
-function initials(name: string): string {
-  return name.split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase() ?? "").join("") || "?";
 }
 
 function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise<void>; onCancel(): void }) {

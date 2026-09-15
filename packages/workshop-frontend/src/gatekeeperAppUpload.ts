@@ -1,3 +1,4 @@
+import { decodeBlueprintTemplate, MAX_BLUEPRINT_TEMPLATE_BYTES } from "@gadgets/workshop-shared/blueprint-template";
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import type { GatekeeperUploadTicket } from "@gadgets/workshop-shared/gatekeeper"
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document"
@@ -40,6 +41,13 @@ export async function uploadGatekeeperNativeDocument(
 /** Upload exact preview text: reserialization would change the server-bound checksum. */
 export async function uploadGatekeeperOfficePreview(text: string, storageOrigin: string, issue: IssueGatekeeperUpload, signal: AbortSignal): Promise<string> {
   return uploadVerifiedText(text,storageOrigin,issue,signal,4 * 1024 * 1024)
+}
+
+/** Проверяет снимок кода и данных перед загрузкой в существующее хранилище. */
+export async function uploadGatekeeperBlueprintTemplate(bytes: Uint8Array, storageOrigin: string, issue: IssueGatekeeperUpload, signal: AbortSignal): Promise<string> {
+  await decodeBlueprintTemplate(bytes);
+  signal.throwIfAborted();
+  return uploadVerifiedText(new TextDecoder("utf-8", {fatal:true}).decode(bytes), storageOrigin, issue, signal, MAX_BLUEPRINT_TEMPLATE_BYTES);
 }
 
 async function uploadVerifiedText(

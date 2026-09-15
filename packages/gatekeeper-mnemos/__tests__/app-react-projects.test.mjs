@@ -58,3 +58,51 @@ test("«Проекты»: пустая политика и отказ серве
     await app.until(() => section("Правила согласования")?.textContent.includes("нет права или сервер отказал"), "отказ показан");
   } finally { app.dispose(); }
 });
+
+
+test("«Мои проекты»: материалы видны сразу, настройки свёрнуты, беседа начинается с выбранным проектом", async () => {
+  const app = await mountMemoryApp({}, {section: "projects", project: "two"});
+  try {
+    await app.until(() => app.button("Начать беседу"), "страница проекта");
+    assert.ok(app.text().includes("Мои проекты"));
+    const settings = [...app.document.querySelectorAll("#root details")].find(e => e.querySelector("summary")?.textContent === "Участники и настройки проекта");
+    assert.ok(settings);
+    assert.equal(settings.open, false);
+    const materials = app.document.querySelector('#root section[aria-label="Материалы"]');
+    assert.ok(materials);
+    assert.equal(materials.closest("details"), null);
+    app.button("Начать беседу").click();
+    await app.until(() => app.calls.some(c => c[0] === "openPrompt"), "подготовка беседы");
+    const prompt = app.calls.find(c => c[0] === "openPrompt")[1];
+    assert.match(prompt, /Второй проект/);
+    assert.match(prompt, /ID: two/);
+    assert.equal(app.calls.some(c => c[0] === "proposeConnectProject"), false);
+  } finally { app.dispose(); }
+});
+
+
+test("Файлы и папки загружаются в выбранный проект, а не в беседу", async () => {
+  const app = await mountMemoryApp({}, {section: "projects", project: "two", pickedFiles: [{path: "договор.pdf", receipt: {outcome: "placed", enqueued: false, placement_state: "personal"}}]});
+  try {
+    await app.until(() => app.button("Загрузить файлы"), "загрузка проекта");
+    app.button("Загрузить файлы").click();
+    await app.until(() => app.text().includes("Принято файлов: 1 из 1"), "результат загрузки");
+    assert.ok(app.calls.some(c => c[0] === "pickInboxFiles" && c[1] === false && c[2] === "two"));
+    assert.ok(app.text().includes("личные черновики проекта"));
+    app.button("Выбрать папку").click();
+    await app.until(() => app.calls.some(c => c[0] === "pickInboxFiles" && c[1] === true && c[2] === "two"), "папка в том же проекте");
+    assert.equal(app.calls.some(c => c[0] === "openPrompt"), false);
+  } finally { app.dispose(); }
+});
+
+
+test("Материал проекта открывается непосредственно в гаджете", async () => {
+  const app = await mountMemoryApp({}, {section: "projects", project: "one", nativeOpen: true});
+  try {
+    await app.until(() => app.button("Заметка команды"), "документ в проекте");
+    app.button("Заметка команды").click();
+    await app.until(() => app.calls.some(c => c[0] === "openNativeDocument"), "переход в редактор");
+    assert.equal(app.calls.find(c => c[0] === "openNativeDocument")[1], "one");
+    assert.equal(app.calls.some(c => c[0] === "openSection" && c[1] === "documents"), false);
+  } finally { app.dispose(); }
+});

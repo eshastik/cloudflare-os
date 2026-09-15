@@ -1,3 +1,4 @@
+import { readNativeDocumentLaunch, clearNativeDocumentLaunch, type NativeDocumentLaunch } from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ClockCounterClockwise } from '@phosphor-icons/react'
@@ -333,11 +334,14 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
 }) {
   const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, changesPollMs })
   const [panel, setPanel] = useState<{ open: boolean; section: PanelSection | null }>({ open: false, section: null })
+  const [launch, setLaunch] = useState<NativeDocumentLaunch | null>(null)
 
   // Незавершённое «Открыть из Mnemos» раньше всплывало диалогом само; теперь для него открывается панель.
   useEffect(() => {
     if (chatId !== undefined || status.gadgetId === null) return
-    if (readPendingNativeOpen(nativeOpenKey(status.gadgetId), format)) setPanel({ open: true, section: 'open' })
+    const requested = readNativeDocumentLaunch(format)
+    setLaunch(requested)
+    if (requested || readPendingNativeOpen(nativeOpenKey(status.gadgetId), format)) setPanel({ open: true, section: 'open' })
   }, [status.gadgetId, chatId, format])
 
   const onPrimary = (kind: PrimaryKind) => {
@@ -349,6 +353,7 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   }
   const panelNode = panel.open ? <DocumentVersionPanel
     key={`${chatId ?? 'workspace'}:${format}`} gadget={gadget} format={format} snapshotSource={snapshotSource} chatId={chatId} disabled={disabled}
+    launch={launch ?? undefined} onLaunchConsumed={() => { clearNativeDocumentLaunch(); setLaunch(null) }}
     status={status} section={panel.section} onSection={section => setPanel({ open: true, section })}
     onClose={() => setPanel({ open: false, section: null })} onCollapseChat={onCollapseChat} /> : null
   return <>

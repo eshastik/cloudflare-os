@@ -1,3 +1,6 @@
+import BlueprintTemplateSave from './BlueprintTemplateSave'
+import type {NativeSnapshotSourceRef} from './nativeSnapshotSource'
+import type {NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Dialog, useKumoToastManager } from '@cloudflare/kumo'
 import { ArrowsClockwise, Check, Copy, ImageSquare, Pencil, Plus, Trash, Warning, X } from '@phosphor-icons/react'
@@ -62,6 +65,8 @@ async function compressBlueprintScreenshot(file: File): Promise<Blob> {
 }
 
 type Props = {
+  nativeFormat?: NativeDocumentFormat
+  snapshotSource?: NativeSnapshotSourceRef
   open: boolean
   onClose: () => void
   overseer: RpcStub<Overseer>
@@ -70,8 +75,9 @@ type Props = {
   metadata: GadgetMetadata
 }
 
-export default function BlueprintModal({ open, onClose, overseer, gadget, metadata }: Props) {
+export default function BlueprintModal({ open, onClose, overseer, gadget, metadata, nativeFormat, snapshotSource }: Props) {
   const toasts = useKumoToastManager()
+  const [workTemplate, setWorkTemplate] = useState<BlueprintGadgetSummary | null>(null)
 
   const [blueprints, setBlueprints] = useState<BlueprintGadgetSummary[]>([])
   const [loading, setLoading] = useState(false)
@@ -276,6 +282,10 @@ export default function BlueprintModal({ open, onClose, overseer, gadget, metada
     ? editingBlueprint.screenshotUrl
     : null
   const screenshotPreviewUrl = newScreenshotUrl ?? savedScreenshotUrl
+
+  if (workTemplate) return <Dialog.Root open={open} onOpenChange={value => { if (!value) { setWorkTemplate(null); onClose() } }}>
+    <Dialog size="base"><BlueprintTemplateSave blueprint={workTemplate} format={nativeFormat} snapshotSource={snapshotSource} onClose={() => setWorkTemplate(null)} /></Dialog>
+  </Dialog.Root>
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose() }}>
@@ -501,6 +511,7 @@ export default function BlueprintModal({ open, onClose, overseer, gadget, metada
                     <BlueprintRow
                       key={bp.id}
                       bp={bp}
+                      onSaveWorkTemplate={() => setWorkTemplate(bp)}
                       isFirst={index === 0}
                       onStartEdit={() => {
                         setNewTitle(bp.title)
@@ -552,6 +563,7 @@ export default function BlueprintModal({ open, onClose, overseer, gadget, metada
 }
 
 function BlueprintRow({
+  onSaveWorkTemplate,
   bp,
   isFirst,
   onStartEdit,
@@ -564,6 +576,7 @@ function BlueprintRow({
   onConfirmDelete,
   onCancelDelete,
 }: {
+  onSaveWorkTemplate(): void
   bp: BlueprintGadgetSummary
   isFirst: boolean
   onStartEdit: () => void
@@ -659,6 +672,7 @@ function BlueprintRow({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <button type="button" onClick={onSaveWorkTemplate} className="rounded-md px-2.5 py-1 text-xs font-medium text-kumo-default hover:bg-kumo-tint">Версия для работы команды</button>
         <div className="-ml-[7px] flex flex-wrap items-center gap-1">
           <GhostButton onClick={onUpdateCode} icon={<ArrowsClockwise size={13} />}>
             Обновить из гаджета

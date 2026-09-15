@@ -104,6 +104,10 @@ export class MnemosAPI {
     if (!Number.isSafeInteger(size) || size < 0 || size > 64*1024*1024 || typeof checksum !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(checksum)) throw new MnemosAPIError(400);
     return this.#request('/v1/inbox/uploads', 'POST', signal, {size_bytes:size,checksum_sha256:checksum});
   }
+  submitProjectUpload(projectId: string, uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {
+    if (typeof projectId !== "string" || !projectId || projectId.length > 255) throw new TypeError("Не выбран проект");
+    return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId});
+  }
   submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {return this.#request('/v1/inbox','POST',signal,checkedIntakeSubmit(uploadId,sourcePath,modifiedAt));}
   inboxStatus(signal?: AbortSignal): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200','GET',signal);}
   inboxAlerts(decided=false,signal?: AbortSignal): Promise<IntakeAlerts> {return this.#request(`/v1/inbox/alerts?limit=200&decided=${decided ? 'true' : 'false'}`,'GET',signal);}
@@ -561,6 +565,9 @@ export class MnemosAPI {
   beginVoiceUpload(project:string,size:number,checksum:string,signal?:AbortSignal):Promise<UploadTicket>{return this.#beginUpload(project,size,checksum,20_000_000,signal);}
   beginImportUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
     return this.#beginUpload(projectId, size, checksum, 16 * 1024 * 1024, signal);
+  }
+  beginProjectUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
+    return this.#beginUpload(projectId, size, checksum, 64 * 1024 * 1024, signal);
   }
   beginNativeUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
     return this.#beginUpload(projectId, size, checksum, 4 * 1024 * 1024, signal);

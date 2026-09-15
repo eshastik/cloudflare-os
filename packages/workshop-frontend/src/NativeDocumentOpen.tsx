@@ -18,7 +18,7 @@ export type NativeOpenResult = { accountId: number; scope: string; resource: str
 type Props = {
   gadget: Pick<RpcStub<GadgetClient>, 'getId' | 'prepareNativeDocumentRead' | 'readNativeDocument' | 'connectToGadget' | 'onRpcBroken'>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; disabled?: boolean; reconnect(): void
   /** Секция видна по запросу; незавершённое открытие показывается независимо от этого флага. */
-  open?: boolean; initialAccountId?: number; initialScope?: string; initialResource?: string; onOpened?(result: NativeOpenResult): void | Promise<void>; onClose?(): void
+  open?: boolean; initialAccountId?: number; initialScope?: string; initialResource?: string; initialPublication?: string; onOpened?(result: NativeOpenResult): void | Promise<void>; onClose?(): void
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
 type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: NativeDocumentFormat }
@@ -55,7 +55,7 @@ export default function NativeDocumentOpen({ open = true, onClose, ...props }: P
   return <OpenSection {...props} storageKey={key} resume={pending} close={close} />
 }
 
-function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume, close, initialAccountId, initialScope, initialResource, onOpened }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
+function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<{ id: number; name: string; valid: boolean }[]>([])
   const [accountId, setAccountId] = useState<number | null>(initialAccountId ?? null)
@@ -125,7 +125,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   }, [scope, accountId, sourceVersion])
   useEffect(() => {
     let cancelled = false
-    setPublications([]); setPublication(''); setPubCursor(''); setHistoryLimited(false); setResourceUrl(''); setSharedDeleted(undefined)
+    setPublications([]); setPublication(scope === initialScope && document === initialResource ? initialPublication ?? '' : ''); setPubCursor(''); setHistoryLimited(false); setResourceUrl(''); setSharedDeleted(undefined)
     if (!scope || !document || !selector.current) return
     if (/\.(docx|xlsx)$/i.test(documents.find(d => d.id === document)?.name || '')) return
     setLoading(true); setError('')
@@ -283,6 +283,6 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       {loading && <p role="status">Загрузка…</p>}
       {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
       <div className="flex justify-end gap-2 mt-1"><WorkshopButton disabled={busy} onClick={close}>Отмена</WorkshopButton>
-        <WorkshopButton tone="primary" className="!h-8" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открытие…' : 'Заменить содержимое редактора'}</WorkshopButton></div>
+        <WorkshopButton tone="primary" className="!h-8" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открытие…' : initialPublication ? 'Открыть документ' : 'Заменить содержимое редактора'}</WorkshopButton></div>
   </section>
 }

@@ -1,4 +1,4 @@
-import ChatIntakePanel from "./ChatIntakePanel";
+import ChatTemplatePicker, { messageWithTemplate, type ChatTemplate } from "./ChatTemplatePicker";
 import { VoiceInput } from "./components/chat/VoiceInput";
 import CorporateWorkContext from "./CorporateWorkContext";
 import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
@@ -105,9 +105,7 @@ import GatekeeperModal from "./GatekeeperModal";
 import { GatekeeperIcon } from "./components/GatekeeperIcon";
 import { formatOf, FORMAT_ICONS } from "./components/format/formats";
 import { FormatMiniature } from "./components/format/FormatVisuals";
-import { formatIconDataUrl } from "./components/format/formatIconImage";
 import { locateMessageFormatRefs } from "./components/format/messageFormatRefs";
-import ComposerFormatMenuItems from "./components/format/ComposerFormatMenuItems";
 import { HookToggle } from "./components/HookToggle";
 import { handlePickerKeyDown } from "./pickerNavigation";
 import { normalizeResourceUrl } from "./resourceMatching";
@@ -1776,7 +1774,6 @@ export const ChatInput = ({
   onConsumeConsoleLogs = () => "",
   onDiscardConsoleLogs = () => {},
   newChat = false,
-  offerFormats = false,
   autoFocus = false,
   minRows = 2,
   seedText,
@@ -1846,8 +1843,9 @@ export const ChatInput = ({
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const [intakeOpen, setIntakeOpen] = useState(false);
-  useEffect(() => setIntakeOpen(false), [chatKey]);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<ChatTemplate | null>(null);
+  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null); }, [chatKey]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -2449,6 +2447,10 @@ export const ChatInput = ({
           typeof message === "string" ? message : message.args,
           [...formatTokens].toSorted((a, b) => a.start - b.start).map(token => token.format));
 
+      if (selectedTemplate) {
+        if (typeof message === "string") message = messageWithTemplate(message, selectedTemplate, window.location.origin);
+        else message = { ...message, args: messageWithTemplate(message.args, selectedTemplate, window.location.origin) };
+      }
       await onSend(message, selectedModel,
           capsuleSpecifiers?.length ? capsuleSpecifiers : undefined,
           readyAttachments.length ? readyAttachments : undefined,
@@ -2457,6 +2459,7 @@ export const ChatInput = ({
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
       setInputValue("");
+      setSelectedTemplate(null);
       setCapsules([]);
       setSelectedSlashCommand(null);
       setFormatTokens([]);
@@ -2907,37 +2910,6 @@ export const ChatInput = ({
   const formatTokensRef = useRef(formatTokens);
   formatTokensRef.current = formatTokens;
 
-  // A format is only context on the message, so it coexists with everything else the composer can
-  // carry, including a slash command ("/writing-review turn this into a Doc").
-  const canChooseFormat = offerFormats;
-
-  // Inserted at the caret, like a capsule, so the noun lands in the sentence that needs it.
-  const chooseFormat = async (format: OutputFormatOffer) => {
-    const logo = await formatIconDataUrl(format.output.icon);
-    const value = inputValueRef.current;
-    // The menu takes focus, but the textarea keeps its last selection; falling back to the end is
-    // right for the case where it was never focused at all.
-    const caret = Math.min(composerTextareaRef.current?.selectionStart ?? value.length, value.length);
-    const at = snapCaretOutOfRanges(caret, currentTokenRanges(), "nearest");
-    const splice = spliceComposerToken(
-        value, at, at, (logo ? CAPSULE_LOGO_SLOT : "") + format.output.noun);
-    setInputValue(splice.value);
-    setCapsules(previous => previous.map(capsule => capsule.start >= at
-      ? {...capsule, start: capsule.start + splice.delta}
-      : capsule));
-    shiftSelectedSlashCommand(at, splice.delta);
-    setFormatTokens(previous => [
-      ...previous.map(token => token.start >= at
-        ? {...token, start: token.start + splice.delta}
-        : token),
-      {format, logo, start: splice.start, length: splice.length},
-    ]);
-    requestAnimationFrame(() => {
-      composerTextareaRef.current?.focus();
-      moveCaret(splice.caret);
-    });
-  };
-
   // What the mirror paints as objects rather than text. Memoized because the composer re-renders for
   // plenty of reasons that leave the text alone (attachments, agent activity, menus).
   const mirrorTokens = useMemo<MirrorToken[]>(() => [
@@ -3285,6 +3257,11 @@ export const ChatInput = ({
           </div>
         )}
 
+        {selectedTemplate && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
+          <Blueprint size={15} className="shrink-0" />
+          <button type="button" onClick={() => setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`}>{selectedTemplate.title}</button>
+          <WorkshopIconButton aria-label="Убрать шаблон" className="!h-6 !w-6" onClick={() => setSelectedTemplate(null)}><X size={13} /></WorkshopIconButton>
+        </div>}
         {/* Footer row: connection/options left, model + send right */}
         <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
@@ -3301,11 +3278,9 @@ export const ChatInput = ({
                 }
               />
               <DropdownMenu.Content collisionPadding={16} className="themed-floating-shadow-lg !z-[1100] !min-w-[170px] rounded-2xl border border-kumo-line/70 bg-kumo-base p-1">
-                {/* The deployment's standard formats. Picking one drops its name into the message at
-                    the caret; the agent is told what to build from it. */}
-                {canChooseFormat && (
-                  <ComposerFormatMenuItems onSelect={(format) => void chooseFormat(format)} />
-                )}
+                <DropdownMenu.Item onClick={() => setTemplatePickerOpen(true)} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
+                  <Blueprint size={14} className="mr-2" /><span>Выбрать шаблон</span>
+                </DropdownMenu.Item>
                 {onToggleThinkingTraces && (
                   <DropdownMenu.Item
                     onClick={onToggleThinkingTraces}
@@ -3327,9 +3302,6 @@ export const ChatInput = ({
                     <FileIcon size={14} />
                   </span>
                   <span className="flex-1">Прикрепить файл</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item onClick={() => setIntakeOpen(true)} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
-                  <FileIcon size={14} className="mr-2"/><span>Материалы организации</span>
                 </DropdownMenu.Item>
                 <DropdownMenu.Item onClick={handleAttachOpen} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
                   <Plug size={14} className="mr-2"/><span>{attachLabel ?? "Подключить источник"}</span>
@@ -3416,7 +3388,7 @@ export const ChatInput = ({
         </div>
       </div>
 
-      {intakeOpen && <ChatIntakePanel onClose={() => { setIntakeOpen(false); composerTextareaRef.current?.focus(); }} />}
+      {templatePickerOpen && <ChatTemplatePicker onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
       <GatekeeperModal
         open={attachModalOpen}
         onClose={() => setAttachModalOpen(false)}

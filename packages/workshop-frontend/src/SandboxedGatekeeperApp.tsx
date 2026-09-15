@@ -1,3 +1,4 @@
+import { launchNativeDocument } from './nativeDocumentLaunch'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
 import {collectIntakeDrop, type IntakeDroppedFile} from "./intakeDrop"
 import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
@@ -132,6 +133,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     inboxUploads?: GatekeeperUiFrame['inboxUploads'],
     private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
     private readonly embeddedIntake = false,
+    private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
@@ -155,6 +157,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#openTarget = openTarget
     this.#openPrompt = openPrompt
     this.#resolveWorkspaceTitles = resolveWorkspaceTitles
+  }
+
+  async openNativeDocument(scope: string, resource: string): Promise<boolean> {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (typeof scope !== 'string' || typeof resource !== 'string' || !scope || !resource || scope.length > 255 || resource.length > 255) throw Error('Не выбран документ')
+    if (!this.launchDocument) return false
+    return this.launchDocument(scope, resource)
   }
 
   /** Selected resource scope from the host URL; never an authorization grant. */
@@ -224,7 +233,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
   }
 
   /** Файлы выбираются в хосте; фрейм получает только имена и результаты приёма. */
-  async pickInboxFiles(directory: boolean): Promise<PickedIntakeFile[]> {
+  async pickInboxFiles(directory: boolean, project?: string): Promise<PickedIntakeFile[]> {
+    if (project !== undefined && (typeof project !== 'string' || !project || project.length > 255)) throw new TypeError('Не выбран проект')
     if (typeof directory !== 'boolean' || !this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
     this.#uploadBusy = true
     const signal = this.#uploadLifetime.signal
@@ -240,7 +250,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
         input.addEventListener('cancel', () => { cleanup(); resolve([]) }, { once: true })
         input.click()
       })
-      return await this.#uploadInboxFiles(files.map(file => ({file,path:file.webkitRelativePath || file.name})))
+      return await this.#uploadInboxFiles(files.map(file => ({file,path:file.webkitRelativePath || file.name})), undefined, project)
     } finally { this.#uploadBusy = false }
   }
 
@@ -248,10 +258,10 @@ class GatekeeperAppHostImpl extends RpcTarget {
   async uploadDroppedInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void):Promise<PickedIntakeFile[]> {
     if (!this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
     this.#uploadBusy=true
-    try { return await this.#uploadInboxFiles(files,onProgress) }
+    try { return await this.#uploadInboxFiles(files,onProgress,this.getSelectedSection() === "projects" ? this.getSelectedProject() : undefined) }
     finally {this.#uploadBusy=false}
   }
-  async #uploadInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void):Promise<PickedIntakeFile[]> {
+  async #uploadInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void,project?:string):Promise<PickedIntakeFile[]> {
     const signal=this.#uploadLifetime.signal
     if(!Array.isArray(files)||files.length>10000)throw Error('Слишком много файлов')
       const result: PickedIntakeFile[] = []
@@ -261,13 +271,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
         if (!(file instanceof File) || typeof path !== "string" || path.length > 1024) throw Error("Некорректный файл")
         try {
           const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
-            const ticket = await uploads.issuer.issue(size, checksum)
+            const ticket = await (project ? uploads.issuer.issue(size, checksum, project) : uploads.issuer.issue(size, checksum))
             if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) throw Error('Адрес хранилища не совпадает с настройкой установки')
             signal.throwIfAborted()
             return ticket
           }, (url, options) => fetch(url, { ...options, signal }))
           signal.throwIfAborted()
-          const receipt = await uploads.issuer.submit(uploadId, path, file.lastModified)
+          const receipt = await (project ? uploads.issuer.submit(uploadId, path, file.lastModified, project) : uploads.issuer.submit(uploadId, path, file.lastModified))
           signal.throwIfAborted()
           result.push({ path, uploadId, modifiedAt: file.lastModified, receipt })
         } catch {
@@ -469,7 +479,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
 // Hosts a gatekeeper's full-page management SPA in a sandboxed, network-isolated iframe. The app
 // talks to the gatekeeper only through the `ui` capability carried over the MessagePort RPC session.
 // The iframe fills its parent container.
-export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embeddedIntake = false, onClosePanel, onIntakeDropReady }: {
+export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, accountId, embeddedIntake = false, onClosePanel, onIntakeDropReady }: {
+  accountId?: number
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
   embeddedIntake?: boolean,
@@ -598,6 +609,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embe
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
         embeddedIntake,
+        async (scope, resource) => {
+          if (accountId === undefined || !frame.nativeDownloads) return false
+          return launchNativeDocument(authenticatedApi, frame.nativeDownloads.selector, accountId, scope, resource, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
+        },
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -646,10 +661,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embe
     }
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
     // carrying a fresh stub (even with identical HTML) never keeps talking through the stale one.
-  }, [frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.inboxUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
+  }, [accountId, authenticatedApi, frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.inboxUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
       present, resolveWorkspaceTitles, setOverlayPhase, navigate, embeddedIntake])
 
-  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || new URLSearchParams(window.location.search).get('section')==='intake')
+  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || new URLSearchParams(window.location.search).get('section')==='intake' || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
   const drop=async(transfer:DataTransfer)=>{
     setDropState(previous=>({...previous,active:false}))
     if(dropBusy.current)return
@@ -666,7 +681,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embe
       const results=await targetHost.uploadDroppedInboxFiles(files,(done,total)=>{if(hostRef.current===targetHost)setDropState({busy:true,active:false,done,total,message:''})})
       if(hostRef.current!==targetHost)return
       const failed=results.filter(file=>file.error).length
-      setDropState({busy:false,active:false,done:results.length,total:files.length,message:failed?`Принято ${results.length-failed} из ${files.length}. Не подтверждены: ${results.filter(file=>file.error).map(file=>file.path).join(', ')}`:`Принято файлов: ${results.length}. Предложения появятся после разбора.`})
+      setDropState({busy:false,active:false,done:results.length,total:files.length,message:failed?`Принято ${results.length-failed} из ${files.length}. Не подтверждены: ${results.filter(file=>file.error).map(file=>file.path).join(', ')}`:`Принято файлов: ${results.length}. ${targetHost.getSelectedSection() === "projects" ? "Материалы добавлены в проект." : "Предложения появятся после разбора."}`})
       if(hostRef.current===targetHost)targetWindow?.postMessage({type:'mnemos-inbox-updated'},'*')
     }catch {if(hostRef.current===targetHost)setDropState(previous=>({...previous,busy:false,message:'Не удалось завершить загрузку. Проверьте приёмную перед повтором.'}))}
     finally{if(hostRef.current===targetHost)dropBusy.current=false}
@@ -681,7 +696,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, embe
   return (
     <div className="flex h-full min-h-0 flex-col">
     {intakeDrop&&<div className={embeddedIntake?"px-4 pt-3":"px-4 pt-4 sm:px-8"}><div role="region" aria-label="Перетащите материалы организации" onDragOver={event=>{event.preventDefault();event.stopPropagation();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}} onDragLeave={()=>setDropState(previous=>({...previous,active:false}))} onDrop={event=>{event.preventDefault();event.stopPropagation();void drop(event.dataTransfer)}} className={`rounded-xl border border-dashed p-5 text-center text-sm ${dropState.active?'border-kumo-brand bg-kumo-fill':'border-kumo-line bg-kumo-elevated'}`}>
-      <p className="m-0 font-medium">Перетащите сюда файлы или папку</p><p className="mb-0 mt-1 text-xs text-kumo-subtle">Или используйте кнопки выбора в приёмной ниже.</p>
+      <p className="m-0 font-medium">Перетащите сюда файлы или папку</p><p className="mb-0 mt-1 text-xs text-kumo-subtle">Или выберите файлы и папку кнопками ниже.</p>
       {dropState.busy&&<div role="status" className="mt-3">{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-2 h-1 w-full" max={dropState.total||1} value={dropState.done}/></div>}
       {dropState.message&&<p role="status" className="mb-0 mt-3 break-words">{dropState.message}</p>}
     </div></div>}

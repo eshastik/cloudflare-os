@@ -1800,6 +1800,8 @@ export default function GadgetEditor() {
           />
           {selectedGadgetStub && (
             <BlueprintModal
+              nativeFormat={nativeFormatOf(selectedGadgetSummary?.output?.id) ?? undefined}
+              snapshotSource={nativeSnapshotSource}
               open={blueprintModalOpen}
               onClose={() => setBlueprintModalOpen(false)}
               overseer={overseer.stub}

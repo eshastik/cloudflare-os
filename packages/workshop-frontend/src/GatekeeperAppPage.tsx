@@ -150,7 +150,7 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, onC
           </div>
         </Dialog>
       </Dialog.Root>
-      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp frame={state.frame} gatekeeperVendorId={appId} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} /></div>
+      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp accountId={accountId} frame={state.frame} gatekeeperVendorId={appId} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} /></div>
     </div>
   )
 }
