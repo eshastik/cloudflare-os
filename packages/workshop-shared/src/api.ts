@@ -1619,7 +1619,7 @@ export interface Overseer extends RpcTarget {
   // is already in the text.
   newChat(initialMessage: string | SlashCommandRequest, modelId: string | null,
           capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-          formats?: MessageFormatRef[]): Promise<number>;
+          formats?: MessageFormatRef[], projectContext?: ChatProjectContext): Promise<number>;
 
   // Send a message to the chat from this client. Sending a message causes the LLM to start
   // running if it isn't already.
@@ -1810,7 +1810,15 @@ export interface Overseer extends RpcTarget {
   previewRevokeShareLink(linkId: string): Promise<AffectedCollaborator[]>;
 }
 
+/** Контекст работы, а не право доступа. accountId принадлежит создателю беседы. */
+export type ChatProjectContext = {
+  accountId: number;
+  projectId: string;
+  title: string;
+};
+
 export type AiChatMetadata = {
+  projectContext?: ChatProjectContext & {creatorId: string;creatorProfileId:string};
   id: number,
   title: string,
   started: Date,

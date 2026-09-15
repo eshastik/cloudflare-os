@@ -6745,7 +6745,8 @@ function ChatInterface({
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                        {currentChatMetadata?.title || "Chat"}
+                        {currentChatMetadata?.title || "Беседа"}
+                        {currentChatMetadata?.projectContext&&<span className="block truncate text-[11px] font-normal text-kumo-subtle">Проект: {currentChatMetadata.projectContext.title}</span>}
                       </span>
                       <WorkshopIconButton
                         onClick={() => setIsEditingTitle(true)}

@@ -1,3 +1,4 @@
+import type {ChatProjectContext} from "@gadgets/workshop-shared/api";
 import {readBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
@@ -3479,6 +3480,7 @@ class OverseerImpl implements AgentHooks {
     responseTargetRegistration?: ExternalMessageResponseTargetRegistration,
     externalChatKey?: string,
     formats?: MessageFormatRef[],
+    projectContext?: ChatProjectContext,
   ): Promise<number> {
     if (responseTargetRegistration) {
       let decision = this.#prepareExternalMessageResponseTargetRegistration(responseTargetRegistration);
@@ -3498,6 +3500,7 @@ class OverseerImpl implements AgentHooks {
       chatId = this.nextChatId();
       let meta: AiChatMetadata = {
         id: chatId,
+        ...(projectContext ? {projectContext:{...projectContext,creatorId:clientUser.id.toString(),creatorProfileId:userMeta.profile.id}} : {}),
         title: DEFAULT_WORKSPACE_TITLE,   // filled in later by AI
         started: timestamp,
         lastActive: timestamp,
@@ -8332,10 +8335,17 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async newChat(initialMessage: string | SlashCommandRequest, chosenModelId: string | null,
                 capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-                formats?: MessageFormatRef[]): Promise<number> {
+                formats?: MessageFormatRef[], projectContext?: ChatProjectContext): Promise<number> {
+    if(projectContext){
+      if(!Number.isSafeInteger(projectContext.accountId)||projectContext.accountId<0||
+          typeof projectContext.projectId!=="string"||!projectContext.projectId.trim()||projectContext.projectId.length>256||
+          typeof projectContext.title!=="string"||!projectContext.title.trim()||projectContext.title.length>256) throw new Error("Неверный контекст проекта");
+      if(!await this.clientUser.describeConnectedAccount(projectContext.accountId)) throw new Error("Подключение проекта недоступно");
+      projectContext={accountId:projectContext.accountId,projectId:projectContext.projectId,title:projectContext.title.trim()};
+    }
     let userMeta = await this.clientUser.getChatContext(chosenModelId);
     return this.impl.newChat(this.clientUser, userMeta, initialMessage, capsules, attachments,
-                             undefined, undefined, formats);
+                             undefined, undefined, formats, projectContext);
   }
 
   async sendChatMessage(

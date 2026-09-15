@@ -97,7 +97,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async pickInboxFiles(directory, project) { calls.push(project === undefined ? ["pickInboxFiles",directory] : ["pickInboxFiles",directory,project]); return options.pickedFiles ?? []; }
     async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; if(project!==undefined) selectedProject=project; dispose(); mount(); },0); }
     async openNativeDocument(project, resource) { calls.push(["openNativeDocument", project, resource]); return options.nativeOpen ?? false; }
-    async openPrompt(prompt) { calls.push(["openPrompt",prompt]); }
+    async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
     async openApprovals() { calls.push(["openApprovals"]); }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
     async downloadText(...args) { calls.push(["downloadText",...args]); return "текст"; }

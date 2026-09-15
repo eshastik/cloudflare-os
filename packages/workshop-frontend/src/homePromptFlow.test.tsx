@@ -14,6 +14,7 @@ const testState = vi.hoisted(() => {
     listModels,
     navigate: vi.fn<(options: unknown) => void>(),
     newGadget,
+    send: undefined as undefined | ((message:string,model:string|null)=>Promise<void>),
     seeds: [] as Array<{ text?: string; nonce?: number }>,
   };
 });
@@ -34,7 +35,8 @@ vi.mock("./AuthContext", () => ({
 }));
 
 vi.mock("./ChatInterface", () => ({
-  ChatInput: ({ seedText, seedNonce }: { seedText?: string; seedNonce?: number }) => {
+  ChatInput: ({ seedText, seedNonce, onSend }: { seedText?: string; seedNonce?: number;onSend:(message:string,model:string|null)=>Promise<void> }) => {
+    testState.send=onSend;
     testState.seeds.push({ text: seedText, nonce: seedNonce });
     return <textarea aria-label="Prompt" readOnly value={seedText ?? ""} />;
   },
@@ -73,4 +75,17 @@ describe("Home prompt route flow", () => {
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/", search: {}, replace: true });
     expect(testState.newGadget).not.toHaveBeenCalled();
   });
+  it("сохраняет выбранный проект при отправке после очистки URL",async()=>{
+    const newChat=vi.fn<(...args:unknown[])=>Promise<number>>(async()=>7);
+    testState.newGadget.mockReturnValue({newChat,getMetadata:async()=>({id:'workspace'}),[Symbol.dispose]:()=>{}} as never);
+    container=document.createElement('div');document.body.append(container);root=createRoot(container);
+    const context={accountId:3,projectId:'project-a',title:'Проект А'};
+    await act(async()=>root!.render(<HomePageContent prompt="Работа над проектом" projectContext={context}/>));
+    await act(async()=>root!.render(<HomePageContent/>));
+    expect(container.textContent).toContain('Проект: Проект А');
+    await act(async()=>testState.send!('Подготовь документ',null));
+    expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,context);
+    expect(testState.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});
+  });
+
 });

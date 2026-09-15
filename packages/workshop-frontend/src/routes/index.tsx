@@ -19,14 +19,15 @@ import {
   persistSelectedModel,
 } from "../modelSelection";
 import { useDocumentTitle } from "../useDocumentTitle";
-import { homePromptFromSearch } from "../homePrompt";
+import { homePromptFromSearch, homeProjectFromSearch } from "../homePrompt";
 
-type HomeSearch = { prompt?: string };
+type HomeSearch = { prompt?: string; projectContext?: import('@gadgets/workshop-shared/api').ChatProjectContext };
 
 export const Route = createFileRoute("/")({
   component: HomePage,
   validateSearch: (search: Record<string, unknown>): HomeSearch => ({
     prompt: homePromptFromSearch(search.prompt),
+    projectContext: homeProjectFromSearch(search.projectContext),
   }),
 });
 
@@ -34,15 +35,18 @@ export const Route = createFileRoute("/")({
 // in the AppShell rail, so this page focuses on a single thing: composing the first message of a
 // new gadget — a centered column with a hero, the prompt composer, and a few task suggestions.
 function HomePage() {
-  return <HomePageContent prompt={Route.useSearch().prompt} />;
+  return <HomePageContent {...Route.useSearch()} />;
 }
 
-export function HomePageContent({ prompt }: HomeSearch) {
+export function HomePageContent({ prompt, projectContext: project }: HomeSearch) {
   useDocumentTitle("Новая беседа");
 
   const { authenticatedApi } = useAuthenticatedApi();
   const navigate = useNavigate();
   const toasts = useKumoToastManager();
+
+  const [projectContext,setProjectContext]=useState(project);
+  useEffect(()=>{if(project)setProjectContext(project)},[project]);
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -112,7 +116,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
         const overseer = provisionalOverseerRef.current!.stub;
         // Pipeline both independent calls in one batch, but settle both before releasing the stub.
         const [chat, {id}] = await Promise.all([
-          overseer.newChat(message, modelId, capsules, attachments, formats),
+          projectContext ? overseer.newChat(message, modelId, capsules, attachments, formats,projectContext) : overseer.newChat(message, modelId, capsules, attachments, formats),
           overseer.getMetadata(),
         ]);
         provisionalOverseerRef.current?.stub[Symbol.dispose]();
@@ -133,7 +137,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
         throw err;
       }
     },
-    [ensureProvisionalGadget, navigate, toasts],
+    [ensureProvisionalGadget, navigate, toasts, projectContext],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -162,6 +166,7 @@ export function HomePageContent({ prompt }: HomeSearch) {
           </p>
         </header>
 
+        {projectContext&&<div className="flex items-center justify-between rounded-lg border border-kumo-line px-3 py-2 text-sm"><span>Проект: {projectContext.title}</span><button type="button" onClick={()=>setProjectContext(undefined)} aria-label="Убрать проект из беседы">Убрать</button></div>}
         {/* Composer */}
         <ChatInput
           createCapsuleGatekeeper={createCapsuleGatekeeper}

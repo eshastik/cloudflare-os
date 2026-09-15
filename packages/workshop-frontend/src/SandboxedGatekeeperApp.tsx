@@ -1,3 +1,4 @@
+import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
 import {collectIntakeDrop, type IntakeDroppedFile} from "./intakeDrop"
@@ -46,7 +47,7 @@ type OpenTarget = (target: GatekeeperAppWorkspaceTarget) => void
 // Resolves workspace IDs the app already holds to their live titles; null for a workspace the user
 // can no longer see. Deliberately a lookup, not an enumeration: the app learns nothing new.
 type ResolveWorkspaceTitles = (ids: string[]) => Promise<(string | null)[]>
-type OpenPrompt = (prompt: string) => void
+type OpenPrompt = (prompt: string, project?:{projectId:string;title:string}) => void
 
 type OverlayState = 'full' | null
 
@@ -371,8 +372,9 @@ class GatekeeperAppHostImpl extends RpcTarget {
     return this.#resolveWorkspaceTitles(ids)
   }
 
-  openPrompt(prompt: string): void {
-    this.#openPrompt(normalizeGatekeeperAppPrompt(prompt))
+  openPrompt(prompt: string, project?:{projectId:string;title:string}): void {
+    if(project&&!homeProjectFromSearch({accountId:0,...project}))throw new Error('Неверный проект')
+    this.#openPrompt(normalizeGatekeeperAppPrompt(prompt),project)
   }
 
   // The app calls this once to learn the current mode and register a receiver for later changes.
@@ -561,9 +563,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     const titles = await entry.titles
     return ids.map((id) => titles.get(id) ?? null)
   }, [authenticatedApi])
-  const openPrompt = useCallback<OpenPrompt>((prompt) => {
-    navigate({ to: '/', search: { prompt } })
-  }, [navigate])
+  const openPrompt = useCallback<OpenPrompt>((prompt,project) => {
+    if(project&&accountId===undefined)throw new Error('Подключение проекта недоступно')
+    navigate({ to: '/', search: { prompt, ...(project&&accountId!==undefined?{projectContext:{projectId:project.projectId,title:project.title,accountId}}:{}) } })
+  }, [navigate,accountId])
   // The gatekeeper capability is `any`: its method shape is gatekeeper-defined and opaque to us.
   const closePanelRef = useRef(onClosePanel)
   closePanelRef.current = onClosePanel

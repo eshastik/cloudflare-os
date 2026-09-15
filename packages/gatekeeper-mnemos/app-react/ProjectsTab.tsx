@@ -96,7 +96,7 @@ function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy
           <h2 className="m-0 text-lg font-semibold text-kumo-strong">{project.name}</h2>
           <p className="mt-1 mb-0 text-[12px] text-kumo-subtle">Документы: {materials.length}{project.truncated ? "+" : ""} · Обращения: {work.length} · Ваши агенты: {agents.length}</p>
         </div>
-        <Button size="sm" onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}» (ID: ${project.id}).\n\n`).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
+        <Button size="sm" onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}».\n\n`, {projectId:project.id,title:project.name}).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
       </div>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
 

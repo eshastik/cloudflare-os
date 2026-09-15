@@ -58,3 +58,18 @@ test('добавляет шаблон в текущую беседу без от
  expect(apply.mock.calls[1][0]).toEqual(new Uint8Array([1,2]))
  expect(mocks.create).not.toHaveBeenCalled();expect(mocks.navigate).not.toHaveBeenCalled()
 })
+
+test('недоступный проект беседы не заменяется единственным другим проектом',async()=>{
+ await React.act(async()=>root.render(<SharedTemplateLibrary preferredProject={{accountId:1,projectId:'deleted'}}/>))
+ const row=[...host.querySelectorAll('button')].find(item=>item.textContent?.includes('Договор'))!
+ await React.act(async()=>row.click())
+ expect(host.textContent).toContain('Проект беседы недоступен')
+ expect((host.querySelector('[aria-label="Проект для рабочей копии"]') as HTMLSelectElement).value).toBe('')
+ expect(start().matches(':disabled')).toBe(true)
+})
+test('недоступное подключение не заменяется другой организацией',async()=>{
+ await React.act(async()=>root.render(<SharedTemplateLibrary preferredProject={{accountId:9,projectId:'project'}}/>))
+ expect(host.textContent).toContain('Подключение проекта беседы недоступно')
+ expect((host.querySelector('[aria-label="Организация"]') as HTMLSelectElement).value).toBe('')
+ expect(mocks.apply).not.toHaveBeenCalled()
+})

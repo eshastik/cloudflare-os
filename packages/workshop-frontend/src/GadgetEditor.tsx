@@ -1,4 +1,4 @@
-import SharedTemplateLibrary from './SharedTemplateLibrary'
+import ChatTemplateLibrary from './ChatTemplateLibrary'
 import {Dialog} from '@cloudflare/kumo'
 import { reportShellStage } from "./shellReadiness"
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
@@ -1797,7 +1797,7 @@ export default function GadgetEditor() {
       {sharedTemplatesOpen&&overseer&&effectiveSelectedChatId!==null&&<Dialog.Root open onOpenChange={open=>setSharedTemplatesOpen(open)}>
         <Dialog size="lg" className="max-h-[85vh] overflow-y-auto">
           <div className="flex items-center justify-between"><Dialog.Title>Шаблон для беседы</Dialog.Title><WorkshopButton onClick={()=>setSharedTemplatesOpen(false)}>Закрыть</WorkshopButton></div>
-          <SharedTemplateLibrary key={`${id}:${effectiveSelectedChatId}`} conversation={{key:`${id}:${effectiveSelectedChatId}`,apply:async(bytes,operationId,signal)=>{
+          <ChatTemplateLibrary overseer={overseer.stub} chatId={effectiveSelectedChatId} viewerId={userInfo?.id} key={`${id}:${effectiveSelectedChatId}`} conversation={{key:`${id}:${effectiveSelectedChatId}`,apply:async(bytes,operationId,signal)=>{
             const result=await overseer.stub.importTemplateIntoChat(new Response(new Uint8Array(bytes)).body!,effectiveSelectedChatId,operationId)
             signal.throwIfAborted()
             if(result.error)throw new Error(result.error)

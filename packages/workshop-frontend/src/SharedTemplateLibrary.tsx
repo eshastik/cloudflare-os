@@ -13,10 +13,11 @@ type Entry = Awaited<ReturnType<GatekeeperBlueprintTemplates['templates']>>['tem
 type Scope = Awaited<ReturnType<GatekeeperBlueprintTemplates['scopes']>>['scopes'][number]
 const levels = {organization:'Организация', department:'Отдел', group:'Группа'}
 
-export default function SharedTemplateLibrary({conversation}:{conversation?:{key:string;apply(bytes:Uint8Array,operationId:string,signal:AbortSignal):Promise<void>}}) {
+export default function SharedTemplateLibrary({conversation,preferredProject}:{preferredProject?:{accountId:number;projectId:string};conversation?:{key:string;apply(bytes:Uint8Array,operationId:string,signal:AbortSignal):Promise<void>}}) {
  const {authenticatedApi:api} = useAuthenticatedApi(), navigate = useNavigate()
  const [accounts,setAccounts] = useState<{id:number;name:string}[]>([]), [account,setAccount] = useState<number|null>(null)
  const [scopes,setScopes] = useState<Scope[]>([]), [scope,setScope] = useState('')
+ const [projectError,setProjectError]=useState('')
  const [projects,setProjects] = useState<{id:string;name:string}[]>([]), [project,setProject] = useState('')
  const [items,setItems] = useState<Entry[]>([]), [cursor,setCursor] = useState(''), [selected,setSelected] = useState<Entry|null>(null)
  const [settings,setSettings]=useState(false),[configurationRevision,setConfigurationRevision]=useState(0)
@@ -29,27 +30,34 @@ export default function SharedTemplateLibrary({conversation}:{conversation?:{key
    void listAccounts(api).then(result=>{
      if(!active)return
      const choices=result.filter(storesDocuments).map(item=>({id:item.id,name:item.description.displayName||item.vendorId}))
-     setAccounts(choices);if(choices.length)setAccount(choices[0].id);else setLoading(false)
+     setAccounts(choices);
+     if(preferredProject&&!choices.some(item=>item.id===preferredProject.accountId)){
+       setAccount(null);setLoading(false);setProjectError('Подключение проекта беседы недоступно. Выберите подключение явно.')
+     }else if(choices.length)setAccount(preferredProject?.accountId??choices[0].id);else setLoading(false)
    }).catch(()=>{if(active){setError('Не удалось прочитать подключения');setLoading(false)}})
    return()=>{active=false}
- },[api])
+ },[api,preferredProject?.accountId])
  useEffect(()=>{
    let active=true
    const controller=new AbortController();lifetime.current=controller
    setScopes([]);setScope('');setItems([]);setProjects([]);setProject('');setSelected(null);setError('')
    if(account===null)return
-   setLoading(true)
+   setLoading(true);setProjectError('')
    void openBlueprintTemplatesFrame(api,account).then(async value=>{
      if(!active){disposeGatekeeperFrame(value);return}
      frame.current=value
      const found:Scope[]=[];let next=''
      do {const page=await value.blueprintTemplates.selector.scopes(next);if(!active)return;found.push(...page.scopes.filter(item=>item.enabled));next=page.next_cursor||''} while(next)
      const projectPage=await value.blueprintTemplates.selector.projects();if(!active)return
-     setProjects(projectPage.projects);if(projectPage.projects.length===1)setProject(projectPage.projects[0].id)
+     setProjects(projectPage.projects);
+     if(preferredProject?.accountId===account){
+       if(projectPage.projects.some(item=>item.id===preferredProject.projectId))setProject(preferredProject.projectId)
+       else setProjectError('Проект беседы недоступен. Выберите другой проект явно.')
+     }else if(projectPage.projects.length===1)setProject(projectPage.projects[0].id)
      setScopes(found);if(found.length)setScope(found[0].scope_id);else setLoading(false)
    }).catch(()=>{if(active){setError('Не удалось открыть общие шаблоны');setLoading(false)}})
    return()=>{active=false;controller.abort();disposeGatekeeperFrame(frame.current);frame.current=null}
- },[api,account,configurationRevision])
+ },[api,account,configurationRevision,preferredProject?.accountId,preferredProject?.projectId])
  useEffect(()=>{
    let active=true
    setItems([]);setCursor('');setSelected(null)
@@ -110,9 +118,10 @@ export default function SharedTemplateLibrary({conversation}:{conversation?:{key
  return <section className="px-3 py-4" aria-label="Общие шаблоны">
    <div className="mb-5 flex flex-wrap items-center gap-3">
      {frame.current?.blueprintTemplates&&<Button disabled={busy||loading} onClick={()=>setSettings(true)}>Настроить уровни</Button>}
-     {accounts.length>1&&<select aria-label="Организация" disabled={busy} value={account??''} onChange={e=>setAccount(Number(e.target.value))} className={selectClass}>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select>}
+     {(accounts.length>1||account===null&&accounts.length>0)&&<select aria-label="Организация" disabled={busy} value={account??''} onChange={e=>setAccount(Number(e.target.value))} className={selectClass}><option value="" disabled>Выберите подключение</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select>}
      {!!scopes.length&&<select aria-label="Уровень применения" disabled={busy} value={scope} onChange={e=>setScope(e.target.value)} className={selectClass}>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{levels[item.level]} · {item.name}</option>)}</select>}
    </div>
+   {projectError&&<p role="alert" className="mb-4 text-sm text-kumo-danger">{projectError}</p>}
    {error&&<p role="alert" className="mb-4 text-sm text-kumo-danger">{error}</p>}
    {loading?<p role="status" className="text-sm text-kumo-subtle">Загрузка шаблонов…</p>:!items.length&&<p className="text-sm text-kumo-subtle">{scopes.length?'На этом уровне пока нет утверждённых шаблонов гаджетов.':'Нет доступных уровней общего применения. Администратор может создать их в настройках.'}</p>}
    <div className="space-y-2">{items.map(item=><button type="button" disabled={busy} key={item.scope_id+':'+item.template_key} onClick={()=>{setSelected(item);setError('');setReason('');setPromotion('')}} className="block w-full rounded-xl border border-kumo-line p-4 text-left hover:bg-kumo-tint">

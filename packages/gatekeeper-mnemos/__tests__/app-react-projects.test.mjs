@@ -75,7 +75,7 @@ test("«Мои проекты»: материалы видны сразу, на�
     await app.until(() => app.calls.some(c => c[0] === "openPrompt"), "подготовка беседы");
     const prompt = app.calls.find(c => c[0] === "openPrompt")[1];
     assert.match(prompt, /Второй проект/);
-    assert.match(prompt, /ID: two/);
+    assert.deepEqual(JSON.parse(JSON.stringify(app.calls.find(c => c[0] === "openPrompt")[2])),{projectId:"two",title:"Второй проект"});
     assert.equal(app.calls.some(c => c[0] === "proposeConnectProject"), false);
   } finally { app.dispose(); }
 });
