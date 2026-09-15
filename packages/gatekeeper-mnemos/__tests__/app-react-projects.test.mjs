@@ -152,3 +152,30 @@ test("Потерянный ответ подтверждения блокиру�
   assert.equal(writes,1);
  } finally {release();app.dispose();}
 });
+
+test("Область меняется у выбранных файлов до подтверждения, исключённый файл сохраняет предложение", async()=>{
+ const decisions=[];
+ const alerts=["a","b","c"].map(id=>({id,blob_sha256_hex:id.repeat(64),status:"open",paths:[`${id}.txt`],suggested_domain:"legal",candidates:[]}));
+ const app=await mountMemoryApp({
+  async inboxAlerts(decided){return {alerts:decided?[]:alerts,truncated:false};},
+  async decideInboxAlert(id,decision){decisions.push({id,decision});return {};},
+ },{section:"projects",project:"two"});
+ try {
+  await app.until(()=>app.button("Подтвердить: 3")&&!app.button("Подтвердить: 3").closest("fieldset").disabled,"список поступлений");
+  const area=name=>app.document.querySelector(`[aria-label="Область: ${name}.txt"]`);
+  const checks=app.document.querySelectorAll('section[aria-label="Проверьте загруженные материалы"] input[type="checkbox"]');
+  checks[2].click();
+  await app.until(()=>app.button("Подтвердить: 2"),"два выбранных файла");
+  const bulk=app.document.querySelector('[aria-label="Область выбранных файлов"]');
+  assert.ok(bulk,"есть общая смена области");
+  app.type(bulk,"finance");
+  await app.until(()=>app.button("Применить к выбранным")&&!app.button("Применить к выбранным").disabled,"область введена");
+  app.button("Применить к выбранным").click();
+  await app.until(()=>area("a").value==="finance"&&area("b").value==="finance","область применена");
+  assert.equal(area("c").value,"legal");
+  assert.equal(decisions.length,0,"редактирование ещё не отправляет решение");
+  app.button("Подтвердить: 2").click();
+  await app.until(()=>decisions.length===2,"подтверждены только выбранные");
+  assert.deepEqual(decisions.map(d=>[d.id,d.decision.place]),[["a","second/finance/a.txt"],["b","second/finance/b.txt"]]);
+ }finally{app.dispose();}
+});

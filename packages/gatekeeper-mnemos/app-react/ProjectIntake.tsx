@@ -10,6 +10,7 @@ export default function ProjectIntake({projectId, onPlaced}:{projectId:string;on
  const onPlacedRef=useRef(onPlaced);onPlacedRef.current=onPlaced;
  const [ready,setReady]=useState(false);
  const [alerts,setAlerts]=useState<IntakeAlert[]>([]),[slug,setSlug]=useState("");
+ const [bulkDomain,setBulkDomain]=useState("");
  const [domains,setDomains]=useState<Record<string,string>>({});
  const [excluded,setExcluded]=useState<Set<string>>(new Set());
  const [error,setError]=useState(""),[message,setMessage]=useState("");
@@ -61,6 +62,10 @@ export default function ProjectIntake({projectId, onPlaced}:{projectId:string;on
   {message&&<Notice>{message}</Notice>}
   {!ready&&!busy&&files.length>0&&<p role="status" className="text-sm text-kumo-subtle">Проверяем актуальные решения…</p>}
   <fieldset disabled={busy||!ready} className="m-0 border-0 p-0">
+   {selected.length>1&&<div className="mb-2 flex flex-wrap items-end gap-2">
+    <label className="w-48 text-xs text-kumo-subtle">Область выбранных файлов<TextInput aria-label="Область выбранных файлов" value={bulkDomain} onChange={e=>setBulkDomain(e.target.value)}/></label>
+    <Button size="sm" variant="secondary" disabled={!bulkDomain.trim()} onClick={()=>{setDomains(previous=>({...previous,...Object.fromEntries(selected.map(a=>[a.id,bulkDomain.trim()]))}));setError("");}}>Применить к выбранным</Button>
+   </div>}
    <div className="divide-y divide-kumo-line">{files.map(file=><div key={file.id} className="flex flex-wrap items-center gap-3 py-3">
     <label className="flex min-w-0 flex-1 items-center gap-3 text-sm"><input type="checkbox" checked={!excluded.has(file.id)} onChange={()=>setExcluded(previous=>{const next=new Set(previous);if(next.has(file.id))next.delete(file.id);else next.add(file.id);return next;})}/><span className="break-all">{file.paths[0]||"Материал"}</span></label>
     <label className="w-48 text-xs text-kumo-subtle">Предметная область<TextInput aria-label={`Область: ${file.paths[0]}`} value={domains[file.id]??""} onChange={e=>setDomains(previous=>({...previous,[file.id]:e.target.value}))}/></label>
