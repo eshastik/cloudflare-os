@@ -63,3 +63,36 @@ test('общий Blueprint копируется по точной версии, 
    denied=false;assert.equal((await call({promote:true})).status,200);assert.equal((await call({promote:true})).status,200);assert.equal(promotions,1);
  }finally{await mf.dispose()}
 });
+
+test('Новая версия Blueprint сохраняет историю, проверяет проект и читается после новой сессии',async()=>{
+ const head='a'.repeat(64),mime='application/vnd.mnemos.blueprint-template+json';
+ let version={template_id:'stable',revision:1,title:'Отчёт',kind:'document',purpose:'План',project_id:'project',node_id:'old',source_head:head,content_type:mime,user_id:'alice',agent_id:'',created_at:'2026-09-15T00:00:00Z'};
+ let writes=0,creates=0;
+ const mf=new Miniflare({workers:[{
+ name:'mnemos',modules:true,modulesRules:[{type:'Text',include:['**/*.txt']}],scriptPath:fileURLToPath(new URL('../dist/mnemos.js',import.meta.url)),compatibilityDate:'2026-02-02',compatibilityFlags:['allow_irrevocable_stub_storage','nodejs_compat'],bindings:{MNEMOS_API_ORIGIN:'https://memory.example',MNEMOS_STORAGE_ORIGIN:'https://objects.example'},durableObjects:{ACCOUNTS:{className:'UserAccount',useSQLite:true}},
+ outboundService:async request=>{
+ const path=new URL(request.url).pathname;
+ if(path==='/v1/whoami')return Response.json({subject:{tenant_id:'org',user_id:'alice'},capabilities:[]});
+ if(path==='/v1/work-templates/stable'&&request.method==='GET')return Response.json(version);
+ if(path==='/v1/projects/project/draft/open')return Response.json({head});
+ if(path==='/v1/uploads')return Response.json({upload_id:'upload',url:'https://objects.example/upload'});
+ if(path==='/v1/projects/project/draft/create'){creates++;const body=await request.json();assert.equal(body.content_type,mime);return Response.json({node_id:'new',head});}
+ if(path==='/v1/work-templates/stable'&&request.method==='PUT'){writes++;const body=await request.json();assert.equal(body.expected_revision,1);version={...version,...body,revision:2};return Response.json(version);}
+ throw Error('Неожиданный запрос '+path);
+ }},
+ {name:'driver',modules:true,compatibilityDate:'2026-02-02',compatibilityFlags:['allow_irrevocable_stub_storage','nodejs_compat'],durableObjects:{ACCOUNTS:{className:'UserAccount',scriptName:'mnemos',useSQLite:true}},script:`export default {async fetch(request,env){
+ const account=env.ACCOUNTS.get(env.ACCOUNTS.idFromName('owner'));await account.acceptVerifiedCredential('fixture-human-token');using frame=await account.startAppUi();const input=await request.json();
+ try{
+ if(input.latest)return Response.json(await frame.blueprintTemplates.selector.latest('bp'));
+ const prepared=await frame.blueprintTemplates.selector.prepare(input.project||'project','Отчёт','План',{template_id:'stable',revision:1},'bp');using creator=prepared.creator;
+ const ticket=await creator.issue(2,'a'.repeat(43)+'=');await creator.checkpoint(ticket.upload_id);
+ const saved=await creator.save();await creator.save();return Response.json(saved);
+ }catch{return new Response('denied',{status:403})}
+ }};`} ]});
+ try{
+ const driver=await mf.getWorker('driver');const call=input=>driver.fetch('https://driver.test',{method:'POST',body:JSON.stringify(input)});
+ assert.equal((await call({project:'other'})).status,403);assert.equal(creates,0);
+ const saved=await call({});assert.equal(saved.status,200);assert.equal((await saved.json()).revision,2);assert.equal(creates,1);assert.equal(writes,1);
+ const latest=await (await call({latest:true})).json();assert.equal(latest.template_id,'stable');assert.equal(latest.revision,2);
+ }finally{await mf.dispose();}
+});

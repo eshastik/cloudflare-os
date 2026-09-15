@@ -3,7 +3,7 @@ import React from 'react'
 import {createRoot} from 'react-dom/client'
 import {beforeEach, afterEach, expect, test, vi} from 'vitest'
 import BlueprintTemplateSave from './BlueprintTemplateSave'
-const mocks=vi.hoisted(()=>({api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
+const mocks=vi.hoisted(()=>({api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
 vi.mock('./accountCapabilities',()=>({listAccounts:async()=>[{id:8,vendorId:'memory',description:{displayName:'Компания'}}],storesDocuments:()=>true,openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{storageOrigin:'https://objects.example',selector:mocks.selector}})}))
 vi.mock('./gatekeeperAppUpload',()=>({uploadGatekeeperBlueprintTemplate:(...args:unknown[])=>mocks.upload(...args)}))
@@ -11,6 +11,7 @@ vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:vi.fn<(...args: 
 let root:ReturnType<typeof createRoot>, container:HTMLDivElement
 beforeEach(()=>{
   vi.clearAllMocks();sessionStorage.clear();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true
+  mocks.selector.latest.mockResolvedValue(null)
   mocks.selector.projects.mockResolvedValue({projects:[{id:'project',name:'Проект'}]})
   mocks.selector.scopes.mockResolvedValueOnce({scopes:[{scope_id:'company',revision:1,level:'organization',name:'Компания',enabled:true},{scope_id:'department',revision:2,level:'department',name:'Финансовый отдел',enabled:true}],next_cursor:'groups'}).mockResolvedValue({scopes:[{scope_id:'finance',revision:4,level:'group',name:'Финансовая группа',enabled:true}]})
   mocks.selector.prepare.mockResolvedValue({id:'capture',creator:mocks.creator})
@@ -26,7 +27,7 @@ const button=(text:string)=>[...container.querySelectorAll('button')].find(item=
 test('Шаблон сохраняется личным, а уровень группы требует отдельного предложения',async()=>{
   await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Финансовый отчёт'}} onClose={()=>{}}/>))
   await React.act(async()=>button('Сохранить личный шаблон').click())
-  expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Отчёт','Финансовый отчёт')
+  expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Отчёт','Финансовый отчёт',undefined,'bp')
   expect(mocks.creator.checkpoint).toHaveBeenCalledWith('upload')
   expect(mocks.creator.save).toHaveBeenCalledOnce()
   expect(mocks.creator.propose).not.toHaveBeenCalled()
@@ -47,4 +48,17 @@ test('Повтор после потери ответа сохраняет ту 
   expect(mocks.selector.prepare).toHaveBeenCalledOnce()
   expect(mocks.upload).toHaveBeenCalledOnce()
   expect(mocks.creator.save).toHaveBeenCalledTimes(2)
+})
+
+test('Новая версия сохраняет идентификатор шаблона и не публикуется автоматически',async()=>{
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Финансовый отчёт'}} onClose={()=>{}}/>))
+ await React.act(async()=>button('Сохранить личный шаблон').click())
+ await React.act(async()=>button('Сохранить новую версию').click())
+ expect(mocks.selector.prepare).toHaveBeenCalledTimes(1)
+ mocks.creator.save.mockResolvedValue({template_id:'template',revision:2,title:'Отчёт',purpose:'Финансовый отчёт',project_id:'project'})
+ await React.act(async()=>button('Сохранить изменения шаблона').click())
+ expect(mocks.selector.prepare).toHaveBeenLastCalledWith('project','Отчёт','Финансовый отчёт',{template_id:'template',revision:1},'bp')
+ expect(mocks.api.captureBlueprintTemplate).toHaveBeenCalledTimes(2)
+ expect(mocks.creator.propose).not.toHaveBeenCalled()
+ expect(container.textContent).toContain('версия 2')
 })

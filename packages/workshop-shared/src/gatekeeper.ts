@@ -448,7 +448,8 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
 
   scopes(cursor?: string): Promise<{scopes: {scope_id: string; revision: number; level: "organization" | "department" | "group"; parent_id: string; name: string; enabled: boolean}[]; next_cursor?: string}>;
   projects(): Promise<{projects: {id: string; name: string}[]}>;
-  prepare(project: string, title: string, purpose: string): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
+  latest(blueprint:string): Promise<GatekeeperTemplateVersion|null>;
+  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
   resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
 }
 

@@ -19,6 +19,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const [scope,setScope] = useState(''), [proposed,setProposed] = useState(false), [locked,setLocked] = useState(false)
   const [title,setTitle] = useState(blueprint.title), [purpose,setPurpose] = useState(blueprint.description || blueprint.title)
   const [busy,setBusy] = useState(false), [error,setError] = useState(''), [version,setVersion] = useState<GatekeeperTemplateVersion|null>(null)
+  const [previous,setPrevious]=useState<{template_id:string;revision:number}|undefined>()
   const frame = useRef<GatekeeperUiFrame|null>(null)
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
@@ -39,17 +40,20 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   },[api,pendingKey])
   useEffect(()=>{
     let cancelled=false
-    setProjects([]);setProject('');setScopes([]);setScope('');setError('');setVersion(null);setLocked(false);setProposed(false)
+    setProjects([]);setProject('');setScopes([]);setScope('');setError('');setVersion(null);setLocked(false);setProposed(false);setPrevious(undefined)
     creator.current?.[Symbol.dispose]();creator.current=null
     disposeGatekeeperFrame(frame.current);frame.current=null
     if(account===null)return
     void openBlueprintTemplatesFrame(api,account).then(async value=>{
       if(cancelled){disposeGatekeeperFrame(value);return}
       frame.current=value
+      const latest=await value.blueprintTemplates.selector.latest(blueprint.id)
+      if(cancelled)return
+      if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);setTitle(latest.title);setPurpose(latest.purpose)}
       const result=await value.blueprintTemplates.selector.projects()
       if(cancelled)return
       setProjects(result.projects)
-      if(result.projects.length===1)setProject(result.projects[0].id)
+      if(!latest&&result.projects.length===1)setProject(result.projects[0].id)
       const groups: typeof scopes = []
       let cursor = ''
       do {
@@ -83,7 +87,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(!creator.current){
         if(saved?.account===account)creator.current=await store.selector.resume(saved.id) as RpcStub<GatekeeperBlueprintTemplateCreator>
         else {
-          const prepared=await store.selector.prepare(project,title,purpose)
+          const prepared=await store.selector.prepare(project,title,purpose,previous,blueprint.id)
           creator.current=prepared.creator as RpcStub<GatekeeperBlueprintTemplateCreator>
           sessionStorage.setItem(pendingKey,JSON.stringify({account,id:prepared.id}));setLocked(true)
         }
@@ -125,12 +129,13 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         <label className="block text-sm">Группа для согласования<select className={field} disabled={busy} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Оставить личным</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{{group:'Группа',department:'Отдел',organization:'Организация'}[item.level]} · {item.name}</option>)}</select></label>
         {scope&&<Button disabled={busy} onClick={()=>void propose()}>{busy?'Отправляем…':'Предложить для общего применения'}</Button>}
       </>}
+      <Button variant="secondary" disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</Button>
     </div>:<fieldset disabled={busy} className="space-y-3 border-0 p-0">
       {accounts.length!==1&&<label className="block text-sm">Организация<select className={field} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите организацию</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <label className="block text-sm">Проект<select className={field} disabled={locked} value={project} onChange={e=>setProject(e.target.value)}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label className="block text-sm">Название<input className={field} disabled={locked} value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label className="block text-sm">Для каких задач<input className={field} disabled={locked} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
-      <Button disabled={!project||!title.trim()||!purpose.trim()} onClick={()=>void save()}>{busy?'Сохраняем…':'Сохранить личный шаблон'}</Button>
+      <Button disabled={!project||!title.trim()||!purpose.trim()} onClick={()=>void save()}>{busy?'Сохраняем…':previous?'Сохранить изменения шаблона':'Сохранить личный шаблон'}</Button>
     </fieldset>}
     {error&&<p role="alert" className="text-sm text-kumo-danger">{error}</p>}
     <Button variant="ghost" disabled={busy} onClick={onClose}>Назад к шаблонам</Button>

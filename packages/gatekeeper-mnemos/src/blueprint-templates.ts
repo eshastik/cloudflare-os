@@ -4,7 +4,7 @@ import { BLUEPRINT_TEMPLATE_MIME, MAX_BLUEPRINT_TEMPLATE_BYTES } from '@gadgets/
 import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
-type Capture = { id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number} }
+type Capture = { blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
@@ -78,10 +78,21 @@ export class BlueprintTemplates extends RpcTarget {
   async validateApplication(project: string, node: string, head: string) {
     await this.session.checkPrivateVersionRead(project, node, head)
   }
-  async prepare(project: string, title: string, purpose: string) {
+  async latest(blueprint:string){
+    const saved=this.storage.get<{template_id:string}>(`blueprint-template-latest:${blueprint}`)
+    if(!saved)return null
+    return this.session.readWorkTemplate(saved.template_id,0)
+  }
+  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string) {
     if (!title.trim() || title.length > 200 || !purpose.trim() || purpose.length > 2000) throw new Error('Укажите название и назначение шаблона')
+    if(blueprint!==undefined&&(!blueprint||blueprint.length>256))throw new Error("Некорректный шаблон гаджета")
+    if(previous){
+      if(!previous.template_id||!Number.isSafeInteger(previous.revision)||previous.revision<1)throw new Error('Некорректная предыдущая версия')
+      const version=await this.session.readWorkTemplate(previous.template_id,previous.revision)
+      if(version.project_id!==project||version.content_type!==BLUEPRINT_TEMPLATE_MIME)throw new Error('Версия относится к другому проекту или формату')
+    }
     const { head } = await this.session.openDraft(project)
-    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '' }
+    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '', blueprint, ...(previous?{template:previous.template_id,expectedRevision:previous.revision}:{}) }
     this.storage.put(`blueprint-template:${capture.id}`, capture)
     return { id: capture.id, creator: new RpcStub(new BlueprintTemplateCreator(this.session, this.storage, capture.id)) }
   }
@@ -117,13 +128,18 @@ class BlueprintTemplateCreator extends RpcTarget {
     const capture = this.read()
     if (!capture.version) throw new Error('Сначала сохраните версию шаблона')
     if (capture.promotion && (capture.promotion.scope !== scope || capture.promotion.revision !== scopeRevision)) throw new Error('Предложение уже связано с другой областью')
-    const version = await this.session.readWorkTemplate(capture.id, capture.version.revision)
+    const version = await this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
+    let catalogueRevision=capture.promotion?.catalogueRevision??0
+    if(!capture.promotion&&capture.expectedRevision){
+      try{catalogueRevision=(await this.session.readScopedWorkTemplate(scope,capture.template??capture.id,0)).revision}
+      catch(error){if(!(error instanceof MnemosAPIError)||error.status!==404)throw error}
+    }
     const input = {project_id: capture.project, request_id: capture.id, revision: version.revision,
-      target_scope_id: scope, target_scope_revision: scopeRevision, template_key: capture.id,
-      expected_catalogue_revision: 0, message: capture.purpose}
+      target_scope_id: scope, target_scope_revision: scopeRevision, template_key: capture.template??capture.id,
+      expected_catalogue_revision: catalogueRevision, message: capture.purpose}
     const previous = await this.session.readSavedTemplateAction(capture.project)
-    const action = await this.session.saveTemplateAction(capture.project, {kind: 'propose', template: capture.id, input}, previous?.id ?? '')
-    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision}})
+    const action = await this.session.saveTemplateAction(capture.project, {kind: 'propose', template: capture.template??capture.id, input}, previous?.id ?? '')
+    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision, catalogueRevision}})
     const result = await this.session.executeSavedTemplateAction(capture.project, action.id)
     if (result.receipt?.kind !== 'propose') throw new Error('Предложение не подтверждено')
     return result.receipt.proposal
@@ -132,16 +148,17 @@ class BlueprintTemplateCreator extends RpcTarget {
     const capture = this.read()
     if (!capture.upload) throw new Error('Сначала загрузите снимок шаблона')
     // Повтор проходит через API: сохранённый receipt не заменяет актуальную проверку доступа.
-    if (capture.version) return this.session.readWorkTemplate(capture.id, capture.version.revision)
+    if (capture.version) return this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
     const created = await this.session.createPrivateDocument(capture.project, {
       request_id: capture.id, expected_head: capture.head, parent_id: '', name: `${capture.title}.mnemos-template`,
       content_type: BLUEPRINT_TEMPLATE_MIME, upload_id: capture.upload, message: 'Снимок Blueprint для согласования',
     })
-    const version = await this.session.saveWorkTemplateSnapshot(capture.id, {
-      expected_revision: 0, title: capture.title, purpose: capture.purpose, kind: 'document',
+    const version = await this.session.saveWorkTemplateSnapshot(capture.template??capture.id, {
+      expected_revision: capture.expectedRevision??0, title: capture.title, purpose: capture.purpose, kind: 'document',
       project_id: capture.project, node_id: created.node_id, source_head: created.head,
     })
     this.storage.put(`blueprint-template:${this.id}`, { ...capture, version })
+    if(capture.blueprint)this.storage.put(`blueprint-template-latest:${capture.blueprint}`,{template_id:version.template_id})
     return version
   }
 }
