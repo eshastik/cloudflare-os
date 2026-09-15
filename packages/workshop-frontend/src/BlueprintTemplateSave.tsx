@@ -50,9 +50,15 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(cancelled)return
       setProjects(result.projects)
       if(result.projects.length===1)setProject(result.projects[0].id)
-      const scopePage=await value.blueprintTemplates.selector.scopes()
-      if(cancelled)return
-      setScopes(scopePage.scopes.filter(item=>item.enabled))
+      const groups: typeof scopes = []
+      let cursor = ''
+      do {
+        const page = await value.blueprintTemplates.selector.scopes(cursor)
+        if(cancelled)return
+        groups.push(...page.scopes.filter(item=>item.enabled && item.level === 'group'))
+        cursor = page.next_cursor || ''
+      } while(cursor)
+      setScopes(groups)
       let saved:{account:number;id:string}|null=null
       try{saved=JSON.parse(sessionStorage.getItem(pendingKey)||'null')}catch{}
       if(saved?.account===account){
@@ -114,7 +120,9 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     <p className="text-sm text-kumo-subtle">Сохраните код гаджета и содержимое документа как одну версию.</p>
     {version?<div className="space-y-3"><p role="status">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p>
       {proposed?<p role="status">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<>
-        <label className="block text-sm">Где предложить применение<select className={field} disabled={busy} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Оставить личным</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{{group:'Группа',department:'Отдел',organization:'Организация'}[item.level]} · {item.name}</option>)}</select></label>
+        <p className="text-xs text-kumo-subtle">Сначала предложите шаблон группе. После одобрения его можно предложить отделу, затем организации.</p>
+        {!scopes.length&&<p className="text-sm text-kumo-subtle">Доступных групп для согласования пока нет. Шаблон остаётся личным.</p>}
+        <label className="block text-sm">Группа для согласования<select className={field} disabled={busy} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Оставить личным</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{{group:'Группа',department:'Отдел',organization:'Организация'}[item.level]} · {item.name}</option>)}</select></label>
         {scope&&<Button disabled={busy} onClick={()=>void propose()}>{busy?'Отправляем…':'Предложить для общего применения'}</Button>}
       </>}
     </div>:<fieldset disabled={busy} className="space-y-3 border-0 p-0">

@@ -5,7 +5,8 @@ import {fileURLToPath} from 'node:url';
 
 test('общий Blueprint копируется по точной версии, повтор не создаёт копию, отзыв запрещает чтение', async()=>{
  const head='a'.repeat(64), saved='b'.repeat(64), source='c'.repeat(64);
- let creates=0, denied=false;
+ let creates=0, denied=false, promotions=0, proposal;
+ const scopes=[{scope_id:"department",revision:2,level:"department",parent_id:"organization",reader_group_id:"department-readers",name:"Отдел",enabled:true,approvers:["reviewer"]},{scope_id:"finance",revision:1,level:"group",parent_id:"department",reader_group_id:"finance-readers",name:"Группа",enabled:true,approvers:["reviewer"]},{scope_id:"organization",revision:1,level:"organization",parent_id:"",reader_group_id:"",name:"Компания",enabled:true,approvers:["reviewer"]}];
  const mime='application/vnd.mnemos.blueprint-template+json';
  const mf=new Miniflare({workers:[{
    name:'mnemos',modules:true,modulesRules:[{type:'Text',include:['**/*.txt']}],
@@ -17,6 +18,13 @@ test('общий Blueprint копируется по точной версии, 
      assert.equal(request.headers.get('Authorization'),'Bearer fixture-human-token');
      const url=new URL(request.url), path=url.pathname;
      if(path==='/v1/whoami')return Response.json({subject:{tenant_id:'org',user_id:'alice'}});
+     if(path==='/v1/template-scopes')return Response.json({scopes});
+     if(path==='/v1/template-scopes/department/templates/contract')return new Response(null,{status:404});
+     if(path==='/v1/template-promotions/scoped'){
+       promotions++;const body=await request.json();assert.equal(body.source_scope_id,'finance');assert.equal(body.source_revision,3);assert.equal(body.target_scope_id,'department');assert.equal(body.target_scope_revision,2);
+       proposal={...body,proposal_id:'promotion',user_id:'alice',agent_id:'',source_owner_id:'author',source_scope_revision:3,template_id:'source-template',template_revision:2,created_at:'2026-09-15T00:00:00Z',scope_path:[scopes[0],scopes[2]]};return Response.json(proposal);
+     }
+     if(path==='/v1/template-promotions/promotion')return Response.json({proposal});
      if(path==='/v1/projects/project/draft/open')return Response.json({head});
      if(path==='/v1/template-scopes/finance/templates/contract'){
        assert.equal(url.searchParams.get('revision'),'3');
@@ -39,7 +47,7 @@ test('общий Blueprint копируется по точной версии, 
    script:`export default {async fetch(request,env){
      const account=env.ACCOUNTS.get(env.ACCOUNTS.idFromName('owner'));await account.acceptVerifiedCredential('fixture-human-token');
      using frame=await account.startAppUi();const input=await request.json();
-     try {const result=await frame.blueprintTemplates.selector.apply('finance','contract',input.revision||3,'project','Договор.mnemos-template','11111111-1111-4111-8111-111111111111');return Response.json(result)}
+     try {if(input.promote)return Response.json(await frame.blueprintTemplates.selector.promote('finance','contract',3,'Полезно всему отделу','22222222-2222-4222-8222-222222222222'));const result=await frame.blueprintTemplates.selector.apply('finance','contract',input.revision||3,'project','Договор.mnemos-template','11111111-1111-4111-8111-111111111111');return Response.json(result)}
      catch{return new Response('denied',{status:403})}
    }};`
  }]});
@@ -49,5 +57,6 @@ test('общий Blueprint копируется по точной версии, 
    assert.equal((await call()).status,200);assert.equal((await call()).status,200);assert.equal(creates,1);
    assert.equal((await call({revision:4})).status,403);assert.equal(creates,1);
    denied=true;assert.equal((await call()).status,403);assert.equal(creates,1);
+   denied=false;assert.equal((await call({promote:true})).status,200);assert.equal((await call({promote:true})).status,200);assert.equal(promotions,1);
  }finally{await mf.dispose()}
 });

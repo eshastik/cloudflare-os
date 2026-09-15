@@ -1,6 +1,7 @@
 import { RpcStub, RpcTarget } from 'cloudflare:workers'
 import type { AccountStorage, MnemosAccountSession } from './account-session'
 import { BLUEPRINT_TEMPLATE_MIME, MAX_BLUEPRINT_TEMPLATE_BYTES } from '@gadgets/workshop-shared/blueprint-template'
+import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
 type Capture = { id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number} }
@@ -10,6 +11,34 @@ export class BlueprintTemplates extends RpcTarget {
   async projects() { return this.session.listProjects() }
   async scopes(cursor = '') { return this.session.listTemplateScopes(cursor) }
   async templates(scope: string, cursor = '') { return this.session.listScopedWorkTemplates(scope, cursor) }
+  async promote(scope: string, template: string, revision: number, message: string, operation: string) {
+    if (!/^[a-f0-9-]{36}$/.test(operation)) throw new Error('Некорректная операция')
+    const input = {scope, template, revision, message}
+    const key = `blueprint-promotion:${operation}`
+    let saved = this.storage.get<{input: typeof input; project: string; action: string}>(key)
+    if (saved && JSON.stringify(saved.input) !== JSON.stringify(input)) throw new Error('Операция уже относится к другому предложению')
+    if (!saved) {
+      const source = await this.session.readScopedWorkTemplate(scope, template, revision)
+      const scopes = []; let cursor = ''
+      do { const page = await this.session.listTemplateScopes(cursor); scopes.push(...page.scopes); cursor = page.next_cursor || '' } while(cursor)
+      const current = scopes.find(item=>item.scope_id === scope && item.enabled)
+      const target = scopes.find(item=>item.scope_id === current?.parent_id && item.enabled)
+      if (!target) throw new Error('Нет следующего уровня для согласования')
+      let expected = 0
+      try { expected = (await this.session.readScopedWorkTemplate(target.scope_id, template, 0)).revision }
+      catch(error) { if (!(error instanceof MnemosAPIError) || error.status !== 404) throw error }
+      const project = source.source.project_id
+      const previous = await this.session.readSavedTemplateAction(project)
+      const action = await this.session.saveTemplateAction(project, {kind:'propose', template,
+        input:{project_id:project,request_id:operation,revision,source_scope_id:scope,target_scope_id:target.scope_id,
+          target_scope_revision:target.revision,template_key:template,expected_catalogue_revision:expected,message}}, previous?.id ?? '')
+      saved = {input, project, action:action.id};this.storage.put(key,saved)
+    }
+    const result = await this.session.executeSavedTemplateAction(saved.project, saved.action)
+    if(result.receipt?.kind !== 'propose') throw new Error('Предложение не подтверждено')
+    // Сохранённая квитанция не заменяет текущую проверку доступа к заявке.
+    return this.session.readTemplateProposal(result.receipt.proposal.proposal_id)
+  }
   async apply(scope: string, template: string, revision: number, project: string, name: string, operation: string) {
     if (!/^[a-f0-9-]{36}$/.test(operation)) throw new Error('Некорректная операция')
     const key = `blueprint-application:${operation}`

@@ -18,6 +18,7 @@ export default function SharedTemplateLibrary() {
  const [scopes,setScopes] = useState<Scope[]>([]), [scope,setScope] = useState('')
  const [projects,setProjects] = useState<{id:string;name:string}[]>([]), [project,setProject] = useState('')
  const [items,setItems] = useState<Entry[]>([]), [cursor,setCursor] = useState(''), [selected,setSelected] = useState<Entry|null>(null)
+ const [reason,setReason] = useState(''), [promotion,setPromotion] = useState('')
  const [loading,setLoading] = useState(true), [busy,setBusy] = useState(false), [error,setError] = useState('')
  const frame = useRef<GatekeeperUiFrame|null>(null), lifetime = useRef(new AbortController())
  const pending = useRef<{key:string;id:string}|null>(null)
@@ -85,6 +86,18 @@ export default function SharedTemplateLibrary() {
    } catch {if(!signal.aborted)setError('Не удалось открыть шаблон. Повторите создание — сохранённая копия будет использована повторно.')}
    finally{if(!signal.aborted)setBusy(false)}
  }
+ async function promote(){
+   const store=frame.current?.blueprintTemplates;if(!store||!selected||busy||!reason.trim())return
+   setBusy(true);setError('');const signal=lifetime.current.signal
+   try {
+     const key='mnemos-template-promotion:'+JSON.stringify([account,selected.scope_id,selected.template_key,selected.revision,reason])
+     let id=sessionStorage.getItem(key);if(!id){id=crypto.randomUUID();sessionStorage.setItem(key,id)}
+     await store.selector.promote(selected.scope_id,selected.template_key,selected.revision,reason,id)
+     signal.throwIfAborted();sessionStorage.removeItem(key);setPromotion('Предложение отправлено. Шаблон появится на следующем уровне после согласования.')
+   }catch{if(!signal.aborted)setError('Отправка не подтверждена. Повторите предложение; исходная версия останется прежней.')}
+   finally{if(!signal.aborted)setBusy(false)}
+ }
+ const parent = scopes.find(item=>item.scope_id===scopes.find(current=>current.scope_id===selected?.scope_id)?.parent_id)
  const selectClass='rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-default'
  return <section className="px-3 py-4" aria-label="Общие шаблоны">
    <div className="mb-5 flex flex-wrap gap-3">
@@ -93,7 +106,7 @@ export default function SharedTemplateLibrary() {
    </div>
    {error&&<p role="alert" className="mb-4 text-sm text-kumo-danger">{error}</p>}
    {loading?<p role="status" className="text-sm text-kumo-subtle">Загрузка шаблонов…</p>:!items.length&&<p className="text-sm text-kumo-subtle">На этом уровне пока нет утверждённых шаблонов гаджетов.</p>}
-   <div className="space-y-2">{items.map(item=><button type="button" disabled={busy} key={item.scope_id+':'+item.template_key} onClick={()=>{setSelected(item);setError('')}} className="block w-full rounded-xl border border-kumo-line p-4 text-left hover:bg-kumo-tint">
+   <div className="space-y-2">{items.map(item=><button type="button" disabled={busy} key={item.scope_id+':'+item.template_key} onClick={()=>{setSelected(item);setError('');setReason('');setPromotion('')}} className="block w-full rounded-xl border border-kumo-line p-4 text-left hover:bg-kumo-tint">
      <span className="block text-sm font-medium">{item.source.title}</span><span className="mt-1 block text-xs text-kumo-subtle">{item.source.purpose}</span><span className="mt-2 block text-xs text-kumo-subtle">Утверждённая версия {item.revision}</span>
    </button>)}</div>
    {cursor&&<Button className="mt-3" disabled={busy} onClick={()=>void more()}>Показать ещё</Button>}
@@ -101,6 +114,10 @@ export default function SharedTemplateLibrary() {
      <h2 className="text-sm font-medium">Начать работу: {selected.source.title}</h2>
      <p className="my-2 text-xs text-kumo-subtle">Сохраним личную копию шаблона в проекте и откроем рабочий гаджет.</p>
      <div className="flex flex-wrap items-center gap-3"><select aria-label="Проект для рабочей копии" disabled={busy} value={project} onChange={e=>setProject(e.target.value)} className={selectClass}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><Button variant="primary" disabled={busy||!project} onClick={()=>void create()}>{busy?'Создание…':'Начать работу'}</Button><Button disabled={busy} onClick={()=>setSelected(null)}>Отмена</Button></div>
+     {parent&&<details className="mt-4 border-t border-kumo-line pt-3"><summary className="cursor-pointer text-sm text-kumo-subtle">Предложить для более широкого применения</summary>
+       <p className="my-2 text-xs text-kumo-subtle">Следующий уровень: {levels[parent.level]} · {parent.name}</p>
+       {promotion?<p role="status" className="text-sm">{promotion}</p>:<><label className="block text-sm">Для чего нужен общий шаблон<textarea className="my-2 block w-full rounded-lg border border-kumo-line bg-kumo-base p-2" disabled={busy} value={reason} onChange={e=>setReason(e.target.value)} /></label><Button disabled={busy||!reason.trim()} onClick={()=>void promote()}>{busy?'Отправляем…':'Отправить на согласование'}</Button></>}
+     </details>}
    </div>}
  </section>
 }

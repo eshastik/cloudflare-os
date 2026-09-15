@@ -12,7 +12,7 @@ let root:ReturnType<typeof createRoot>, container:HTMLDivElement
 beforeEach(()=>{
   vi.clearAllMocks();sessionStorage.clear();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true
   mocks.selector.projects.mockResolvedValue({projects:[{id:'project',name:'Проект'}]})
-  mocks.selector.scopes.mockResolvedValue({scopes:[{scope_id:'finance',revision:4,level:'department',name:'Финансовый отдел',enabled:true}]})
+  mocks.selector.scopes.mockResolvedValueOnce({scopes:[{scope_id:'company',revision:1,level:'organization',name:'Компания',enabled:true},{scope_id:'department',revision:2,level:'department',name:'Финансовый отдел',enabled:true}],next_cursor:'groups'}).mockResolvedValue({scopes:[{scope_id:'finance',revision:4,level:'group',name:'Финансовая группа',enabled:true}]})
   mocks.selector.prepare.mockResolvedValue({id:'capture',creator:mocks.creator})
   mocks.creator.state.mockResolvedValue({upload:'',version:null})
   mocks.creator.save.mockResolvedValue({template_id:'template',revision:1,title:'Отчёт',purpose:'Финансовый отчёт',project_id:'project'})
@@ -23,7 +23,7 @@ beforeEach(()=>{
 })
 afterEach(async()=>{await React.act(async()=>root.unmount());container.remove()})
 const button=(text:string)=>[...container.querySelectorAll('button')].find(item=>item.textContent===text)!
-test('Шаблон сохраняется личным, а уровень отдела требует отдельного предложения',async()=>{
+test('Шаблон сохраняется личным, а уровень группы требует отдельного предложения',async()=>{
   await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Финансовый отчёт'}} onClose={()=>{}}/>))
   await React.act(async()=>button('Сохранить личный шаблон').click())
   expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Отчёт','Финансовый отчёт')
@@ -31,6 +31,8 @@ test('Шаблон сохраняется личным, а уровень отд
   expect(mocks.creator.save).toHaveBeenCalledOnce()
   expect(mocks.creator.propose).not.toHaveBeenCalled()
   const scope=container.querySelector('select')!
+  expect([...scope.options].map(item=>item.value)).toEqual(['','finance'])
+  expect(mocks.selector.scopes).toHaveBeenCalledWith('groups')
   await React.act(async()=>{scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}))})
   await React.act(async()=>button('Предложить для общего применения').click())
   expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4)

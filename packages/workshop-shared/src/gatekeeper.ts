@@ -416,6 +416,9 @@ export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
   save(): Promise<GatekeeperTemplateVersion>;
 }
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  /** Предлагает выбранную общую версию непосредственному родительскому уровню с отдельным согласованием. */
+  promote(scope: string, template: string, revision: number, message: string, operation: string): Promise<{proposal: {proposal_id: string; target_scope_id: string}}>;
+
   /** Утверждённые версии выбранного уровня; возвращается курсор следующей страницы. */
   templates(scope: string, cursor?: string): Promise<{templates: {scope_id: string; template_key: string; revision: number; source: {title: string; purpose: string; content_type: string}}[]; next_cursor?: string}>;
   /** Создаёт личную копию утверждённой версии в выбранном проекте. Повтор использует тот же идентификатор операции. */
@@ -423,7 +426,7 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
   /** Повторно проверяет чтение копии после загрузки её содержимого. */
   validateApplication(project: string, node: string, head: string): Promise<void>;
 
-  scopes(cursor?: string): Promise<{scopes: {scope_id: string; revision: number; level: "organization" | "department" | "group"; name: string; enabled: boolean}[]; next_cursor?: string}>;
+  scopes(cursor?: string): Promise<{scopes: {scope_id: string; revision: number; level: "organization" | "department" | "group"; parent_id: string; name: string; enabled: boolean}[]; next_cursor?: string}>;
   projects(): Promise<{projects: {id: string; name: string}[]}>;
   prepare(project: string, title: string, purpose: string): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
   resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
