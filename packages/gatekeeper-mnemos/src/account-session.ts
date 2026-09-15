@@ -546,7 +546,7 @@ export class MnemosAccountSession {
     return result;
   }
   async submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number) {await this.requireIntakeManager();const result=await this.#client.submitInboxUpload(uploadId,sourcePath,modifiedAt,this.#lifetime.signal);this.#check();return result;}
-  async inboxStatus() {await this.requireIntakeManager();const result=await this.#client.inboxStatus(this.#lifetime.signal);this.#check();return result;}
+  async inboxStatus(projectId?:string) {this.#check();if(!projectId)await this.requireIntakeManager();const result=await this.#client.inboxStatus(this.#lifetime.signal,projectId);this.#check();return result;}
   async inboxAlerts(decided=false, projectId?: string) {this.#check();if (!projectId) await this.requireIntakeManager();const result=await this.#client.inboxAlerts(decided,this.#lifetime.signal,projectId);this.#check();return result;}
   async decideInboxAlert(id: string, decision: import("./intake.ts").IntakeDecision) {this.#check();if (!decision.intake_project_id) await this.requireIntakeManager();const result=await this.#client.decideInboxAlert(id,decision,this.#lifetime.signal);this.#check();return result;}
   async replayInboxItem(hash: string, version: number) {await this.requireIntakeManager();const result=await this.#client.replayInboxItem(hash,version,this.#lifetime.signal);this.#check();return result;}

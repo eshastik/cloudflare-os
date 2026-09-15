@@ -109,7 +109,7 @@ export class MnemosAPI {
     return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId,review_required:true});
   }
   submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {return this.#request('/v1/inbox','POST',signal,checkedIntakeSubmit(uploadId,sourcePath,modifiedAt));}
-  inboxStatus(signal?: AbortSignal): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200','GET',signal);}
+  inboxStatus(signal?: AbortSignal, projectId?:string): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200'+(projectId?'&project_id='+encodeURIComponent(projectId):''),'GET',signal);}
   inboxAlerts(decided=false,signal?: AbortSignal,projectId?:string): Promise<IntakeAlerts> {return this.#request(`/v1/inbox/alerts?limit=200&decided=${decided ? 'true' : 'false'}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`,'GET',signal);}
   decideInboxAlert(id: string, decision: IntakeDecision, signal?: AbortSignal): Promise<{alert:IntakeAlert}> {return this.#request(`/v1/inbox/alerts/${segment(id)}`,'POST',signal,decision);}
   replayInboxItem(hash: string, version: number, signal?: AbortSignal): Promise<{blob_sha256_hex:string;pipeline_version:number}> {

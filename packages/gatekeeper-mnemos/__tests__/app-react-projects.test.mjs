@@ -179,3 +179,11 @@ test("Область меняется у выбранных файлов до п
   assert.deepEqual(decisions.map(d=>[d.id,d.decision.place]),[["a","second/finance/a.txt"],["b","second/finance/b.txt"]]);
  }finally{app.dispose();}
 });
+
+test("Поступления проекта показывают обработку до появления вопроса",async()=>{
+ const app=await mountMemoryApp({
+  async inboxStatus(project){assert.equal(project,"two");return {total:3,in_queue:2,awaiting_classification:0,awaiting_placement:1,placed_in_tree:0,dead_lettered:0,dead_letters:[]};},
+  async inboxAlerts(){return {alerts:[],truncated:false};},
+ },{section:"projects",project:"two"});
+ try{await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
+});

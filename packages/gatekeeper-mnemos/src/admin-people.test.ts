@@ -71,3 +71,18 @@ test("Проектная загрузка требует проверки, во�
  assert.equal(new URL(calls[1].url).searchParams.get("project_id"),"project-a");
  assert.equal((calls[2].body as {intake_project_id:string}).intake_project_id,"project-a");
 });
+
+test("Статус проекта запрашивается без админского полномочия, общая очередь остаётся закрыта",async()=>{
+ const requests:string[]=[];
+ const account=new MnemosAccount(storage(),"https://memory.example",async(url)=>{
+  if(String(url).endsWith("/whoami"))return Response.json({subject:{tenant_id:"org",user_id:"member"},capabilities:[]});
+  requests.push(String(url));return Response.json({total:1,in_queue:1});
+ });
+ await account.connect("human-token");const session=account.session();
+ try {
+  const status=await session.inboxStatus("проект & 1");assert.equal(status.in_queue,1);
+  assert.equal(new URL(requests[0]).pathname,"/v1/inbox/status");
+  assert.equal(new URL(requests[0]).searchParams.get("project_id"),"проект & 1");
+  await assert.rejects(session.inboxStatus());assert.equal(requests.length,1);
+ }finally{session.dispose();}
+});

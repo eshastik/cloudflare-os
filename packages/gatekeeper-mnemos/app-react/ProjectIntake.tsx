@@ -2,12 +2,13 @@ import {useEffect, useRef, useState} from "react";
 import {Button} from "@cloudflare/kumo";
 import {useUi} from "./host.ts";
 import {Block, Notice, TextInput} from "./ui.tsx";
-import {intakePlacement, type IntakeAlert} from "../src/intake.ts";
+import {intakePlacement, type IntakeAlert, type IntakeStatus} from "../src/intake.ts";
 
 export default function ProjectIntake({projectId, onPlaced}:{projectId:string;onPlaced():Promise<void>}) {
  const ui=useUi();
  const placed=useRef(new Set<string>());
  const onPlacedRef=useRef(onPlaced);onPlacedRef.current=onPlaced;
+ const [status,setStatus]=useState<IntakeStatus|null>(null);
  const [ready,setReady]=useState(false);
  const [alerts,setAlerts]=useState<IntakeAlert[]>([]),[slug,setSlug]=useState("");
  const [bulkDomain,setBulkDomain]=useState("");
@@ -19,9 +20,9 @@ export default function ProjectIntake({projectId, onPlaced}:{projectId:string;on
   let disposed=false;let timer:ReturnType<typeof setTimeout>|undefined;
   async function load(){
    try {
-    const [questions,projects,history]=await Promise.all([ui.inboxAlerts(false,projectId),ui.listProjects(),ui.inboxAlerts(true,projectId)]);
+    const [questions,projects,history,currentStatus]=await Promise.all([ui.inboxAlerts(false,projectId),ui.listProjects(),ui.inboxAlerts(true,projectId),ui.inboxStatus(projectId)]);
     if(disposed)return;
-    setAlerts(questions.alerts);setTruncated(questions.truncated);
+    setStatus(currentStatus);setAlerts(questions.alerts);setTruncated(questions.truncated);
     setSlug(projects.projects.find(p=>p.id===projectId)?.slug??"");
     setDomains(previous=>Object.fromEntries(questions.alerts.map(a=>[a.id,previous[a.id]??a.suggested_domain??""])));
     const completed=history.alerts.filter(a=>a.result_node_id&&a.result_project_id===projectId);
@@ -56,8 +57,12 @@ export default function ProjectIntake({projectId, onPlaced}:{projectId:string;on
   }catch {setMessage(`Подтверждено: ${accepted}. Остальные решения проверяем по серверу.`);}
   finally {setBusy(false);setRevision(v=>v+1);}
  }
- if(!files.length&&!error&&!message)return null;
+ const processing=status?(status.in_queue+status.awaiting_placement+Math.max(0,status.awaiting_classification-files.length)):0;
+ const failed=status?.dead_lettered??0;
+ if(!files.length&&!processing&&!failed&&!error&&!message)return null;
  return <Block title="Проверьте загруженные материалы" count={files.length} actions={<Button size="sm" variant="ghost" disabled={busy} onClick={()=>setRevision(v=>v+1)}>Обновить</Button>}>
+  {processing>0&&<p role="status" className="text-sm text-kumo-subtle">В обработке: {processing}. Обновляем состояние автоматически.</p>}
+  {failed>0&&<Notice tone="danger">Не удалось обработать файлов: {failed}. Исходные файлы сохранены.</Notice>}
   {error&&<Notice tone="danger">{error}</Notice>}
   {message&&<Notice>{message}</Notice>}
   {!ready&&!busy&&files.length>0&&<p role="status" className="text-sm text-kumo-subtle">Проверяем актуальные решения…</p>}
