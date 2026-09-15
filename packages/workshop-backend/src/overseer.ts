@@ -1,3 +1,4 @@
+import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
 import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
 import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "./native-editor-update.js";
@@ -693,7 +694,7 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       version: 0,
 
       // The workspace title. (Each chat, gatekeeper, and gadget has its own title, elsewhere.)
-      title: "Untitled Workspace",
+      title: DEFAULT_WORKSPACE_TITLE,
 
       // If present, this gadget was migrated from version zero, when a workspace had only one
       // gadget. Many stored records that normally contain a `gadgetId` might be missing it; they
@@ -3494,7 +3495,7 @@ class OverseerImpl implements AgentHooks {
       chatId = this.nextChatId();
       let meta: AiChatMetadata = {
         id: chatId,
-        title: "New Chat",   // filled in later by AI
+        title: DEFAULT_WORKSPACE_TITLE,   // filled in later by AI
         started: timestamp,
         lastActive: timestamp,
       };
@@ -5230,7 +5231,7 @@ class OverseerImpl implements AgentHooks {
       // Also rename the gadget if this is the first chat. Since the gadget likely doesn't have
       // any code yet, the user still sees it as just a chat, and therefore it makes sense to
       // apply the same title as the chat itself.
-      if (chatId === 0 && ["Untitled Gadget", "Untitled Workspace"].includes(this.storage.title.get()) && this.ownerId) {
+      if (chatId === 0 && isDefaultWorkspaceTitle(this.storage.title.get()) && this.ownerId) {
         this.storage.title.put(result);
         let owner = this.users.get(this.users.idFromString(this.ownerId));
         await owner.updateTitle(this.ctx.id.toString(), result);
@@ -7245,7 +7246,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   async getMetadata(): Promise<GadgetMetadata> {
     let result: GadgetMetadata = {
       id: this.impl.ctx.id.toString(),
-      title: this.impl.storage.title.get(),
+      title: displayWorkspaceTitle(this.impl.storage.title.get()),
       totalCost: this.impl.storage.totalCost.get(),
       sharingProhibited: (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
       role: "build",
@@ -7264,7 +7265,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
     let metadata: GadgetMetadata = {
       id: this.impl.ctx.id.toString(),
-      title: this.impl.storage.title.get(),
+      title: displayWorkspaceTitle(this.impl.storage.title.get()),
       totalCost: this.impl.storage.totalCost.get(),
       sharingProhibited: (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
       role: "build",
@@ -8899,7 +8900,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async getMetadata(): Promise<GadgetMetadata> {
     return {
       id: this.impl.ctx.id.toString(),
-      title: this.impl.storage.title.get(),
+      title: displayWorkspaceTitle(this.impl.storage.title.get()),
       owner: await this.owner.whoami(),
       role: "use",
       defaultGadgetId: this.impl.defaultGadgetId,
@@ -8913,7 +8914,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
 
     let metadata: GadgetMetadata = {
       id: this.impl.ctx.id.toString(),
-      title: this.impl.storage.title.get(),
+      title: displayWorkspaceTitle(this.impl.storage.title.get()),
       owner: await this.owner.whoami(),
       role: "use",
       defaultGadgetId: this.impl.defaultGadgetId,

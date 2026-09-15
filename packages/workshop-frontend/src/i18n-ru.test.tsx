@@ -8,8 +8,8 @@ const SOURCES: Record<string, string> = {
   ...import.meta.glob('./components/chat/*.tsx', { query: '?raw', import: 'default', eager: true }),
   ...import.meta.glob([
     './routes/gatekeepers.tsx', './routes/index.tsx', './routes/workspaces.tsx', './routes/outputs.tsx', './routes/explore.tsx',
-    './GadgetEditor.tsx', './GatekeeperAppPage.tsx', './Connections.tsx', './AgentConsentDialog.tsx',
-    './components/ConnectConnectorModal.tsx', './components/EmptyState.tsx',
+    './ProtectedRoute.tsx', './ShareModal.tsx', './BlueprintModal.tsx', './components/BlueprintCard.tsx', './components/BlueprintBindingCard.tsx', './GadgetEditor.tsx', './GatekeeperAppPage.tsx', './Connections.tsx', './AgentConsentDialog.tsx',
+    './components/GadgetList.tsx', './components/RecentApps.tsx', './components/ConnectConnectorModal.tsx', './components/EmptyState.tsx',
   ], { query: '?raw', import: 'default', eager: true }),
 }
 const FILES = Object.keys(SOURCES).filter(file => !file.endsWith('.test.tsx')).sort()
@@ -33,7 +33,7 @@ const OLD_STRINGS: RegExp[] = [
   /Needs review/, /Auto-approval/, /['"]History['"]/, /['"]Activity['"]/, /['"]Code['"]/,
   /Full screen/, /title="Close"/, /aria-label="Close"/, /aria-label="Search"/,
   /Collapse sidebar/, /Expand sidebar/, /Open menu/, /Close menu/,
-  /['"]Favorites['"]/, /Recent workspaces/, /Show all/, /Untitled workspace/, /Untitled blueprint/,
+  /['"]Favorites['"]/, /Recent workspaces/, /Show all/, /Untitled workspace/i, /Untitled blueprint/,
   /['"]Rename['"]/, /['"]Share['"]/, /['"]Delete['"]/, /['"]Remove['"]/, /['"]Cancel['"]/, /['"]Save['"]/, /['"]Close['"]/, /['"]Open['"]/, /['"]Add['"]/,
   /Connect resource/, /Permission requested/, /Allow access/, /['"]Deny['"]/,
   /Resources to enable/, /What this gatekeeper can do/, /Continue to \$\{/, /Yes, disconnect/, /['"]Disconnect['"]/,

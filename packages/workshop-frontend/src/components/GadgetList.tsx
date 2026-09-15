@@ -13,7 +13,7 @@ import DeleteConfirmationDialog from './DeleteConfirmationDialog'
 
 // Neutral monogram for a workspace — matches the sidebar treatment (no per-item color noise).
 function initials(title: string | undefined): string {
-  const t = (title || 'Untitled').trim()
+  const t = (title || 'Без названия').trim()
   if (!t) return 'UG'
   const parts = t.split(/\s+/).slice(0, 2)
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || t.slice(0, 2).toUpperCase()
@@ -22,12 +22,12 @@ function initials(title: string | undefined): string {
 function formatRelativeTime(date: Date): string {
   const diff = Date.now() - date.getTime()
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 1) return 'только что'
+  if (minutes < 60) return `${minutes} мин назад`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return `${hours} ч назад`
   const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  return `${days} дн назад`
 }
 
 function formatCost(cost: number): string {
@@ -104,13 +104,13 @@ function AppRow({
             />
           ) : (
             <h3 className="text-sm font-medium text-kumo-default truncate">
-              {gadget.title || 'Untitled Workspace'}
+              {gadget.title || 'Новая беседа'}
             </h3>
           )}
         </div>
         {gadget.owner && (
           <p className="text-xs text-kumo-subtle truncate mt-0.5">
-            Shared by {gadget.owner.name}
+            Доступ предоставил {gadget.owner.name}
           </p>
         )}
       </div>
@@ -136,19 +136,19 @@ function AppRow({
         <DropdownMenu.Content className={MENU_CONTENT}>
           <DropdownMenu.Item onClick={startRenaming} className={MENU_ITEM}>
             <Pencil size={13} className="mr-2" />
-            Rename
+            Переименовать
           </DropdownMenu.Item>
           <DropdownMenu.Item onClick={() => onTogglePin(gadget)} className={MENU_ITEM}>
             <Star size={13} className="mr-2" weight={gadget.pinned ? 'fill' : 'regular'} />
-            {gadget.pinned ? 'Unfavorite' : 'Favorite'}
+            {gadget.pinned ? 'Убрать из избранного' : 'В избранное'}
           </DropdownMenu.Item>
           <DropdownMenu.Item onClick={() => onInfo(gadget)} className={MENU_ITEM}>
             <Info size={13} className="mr-2" />
-            Information
+            Сведения
           </DropdownMenu.Item>
           <DropdownMenu.Item onClick={() => onShare(gadget)} className={MENU_ITEM}>
             <ShareNetwork size={13} className="mr-2" />
-            Share
+            Поделиться
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item
@@ -157,7 +157,7 @@ function AppRow({
             className={MENU_ITEM_DANGER}
           >
             <Trash size={13} className="mr-2" />
-            {gadget.owner ? 'Dismiss' : 'Delete'}
+            {gadget.owner ? 'Убрать из списка' : 'Удалить'}
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu>
@@ -237,7 +237,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
     try {
       if (deleteTarget.owner) {
         await authenticatedApi.dismissSharedGadget(deleteTarget.id)
-        toasts.add({ title: 'Workspace removed from list', variant: 'success' })
+        toasts.add({ title: 'Беседа убрана из списка', variant: 'success' })
       } else {
         const overseer = await authenticatedApi.openGadget(deleteTarget.id)
         try {
@@ -245,12 +245,12 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
         } finally {
           overseer[Symbol.dispose]()
         }
-        toasts.add({ title: 'Workspace deleted', variant: 'success' })
+        toasts.add({ title: 'Беседа удалена', variant: 'success' })
       }
       setGadgets(prev => prev.filter(g => g.id !== deleteTarget.id))
     } catch (err) {
       console.error('Failed to delete workspace:', err)
-      toasts.add({ title: 'Failed to delete workspace', variant: 'error' })
+      toasts.add({ title: 'Не удалось удалить беседу', variant: 'error' })
     } finally {
       setIsDeleting(false)
       setDeleteTarget(null)
@@ -268,7 +268,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
     } catch (err) {
       overseer?.[Symbol.dispose]()
       console.error('Failed to open workspace for sharing:', err)
-      toasts.add({ title: 'Failed to open share settings', variant: 'error' })
+      toasts.add({ title: 'Не удалось открыть настройки доступа', variant: 'error' })
     }
   }
 
@@ -297,7 +297,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
           return b.lastActive.getTime() - a.lastActive.getTime()
         })
       })
-      toasts.add({ title: 'Failed to update favorite status', variant: 'error' })
+      toasts.add({ title: 'Не удалось изменить избранное', variant: 'error' })
     } finally {
       (await overseer)[Symbol.dispose]()
     }
@@ -313,7 +313,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
     } catch (err) {
       console.error('Failed to rename workspace:', err)
       setGadgets(prev => prev.map(g => g.id === gadget.id ? { ...g, title: gadget.title } : g))
-      toasts.add({ title: 'Failed to rename workspace', variant: 'error' })
+      toasts.add({ title: 'Не удалось переименовать беседу', variant: 'error' })
     } finally {
       (await overseer)[Symbol.dispose]()
     }
@@ -334,11 +334,11 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
       {showHeader && (
         <div className="px-6 sm:px-10 lg:px-10 pt-10 lg:pt-10 mb-4">
           <h2 className="text-lg font-semibold text-kumo-default">
-            Your workspaces
+            Ваши беседы
           </h2>
           {!loading && gadgets.length === 0 && !loadError && (
             <p className="mt-1 text-sm text-kumo-inactive">
-              You haven&apos;t created any workspaces yet
+              У вас пока нет бесед
             </p>
           )}
         </div>
@@ -356,7 +356,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search workspaces…"
+              placeholder="Поиск бесед…"
               className="h-9 w-full rounded-lg border border-kumo-line bg-kumo-base pl-9 pr-4 text-[13px] tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] duration-150 ease-out focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15"
             />
           </div>
@@ -375,13 +375,13 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
           </>
         ) : loadError ? (
           <div className="text-center py-12 text-sm">
-            <p className="text-kumo-danger">Something went wrong loading your workspaces.</p>
-            <button onClick={loadGadgets} className="text-kumo-brand mt-1 underline">Try again</button>
+            <p className="text-kumo-danger">Не удалось загрузить беседы.</p>
+            <button onClick={loadGadgets} className="text-kumo-brand mt-1 underline">Повторить</button>
           </div>
         ) : filtered.length === 0 ? (
           search ? (
             <div className="text-center py-12 text-kumo-inactive text-sm">
-              No workspaces found
+              Беседы не найдены
             </div>
           ) : (
             <FeaturedBlueprintsGallery />
@@ -406,14 +406,14 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         isDeleting={isDeleting}
-        title={deleteTarget?.owner ? 'Remove workspace' : 'Delete workspace'}
+        title={deleteTarget?.owner ? 'Убрать беседу из списка' : 'Удалить беседу'}
         description={
           deleteTarget?.owner
-            ? `Remove "${deleteTarget?.title || 'Untitled Workspace'}" from your list? You can still access it via its link.`
-            : `Delete "${deleteTarget?.title || 'Untitled Workspace'}"? This cannot be undone.`
+            ? `Убрать «${deleteTarget?.title || 'Новая беседа'}» из списка? Беседу можно будет открыть по ссылке.`
+            : `Удалить «${deleteTarget?.title || 'Новая беседа'}»? Отменить удаление нельзя.`
         }
-        confirmLabel={deleteTarget?.owner ? 'Remove' : 'Delete'}
-        confirmingLabel={deleteTarget?.owner ? 'Removing...' : 'Deleting...'}
+        confirmLabel={deleteTarget?.owner ? 'Убрать' : 'Удалить'}
+        confirmingLabel={deleteTarget?.owner ? 'Убираем…' : 'Удаляем…'}
         onConfirm={handleDeleteConfirm}
       />
 
@@ -424,27 +424,27 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
       >
         <Dialog className="p-8" size="sm">
           <Dialog.Title className="text-lg font-semibold">
-            {infoTarget?.title || 'Untitled Workspace'}
+            {infoTarget?.title || 'Новая беседа'}
           </Dialog.Title>
           <div className="mt-4 flex flex-col gap-3 text-sm">
             <div className="flex justify-between">
-              <span className="text-kumo-subtle">Author</span>
-              <span className="text-kumo-default">{infoTarget?.owner ? infoTarget.owner.name : 'You'}</span>
+              <span className="text-kumo-subtle">Автор</span>
+              <span className="text-kumo-default">{infoTarget?.owner ? infoTarget.owner.name : 'Вы'}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-kumo-subtle">Total cost</span>
+              <span className="text-kumo-subtle">Расходы</span>
               <span className="text-kumo-default">
                 {formatCost(infoTarget?.totalCost ?? 0)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-kumo-subtle">Created</span>
+              <span className="text-kumo-subtle">Создана</span>
               <span className="text-kumo-default">
                 {infoTarget?.created?.toLocaleString()}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-kumo-subtle">Last active</span>
+              <span className="text-kumo-subtle">Последняя активность</span>
               <span className="text-kumo-default">
                 {infoTarget?.lastActive?.toLocaleString()}
               </span>
@@ -454,7 +454,7 @@ export default function GadgetList({ showHeader = true }: { showHeader?: boolean
             <Dialog.Close
               render={(props) => (
                 <Button variant="secondary" {...props}>
-                  Close
+                  Закрыть
                 </Button>
               )}
             />
@@ -493,7 +493,7 @@ function HomeFeaturedBlueprintCard({
       <Link
         to="/blueprint/$id"
         params={{ id: blueprint.id }}
-        aria-label={`Open blueprint ${blueprint.metadata.title}`}
+        aria-label={`Открыть шаблон ${blueprint.metadata.title}`}
         className="absolute inset-0 z-10 rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-kumo-brand"
       />
       <div className="pointer-events-none relative z-20 flex flex-1 flex-col p-2.5">
@@ -512,7 +512,7 @@ function HomeFeaturedBlueprintCard({
               {blueprint.metadata.title}
             </p>
             <p className={`mt-0.5 line-clamp-2 min-h-8 text-[12px] leading-4 tracking-[-0.2px] ${blueprint.metadata.description ? 'text-kumo-subtle' : 'text-kumo-inactive italic'}`}>
-              {blueprint.metadata.description || 'No description'}
+              {blueprint.metadata.description || 'Нет описания'}
             </p>
             {badges.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -572,7 +572,7 @@ function FeaturedBlueprintsGallery() {
     <div className="py-4 pr-4 sm:pr-6">
       <div className="mb-5">
         <h3 className="text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-          Start from a featured blueprint.
+          Начните с готового шаблона.
         </h3>
       </div>
 
@@ -591,7 +591,7 @@ function FeaturedBlueprintsGallery() {
             to="/explore"
             className="inline-flex items-center gap-1.5 text-xs font-medium text-kumo-brand hover:text-kumo-brand-hover transition-colors"
           >
-            Browse all blueprints
+            Все шаблоны
             <ArrowRight size={12} weight="bold" />
           </Link>
         </div>

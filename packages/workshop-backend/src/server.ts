@@ -1,3 +1,4 @@
+import { DEFAULT_WORKSPACE_TITLE } from "./workspace-title.js";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "./chat-voice";
 export {MailSourceLease,MailSendLease,MailDraftSendUI} from "./mail-source-lease";
 export {DriveImportLease} from "./drive-import-lease";
@@ -303,7 +304,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
 
   async newGadget(): Promise<RpcStub<Overseer>> {
     let id = this.overseers.newUniqueId().toString();
-    await this.user.newGadget(id, "Untitled Workspace");
+    await this.user.newGadget(id, DEFAULT_WORKSPACE_TITLE);
     recordAnalytics(this.ctx, this.env, {
       event_name: "gadget_created",
       user_id: this.user.id.toString(),

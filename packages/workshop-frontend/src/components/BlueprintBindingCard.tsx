@@ -16,14 +16,14 @@ export function suggestValueLabel(spec: GatekeeperCreationSpec, title?: string):
   const displayTitle = title?.trim()
   switch (spec.type) {
     case 'gatekeeper':
-      return displayTitle ? `Suggest "${displayTitle}" by default` : 'Suggest this resource by default'
+      return displayTitle ? `Предлагать «${displayTitle}» по умолчанию` : 'Предлагать этот ресурс по умолчанию'
     case 'aiModel':
-      return displayTitle ? `Suggest "${displayTitle}" by default` : 'Suggest this model by default'
+      return displayTitle ? `Предлагать «${displayTitle}» по умолчанию` : 'Предлагать эту модель по умолчанию'
     case 'agentSpawner':
-      return displayTitle ? `Suggest "${displayTitle}" by default` : 'Suggest this agent setup by default'
+      return displayTitle ? `Предлагать «${displayTitle}» по умолчанию` : 'Предлагать эти настройки агента по умолчанию'
     case 'ambient':
       // Ambient resources are auto-provided and excluded from blueprints, so this never renders.
-      return 'Suggest this by default'
+      return 'Предлагать по умолчанию'
   }
 }
 
@@ -60,17 +60,17 @@ export function BlueprintBindingCard({
       <div className={headerClass}>
         <GatekeeperIcon vendorId={vendorId} fallbackText={resourceTitle || bindingName} />
         <div className="min-w-0 flex-1">
-          <label htmlFor={titleId} className="sr-only">Connection name</label>
+          <label htmlFor={titleId} className="sr-only">Название подключения</label>
           <WorkshopInput
             id={titleId}
-            aria-label={`Name for ${bindingName}`}
+            aria-label={`Название для ${bindingName}`}
             value={annotation.title}
             onChange={(e) => onChange({ ...annotation, title: e.target.value })}
-            placeholder="Connection name"
+            placeholder="Название подключения"
             className="!h-8 w-full bg-kumo-base text-[13px] leading-5 font-medium tracking-[-0.25px]"
           />
           <p className="mt-1 text-[11px] leading-4 tracking-[-0.1px] text-kumo-inactive">
-            Referenced in code as: <span className="font-mono text-kumo-subtle">{bindingName}</span>
+            Имя в коде: <span className="font-mono text-kumo-subtle">{bindingName}</span>
           </p>
         </div>
       </div>
@@ -78,10 +78,10 @@ export function BlueprintBindingCard({
       <div className={descriptionWrapperClass}>
         <WorkshopInputArea
           id={descriptionId}
-          aria-label={`Help text for ${displayTitle}`}
+          aria-label={`Инструкция для ${displayTitle}`}
           value={annotation.description}
           onChange={(e) => onChange({ ...annotation, description: e.target.value })}
-          placeholder="What should people connect here?"
+          placeholder="Что нужно подключить? "
           rows={2}
           autoFocus={autoFocusDescription}
           className="w-full resize-none"

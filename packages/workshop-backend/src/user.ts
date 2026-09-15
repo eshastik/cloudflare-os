@@ -1,3 +1,4 @@
+import { displayWorkspaceTitle } from "./workspace-title.js";
 import { refreshAccountUiDescription } from "./account-ui-description";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
 import type {CalendarSourceAccounts} from "./calendar-source-lease.js";
@@ -783,7 +784,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let result: GadgetMetadataWithTimestamps[] = [];
     for (let gadget of this.storage.gadgets.list()) {
       if (isFullyCreated(gadget)) {
-        result.push(gadget);
+        result.push({ ...gadget, title: displayWorkspaceTitle(gadget.title) });
       }
     }
     return result;
