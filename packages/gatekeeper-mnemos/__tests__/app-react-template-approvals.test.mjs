@@ -43,3 +43,17 @@ test("Потерянный ответ требует проверки сохра
   await app.until(()=>!app.document.querySelector('section[aria-label="Шаблоны на согласовании"]'),"повтор подтверждён");assert.equal(backend.writes.length,1);
  }finally{app.dispose();}
 });
+
+test("Предложенный Blueprint открывается отдельной копией без согласования",async()=>{
+ const backend=api();backend.readTemplateProposalSource=async()=>({proposal_id:"q",source:{template_id:"template",revision:2,source_head:"a".repeat(64),project_id:"project",node_id:"doc",content_type:"application/vnd.mnemos.blueprint-template+json"}});
+ const bytes=new TextEncoder().encode('archive');const hash=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
+ const snapshot={schema:'mnemos.blueprint-template',schemaVersion:1,blueprint:{id:'bp',version:2,title:'Бюджет',archiveSHA256:hash,archiveBase64:Buffer.from(bytes).toString('base64')}};
+ const app=await mountMemoryApp(backend,{section:'approvals',downloadText:JSON.stringify(snapshot)});
+ try{
+  await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
+  await app.until(()=>app.button('Открыть копию в гаджете')&&!app.button('Открыть копию в гаджете').disabled,'копия доступна');
+  app.button('Открыть копию в гаджете').click();await app.until(()=>app.calls.some(([method])=>method==='openTemplateProposal'),'открытие через хост');
+  assert.deepEqual(app.calls.find(([method])=>method==='openTemplateProposal'),['openTemplateProposal','project','doc','q']);
+  assert.equal(backend.writes.length,0,'открытие не утверждает предложение');
+ }finally{app.dispose();}
+});

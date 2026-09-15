@@ -284,6 +284,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   revokeAgentConnection(id: string): Promise<void>;
 }
 export interface Host extends RpcTarget {
+  openTemplateProposal(project:string,node:string,proposal:string):Promise<void>;
   openNativeDocument(project: string, resource: string): Promise<boolean>;
   openPrompt(prompt: string, project?:{projectId:string;title:string}): void;
   setUnsavedChanges(dirty: boolean): void;

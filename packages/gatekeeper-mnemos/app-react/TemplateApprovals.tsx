@@ -1,3 +1,4 @@
+import {BLUEPRINT_TEMPLATE_MIME} from '@gadgets/workshop-shared/blueprint-template';
 import {useEffect,useState} from "react";
 import {Button} from "@cloudflare/kumo";
 import {useHost,useUi} from "./host.ts";
@@ -30,11 +31,13 @@ export default function TemplateApprovals({userId}:{userId:string}){
 }
 function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
  const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
+ const [gadget,setGadget]=useState<{project:string;node:string}|null>(null);
  const proposal=item.proposal,id=proposal.proposal_id;
- async function inspect(){setOpen(true);setBusy(true);setError("");setReady(false);setText(null);
-  try{const current=await ui.readTemplateProposal(id);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}setReady(true);const preview=await readTemplateProposalText(ui,id,(...args)=>host.downloadText(...args));setText(preview);}
+ async function inspect(){setOpen(true);setBusy(true);setError("");setReady(false);setText(null);setGadget(null);
+  try{const current=await ui.readTemplateProposal(id);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}const source=await ui.readTemplateProposalSource(id);if(source.source.content_type===BLUEPRINT_TEMPLATE_MIME)setGadget({project:source.source.project_id,node:source.source.node_id});setReady(true);const preview=await readTemplateProposalText(ui,id,(...args)=>host.downloadText(...args));setText(preview);}
   catch{setError("Не удалось открыть предложенную версию. Проверьте доступ и повторите.");}finally{setBusy(false);}
  }
+ async function openGadget(){if(!gadget||busy)return;setBusy(true);setError("");try{await host.openTemplateProposal(gadget.project,gadget.node,id);}catch{setError("Копия шаблона не открылась. Повторите проверку предложенной версии.");}finally{setBusy(false);}}
  async function decide(approved?:boolean){if(busy||!ready)return;setBusy(true);setError("");
   try{
    if(approved!==undefined){if(saved||!comment.trim()||(approved&&text===null))return;const decision=await ui.saveTemplateDecision(id,{request_id:crypto.randomUUID(),approved,scope_revision:scope.revision,comment:comment.trim()});setSaved(decision);}
@@ -47,6 +50,7 @@ function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionReview;scop
    <p className="text-kumo-subtle">{proposal.expected_catalogue_revision?"Предлагается обновить общий шаблон. До одобрения действует прежняя версия.":"Предлагается сделать шаблон доступным этому подразделению."}</p>
    {error&&<Notice tone="danger">{error}</Notice>}
    {busy&&<p role="status">Проверяем…</p>}
+   {gadget&&ready&&<div><Button size="sm" variant="secondary" disabled={busy} onClick={()=>void openGadget()}>Открыть копию в гаджете</Button><p className="mt-1 text-xs text-kumo-subtle">Откроется отдельная рабочая копия. Для решения вернитесь назад; общий шаблон останется прежним.</p></div>}
    {text!==null&&<pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-kumo-line p-3 font-sans">{text}</pre>}
    {!busy&&(!ready||text===null)&&<Button size="sm" variant="secondary" onClick={()=>void inspect()}>Повторить проверку</Button>}
    {saved?<div><p>{saved.receipt?"Решение записано.":`Сохранено решение: ${saved.input.approved?"одобрить":"отклонить"}.`}</p>{!saved.receipt&&ready&&<Button size="sm" disabled={busy} onClick={()=>void decide()}>Повторить сохранённое решение</Button>}</div>:<>

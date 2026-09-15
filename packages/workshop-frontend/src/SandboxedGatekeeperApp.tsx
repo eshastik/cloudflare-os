@@ -1,3 +1,4 @@
+import {launchTemplateProposal} from './templateProposalLaunch'
 import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
@@ -135,6 +136,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
     private readonly embeddedIntake = false,
     private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
+    private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
@@ -165,6 +167,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
     if (typeof scope !== 'string' || typeof resource !== 'string' || !scope || !resource || scope.length > 255 || resource.length > 255) throw Error('Не выбран документ')
     if (!this.launchDocument) return false
     return this.launchDocument(scope, resource)
+  }
+
+  async openTemplateProposal(scope:string,resource:string,proposal:string):Promise<void> {
+    if(!this.launchTemplate||this.#downloadBusy)throw Error('Открытие шаблона недоступно')
+    this.#downloadBusy=true
+    try{await this.launchTemplate(scope,resource,proposal,this.#uploadLifetime.signal)}finally{this.#downloadBusy=false}
   }
 
   /** Selected resource scope from the host URL; never an authorization grant. */
@@ -616,6 +624,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         async (scope, resource) => {
           if (accountId === undefined || !frame.nativeDownloads) return false
           return launchNativeDocument(authenticatedApi, frame.nativeDownloads.selector, accountId, scope, resource, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
+        },
+        async (scope,resource,proposal,signal)=>{
+          if(!frame.textDownloads)throw Error('Хранилище шаблонов недоступно')
+          await launchTemplateProposal(authenticatedApi,frame.textDownloads,scope,resource,proposal,signal,async id=>{await navigate({to:'/workspace/$id',params:{id}})})
         },
       )
       host.updateAccentColor(accentRef.current)
