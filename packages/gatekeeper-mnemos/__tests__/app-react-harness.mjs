@@ -13,6 +13,7 @@ const HEAD_A = "a".repeat(64), HEAD_B = "b".repeat(64);
 export function defaultMethods(calls) {
   const record = (name, ...args) => { calls.push([name, ...args]); };
   return {
+    async listTemplateReviewScopes(){return {scopes:[],next_cursor:""};},
     async inboxStatus(){return {total:0,in_queue:0,awaiting_classification:0,awaiting_placement:0,placed_in_tree:0,dead_lettered:0,dead_letters:[],dead_letters_truncated:false};},
     async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример команды", capabilities:["project.create","principal.manage","platform.metrics.read"] }; },
     async listProjects() { return { projects: [{ id: "one", name: "Общий проект", slug: "shared" }, { id: "two", name: "Второй проект", slug: "second" }] }; },

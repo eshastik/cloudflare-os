@@ -1,3 +1,4 @@
+import TemplateApprovals from "./TemplateApprovals.tsx";
 import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import type { PublicationReview } from "../src/mnemos-api.ts";
@@ -76,6 +77,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
 
   return (
     <LegacySwitch state={legacy}>
+      <TemplateApprovals userId={data.identity?.subject.user_id??""}/>
       <div className="mb-4 flex items-center gap-2">
         <p className="m-0 flex-1 text-[12px] text-kumo-subtle">Что ждёт вашего решения, что поручено вам, чем заняты ваши агенты и что стоит.</p>
         <Button variant="secondary" size="sm" onClick={() => legacy.open({ kind: "uploadUsage" }, "Мои загрузки")}>Мои загрузки</Button>
@@ -85,7 +87,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       <Block title="Ждут моего решения" count={decisionsCount}>
         <Button variant="secondary" size="sm" onClick={() => void host.openApprovals().catch(() => setPublishNotice({tone:"danger",text:"Очередь не открылась. Обновите оболочку."}))}>Действия агентов — открыть очередь разрешений</Button>
 
-        {decisionsCount === 0 && <Notice>Ничего не ждёт: решений за вами нет.</Notice>}
+        {decisionsCount === 0 && <Notice>По документам и заданиям решений пока нет.</Notice>}
         {decision.notice && <div className="mb-2"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
         {publishNotice && <div className="mb-2"><Notice tone={publishNotice.tone}>{publishNotice.text}</Notice></div>}
         {data.reviewsError && <div className="mb-2"><Notice tone="danger">{data.reviewsError}</Notice></div>}

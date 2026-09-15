@@ -67,7 +67,8 @@ test('общий Blueprint копируется по точной версии, 
 test('Новая версия Blueprint сохраняет историю, проверяет проект и читается после новой сессии',async()=>{
  const head='a'.repeat(64),mime='application/vnd.mnemos.blueprint-template+json';
  let version={template_id:'stable',revision:1,title:'Отчёт',kind:'document',purpose:'План',project_id:'project',node_id:'old',source_head:head,content_type:mime,user_id:'alice',agent_id:'',created_at:'2026-09-15T00:00:00Z'};
- let writes=0,creates=0;
+ let writes=0,creates=0,promotions=0;
+ const scope={scope_id:'finance',revision:4,level:'group',parent_id:'department',reader_group_id:'readers',name:'Финансы',enabled:true,approvers:['reviewer']};
  const mf=new Miniflare({workers:[{
  name:'mnemos',modules:true,modulesRules:[{type:'Text',include:['**/*.txt']}],scriptPath:fileURLToPath(new URL('../dist/mnemos.js',import.meta.url)),compatibilityDate:'2026-02-02',compatibilityFlags:['allow_irrevocable_stub_storage','nodejs_compat'],bindings:{MNEMOS_API_ORIGIN:'https://memory.example',MNEMOS_STORAGE_ORIGIN:'https://objects.example'},durableObjects:{ACCOUNTS:{className:'UserAccount',useSQLite:true}},
  outboundService:async request=>{
@@ -75,6 +76,11 @@ test('Новая версия Blueprint сохраняет историю, пр�
  if(path==='/v1/whoami')return Response.json({subject:{tenant_id:'org',user_id:'alice'},capabilities:[]});
  if(path==='/v1/work-templates/stable'&&request.method==='GET')return Response.json(version);
  if(path==='/v1/projects/project/draft/open')return Response.json({head});
+ if(path==='/v1/template-scopes/finance/templates/stable')return Response.json({scope_id:'finance',template_key:'stable',revision:7,proposal_id:'old-proposal',approved_by:'reviewer',approved_at:'2026-09-15T00:00:00Z',source:{...version,revision:1}});
+ if(path==='/v1/template-promotions/personal'){
+ promotions++;const body=await request.json();assert.equal(body.template_id,'stable');assert.equal(body.template_revision,2);assert.equal(body.template_key,'stable');assert.equal(body.expected_catalogue_revision,7);
+ return Response.json({...body,proposal_id:'update-proposal',user_id:'alice',agent_id:'',source_owner_id:'alice',created_at:'2026-09-15T00:00:00Z',scope_path:[scope]});
+ }
  if(path==='/v1/uploads')return Response.json({upload_id:'upload',url:'https://objects.example/upload'});
  if(path==='/v1/projects/project/draft/create'){creates++;const body=await request.json();assert.equal(body.content_type,mime);return Response.json({node_id:'new',head});}
  if(path==='/v1/work-templates/stable'&&request.method==='PUT'){writes++;const body=await request.json();assert.equal(body.expected_revision,1);version={...version,...body,revision:2};return Response.json(version);}
@@ -83,16 +89,18 @@ test('Новая версия Blueprint сохраняет историю, пр�
  {name:'driver',modules:true,compatibilityDate:'2026-02-02',compatibilityFlags:['allow_irrevocable_stub_storage','nodejs_compat'],durableObjects:{ACCOUNTS:{className:'UserAccount',scriptName:'mnemos',useSQLite:true}},script:`export default {async fetch(request,env){
  const account=env.ACCOUNTS.get(env.ACCOUNTS.idFromName('owner'));await account.acceptVerifiedCredential('fixture-human-token');using frame=await account.startAppUi();const input=await request.json();
  try{
+ if(input.propose){using creator=await frame.blueprintTemplates.selector.resume(input.id);return Response.json(await creator.propose('finance',4));}
  if(input.latest)return Response.json(await frame.blueprintTemplates.selector.latest('bp'));
  const prepared=await frame.blueprintTemplates.selector.prepare(input.project||'project','Отчёт','План',{template_id:'stable',revision:1},'bp');using creator=prepared.creator;
  const ticket=await creator.issue(2,'a'.repeat(43)+'=');await creator.checkpoint(ticket.upload_id);
- const saved=await creator.save();await creator.save();return Response.json(saved);
+ const saved=await creator.save();await creator.save();return Response.json({...saved,capture:prepared.id});
  }catch{return new Response('denied',{status:403})}
  }};`} ]});
  try{
  const driver=await mf.getWorker('driver');const call=input=>driver.fetch('https://driver.test',{method:'POST',body:JSON.stringify(input)});
  assert.equal((await call({project:'other'})).status,403);assert.equal(creates,0);
- const saved=await call({});assert.equal(saved.status,200);assert.equal((await saved.json()).revision,2);assert.equal(creates,1);assert.equal(writes,1);
+ const saved=await call({});assert.equal(saved.status,200);const result=await saved.json();assert.equal(result.revision,2);assert.equal(creates,1);assert.equal(writes,1);
  const latest=await (await call({latest:true})).json();assert.equal(latest.template_id,'stable');assert.equal(latest.revision,2);
+ assert.equal(promotions,0);const proposed=await call({propose:true,id:result.capture});assert.equal(proposed.status,200);assert.equal((await proposed.json()).expected_catalogue_revision,7);assert.equal(promotions,1);
  }finally{await mf.dispose();}
 });

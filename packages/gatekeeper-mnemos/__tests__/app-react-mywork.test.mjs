@@ -42,7 +42,7 @@ test("«Моя работа»: пустые блоки говорят «ниче
   try {
     const block = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => block("Мои агенты")?.textContent.includes("Ничего не ждёт"), "пустой блок агентов");
-    await app.until(() => block("Ждут моего решения")?.textContent.includes("Ничего не ждёт"), "пустой блок решений");
+    await app.until(() => block("Ждут моего решения")?.textContent.includes("По документам и заданиям решений пока нет."), "пустой блок решений");
     await app.until(() => block("Поручено мне")?.textContent.includes("Обращения недоступны"), "отказ RPC в блоке поручений");
     await app.until(() => block("Заблокировано")?.textContent.includes("Ничего не ждёт"), "пустой блок заблокированного");
     assert.ok(app.button("Мои загрузки"), "личный раздел «Мои загрузки» достижим отсюда");

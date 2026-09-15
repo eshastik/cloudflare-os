@@ -1,3 +1,4 @@
+import TemplateApprovals from "./TemplateApprovals.tsx";
 import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
@@ -70,13 +71,14 @@ export default function ApprovalsTab({ data }: { data: MemoryData }) {
       </div>
       {notice && <div className="mb-3"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
       {data.reviewsError && <div className="mb-3"><Notice tone="danger">{data.reviewsError}</Notice></div>}
-      {items.length === 0 && !data.reviewsLoading && !data.reviewsError && <EmptyTab description="Здесь появятся предложения к публикации, которые ждут вашего решения." />}
+      {items.length === 0 && !data.reviewsLoading && !data.reviewsError && <EmptyTab description="Предложений к публикации документов пока нет." />}
       {items.length > 0 && (
         <RowList>
           {items.map(item => <ApprovalRow key={`${item.review.candidate_id}/${item.domain.domain_id}`} item={item} data={data} busy={busy} decide={(i, a) => void decide(i, a)} />)}
         </RowList>
       )}
       {data.reviewsCursor && <div className="mt-3"><Button variant="secondary" size="sm" disabled={data.reviewsLoading} onClick={() => void data.loadMoreReviews()}>Показать ещё</Button></div>}
+      <TemplateApprovals userId={userId}/>
     </section>
   );
 }
