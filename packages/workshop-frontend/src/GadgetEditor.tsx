@@ -1,3 +1,5 @@
+import SharedTemplateLibrary from './SharedTemplateLibrary'
+import {Dialog} from '@cloudflare/kumo'
 import { reportShellStage } from "./shellReadiness"
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useNavigate, useSearch, Link } from '@tanstack/react-router'
@@ -500,6 +502,7 @@ export default function GadgetEditor() {
   const [activityClosing, setActivityClosing] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false)
+  const [sharedTemplatesOpen,setSharedTemplatesOpen]=useState(false)
   const [previewMode, _setPreviewMode] = useState(false)
   // Панель «Версия» нативного документа монтируется порталом справа от колонки редактора.
   const [versionPanelHost, setVersionPanelHost] = useState<HTMLDivElement | null>(null)
@@ -910,6 +913,9 @@ export default function GadgetEditor() {
     const newlyCreated = allGadgets.filter(app => !known.has(app.id))
     for (const app of newlyCreated) known.add(app.id)
 
+    // Импорт сам откроет гаджет после восстановления документа.
+    if (sharedTemplatesOpen) return
+
     const target = newlyCreated.findLast(app =>
       app.chatId !== undefined && app.chatId === effectiveSelectedChatId)
     if (!target) return
@@ -922,7 +928,7 @@ export default function GadgetEditor() {
       search: (prev: Record<string, unknown>) => ({ ...prev, w: target.id }),
       replace: true,
     })
-  }, [workpiecesReady, allGadgets, effectiveSelectedChatId, setWorkspaceVisibility, navigate, id])
+  }, [workpiecesReady, allGadgets, effectiveSelectedChatId, setWorkspaceVisibility, navigate, id, sharedTemplatesOpen])
 
   useEffect(() => {
     const handleResize = () => {
@@ -1409,6 +1415,7 @@ export default function GadgetEditor() {
 
         {/* Right: presence, cost, workspace, share, blueprints */}
         <div className="flex items-center gap-1 flex-shrink-0">
+          {effectiveSelectedChatId!==null&&<WorkshopButton onClick={()=>setSharedTemplatesOpen(true)}>Шаблон</WorkshopButton>}
           <GadgetPresence
             overseer={overseer.stub}
             authenticatedApi={authenticatedApi}
@@ -1786,6 +1793,21 @@ export default function GadgetEditor() {
           )}
         </div>
       )}
+
+      {sharedTemplatesOpen&&overseer&&effectiveSelectedChatId!==null&&<Dialog.Root open onOpenChange={open=>setSharedTemplatesOpen(open)}>
+        <Dialog size="lg" className="max-h-[85vh] overflow-y-auto">
+          <div className="flex items-center justify-between"><Dialog.Title>Шаблон для беседы</Dialog.Title><WorkshopButton onClick={()=>setSharedTemplatesOpen(false)}>Закрыть</WorkshopButton></div>
+          <SharedTemplateLibrary key={`${id}:${effectiveSelectedChatId}`} conversation={{key:`${id}:${effectiveSelectedChatId}`,apply:async(bytes,operationId,signal)=>{
+            const result=await overseer.stub.importTemplateIntoChat(new Response(new Uint8Array(bytes)).body!,effectiveSelectedChatId,operationId)
+            signal.throwIfAborted()
+            if(result.error)throw new Error(result.error)
+            setSharedTemplatesOpen(false)
+            setActiveTab('app')
+            setWorkspaceVisibility('open',result.gadgetId!)
+            await navigate({to:'/workspace/$id',params:{id:id!},search:(prev:Record<string,unknown>)=>({...prev,chat:effectiveSelectedChatId,w:result.gadgetId})})
+          }}}/>
+        </Dialog>
+      </Dialog.Root>}
 
       {/* Share modal */}
       {overseer && metadata && (

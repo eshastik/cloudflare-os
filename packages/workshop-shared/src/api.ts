@@ -1456,6 +1456,9 @@ export interface Overseer extends RpcTarget {
   // names are unique within the workspace: throws if the name is already taken by another
   // gadget -- including one still pending in another chat (retry after that chat's changes are
   // accepted or reverted).
+  /** Добавляет точный снимок как отдельный гаджет беседы; повтор операции не создаёт копию. */
+  importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): Promise<{gadgetId: WorkpieceId; error?: never} | {error: string; gadgetId?: never}>;
+
   createGadget(title: string, chatId?: number, bindingName?: string)
       : Promise<RpcStub<GadgetClient>>;
 

@@ -13,7 +13,7 @@ type Entry = Awaited<ReturnType<GatekeeperBlueprintTemplates['templates']>>['tem
 type Scope = Awaited<ReturnType<GatekeeperBlueprintTemplates['scopes']>>['scopes'][number]
 const levels = {organization:'Организация', department:'Отдел', group:'Группа'}
 
-export default function SharedTemplateLibrary() {
+export default function SharedTemplateLibrary({conversation}:{conversation?:{key:string;apply(bytes:Uint8Array,operationId:string,signal:AbortSignal):Promise<void>}}) {
  const {authenticatedApi:api} = useAuthenticatedApi(), navigate = useNavigate()
  const [accounts,setAccounts] = useState<{id:number;name:string}[]>([]), [account,setAccount] = useState<number|null>(null)
  const [scopes,setScopes] = useState<Scope[]>([]), [scope,setScope] = useState('')
@@ -71,7 +71,7 @@ export default function SharedTemplateLibrary() {
    const store=frame.current?.blueprintTemplates;if(!store||!selected||!project||busy)return
    setBusy(true);setError('');const signal=lifetime.current.signal
    try {
-     const key=JSON.stringify([account,selected.scope_id,selected.template_key,selected.revision,project])
+     const key=JSON.stringify([account,selected.scope_id,selected.template_key,selected.revision,project,conversation?.key??null])
      if(pending.current?.key!==key){
        let id=sessionStorage.getItem('mnemos-template-use:'+key)
        if(!id){id=crypto.randomUUID();sessionStorage.setItem('mnemos-template-use:'+key,id)}
@@ -81,10 +81,15 @@ export default function SharedTemplateLibrary() {
      signal.throwIfAborted()
      const bytes=await downloadGatekeeperFile(store.storageOrigin,copy.ticket,signal,()=>store.selector.validateApplication(project,copy.node,copy.head))
      await decodeBlueprintTemplate(bytes);signal.throwIfAborted()
-     using workspace=await api.newGadgetFromTemplateSnapshot(new Response(new Uint8Array(bytes)).body!,{})
-     const metadata=await workspace.getMetadata();signal.throwIfAborted()
-     sessionStorage.removeItem('mnemos-template-use:'+key);pending.current=null
-     await navigate({to:'/workspace/$id',params:{id:metadata.id}})
+     if(conversation){
+       await conversation.apply(bytes,pending.current.id,signal)
+       sessionStorage.removeItem('mnemos-template-use:'+key);pending.current=null
+     }else{
+       using workspace=await api.newGadgetFromTemplateSnapshot(new Response(new Uint8Array(bytes)).body!,{})
+       const metadata=await workspace.getMetadata();signal.throwIfAborted()
+       sessionStorage.removeItem('mnemos-template-use:'+key);pending.current=null
+       await navigate({to:'/workspace/$id',params:{id:metadata.id}})
+     }
    } catch {if(!signal.aborted)setError('Не удалось открыть шаблон. Повторите создание — сохранённая копия будет использована повторно.')}
    finally{if(!signal.aborted)setBusy(false)}
  }
@@ -117,7 +122,7 @@ export default function SharedTemplateLibrary() {
    {selected&&<div className="mt-5 rounded-xl border border-kumo-line p-4">
      <h2 className="text-sm font-medium">Начать работу: {selected.source.title}</h2>
      <p className="my-2 text-xs text-kumo-subtle">Сохраним личную копию шаблона в проекте и откроем рабочий гаджет.</p>
-     <div className="flex flex-wrap items-center gap-3"><select aria-label="Проект для рабочей копии" disabled={busy} value={project} onChange={e=>setProject(e.target.value)} className={selectClass}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><Button variant="primary" disabled={busy||!project} onClick={()=>void create()}>{busy?'Создание…':'Начать работу'}</Button><Button disabled={busy} onClick={()=>setSelected(null)}>Отмена</Button></div>
+     <div className="flex flex-wrap items-center gap-3"><select aria-label="Проект для рабочей копии" disabled={busy} value={project} onChange={e=>setProject(e.target.value)} className={selectClass}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><Button variant="primary" disabled={busy||!project} onClick={()=>void create()}>{busy?'Создание…':conversation?'Добавить в беседу':'Начать работу'}</Button><Button disabled={busy} onClick={()=>setSelected(null)}>Отмена</Button></div>
      {parent&&<details className="mt-4 border-t border-kumo-line pt-3"><summary className="cursor-pointer text-sm text-kumo-subtle">Предложить для более широкого применения</summary>
        <p className="my-2 text-xs text-kumo-subtle">Следующий уровень: {levels[parent.level]} · {parent.name}</p>
        {promotion?<p role="status" className="text-sm">{promotion}</p>:<><label className="block text-sm">Для чего нужен общий шаблон<textarea className="my-2 block w-full rounded-lg border border-kumo-line bg-kumo-base p-2" disabled={busy} value={reason} onChange={e=>setReason(e.target.value)} /></label><Button disabled={busy||!reason.trim()} onClick={()=>void promote()}>{busy?'Отправляем…':'Отправить на согласование'}</Button></>}

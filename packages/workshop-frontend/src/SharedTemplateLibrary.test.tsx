@@ -45,3 +45,16 @@ test('общее применение требует отдельного пре
  expect(mocks.promote).toHaveBeenCalledWith('finance','contract',3,'Подходит всем',expect.any(String))
  expect(mocks.create).not.toHaveBeenCalled();expect(host.textContent).toContain('после согласования')
 })
+
+test('добавляет шаблон в текущую беседу без отдельного рабочего пространства',async()=>{
+ const apply=vi.fn<(bytes:Uint8Array,operationId:string,signal:AbortSignal)=>Promise<void>>().mockRejectedValueOnce(new Error('lost')).mockResolvedValue(undefined)
+ await React.act(async()=>root.render(<SharedTemplateLibrary conversation={{key:'workspace:7',apply}}/>))
+ const row=[...host.querySelectorAll('button')].find(item=>item.textContent?.includes('Договор'))!
+ await React.act(async()=>row.click())
+ const add=()=>[...host.querySelectorAll('button')].find(item=>item.textContent==='Добавить в беседу')!
+ await React.act(async()=>add().click());const operation=apply.mock.calls[0][1]
+ await React.act(async()=>add().click())
+ expect(apply).toHaveBeenCalledTimes(2);expect(apply.mock.calls[1][1]).toBe(operation)
+ expect(apply.mock.calls[1][0]).toEqual(new Uint8Array([1,2]))
+ expect(mocks.create).not.toHaveBeenCalled();expect(mocks.navigate).not.toHaveBeenCalled()
+})

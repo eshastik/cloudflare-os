@@ -1,3 +1,4 @@
+import {readBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
 import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
@@ -765,6 +766,8 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // files root of a deleted gadget, since Yjs roots can't be deleted and whole-doc sync can't
       // stop an old client or later-merged branch from writing there. Such content is inert --
       // never listed, loaded, executed, or rendered -- because it has no registry entry.
+      templateImports: collection<{id:string; hash:string; chatId:number; profile:string; gadgetId:WorkpieceId; complete:boolean}>()({primaryKey:"id"}),
+
       gadgets: collection<GadgetRecord>()({
         primaryKey: "id",
 
@@ -7337,6 +7340,59 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return this.impl.subscribeToWorkpieces(subscriber, true);
   }
 
+  async importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): ReturnType<Overseer["importTemplateIntoChat"]> {
+    try { return {gadgetId:await this.#importTemplateIntoChat(stream,chatId,operationId)}; }
+    catch(error) { return {error:error instanceof Error?error.message:"Не удалось добавить шаблон"}; }
+  }
+
+  async #importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): Promise<WorkpieceId> {
+    if (!/^[a-f0-9-]{36}$/.test(operationId)) throw new Error("Неверный идентификатор операции");
+    this.impl.getChatMetaOrThrow(chatId);
+    const {metadata,code,snapshot}=await readBlueprintTemplate(stream);
+    const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(snapshot)))),b=>b.toString(16).padStart(2,"0")).join("");
+    const archive=new Y.Doc();
+    try { Y.applyUpdateV2(archive,code); } catch { archive.destroy();throw new Error("Повреждён код шаблона"); }
+    const files=[...archive.getMap<Y.Text>()].map(([name,value])=>{
+      if (!(value instanceof Y.Text)) throw new Error("Повреждён файл шаблона");
+      return [name,value.toString()] as const;
+    });
+    archive.destroy();
+    const author=await this.#getClientProfile();
+    this.impl.getChatMetaOrThrow(chatId);
+    let operation=this.impl.storage.templateImports.get(operationId);
+    if(operation && (operation.hash!==hash || operation.chatId!==chatId || operation.profile!==this.clientProfileId)) throw new Error("Операция относится к другому шаблону или беседе");
+    if(!operation){
+      const taken=new Set([...this.impl.storage.gadgets.list()].map(item=>item.bindingName));
+      for(const name of this.impl.chatScopeNames(chatId)) taken.add(name);
+      const bindingName=fallbackBindingName("GADGET",name=>taken.has(name));
+      const record=this.impl.createGadget(metadata.title,bindingName,chatId,sanitizeBlueprintOutput(metadata.output));
+      const doc=new Y.Doc();
+      const root=doc.getMap<Y.Text>(this.impl.gadgetRootName(record.id));
+      for(const [name,content] of files){const text=new Y.Text();text.insert(0,content);root.set(name,text);}
+      const update=Y.encodeStateAsUpdateV2(doc);doc.destroy();
+      this.impl.addChatMessages(chatId,author,[{type:"changes",update,observedCodeVersion:this.impl.currentCodeBaseVersion(),createdGadgets:[{gadgetId:record.id,title:record.title,bindingName}]}]);
+      operation={id:operationId,hash,chatId,profile:this.clientProfileId,gadgetId:record.id,complete:false};
+      this.impl.storage.templateImports.put(operation);
+    }
+    this.impl.getGadgetRecord(operation.gadgetId);
+    if(operation.complete)return operation.gadgetId;
+    if(snapshot.nativeDocument){
+      using gadget=await this.getGadget(operation.gadgetId);
+      using editor=await gadget.connectToGadget(chatId) as RpcStub<import("@gadgets/workshop-shared/native-document").NativeDocumentEditor>;
+      const current=await editor.getDocument();
+      operation=this.impl.storage.templateImports.get(operationId)!;
+      if(operation.complete)return operation.gadgetId;
+      // У нативного редактора начальная ревизия равна нулю. Любая правка до
+      // первого чтения тоже должна остановить импорт, а не стать его новой базой.
+      if(current.revision!==0) throw new Error("Документ уже изменён. Проверьте созданный гаджет перед повтором импорта");
+      await editor.restoreDocumentSnapshot(snapshot.nativeDocument,0);
+    }
+    this.impl.getChatMetaOrThrow(chatId);
+    this.impl.getGadgetRecord(operation.gadgetId);
+    operation.complete=true;this.impl.storage.templateImports.put(operation);
+    return operation.gadgetId;
+  }
+
   async createGadget(title: string, chatId?: number, bindingName?: string)
       : Promise<RpcStub<GadgetClient>> {
     // When creating within a chat, names already claimed in that chat's scope (its frozen seed
@@ -8971,6 +9027,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async setTitle(_title: string): Promise<void> { this.#deny(); }
   async setPinned(_pinned: boolean): Promise<void> { this.#deny(); }
   async deleteSelf(): Promise<void> { this.#deny(); }
+  async importTemplateIntoChat(_stream: ReadableStream<Uint8Array>, _chatId:number, _operationId:string): ReturnType<Overseer["importTemplateIntoChat"]> { this.#deny(); }
   async createGadget(_title: string): Promise<RpcStub<GadgetClient>> { this.#deny(); }
   async subscribeToCode(
       _subscriber: RpcStub<CodeSubscriber>, _fromVersion?: number): Promise<RpcStub<{}>> {
