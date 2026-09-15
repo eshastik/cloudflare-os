@@ -547,6 +547,10 @@ export interface AuthenticatedApi extends RpcTarget {
   // Return a blueprint created by the current user, or null if it is not owned by this user.
   getOwnBlueprint(blueprintId: string): Promise<BlueprintUserSummary | null>;
 
+  /** Снимок собственного Blueprint для хранения и согласования в Mnemos; общую версию не меняет. */
+  newGadgetFromTemplateSnapshot(snapshot: ReadableStream<Uint8Array>, bindings: Record<string, BlueprintBindingAssignment>): Promise<RpcStub<Overseer>>;
+  captureBlueprintTemplate(blueprintId: string, nativeDocument?: import('./native-document').NativeDocumentSnapshot): Promise<ReadableStream<Uint8Array>>;
+
   // List the blueprints currently in the user's library. This includes uploaded `.gadget`
   // archives (stored locally) and blueprints saved by reference from other publishers.
   listLibraryBlueprints(): Promise<BlueprintLibrarySummary[]>;

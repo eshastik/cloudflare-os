@@ -72,6 +72,10 @@
     "./accent-theme": {
       "types": "./src/accent-theme.ts",
       "import": "./src/accent-theme.ts"
+    },
+    "./blueprint-template": {
+      "types": "./src/blueprint-template.ts",
+      "import": "./src/blueprint-template.ts"
     }
   },
   "scripts": {

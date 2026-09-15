@@ -405,11 +405,28 @@ export interface GatekeeperTextUploadIssuer extends RpcTarget {
 }
 
 /** Приём файлов организации до выбора проекта; доступен только доверенному хосту. */
+export interface GatekeeperTemplateVersion {
+  template_id: string; revision: number; title: string; purpose: string; project_id: string;
+}
+export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
+  state(): Promise<{upload: string; project: string; title: string; purpose: string; version: GatekeeperTemplateVersion | null}>;
+  propose(scope: string, scopeRevision: number): Promise<{proposal_id: string; target_scope_id: string}>;
+  issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+  checkpoint(upload: string): Promise<void>;
+  save(): Promise<GatekeeperTemplateVersion>;
+}
+export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  scopes(cursor?: string): Promise<{scopes: {scope_id: string; revision: number; level: "organization" | "department" | "group"; name: string; enabled: boolean}[]; next_cursor?: string}>;
+  projects(): Promise<{projects: {id: string; name: string}[]}>;
+  prepare(project: string, title: string, purpose: string): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
+  resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
+}
+
 export interface GatekeeperInboxUploadIssuer extends RpcTarget {
   /** Выдать билет после проверки полномочия, размера, квоты и контрольной суммы. */
-  issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+  issue(size: number, checksum: string, project?: string): Promise<GatekeeperUploadTicket>;
   /** Передать метаданные приёмной сразу после загрузки и освободить квоту билетов. */
-  submit(uploadId: string, sourcePath: string, modifiedAt: number): Promise<{ outcome: string; enqueued: boolean }>;
+  submit(uploadId: string, sourcePath: string, modifiedAt: number, project?: string): Promise<{ outcome: string; enqueued: boolean; placement_state?: string }>;
 }
 
 /** Integrity metadata for one service-authorized text download. */
@@ -724,6 +741,8 @@ export type GatekeeperUiFrame = {
   };
 
   /** Загрузка файлов организации по выбору человека без участия чата. */
+  /** Версионирование кода Blueprint вместе с нативными данными документа. */
+  blueprintTemplates?: { storageOrigin: string; selector: RpcStub<GatekeeperBlueprintTemplates> };
   inboxUploads?: {
     /** Разрешённый адрес хранилища из конфигурации установки. */
     storageOrigin: string;

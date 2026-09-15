@@ -1,3 +1,4 @@
+import { captureBlueprintTemplate, readBlueprintTemplate } from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE } from "./workspace-title.js";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "./chat-voice";
 export {MailSourceLease,MailSendLease,MailDraftSendUI} from "./mail-source-lease";
@@ -384,6 +385,15 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return this.user.getBlueprint(blueprintId);
   }
 
+  async captureBlueprintTemplate(blueprintId: string, nativeDocument?: import('@gadgets/workshop-shared/native-document').NativeDocumentSnapshot): Promise<ReadableStream<Uint8Array>> {
+    const record = await readBlueprintKvRecord(this.env, blueprintId);
+    if (!record || record.ownerId !== this.user.id.toString()) throw new Error("Выберите собственный шаблон");
+    const code = await this.env.BLUEPRINT_CONTENT.get(`${blueprintId}/${record.metadata.version}`);
+    if (!code) throw new Error("Содержимое шаблона недоступно");
+    const captured = await captureBlueprintTemplate(blueprintId, record, code, nativeDocument);
+    return new Response(captured).body!;
+  }
+
   async listLibraryBlueprints(): Promise<BlueprintLibrarySummary[]> {
     return this.user.listLibraryBlueprints();
   }
@@ -464,16 +474,36 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     let codeBytes = await readBlueprintContent(this.env, blueprintId, kvRecord.metadata.version);
     if (!codeBytes) throw new Error("Blueprint content not found in R2.");
 
+    return this.#newGadgetFromDefinition(blueprintId, kvRecord.metadata, codeBytes, bindings,
+      deploymentOutputForBlueprint(await readAdminConfig(this.env), blueprintId, sanitizeBlueprintOutput(kvRecord.metadata.output)));
+  }
+
+  async newGadgetFromTemplateSnapshot(stream: ReadableStream<Uint8Array>, bindings: Record<string, BlueprintBindingAssignment>): Promise<RpcStub<Overseer>> {
+    const {metadata, code, snapshot} = await readBlueprintTemplate(stream);
+    const overseer = await this.#newGadgetFromDefinition(snapshot.blueprint.id, metadata, code, bindings, sanitizeBlueprintOutput(metadata.output));
+    try {
+    if (snapshot.nativeDocument) {
+      const info = await overseer.getMetadata();
+      using gadget = await overseer.getGadget(info.defaultGadgetId!);
+      using editor = await gadget.connectToGadget() as RpcStub<import("@gadgets/workshop-shared/native-document").NativeDocumentEditor>;
+      const initial = await editor.getDocument();
+      await editor.restoreDocumentSnapshot(snapshot.nativeDocument, initial.revision);
+    }
+    return overseer;
+    } catch (error) { overseer[Symbol.dispose](); throw error; }
+  }
+
+  async #newGadgetFromDefinition(blueprintId: string, blueprintMetadata: Awaited<ReturnType<typeof parseBlueprintArchive>>['metadata'], codeBytes: Uint8Array,
+    bindings: Record<string, BlueprintBindingAssignment>, output: ReturnType<typeof sanitizeBlueprintOutput>): Promise<RpcStub<Overseer>> {
     // 3. Create new Overseer DO (same as newGadget()).
     let id = this.overseers.newUniqueId().toString();
-    await this.user.newGadget(id, kvRecord.metadata.title);
+    await this.user.newGadget(id, blueprintMetadata.title);
     let overseerResult = await this.#openGadgetInternal(id);
 
     // 4. Initialize from blueprint code.
     let overseerDo = this.overseers.get(this.overseers.idFromString(id));
-    await overseerDo.initializeFromBlueprint(codeBytes, kvRecord.metadata.title,
-        deploymentOutputForBlueprint(await readAdminConfig(this.env), blueprintId,
-            sanitizeBlueprintOutput(kvRecord.metadata.output)));
+    await overseerDo.initializeFromBlueprint(codeBytes, blueprintMetadata.title,
+        output);
 
     // 5. Create gatekeepers from assignments and bind them into the workspace's (only) gadget.
     let metadata = await overseerResult.getMetadata();
@@ -481,7 +511,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
 
     // Defensively put blueprint bindings into a map (not a raw object) until we've had a chance to
     // validate the names.
-    let blueprintBindings = new Map(Object.entries(kvRecord.metadata.bindings));
+    let blueprintBindings = new Map(Object.entries(blueprintMetadata.bindings));
     let gadgetId = metadata.defaultGadgetId!;
 
     // Create gatekeepers in two phases: first every non-spawner binding (binding the
