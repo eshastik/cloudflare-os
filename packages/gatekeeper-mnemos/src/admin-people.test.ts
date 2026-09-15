@@ -56,3 +56,18 @@ test("Решение приёмной использует реальный ма
  await api.decideInboxAlert("question",{approve:true,place:"project/legal/file.txt"});
  assert.deepEqual(calls,["/v1/inbox/alerts/question"]);
 });
+
+test("Проектная загрузка требует проверки, вопросы и решение сохраняют проект", async()=>{
+ const calls:Array<{url:string;body:unknown}>=[];
+ const api=new MnemosAPI("https://memory.example",async()=>"human-token",async(url,init)=>{
+  calls.push({url:String(url),body:init?.body?JSON.parse(String(init.body)):undefined});
+  return Response.json({alerts:[],truncated:false});
+ });
+ await api.submitProjectUpload("project-a","upload","договор.txt");
+ await api.inboxAlerts(false,undefined,"project-a");
+ await api.decideInboxAlert("question",{approve:true,place:"project/legal/договор.txt",intake_project_id:"project-a"});
+ assert.equal((calls[0].body as {review_required:boolean}).review_required,true);
+ assert.equal((calls[0].body as {project_id:string}).project_id,"project-a");
+ assert.equal(new URL(calls[1].url).searchParams.get("project_id"),"project-a");
+ assert.equal((calls[2].body as {intake_project_id:string}).intake_project_id,"project-a");
+});

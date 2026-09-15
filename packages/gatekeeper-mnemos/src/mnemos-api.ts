@@ -106,11 +106,11 @@ export class MnemosAPI {
   }
   submitProjectUpload(projectId: string, uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {
     if (typeof projectId !== "string" || !projectId || projectId.length > 255) throw new TypeError("Не выбран проект");
-    return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId});
+    return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId,review_required:true});
   }
   submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {return this.#request('/v1/inbox','POST',signal,checkedIntakeSubmit(uploadId,sourcePath,modifiedAt));}
   inboxStatus(signal?: AbortSignal): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200','GET',signal);}
-  inboxAlerts(decided=false,signal?: AbortSignal): Promise<IntakeAlerts> {return this.#request(`/v1/inbox/alerts?limit=200&decided=${decided ? 'true' : 'false'}`,'GET',signal);}
+  inboxAlerts(decided=false,signal?: AbortSignal,projectId?:string): Promise<IntakeAlerts> {return this.#request(`/v1/inbox/alerts?limit=200&decided=${decided ? 'true' : 'false'}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`,'GET',signal);}
   decideInboxAlert(id: string, decision: IntakeDecision, signal?: AbortSignal): Promise<{alert:IntakeAlert}> {return this.#request(`/v1/inbox/alerts/${segment(id)}`,'POST',signal,decision);}
   replayInboxItem(hash: string, version: number, signal?: AbortSignal): Promise<{blob_sha256_hex:string;pipeline_version:number}> {
     if (!/^[a-f0-9]{64}$/.test(hash) || !Number.isSafeInteger(version) || version<1) throw new MnemosAPIError(400);

@@ -8,6 +8,8 @@ import { agentEnvironment, documentRows, useLoad, type MemoryData, type ProjectD
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
 import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
 
+import ProjectIntake from "./ProjectIntake.tsx";
+
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 const MATERIALS_LIMIT = 8;
 
@@ -111,6 +113,7 @@ function ProjectPage({ project, data, onOpenDocuments, onOpenSources, openLegacy
         {uploaded.some(file => file.receipt?.placement_state === "personal") && <p>Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
         {uploaded.filter(file => file.error).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
       </div>}
+      <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
       <Block title="Материалы" count={materials.length} empty={project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет."}
         actions={<Button variant="ghost" size="sm" onClick={onOpenDocuments}>Все документы проекта</Button>}>
         <RowList>

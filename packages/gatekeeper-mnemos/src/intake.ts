@@ -14,7 +14,7 @@ export interface IntakeAlert {
  status:string; placement:string; decided_by:string; note:string; raised_at:string; decided_at:string;
 }
 export interface IntakeAlerts {alerts:IntakeAlert[];truncated:boolean}
-export interface IntakeDecision {approve:boolean;place?:string;candidate?:number;note?:string}
+export interface IntakeDecision {intake_project_id?:string;approve:boolean;place?:string;candidate?:number;note?:string}
 export interface IntakeReceipt {outcome:string;blob_sha256_hex:string;enqueued:boolean;repeat:boolean;deduplicated:boolean;decider:string;notes:string[]}
 export interface PickedIntakeFile {path:string;uploadId?:string;error?:string;modifiedAt?:number;receipt?:{outcome:string;enqueued:boolean;placement_state?:string}}
 

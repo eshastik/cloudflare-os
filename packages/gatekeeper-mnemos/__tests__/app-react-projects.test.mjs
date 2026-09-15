@@ -106,3 +106,49 @@ test("Материал проекта открывается непосредс�
     assert.equal(app.calls.some(c => c[0] === "openSection" && c[1] === "documents"), false);
   } finally { app.dispose(); }
 });
+
+
+test("Материалы проекта: подтверждение области и обновление после размещения", async()=>{
+ let confirmed=false;
+ const decisions=[];
+ const alert={id:"q1",blob_sha256_hex:"a".repeat(64),status:"open",paths:["договор.txt"],suggested_domain:"legal",candidates:[]};
+ const app=await mountMemoryApp({
+  async inboxAlerts(decided,project){
+   assert.equal(project,"two");
+   return {alerts:decided?(confirmed?[{...alert,status:"approved",result_project_id:"two",result_node_id:"new-doc"}]:[]):(confirmed?[]:[alert]),truncated:false};
+  },
+  async decideInboxAlert(id,decision){decisions.push({id,decision});confirmed=true;return {alert:{...alert,status:"approved"}};},
+ },{section:"projects",project:"two"});
+ try {
+  await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"область готова к подтверждению");
+  app.button("Подтвердить: 1").click();
+  await app.until(()=>app.text().includes("Список документов обновлён"),"результат размещения прочитан");
+  assert.deepEqual(JSON.parse(JSON.stringify(decisions)),[{id:"q1",decision:{approve:true,place:"second/legal/договор.txt",intake_project_id:"two"}}]);
+  assert.equal(app.button("Подтвердить: 1"),undefined);
+ } finally {app.dispose();}
+});
+
+
+test("Потерянный ответ подтверждения блокирует повтор до чтения сервера", async()=>{
+ let sent=false, writes=0, release;
+ const reread=new Promise(resolve=>{release=resolve;});
+ const alert={id:"q-lost",blob_sha256_hex:"b".repeat(64),status:"open",paths:["счёт.txt"],suggested_domain:"finance",candidates:[]};
+ const app=await mountMemoryApp({
+  async inboxAlerts(decided,project){
+   assert.equal(project,"two");
+   if(sent)await reread;
+   return {alerts:decided?[]:sent?[]:[alert],truncated:false};
+  },
+  async decideInboxAlert(){writes++;sent=true;throw Error("response lost");},
+ },{section:"projects",project:"two"});
+ try {
+  await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"первое подтверждение доступно");
+  app.button("Подтвердить: 1").click();
+  await app.until(()=>app.text().includes("Остальные решения проверяем по серверу"),"неизвестный результат показан");
+  assert.equal(app.button("Подтвердить: 1").closest("fieldset").disabled,true);
+  assert.equal(writes,1);
+  release();
+  await app.until(()=>!app.button("Подтвердить: 1"),"сервер подтвердил отсутствие открытого вопроса");
+  assert.equal(writes,1);
+ } finally {release();app.dispose();}
+});
