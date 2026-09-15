@@ -8,6 +8,17 @@ type Capture = { id: string; project: string; title: string; purpose: string; he
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
+  async configuration() {
+    const scopes = []; let cursor = ''
+    do { const page = await this.session.listManagedTemplateScopes(cursor); scopes.push(...page.scopes); cursor=page.next_cursor||'' } while(cursor)
+    const people = await this.session.listPeople()
+    const groups = []; cursor = ''
+    do { const page = await this.session.listOrganizationRoles(cursor); groups.push(...page.roles.filter(item=>item.active&&item.kind==='group'));cursor=page.next_cursor||'' } while(cursor)
+    return {scopes, people:people.users.filter(item=>item.active!==false).map(item=>({id:item.userName,name:item.displayName||item.userName})), groups:groups.map(item=>({id:item.id,name:item.name}))}
+  }
+  async configure(id: string, expected: number, config: Parameters<MnemosAccountSession['setTemplateScope']>[2]) {
+    return this.session.setTemplateScope(id, expected, config)
+  }
   async projects() { return this.session.listProjects() }
   async scopes(cursor = '') { return this.session.listTemplateScopes(cursor) }
   async templates(scope: string, cursor = '') { return this.session.listScopedWorkTemplates(scope, cursor) }

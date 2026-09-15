@@ -1,3 +1,4 @@
+import TemplateScopeSettings from './TemplateScopeSettings'
 import {useEffect, useRef, useState} from 'react'
 import {useNavigate} from '@tanstack/react-router'
 import {Button} from '@cloudflare/kumo'
@@ -18,6 +19,7 @@ export default function SharedTemplateLibrary() {
  const [scopes,setScopes] = useState<Scope[]>([]), [scope,setScope] = useState('')
  const [projects,setProjects] = useState<{id:string;name:string}[]>([]), [project,setProject] = useState('')
  const [items,setItems] = useState<Entry[]>([]), [cursor,setCursor] = useState(''), [selected,setSelected] = useState<Entry|null>(null)
+ const [settings,setSettings]=useState(false),[configurationRevision,setConfigurationRevision]=useState(0)
  const [reason,setReason] = useState(''), [promotion,setPromotion] = useState('')
  const [loading,setLoading] = useState(true), [busy,setBusy] = useState(false), [error,setError] = useState('')
  const frame = useRef<GatekeeperUiFrame|null>(null), lifetime = useRef(new AbortController())
@@ -47,7 +49,7 @@ export default function SharedTemplateLibrary() {
      setScopes(found);if(found.length)setScope(found[0].scope_id);else setLoading(false)
    }).catch(()=>{if(active){setError('Не удалось открыть общие шаблоны');setLoading(false)}})
    return()=>{active=false;controller.abort();disposeGatekeeperFrame(frame.current);frame.current=null}
- },[api,account])
+ },[api,account,configurationRevision])
  useEffect(()=>{
    let active=true
    setItems([]);setCursor('');setSelected(null)
@@ -99,13 +101,15 @@ export default function SharedTemplateLibrary() {
  }
  const parent = scopes.find(item=>item.scope_id===scopes.find(current=>current.scope_id===selected?.scope_id)?.parent_id)
  const selectClass='rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-default'
+ if(settings&&frame.current?.blueprintTemplates)return <TemplateScopeSettings selector={frame.current.blueprintTemplates.selector} onClose={()=>{setSettings(false);setConfigurationRevision(value=>value+1)}}/>
  return <section className="px-3 py-4" aria-label="Общие шаблоны">
-   <div className="mb-5 flex flex-wrap gap-3">
+   <div className="mb-5 flex flex-wrap items-center gap-3">
+     {frame.current?.blueprintTemplates&&<Button disabled={busy||loading} onClick={()=>setSettings(true)}>Настроить уровни</Button>}
      {accounts.length>1&&<select aria-label="Организация" disabled={busy} value={account??''} onChange={e=>setAccount(Number(e.target.value))} className={selectClass}>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select>}
      {!!scopes.length&&<select aria-label="Уровень применения" disabled={busy} value={scope} onChange={e=>setScope(e.target.value)} className={selectClass}>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{levels[item.level]} · {item.name}</option>)}</select>}
    </div>
    {error&&<p role="alert" className="mb-4 text-sm text-kumo-danger">{error}</p>}
-   {loading?<p role="status" className="text-sm text-kumo-subtle">Загрузка шаблонов…</p>:!items.length&&<p className="text-sm text-kumo-subtle">На этом уровне пока нет утверждённых шаблонов гаджетов.</p>}
+   {loading?<p role="status" className="text-sm text-kumo-subtle">Загрузка шаблонов…</p>:!items.length&&<p className="text-sm text-kumo-subtle">{scopes.length?'На этом уровне пока нет утверждённых шаблонов гаджетов.':'Нет доступных уровней общего применения. Администратор может создать их в настройках.'}</p>}
    <div className="space-y-2">{items.map(item=><button type="button" disabled={busy} key={item.scope_id+':'+item.template_key} onClick={()=>{setSelected(item);setError('');setReason('');setPromotion('')}} className="block w-full rounded-xl border border-kumo-line p-4 text-left hover:bg-kumo-tint">
      <span className="block text-sm font-medium">{item.source.title}</span><span className="mt-1 block text-xs text-kumo-subtle">{item.source.purpose}</span><span className="mt-2 block text-xs text-kumo-subtle">Утверждённая версия {item.revision}</span>
    </button>)}</div>

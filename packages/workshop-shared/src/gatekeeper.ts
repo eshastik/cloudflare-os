@@ -415,7 +415,27 @@ export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
   checkpoint(upload: string): Promise<void>;
   save(): Promise<GatekeeperTemplateVersion>;
 }
+/** Настройки области общего применения шаблонов. */
+export interface GatekeeperTemplateScopeConfig {
+  /** Место в иерархии. */
+  level: 'organization' | 'department' | 'group';
+  /** Непосредственный родитель; пусто у организации. */
+  parent_id: string;
+  /** Существующая группа читателей; пусто у организации. */
+  reader_group_id: string;
+  /** Название для пользователей. */
+  name: string;
+  /** Применяется ли область. */
+  enabled: boolean;
+  /** Согласующие — пользователи организации. */
+  approvers: string[];
+}
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  /** Читает доступные для управления уровни и разрешённые администратору справочники. */
+  configuration(): Promise<{scopes: (GatekeeperTemplateScopeConfig & {scope_id:string;revision:number})[]; people:{id:string;name:string}[]; groups:{id:string;name:string}[]}>;
+  /** Сохраняет область с проверкой текущей ревизии и полномочий на сервере. */
+  configure(id: string, expected: number, config: GatekeeperTemplateScopeConfig): Promise<GatekeeperTemplateScopeConfig & {scope_id:string;revision:number}>;
+
   /** Предлагает выбранную общую версию непосредственному родительскому уровню с отдельным согласованием. */
   promote(scope: string, template: string, revision: number, message: string, operation: string): Promise<{proposal: {proposal_id: string; target_scope_id: string}}>;
 

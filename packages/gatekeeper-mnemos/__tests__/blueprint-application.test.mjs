@@ -17,7 +17,9 @@ test('общий Blueprint копируется по точной версии, 
    outboundService:async request=>{
      assert.equal(request.headers.get('Authorization'),'Bearer fixture-human-token');
      const url=new URL(request.url), path=url.pathname;
-     if(path==='/v1/whoami')return Response.json({subject:{tenant_id:'org',user_id:'alice'}});
+     if(path==='/v1/whoami')return Response.json({subject:{tenant_id:'org',user_id:'alice'},capabilities:['principal.manage']});
+     if(path==='/v1/admin/users')return Response.json({users:[{userName:'alice',displayName:'Алиса',externalId:'alice',active:true}]});
+     if(path==='/v1/admin/roles')return Response.json({roles:[{id:'readers',kind:'group',name:'Сотрудники',active:true}],next_cursor:'',generation:1});
      if(path==='/v1/template-scopes')return Response.json({scopes});
      if(path==='/v1/template-scopes/department/templates/contract')return new Response(null,{status:404});
      if(path==='/v1/template-promotions/scoped'){
@@ -47,13 +49,14 @@ test('общий Blueprint копируется по точной версии, 
    script:`export default {async fetch(request,env){
      const account=env.ACCOUNTS.get(env.ACCOUNTS.idFromName('owner'));await account.acceptVerifiedCredential('fixture-human-token');
      using frame=await account.startAppUi();const input=await request.json();
-     try {if(input.promote)return Response.json(await frame.blueprintTemplates.selector.promote('finance','contract',3,'Полезно всему отделу','22222222-2222-4222-8222-222222222222'));const result=await frame.blueprintTemplates.selector.apply('finance','contract',input.revision||3,'project','Договор.mnemos-template','11111111-1111-4111-8111-111111111111');return Response.json(result)}
+     try {if(input.configuration)return Response.json(await frame.blueprintTemplates.selector.configuration());if(input.promote)return Response.json(await frame.blueprintTemplates.selector.promote('finance','contract',3,'Полезно всему отделу','22222222-2222-4222-8222-222222222222'));const result=await frame.blueprintTemplates.selector.apply('finance','contract',input.revision||3,'project','Договор.mnemos-template','11111111-1111-4111-8111-111111111111');return Response.json(result)}
      catch{return new Response('denied',{status:403})}
    }};`
  }]});
  try{
    const driver=await mf.getWorker('driver');
    const call=(body={})=>driver.fetch('https://driver.test',{method:'POST',body:JSON.stringify(body)});
+   const configuration=await (await call({configuration:true})).json();assert.equal(configuration.people[0].name,'Алиса');assert.equal(configuration.groups[0].name,'Сотрудники');
    assert.equal((await call()).status,200);assert.equal((await call()).status,200);assert.equal(creates,1);
    assert.equal((await call({revision:4})).status,403);assert.equal(creates,1);
    denied=true;assert.equal((await call()).status,403);assert.equal(creates,1);
