@@ -283,3 +283,13 @@ test("Клиент: долгий опрос событий, изменения �
   publishStatus = 409;
   await assert.rejects(client.publish(TASK, "Итог"), (e: WorkspaceError) => e.code === "no_changes");
 });
+
+test("client calls fetch without its own this, as the Workers runtime requires", async () => {
+  // Workers fetch бросает «Illegal invocation», если this — не глобальный объект.
+  function strictFetch(this: unknown, _input: RequestInfo | URL, _init?: RequestInit): Promise<Response> {
+    if (this !== globalThis && this !== undefined) throw new TypeError("Illegal invocation");
+    return Promise.resolve(new Response(JSON.stringify({ task_id: "0123456789abcdef", binding_id: "b", project_id: "p", branch: "agents/x", title: "t", state: "running", cost_usd: 0, created_at: "2026-09-24T00:00:00Z" }), { status: 200 }));
+  }
+  const client = new WorkspaceClient("https://localhost:9452", "token", strictFetch as typeof fetch);
+  assert.equal((await client.status("0123456789abcdef")).state, "running");
+});

@@ -75,7 +75,8 @@ export class WorkspaceClient implements WorkspaceControl {
   constructor(origin: string, token: string, fetcher: typeof fetch = fetch, eventsWindowMs = EVENTS_WINDOW_MS) {
     const url = new URL(origin);
     if (url.protocol !== "https:" || url.origin !== origin.replace(/\/$/, "") || !token) throw new WorkspaceError("unconfigured", "Рабочие места агентов не настроены.");
-    this.#origin = url.origin; this.#token = token; this.#fetch = fetcher; this.#window = eventsWindowMs;
+    // Рантайм Workers бросает «Illegal invocation», если fetch вызвать с this клиента.
+    this.#origin = url.origin; this.#token = token; this.#fetch = fetcher.bind(globalThis); this.#window = eventsWindowMs;
   }
   async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError): Promise<Response> {
     let response: Response;
