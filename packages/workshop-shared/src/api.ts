@@ -1952,6 +1952,10 @@ export type AiChatMessageBody = {
   // but the user should have the option to expand it.
   reasoning?: string;
 
+  // Перевод `reasoning` на язык интерфейса (русский), если модель рассуждала на другом языке.
+  // Заполняется сервером после сохранения сообщения; только для показа, модели не передаётся.
+  reasoningTranslation?: string;
+
   // Messages from an AI agent can invoke tools.
   toolCalls?: AiToolCall[];
 

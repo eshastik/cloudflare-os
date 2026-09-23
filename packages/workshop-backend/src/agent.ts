@@ -18,6 +18,7 @@ import { AgentCatalogSnapshot, formatAlwaysAvailableResourcesPrompt } from "./ag
 import { formatInstanceInstructions } from "./admin-config";
 import type { AiGatewayLogRoute } from "./ai-gateway";
 import { AgentTurnError, completeText, httpStatusFromError, zeroUsage } from "./ai-invoke";
+import { guardToolRepeats, RepeatedFailureGuard, REPEATED_FAILURE_LIMIT } from "./tool-failure-guard";
 import type { ModelHandle } from "./ai-models";
 import {
   buildCompactionState, buildSummaryPrompt, COMPACTION_SYSTEM_PROMPT, estimateProjectionTokens,
@@ -392,6 +393,17 @@ You are a helpful coding assistant tasked with helping users write small persona
 # Language
 
 The user sees your reasoning, tool steps and answers in a Russian interface. Think, reason and write to the user in Russian, in plain words, unless the user writes in another language. Refer to projects, documents and repositories by their names, never by internal identifiers.
+
+Internal identifiers are for tool calls only. Never write them in your answers or in your reasoning addressed to the user: no projectId, task id, agent id, connection or gatekeeper id, account id, workspace or chat id, commit hash, node id, UUID or long hex string. Say "проект «Продажи»", "задача агента кода", "подключение к почте" instead. If something has no name, describe it in words ("этот проект", "задача агента") rather than quoting the identifier. The only exception: the user explicitly asks for the identifier.
+
+# When a tool fails
+
+A failed tool call is a fact you report, not a gap you fill. When a tool (for example \`codeWork\`, \`executeCode\`, a connection call) returns an error:
+- Say plainly that it did not work: what you tried and that it failed.
+- Explain why in your own words, based only on the error text. Do not guess causes the error does not support, and do not paste raw stack traces or identifiers.
+- Say what the user can do next (grant access, connect the project, retry later, rephrase the task), or what you will try differently.
+- Never present general knowledge as the result of the work: do not answer "usually this is done like this" or describe what the code "probably" contains as if you had checked it. If you give general advice, label it as general advice that you could not verify.
+- Do not repeat the same failing call with the same arguments. If a call failed twice the same way, stop retrying and report.
 
 # Workspaces
 
@@ -2938,7 +2950,10 @@ export async function runAgent(
     };
   }
 
-  let toolList = Object.values(tools);
+  // Одинаково упавший вызов не повторяется бесконечно (см. tool-failure-guard.ts).
+  let failureGuard = new RepeatedFailureGuard();
+  let toolList = guardToolRepeats(Object.values(tools), failureGuard, toolErrorText,
+      (toolCallId, text) => toolCallNotes.set(toolCallId, {...toolCallNotes.get(toolCallId), error: text}));
 
   // Records a turn that ended with a provider error, so it can be rethrown for the overseer's
   // error triage after the loop settles. (pi never throws for provider failures; the loop
@@ -3143,6 +3158,9 @@ export async function runAgent(
           abortSignal.aborted ||
           // Hard cap on turns, as before.
           ++turnCount >= 30 ||
+          // Модель дважды пыталась повторить вызов, уже отклонённый как повтор одинаковой ошибки:
+          // дальше ход ничего не даст.
+          failureGuard.refusals >= REPEATED_FAILURE_LIMIT ||
           // End the turn once the agent has successfully requested a connection: it must wait
           // for the user to respond, not keep reasoning in the meantime. (Accept resumes it on a
           // fresh turn; deny just leaves the turn ended.) A rejected requestConnection (e.g.

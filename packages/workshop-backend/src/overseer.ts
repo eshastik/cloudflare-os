@@ -23,6 +23,8 @@ import {
   UserGatewayRouting,
 } from "./ai-models";
 import { AgentTurnError, completeText } from "./ai-invoke";
+import { translateStoredReasoning } from "./reasoning-translation";
+import { isMostlyRussian } from "@gadgets/workshop-shared/reasoning";
 import {
   AiGatewayLogRetryableError,
   getAiGatewayConfig,
@@ -5352,6 +5354,11 @@ class OverseerImpl implements AgentHooks {
       if (modelData) {
         this.storage.chatModelData.put({chatId, sequence, message: modelData});
       }
+
+      // Размышления не по-русски переводятся в фоне; перевод приходит обновлением сообщения.
+      if (msg.type === "message" && msg.reasoning && !isMostlyRussian(msg.reasoning)) {
+        void this.#translateReasoning(chatId, sequence);
+      }
     }
 
     if (totalTokens !== undefined) {
@@ -5369,6 +5376,30 @@ class OverseerImpl implements AgentHooks {
       // No AI Gateway log to consult (direct provider access, or a gateway response that didn't
       // surface a log id): fall back to the caller's catalog-priced estimate.
       this.#addChatCost(chatId, estimatedCost);
+    }
+  }
+
+  // Перевод размышлений сообщения на русский быстрой служебной моделью владельца. Ошибка перевода
+  // не мешает беседе: человек видит исходник свёрнутым.
+  async #translateReasoning(chatId: number, sequence: number): Promise<void> {
+    try {
+      let quick = await this.#getNamingQuickModel();
+      if (!quick) return;
+      let model = getModel(this.env, quick.config, quick.initiator, {
+        metadata: { source: "reasoning-translation", gadgetId: this.ctx.id.toString(), chatId },
+      });
+      await translateStoredReasoning({
+        get: (c, s) => this.storage.chats.get(`${keyString(c)}.${keyString(s)}`),
+        put: (message) => {
+          // Беседу могли удалить, пока шёл перевод: не воскрешать сообщение.
+          if (this.storage.chatMeta.get(chatId)) this.storage.chats.put(message);
+        },
+        now: () => this.getChatTimestamp(),
+      }, chatId, sequence, (args) => completeText(model, args));
+    } catch (err) {
+      this.logger.warn("error translating reasoning", {
+        event: "chat.reasoning.translate.failed", chatId, error: err,
+      });
     }
   }
 

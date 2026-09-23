@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowUUpLeft, CheckCircle, Clock, WarningCircle, CaretRight } from "@phosphor-icons/react";
 import type { ChatCodeAcceptResult, ChatCodeChanges } from "@gadgets/workshop-shared/api";
 import type { ChangedFile, ChatCodeWork } from "@gadgets/workshop-shared/code-work";
+import { displayName } from "@gadgets/workshop-shared/code-work";
 import { WorkshopButton } from "../WorkshopControls";
 
 type Outcome = NonNullable<ChatCodeWork["review"]>["outcome"];
@@ -128,7 +129,7 @@ export function CodeChangesCard({ refreshKey, review, load, accept, revert, disa
         <div className="min-w-0">
           <div className="font-medium text-kumo-default">Что изменилось</div>
           <div className="truncate text-[12px] leading-4 text-kumo-inactive">
-            {changes.projectTitle} · файлов: {changes.files.length}
+            {displayName(changes.projectTitle, "Проект")} · файлов: {changes.files.length}
           </div>
         </div>
         {decided ? (

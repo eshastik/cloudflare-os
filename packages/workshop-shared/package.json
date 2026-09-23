@@ -80,6 +80,10 @@
     "./blueprint-template": {
       "types": "./src/blueprint-template.ts",
       "import": "./src/blueprint-template.ts"
+    },
+    "./reasoning": {
+      "types": "./src/reasoning.ts",
+      "import": "./src/reasoning.ts"
     }
   },
   "scripts": {

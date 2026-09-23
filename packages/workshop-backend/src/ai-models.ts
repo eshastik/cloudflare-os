@@ -42,7 +42,7 @@ type GatewayMetadata = {
 };
 
 type GatewayMetadataContext = {
-  source: "chat" | "thread-title" | "gadget-title" | "model-binding";
+  source: "chat" | "thread-title" | "gadget-title" | "model-binding" | "reasoning-translation";
   gadgetId?: string;
   chatId?: number;
 };

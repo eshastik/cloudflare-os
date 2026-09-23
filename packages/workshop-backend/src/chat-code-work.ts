@@ -1,7 +1,7 @@
 // Работа с кодом в беседе: набор проектов, переход агента беседы в рабочее место, сообщения
 // человека прямо в работу с кодом, «Что изменилось» и «Принять». Хранится в метаданных беседы.
 import type {AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
-import {chatProjects, validateChatProjects, type AgentStep, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+import {chatProjects, displayName, validateChatProjects, type AgentStep, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend} from "./code-work.js";
 
@@ -130,7 +130,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
       let fresh = metaOrThrow(host, request.chatId);
       pinProject(fresh, chosen, ownerId, request.profileId);
       host.putChatMeta(fresh);
-      pinStep = {id: `pin:${chosen.projectId}`, kind: "project", status: "done", title: `Подключил проект «${chosen.title}»`, resource: {kind: "project", name: chosen.title}};
+      pinStep = {id: `pin:${chosen.projectId}`, kind: "project", status: "done", title: `Подключил проект «${displayName(chosen.title, "без названия")}»`, resource: {kind: "project", name: displayName(chosen.title, "проект")}};
       emitStep(pinStep);
     }
     let found = await user.codeWorkTarget(chosen.accountId, chosen.projectId);

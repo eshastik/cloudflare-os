@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { AiChatMetadata, AiChatStreamEvent } from "@gadgets/workshop-shared/api";
 import type { AgentStep, ChangedFile } from "@gadgets/workshop-shared/code-work";
 import { formatCodeWorkResult, validateChatProjects, chatProjects } from "@gadgets/workshop-shared/code-work";
-import { CodeWorkTimeline, type CodeWorkEvent } from "../src/code-work-timeline";
+import { CodeWorkTimeline, shortCommand, type CodeWorkEvent } from "../src/code-work-timeline";
 import { runCodeWorkTurn, type CodeWorkBackend } from "../src/code-work";
 import {
   acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, revertChatCodeChanges, runChatCodeWork, setChatProjects,
@@ -26,12 +26,46 @@ describe("шаги рабочего места для человека", () => {
     expect(steps.map(s => [s.kind, s.title, s.status])).toEqual([
       ["file", "Прочитал файл go.mod", "done"],
       ["edit", "Изменил файл a.go +2 −1", "done"],
-      ["run", "Команда завершилась с ошибкой: Запустить тесты", "error"],
+      ["run", "Команда завершилась с ошибкой go test ./...", "error"],
       ["memory", "Поискал в памяти «регламент»", "done"],
     ]);
-    expect(steps[2].detail).toBe("go test ./...");
+    expect(steps[2].detail).toBe("# Запустить тесты\ngo test ./...");
     expect(steps[2].output).toBe("FAIL");
     expect(steps.every(s => !/bash|grep|mnemos_/.test(s.title))).toBe(true);
+  });
+
+  it("шаг команды показывает саму команду коротко, полный текст и вывод — в подробностях", () => {
+    expect(shortCommand("  git status  ")).toBe("git status");
+    expect(shortCommand("cd /workspace/repo\nnpm test")).toBe("cd /workspace/repo …");
+    expect(shortCommand("x".repeat(200))).toHaveLength(80);
+    expect(shortCommand("")).toBe("");
+    const t = new CodeWorkTimeline(0);
+    const long = `rg -n "reasoning" packages/workshop-backend/src --glob '*.ts' | head -50 && echo done && echo more`;
+    const { steps } = t.apply([
+      role(1, "a1", "assistant"),
+      part(2, { id: "b1", messageID: "a1", type: "tool", tool: "bash", callID: "k1", state: { status: "running", input: { command: "ls -la" } } }),
+      part(3, { id: "b2", messageID: "a1", type: "tool", tool: "bash", callID: "k2", state: { status: "completed", input: { command: long, description: "Найти размышления" }, output: "agent.ts:1" } }),
+      part(4, { id: "b3", messageID: "a1", type: "tool", tool: "bash", callID: "k3", state: { status: "completed", input: { command: "", description: "Проверить окружение" } } }),
+    ]);
+    expect(steps[0].title).toBe("Выполняю команду ls -la");
+    expect(steps[1].title).toBe(`Выполнил команду ${long.slice(0, 79)}…`);
+    expect(steps[1].detail).toBe(`# Найти размышления\n${long}`);
+    expect(steps[1].output).toBe("agent.ts:1");
+    expect(steps[2].title).toBe("Выполнил команду: Проверить окружение");
+  });
+
+  it("идентификаторы узлов и баз не попадают в строку шага", () => {
+    const t = new CodeWorkTimeline(0);
+    const node = "3fa85f6457174562b3fc2c963f66afa6";
+    const { steps } = t.apply([
+      role(1, "a1", "assistant"),
+      part(2, { id: "m1", messageID: "a1", type: "tool", tool: "mnemos_mnemos_read", callID: "r1", state: { status: "completed", input: { node_id: node } } }),
+      part(3, { id: "m2", messageID: "a1", type: "tool", tool: "mnemos_mnemos_read", callID: "r2", state: { status: "completed", input: { path: "Договоры/2026.docx" } } }),
+      part(4, { id: "m3", messageID: "a1", type: "tool", tool: "mnemos_mnemos_query", callID: "r3", state: { status: "completed", input: { db_id: "db_0123456789abcdef0123", sql: "select 1" } } }),
+    ]);
+    expect(steps.map(s => s.title)).toEqual(["Открыл документ", "Открыл документ Договоры/2026.docx", "Запросил базу"]);
+    expect(steps[0].detail).toBe(node);
+    expect(steps.every(s => !s.title.includes(node))).toBe(true);
   });
 
   it("шаг обновляется по мере работы, повторные события и текст человека не учитываются", () => {

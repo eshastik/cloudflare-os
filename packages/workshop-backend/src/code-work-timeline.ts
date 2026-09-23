@@ -1,7 +1,7 @@
 // Разбор событий рабочего места (OpenCode) в шаги для ленты беседы. Строка шага — для
 // нетехнического человека («Прочитал файл», «Выполнил команду»); команды, пути и выводы —
 // только в подробностях по раскрытию.
-import type {AgentStep} from "@gadgets/workshop-shared/code-work";
+import {displayName, type AgentStep} from "@gadgets/workshop-shared/code-work";
 
 export type CodeWorkEvent = {seq: number; type: string; data: unknown};
 
@@ -31,6 +31,17 @@ function lineCount(value: unknown): number {
   return s ? s.split("\n").length : 0;
 }
 
+const MAX_COMMAND = 80;
+
+/** Первая непустая строка команды, не длиннее MAX_COMMAND; многострочная помечается «…». */
+export function shortCommand(command: string): string {
+  let lines = command.split("\n").map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  let first = lines[0].replace(/\s+/g, " ");
+  if (first.length > MAX_COMMAND) return first.slice(0, MAX_COMMAND - 1) + "…";
+  return lines.length > 1 ? `${first} …` : first;
+}
+
 type Verb = {running: string; done: string; error: string};
 function verb(running: string, done: string, subject = ""): Verb {
   let tail = subject ? ` ${subject}` : "";
@@ -55,8 +66,12 @@ function describeTool(tool: string, input: Record<string, unknown>): {kind: Agen
       let command = text(input.command);
       let description = text(input.description);
       if (/\bgit\s+push\b/.test(command)) return {kind: "run", verb: verb("Сохраняю работу", "Сохранил работу"), detail: command};
-      let what = description ? `: ${oneLine(description, 90)}` : "";
-      return {kind: "run", verb: {running: `Выполняю команду${what}`, done: `Выполнил команду${what}`, error: `Команда завершилась с ошибкой${what}`}, detail: command, resource: {kind: "command", name: oneLine(command, 80) || "команда"}};
+      // В заголовке — сама команда (коротко), иначе человек не видит, что именно запускалось.
+      // Пояснение агента и полный текст команды — в подробностях.
+      let short = shortCommand(command);
+      let what = short ? ` ${short}` : description ? `: ${oneLine(description, 90)}` : "";
+      let detail = description && short ? `# ${oneLine(description, 200)}\n${command}` : command;
+      return {kind: "run", verb: {running: `Выполняю команду${what}`, done: `Выполнил команду${what}`, error: `Команда завершилась с ошибкой${what}`}, detail, resource: {kind: "command", name: oneLine(command, 80) || "команда"}};
     }
     case "grep": case "glob": {
       let pattern = oneLine(text(input.pattern) || text(input.query), 80);
@@ -79,11 +94,16 @@ function describeTool(tool: string, input: Record<string, unknown>): {kind: Agen
       case "mnemos_search":
         return {kind: "memory", verb: verb("Ищу в памяти", "Поискал в памяти", query ? `«${query}»` : ""), detail: query, resource: {kind: "search", name: query || "поиск"}};
       case "mnemos_read": {
-        let doc = oneLine(text(input.path) || text(input.node_id) || text(input.node) || "документ", 80);
-        return {kind: "document", verb: verb("Открываю документ", "Открыл документ", doc), detail: doc, resource: {kind: "document", name: doc}};
+        // Идентификатор узла человеку ничего не говорит: в строке — путь или слово «документ».
+        let raw = text(input.path) || text(input.node_id) || text(input.node);
+        let doc = oneLine(displayName(raw, ""), 80);
+        return {kind: "document", verb: verb("Открываю документ", "Открыл документ", doc), detail: raw || undefined, resource: {kind: "document", name: doc || raw || "документ"}};
       }
-      case "mnemos_query":
-        return {kind: "database", verb: verb("Запрашиваю базу", "Запросил базу", text(input.database) || text(input.db_id)), detail: text(input.sql) || query, resource: {kind: "database", name: text(input.database) || text(input.db_id) || "база"}};
+      case "mnemos_query": {
+        let raw = text(input.database) || text(input.db_id);
+        let db = displayName(raw, "");
+        return {kind: "database", verb: verb("Запрашиваю базу", "Запросил базу", db), detail: text(input.sql) || query, resource: {kind: "database", name: db || raw || "база"}};
+      }
       case "mnemos_overview":
         return {kind: "project", verb: verb("Смотрю обзор проекта", "Посмотрел обзор проекта"), detail: text(input.project_id)};
       default:

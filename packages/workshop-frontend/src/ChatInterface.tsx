@@ -119,7 +119,8 @@ import { chatListState, upsertAgentStep } from "./codeWorkSteps";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
-import { chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { chatProjects, displayName, looksLikeId, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { reasoningForDisplay } from "@gadgets/workshop-shared/reasoning";
 import { useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
 import { useResolveAction } from "./useResolveAction";
@@ -632,7 +633,27 @@ export function resolveToolCallOutput(
   return typeof gadgetId === "number" ? outputOfWorkpiece(gadgetId) : undefined;
 }
 
+// Строка шага в ленте не показывает внутренние идентификаторы (проектов, задач, подключений,
+// агентов): цель, целиком похожая на идентификатор, опускается, а вкрапленный идентификатор
+// заменяется многоточием. Полные значения остаются в раскрываемых подробностях.
+export function hideInternalIds(target: string | undefined): string | undefined {
+  if (target === undefined) return undefined;
+  if (looksLikeId(target)) return undefined;
+  const cleaned = target
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "…")
+    .replace(/\b[0-9a-f]{16,}\b/gi, "…");
+  return cleaned.trim() || undefined;
+}
+
 function getToolCallSummary(
+  tc: AiToolCall,
+  outputOf?: ToolOutputResolver,
+): { verb: string; target?: string } {
+  const summary = rawToolCallSummary(tc, outputOf);
+  return { verb: summary.verb, target: hideInternalIds(summary.target) };
+}
+
+function rawToolCallSummary(
   tc: AiToolCall,
   outputOf?: ToolOutputResolver,
 ): { verb: string; target?: string } {
@@ -1681,16 +1702,54 @@ const NestedObservationRow = memo(function NestedObservationRow({
   );
 });
 
-const ThinkingTraceRow = memo(function ThinkingTraceRow({
+// Размышления показываются на русском: перевод с сервера, либо исходник, если он уже по-русски.
+// Пока перевода нет, исходник на другом языке свёрнут: во время ответа — «Думает…», после —
+// «Размышления переводятся…» с кнопкой показать исходный текст.
+export const ThinkingTraceRow = memo(function ThinkingTraceRow({
   reasoning,
+  translation,
+  streaming = false,
 }: {
   reasoning: string;
+  translation?: string;
+  streaming?: boolean;
 }) {
+  const [showOriginal, setShowOriginal] = useState(false);
+  const shown = reasoningForDisplay({ reasoning, reasoningTranslation: translation });
+  if (!shown) return null;
+  // В начале потока букв мало, язык ещё не ясен: не мелькаем английским.
+  const undecided = streaming && !translation && reasoning.trim().length < 40;
+  if ("text" in shown && !undecided) {
+    return (
+      <div className="min-w-0 py-1 text-kumo-subtle">
+        <div className={`min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
+          <MarkdownMessage message={shown.text} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-w-0 py-1 text-kumo-subtle">
-      <div className={`min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
-        <MarkdownMessage message={reasoning} />
+      <div className="flex min-w-0 items-center gap-2 text-[13px] leading-[19px]">
+        <span className={streaming ? styles.thinkingShimmer : undefined}>
+          {streaming ? "Думает…" : "Размышления переводятся…"}
+        </span>
+        {!streaming && "pending" in shown && (
+          <button
+            type="button"
+            onClick={() => setShowOriginal((v) => !v)}
+            aria-expanded={showOriginal}
+            className="cursor-pointer text-[12px] text-kumo-inactive hover:text-kumo-default"
+          >
+            {showOriginal ? "Скрыть исходный текст" : "Показать исходный текст"}
+          </button>
+        )}
       </div>
+      {showOriginal && "pending" in shown && (
+        <div className={`mt-1 min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
+          <MarkdownMessage message={shown.original} />
+        </div>
+      )}
     </div>
   );
 });
@@ -6799,7 +6858,7 @@ function ChatInterface({
               {!sidebarMode && (
                 <ChatSubline
                   chatCount={chatList.length}
-                  projectTitle={chatProjectList.map((p) => p.title).join(" · ") || undefined}
+                  projectTitle={chatProjectList.map((p) => displayName(p.title, "проект")).join(" · ") || undefined}
                   onBack={() => onNavigateToChat(null)}
                 />
               )}
@@ -7144,7 +7203,7 @@ function ChatInterface({
                           <div className="min-w-0 w-full max-w-[860px] space-y-2">
                             <div className="group/agentMessage relative space-y-1.5">
                               {showReasoning && (
-                                <ThinkingTraceRow reasoning={msg.reasoning!} />
+                                <ThinkingTraceRow reasoning={msg.reasoning!} translation={msg.reasoningTranslation} />
                               )}
 
                               {hasMessageText && (
@@ -7513,7 +7572,7 @@ function ChatInterface({
                           )}
 
                           {showThinkingTraces && currentProvisionalState?.reasoning && (
-                            <ThinkingTraceRow reasoning={currentProvisionalState.reasoning} />
+                            <ThinkingTraceRow reasoning={currentProvisionalState.reasoning} streaming />
                           )}
 
                           {currentProvisionalState?.text && (

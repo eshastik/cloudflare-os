@@ -69,12 +69,27 @@ export type CodeWorkOutput = {
 
 export const MAX_CHAT_PROJECTS = 8;
 
+/** Похоже на внутренний идентификатор (hex, UUID, «prefix-<hex>»), а не на название для человека. */
+export function looksLikeId(value: string | null | undefined): boolean {
+  let v = (value ?? "").trim();
+  if (!v || /\s/.test(v)) return false;
+  if (/^[0-9a-f]{12,}$/i.test(v)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
+  return /[0-9a-f]{16,}/i.test(v) || /^[a-z]+[_-][0-9a-z]{20,}$/i.test(v) && /\d/.test(v);
+}
+
+/** Название для ленты и шапки: пустое или похожее на идентификатор заменяется подписью. */
+export function displayName(name: string | null | undefined, fallback: string): string {
+  let v = (name ?? "").trim();
+  return v && !looksLikeId(v) ? v : fallback;
+}
+
 /** Набор проектов беседы; старое одиночное поле читается как проект, выбранный человеком. */
 export function chatProjects(context: {accountId?: number; projectId?: string; title?: string; projects?: ChatProject[]} | undefined): ChatProject[] {
   if (!context) return [];
   if (Array.isArray(context.projects)) return context.projects;
   if (typeof context.projectId === "string" && context.projectId && typeof context.accountId === "number") {
-    return [{accountId: context.accountId, projectId: context.projectId, title: context.title ?? context.projectId, pinnedBy: "user"}];
+    return [{accountId: context.accountId, projectId: context.projectId, title: displayName(context.title, "Проект"), pinnedBy: "user"}];
   }
   return [];
 }
@@ -103,7 +118,9 @@ const MAX_SUMMARY_STEPS = 40;
 /** Текст итога для агента беседы (и для переигрывания истории): ответ, шаги, изменённые файлы. */
 export function formatCodeWorkResult(output: CodeWorkOutput): string {
   let lines = [
-    `Работа с кодом проекта «${output.projectTitle}» (${output.projectId}), задача ${output.taskId}, состояние: ${output.state}.`,
+    // Идентификатор задачи агенту беседы не нужен (продолжение идёт по беседе) и не должен
+    // попадать в его ответ человеку; projectId нужен для следующих вызовов инструментов.
+    `Работа с кодом проекта «${output.projectTitle}» (projectId для инструментов: ${output.projectId}), состояние: ${output.state}.`,
   ];
   if (output.answer.trim()) lines.push("", "Ответ агента кода:", output.answer.trim());
   let steps = output.steps.filter(s => s.kind !== "state");

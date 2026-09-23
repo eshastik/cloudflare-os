@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, X, Sparkle } from "@phosphor-icons/react";
 import type { ChatProjectChoice } from "@gadgets/workshop-shared/api";
 import type { ChatProject } from "@gadgets/workshop-shared/code-work";
-import { MAX_CHAT_PROJECTS } from "@gadgets/workshop-shared/code-work";
+import { MAX_CHAT_PROJECTS, displayName } from "@gadgets/workshop-shared/code-work";
 
 export type ProjectChipsProps = {
   projects: ChatProject[];
@@ -61,13 +61,13 @@ export function ProjectChips({ projects, onChange, loadChoices, disabled = false
           title={project.pinnedBy === "agent" ? "Агент подключил проект по ходу работы" : undefined}
         >
           {project.pinnedBy === "agent" && <Sparkle size={11} className="flex-shrink-0 text-kumo-inactive" aria-label="подключил агент" />}
-          <span className="truncate">{project.title}</span>
+          <span className="truncate">{displayName(project.title, "Проект")}</span>
           <button
             type="button"
             disabled={disabled}
             onClick={() => onChange(projects.filter((p) => !sameProject(p, project)))}
             className="flex h-4 w-4 cursor-pointer items-center justify-center rounded-full text-kumo-inactive hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={`Убрать проект «${project.title}»`}
+            aria-label={`Убрать проект «${displayName(project.title, "Проект")}»`}
           >
             <X size={10} weight="bold" />
           </button>
@@ -108,7 +108,7 @@ export function ProjectChips({ projects, onChange, loadChoices, disabled = false
               }}
               className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] leading-5 text-kumo-default hover:bg-kumo-elevated"
             >
-              <span className="truncate">{choice.title}</span>
+              <span className="truncate">{displayName(choice.title, "Проект без названия")}</span>
               {choice.hasCode && <span className="flex-shrink-0 text-[11px] text-kumo-inactive">есть код</span>}
             </button>
           ))}
