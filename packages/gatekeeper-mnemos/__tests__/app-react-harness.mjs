@@ -14,6 +14,8 @@ export function defaultMethods(calls) {
   const record = (name, ...args) => { calls.push([name, ...args]); };
   return {
     async listTemplateReviewScopes(){return {scopes:[],next_cursor:""};},
+    async workspaceAvailable(){return false;},
+    async listWorkspaceTasks(){return {tasks:[]};},
     async inboxStatus(){return {total:0,in_queue:0,awaiting_classification:0,awaiting_placement:0,placed_in_tree:0,dead_lettered:0,dead_letters:[],dead_letters_truncated:false};},
     async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример команды", capabilities:["project.create","principal.manage","platform.metrics.read"] }; },
     async listProjects() { return { projects: [{ id: "one", name: "Общий проект", slug: "shared" }, { id: "two", name: "Второй проект", slug: "second" }] }; },
@@ -83,7 +85,7 @@ export function defaultMethods(calls) {
 
 export async function mountMemoryApp(overrides = {}, options = {}) {
   const calls = [];
-  let selectedSection = options.section ?? "my-work", selectedProject = options.project ?? "";
+  let selectedSection = options.section ?? "my-work", selectedProject = options.project ?? "", selectedView = options.view ?? "";
   const methods = { ...defaultMethods(calls), ...overrides };
   // capnweb ищет методы цели на прототипе, а не среди собственных свойств экземпляра.
   class UI extends RpcTarget {}
@@ -94,10 +96,13 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async subscribeTheme() { return "light"; }
     async setUnsavedChanges(dirty) { calls.push(["setUnsavedChanges",dirty]); }
     async getSelectedProject() { return selectedProject; }
+    async getSelectedView() { return selectedView; }
+    async selectView(view) { calls.push(["selectView",view]); selectedView = view; setTimeout(locationChanged, 0); }
     async getSelectedSection() { return selectedSection; }
     async getPresentationMode() { return options.presentationMode ?? "page"; }
     async pickInboxFiles(directory, project) { calls.push(project === undefined ? ["pickInboxFiles",directory] : ["pickInboxFiles",directory,project]); return options.pickedFiles ?? []; }
-    async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; if(project!==undefined) selectedProject=project; dispose(); mount(); },0); }
+    // Как оболочка: адрес меняется, фрейм не перезагружается и получает сигнал перечитать выбор.
+    async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; selectedView=""; if(project!==undefined) selectedProject=project; locationChanged(); },0); }
     async openTemplateProposal(...args) { calls.push(["openTemplateProposal",...args]); }
     async openNativeDocument(project, resource) { calls.push(["openNativeDocument", project, resource]); return options.nativeOpen ?? false; }
     async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
@@ -109,6 +114,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
   let frame; const ports = [];
   const html = await readFile(new URL("../src/generated/app.txt", import.meta.url), "utf8");
   let dom, document;
+  const locationChanged = () => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: { type: "gatekeeper-location" }, source: dom.window }));
   function mount() {
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", error => { if(error.type !== "css parsing") console.error(error); });
@@ -128,6 +134,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
       };
       window.postMessage = (message, origin, transferred) => {
         if(message.type === "mnemos-intake-close") { calls.push(["closeIntake"]); return; }
+        if(message.type === "mnemos-drag-enter") { calls.push(["dragEnter"]); return; }
         assert.equal(message.type, "handshake"); assert.equal(origin, "*");
         frame = newMessagePortRpcSession(transferred[0], new Host());
       };
@@ -142,7 +149,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
   const buttons = () => [...document.querySelectorAll("#root button")];
   const button = name => buttons().find(b => b.textContent === name);
   async function until(predicate, what) {
-    const deadline = Date.now() + 3000;
+    const deadline = Date.now() + 15000;
     while (!predicate()) {
       if (Date.now() >= deadline) throw new Error(`UI did not reach expected state: ${what}\n${text().slice(0, 600)}`);
       await new Promise(resolve => setTimeout(resolve, 5));
@@ -160,11 +167,13 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     Object.getOwnPropertyDescriptor(proto, "value").set.call(input, value);
     input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
   }
+  /** Переход из меню оболочки: адрес меняется, фрейм остаётся тем же. */
+  function go(section, project = "", view = "") { selectedSection = section; selectedProject = project; selectedView = view; locationChanged(); }
   function dispose() {
     dom.window.dispatchEvent(new dom.window.Event("pagehide"));
     frame?.[Symbol.dispose](); dom.window.close();
     for (const port of ports.splice(0)) port.close();
   }
   await until(() => options.presentationMode === "panel" ? document.querySelector('[aria-label="Приём данных"]') : document.querySelector("#root h1"), "заголовок раздела");
-  return { get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
+  return { get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, go, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
 }

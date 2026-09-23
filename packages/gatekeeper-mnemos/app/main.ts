@@ -274,6 +274,12 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   readGitLog:MnemosAccountSession["readGitLog"];
   compareGitRefs:MnemosAccountSession["compareGitRefs"];
   readProjectOverview:MnemosAccountSession["readProjectOverview"];
+  workspaceAvailable():Promise<boolean>;
+  listWorkspaceTasks(project:string):Promise<{tasks:import("../src/workspace-tasks.ts").WorkspaceTaskView[]}>;
+  startWorkspaceTask(project:string,connection:string,repository:string,prompt:string):Promise<import("../src/workspace-tasks.ts").WorkspaceTaskView>;
+  readWorkspaceTask(project:string,task:string):Promise<import("../src/workspace-tasks.ts").WorkspaceTaskDetails>;
+  messageWorkspaceTask(project:string,task:string,text:string):Promise<void>;
+  abortWorkspaceTask(project:string,task:string):Promise<void>;
   readOwnedGitBinding:MnemosAccountSession["readOwnedGitBinding"];
   listProjectGitRepositories: MnemosAccountSession["listProjectGitRepositories"];
   bindGitRepository: MnemosAccountSession["bindGitRepository"];
@@ -302,6 +308,10 @@ export interface Host extends RpcTarget {
   openSection(section: string, project?: string): void;
   openApprovals(): Promise<void>;
   getSelectedProject(): Promise<string>;
+  /** Вкладка раздела из адреса хоста; пусто — вкладка по умолчанию. */
+  getSelectedView(): Promise<string>;
+  /** Записывает вкладку в адрес без перезагрузки фрейма. */
+  selectView(view: string): void;
   saveMailAttachment(bytes:Uint8Array,filename:string):Promise<void>;
   createCalendarDraft(id:string,sha256:string):Promise<import('@gadgets/workshop-shared/calendar-draft').CalendarDraftExecution>;
   sendMailDraft(id:string,sha256:string):Promise<{state:'attempted'|'accepted';message_id?:string}>;

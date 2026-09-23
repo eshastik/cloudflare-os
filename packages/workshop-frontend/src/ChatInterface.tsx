@@ -28,7 +28,6 @@ import {
 
 import {
   CaretDown,
-  CaretLeft,
   CaretRight,
   Check,
   X,
@@ -113,7 +112,8 @@ import { normalizeResourceUrl } from "./resourceMatching";
 import DeleteConfirmationDialog from "./components/DeleteConfirmationDialog";
 import AutoApproveConfirmDialog from "./components/AutoApproveConfirmDialog";
 import { AlwaysApproveButton, ResolveButton } from "./components/ResolveButton";
-import { WorkshopButton, WorkshopIconButton, WorkshopInput } from "./components/WorkshopControls";
+import { WorkshopButton, WorkshopIconButton } from "./components/WorkshopControls";
+import { ChatSubline } from "./ChatSubline";
 import { useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
 import { useResolveAction } from "./useResolveAction";
@@ -4259,8 +4259,6 @@ function ChatInterface({
   const [updateCounter, setUpdateCounter] = useState(0); // Force re-render when cache updates
   const [proposedChangesVersion, setProposedChangesVersion] = useState(0); // Incremented only for change-affecting messages
   const [draftChangesVersion, setDraftChangesVersion] = useState(0);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [titleInput, setTitleInput] = useState("");
   const [renamingChatId, setRenamingChatId] = useState<number | null>(null);
   const renamingChatIdRef = useRef<number | null>(null);
   const [renamingInput, setRenamingInput] = useState("");
@@ -4792,12 +4790,6 @@ function ChatInterface({
     setDiscardChangesTarget(null);
   }, [selectedChatId]);
 
-  // Initialize title input when selecting a chat
-  useEffect(() => {
-    if (currentChatMetadata) {
-      setTitleInput(currentChatMetadata.title);
-    }
-  }, [currentChatMetadata?.title]);
 
   // Update selected model when switching chats
   useEffect(() => {
@@ -5237,7 +5229,6 @@ function ChatInterface({
     setExpandedActions(new Set());
     setExpandedErrors(new Set());
     setIsLoadingEarlier(false);
-    setIsEditingTitle(false);
     setSidebarActiveTab("chat");
   }, [selectedChatId]);
 
@@ -5401,39 +5392,6 @@ function ChatInterface({
       console.error("Не удалось остановить агента:", err);
       toasts.add({ title: "Не удалось остановить агента", variant: "error" });
     }
-  };
-
-  // Handle saving chat title
-  const handleSaveChatTitle = async () => {
-    if (selectedChatId === null || !titleInput.trim()) {
-      return;
-    }
-
-    try {
-      await overseer.setChatTitle(selectedChatId, titleInput.trim());
-
-      // Update the cache with the new title
-      const chat = cacheRef.current.chats.get(selectedChatId);
-      if (chat) {
-        cacheRef.current.chats.set(selectedChatId, {
-          ...chat,
-          title: titleInput.trim(),
-        });
-        forceUpdate();
-      }
-
-      setIsEditingTitle(false);
-      toasts.add({ title: "Название беседы изменено", variant: "success" });
-    } catch (err) {
-      console.error("Не удалось изменить название беседы:", err);
-      toasts.add({ title: "Не удалось изменить название беседы", variant: "error" });
-    }
-  };
-
-  // Handle canceling title edit
-  const handleCancelTitleEdit = () => {
-    setTitleInput(currentChatMetadata?.title || "");
-    setIsEditingTitle(false);
   };
 
   // Handle deleting a chat. Can be called from the chat header (no args) or the
@@ -6702,74 +6660,12 @@ function ChatInterface({
           {/* Chat content — hidden when connections tab is active in sidebar mode */}
           {(!sidebarMode || sidebarActiveTab === "chat") && (
             <>
-              {/* Chat sub-header — hidden in sidebar mode (list is always visible) */}
               {!sidebarMode && (
-                <div className="flex h-12 flex-shrink-0 items-center justify-between gap-2 border-b border-kumo-line px-4">
-                  <WorkshopIconButton
-                    onClick={() => onNavigateToChat(null)}
-                    className="!h-8 !w-8 flex-shrink-0"
-                    title="К беседам"
-                    aria-label="К беседам"
-                  >
-                    <CaretLeft size={14} />
-                  </WorkshopIconButton>
-
-                  {isEditingTitle ? (
-                    <div className="flex items-center gap-1 flex-1 min-w-0">
-                      <WorkshopInput
-                        type="text"
-                        value={titleInput}
-                        onChange={(e) => setTitleInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") handleSaveChatTitle();
-                          if (e.key === "Escape") handleCancelTitleEdit();
-                        }}
-                        autoFocus
-                        className="!h-8 min-w-0 flex-1 bg-kumo-tint text-[13px] font-medium"
-                      />
-                      <WorkshopIconButton
-                        onClick={handleSaveChatTitle}
-                        disabled={!titleInput.trim()}
-                        className="!h-8 !w-8 hover:text-kumo-brand disabled:opacity-30"
-                        aria-label="Сохранить название беседы"
-                      >
-                        <Check size={13} />
-                      </WorkshopIconButton>
-                      <WorkshopIconButton
-                        onClick={handleCancelTitleEdit}
-                        className="!h-8 !w-8"
-                        aria-label="Отменить изменение названия"
-                      >
-                        <X size={13} />
-                      </WorkshopIconButton>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                        {displayChatTitle(currentChatMetadata?.title)}
-                        {currentChatMetadata?.projectContext&&<span className="block truncate text-[11px] font-normal text-kumo-subtle">Проект: {currentChatMetadata.projectContext.title}</span>}
-                      </span>
-                      <WorkshopIconButton
-                        onClick={() => setIsEditingTitle(true)}
-                        className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive hover:text-kumo-subtle"
-                        title="Переименовать беседу"
-                        aria-label="Переименовать беседу"
-                      >
-                        <Pencil size={11} />
-                      </WorkshopIconButton>
-                    </>
-                  )}
-
-                  <WorkshopIconButton
-                    onClick={() => handleDeleteChat()}
-                    danger
-                    className="!h-8 !w-8 flex-shrink-0 text-kumo-inactive"
-                    title="Удалить беседу"
-                    aria-label="Удалить беседу"
-                  >
-                    <Trash size={14} />
-                  </WorkshopIconButton>
-                </div>
+                <ChatSubline
+                  chatCount={chatList.length}
+                  projectTitle={currentChatMetadata?.projectContext?.title}
+                  onBack={() => onNavigateToChat(null)}
+                />
               )}
 
               <CorporateWorkContext messages={currentMessages} />
@@ -7657,17 +7553,6 @@ function ChatInterface({
                     })()}
                   />
 
-                  {/* Token / cost summary. */}
-                  <div className="-mt-1 flex min-h-[1.25rem] items-start justify-end gap-4 px-4 pb-1 font-mono text-[11px] leading-4 text-kumo-inactive">
-                    {currentChatMetadata?.totalTokens != null && (
-                      <span>
-                        {currentChatMetadata.totalTokens.toLocaleString()} tokens
-                      </span>
-                    )}
-                    {currentChatMetadata?.totalCost != null && (
-                      <span>${currentChatMetadata.totalCost.toFixed(4)}</span>
-                    )}
-                  </div>
                 </div>
               </div>
             </>

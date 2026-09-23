@@ -22,19 +22,33 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
   const tools = useLegacySection();
   const [section, setSection] = useState<SectionId | null | undefined>(undefined);
   const [selectedProject, setSelectedProject] = useState("");
+  const [selectedView, setSelectedView] = useState("");
   const [documentsProject, setDocumentsProject] = useState("");
   const [notice, setNotice] = useState("");
   const [compact, setCompact] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    let generation = 0;
     legacy.hidden = true;
-    void Promise.all([host.getSelectedSection().catch(() => ""), host.getSelectedProject().catch(() => ""), host.getPresentationMode().catch(() => "page")]).then(([selected, project, mode]) => {
-      if (cancelled) return;
-      setSelectedProject(project); setDocumentsProject(project); setCompact(mode === "panel");
-      setSection(selected ? resolveSection(selected) : project ? "projects" : "my-work");
-    });
-    return () => { cancelled = true; };
+    // Хост меняет раздел, проект и вкладку без перезагрузки фрейма; выбор перечитывается у хоста,
+    // загруженные данные остаются. Поздний ответ на прежний сигнал не перекрывает новый.
+    const read = () => {
+      const current = ++generation;
+      // Старый хост без вкладок в адресе отвечает отказом: тогда открывается вкладка по умолчанию.
+      void Promise.all([host.getSelectedSection().catch(() => ""), host.getSelectedProject().catch(() => ""), host.getPresentationMode().catch(() => "page"), host.getSelectedView().catch(() => "")]).then(([selected, project, mode, view]) => {
+        if (cancelled || current !== generation) return;
+        setSelectedProject(project); setSelectedView(view); setDocumentsProject(project); setCompact(mode === "panel");
+        setSection(selected ? resolveSection(selected) : project ? "projects" : "my-work");
+      });
+    };
+    read();
+    const changed = (event: MessageEvent) => { if (event.source === window.parent && event.data?.type === "gatekeeper-location") read(); };
+    window.addEventListener("message", changed);
+    return () => { cancelled = true; window.removeEventListener("message", changed); };
   }, [host, legacy]);
+  // Инструменты прежнего раздела не переезжают вместе с переходом в другой раздел.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { tools.close(); }, [section]);
   useEffect(() => {
     if (!compact) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); window.parent.postMessage({type:"mnemos-intake-close"}, "*"); } };
@@ -66,8 +80,8 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
     {!section && <p>Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел недоступен с вашими текущими полномочиями."}</p> : <LegacySwitch state={tools}>
       {section === "my-work" && <MyWorkTab data={data} />}
-      {section === "projects" && <ProjectsTab initialProject={selectedProject} data={data} onSelectProject={project => open("projects", project)} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("sources")} />}
-      {section === "documents" && <DocumentsTab data={data} initialProject={documentsProject} />}
+      {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("sources")} />}
+      {section === "documents" && <DocumentsTab key={documentsProject} data={data} initialProject={documentsProject} />}
       {section === "approvals" && <ApprovalsTab data={data} />}
       {section === "sources" && <SourcesTab data={data} />}
       {section === "agents" && <AgentsTab data={data} />}

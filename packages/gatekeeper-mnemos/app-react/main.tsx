@@ -27,6 +27,16 @@ function main() {
   host.subscribeTheme(frame).then(applyThemeMode).catch(() => {});
   host.subscribeAccent(frame).then(applyAccentColor).catch(() => {});
 
+  // Оболочка показывает слой загрузки файлов, но не видит перетаскивание внутри фрейма.
+  // dragenter приходит на каждый элемент под курсором, поэтому сообщение не чаще раза в 300 мс.
+  let dragAnnounced = 0;
+  window.addEventListener("dragenter", event => {
+    const types = event.dataTransfer?.types;
+    if (!types || !Array.from(types).includes("Files") || Date.now() - dragAnnounced < 300) return;
+    dragAnnounced = Date.now();
+    window.parent.postMessage({ type: "mnemos-drag-enter" }, "*");
+  });
+
   // Существующие редакторы сохраняют состояние; их контейнер показывается внутри соответствующего раздела.
   mountLegacy(legacy, host);
 

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import type { PublicationReview } from "../src/mnemos-api.ts";
 import { formatBudgetUSD } from "../app/budget-money.ts";
+import { inboxDecisions } from "../src/inbox-count.ts";
 import { useHost, useUi } from "./host.ts";
 import { agentEnvironment, documentNames, myApprovals, projectName, useLoad, type CollaborationItem, type MemoryData } from "./data.ts";
 import { ApprovalRow, useReviewDecision } from "./ApprovalsTab.tsx";
@@ -72,7 +73,8 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
     }
   }
 
-  const decisionsCount = approvals.length + publishable.length + reviewCollaborations.length;
+  // Тот же подсчёт даёт счётчик «Входящих» в навигации.
+  const decisionsCount = inboxDecisions(data.reviews, data.collaborations, userId);
   const blockedCount = blocked.length + waitingCollaborations.length + (budgetBlocked ? 1 : 0);
 
   return (

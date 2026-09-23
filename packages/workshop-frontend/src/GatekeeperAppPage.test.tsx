@@ -168,3 +168,19 @@ it('прямая ссылка выбирает точное подключени
   expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory',8);
  }finally{await React.act(async()=>root.unmount());container.remove();}
 });
+
+it('смена раздела и проекта в адресе не перезагружает приложение того же подключения', async () => {
+  api.subscribeConnectedAccounts.mockImplementation(async (s: ConnectedAccountsSubscriber) => { addAccount(s, 7, 'Организация'); s.ready(); return { [Symbol.dispose]: () => {} } })
+  const frame = { html: 'application' }
+  api.getGatekeeperApp.mockResolvedValue(frame)
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container)
+  try {
+    await React.act(async () => root.render(<GatekeeperAppPage appId="memory" section="projects" project="one" />))
+    expect(container.textContent).toContain('Opened application')
+    await React.act(async () => root.render(<GatekeeperAppPage appId="memory" section="projects" project="two" />))
+    await React.act(async () => root.render(<GatekeeperAppPage appId="memory" section="documents" />))
+    // Один запрос приложения и ни одного освобождения фрейма: раздел и проект приходят в работающий фрейм сигналом.
+    expect(api.getGatekeeperApp).toHaveBeenCalledOnce()
+    expect(dispose).not.toHaveBeenCalled()
+  } finally { await React.act(async () => root.unmount()); container.remove() }
+})

@@ -19,7 +19,8 @@ type UiAccount = { name: string; resources: SupportedResource[] }
 
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
-export default function GatekeeperAppPage({ appId, section, project, accountId, tool, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; tool?:'connections'|'summary'; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
+// Раздел и проект фрейм читает из адреса сам; их смена не пересоздаёт фрейм.
+export default function GatekeeperAppPage({ appId, accountId, tool, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; tool?:'connections'|'summary'; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, UiAccount>>(new Map())
   const [ready, setReady] = useState(false)
@@ -65,7 +66,7 @@ export default function GatekeeperAppPage({ appId, section, project, accountId, 
       </Select>
     </div>}
     {notice && <p role="alert">{notice}</p>}
-    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}:${tool ?? ''}`} appId={appId} requestedTool={tool} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
+    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${tool ?? ''}`} appId={appId} requestedTool={tool} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
   </>
 }
 

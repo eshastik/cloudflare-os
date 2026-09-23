@@ -1,9 +1,11 @@
 import { BlueprintTemplates } from "./blueprint-templates.ts";
 import { managementSections } from "./management-sections.ts";
+import { inboxDecisions } from "./inbox-count.ts";
 import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
 import {AccountAlarms} from './account-alarms.ts';
+import {WorkspaceClient,WorkspaceTasks} from './workspace-tasks.ts';
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
@@ -64,7 +66,7 @@ import type { NativeDocumentSource, ObservationAuthorizer, AccountDescription, A
 
 import APP_HTML from "./generated/app.txt";
 
-interface Env { MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string }
+interface Env { MNEMOS_WORKSPACE_ORIGIN?:string; MNEMOS_WORKSPACE_TOKEN?:string; MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string }
 
 function callbackUrl(env: Env): string {
   try {
@@ -102,7 +104,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     return { displayName: identity.tenant_name || identity.subject.user_id,
       uniqueName: identity.connectionName, avatar: AVATAR,
       sourceErrors: await this.#account().sourceErrors(),
-      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: managementSections(identity) } };
+      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: managementSections(identity, await this.#account().inboxCount(identity.subject.user_id).catch(() => undefined)) } };
   }
   /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
   async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
@@ -195,6 +197,21 @@ export class UserAccount extends DurableObject<Env> {
   });
  }
  #alarms(){return new AccountAlarms(this.ctx.storage.kv,this.ctx.storage);}
+ /** Задачи агентов в рабочих местах; без настройки службы — только чтение списка. */
+ #workspace(){
+  let control:WorkspaceClient|null=null;
+  if(this.env.MNEMOS_WORKSPACE_ORIGIN&&this.env.MNEMOS_WORKSPACE_TOKEN){try{control=new WorkspaceClient(this.env.MNEMOS_WORKSPACE_ORIGIN,this.env.MNEMOS_WORKSPACE_TOKEN);}catch{control=null;}}
+  return new WorkspaceTasks(this.ctx.storage.kv,{control,
+   agent:()=>this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME),
+   human:()=>{const session=this.#account().session();return {issueAgentCredential:(b:string)=>session.issueAgentCredential(b),readWorkshopAgentScope:(b:string)=>session.readWorkshopAgentScope(b),listProjectGitRepositories:(p:string)=>session.listProjectGitRepositories(p,''),dispose:()=>session.dispose()};},
+   wake:at=>at===null?this.#alarms().clear('workspace'):this.#alarms().reschedule('workspace',at)});
+ }
+ async workspaceAvailable(){return this.#workspace().available();}
+ async listWorkspaceTasks(project:string){return {tasks:this.#workspace().list(project)};}
+ async startWorkspaceTask(project:string,connection:string,repository:string,prompt:string){return this.#workspace().start(project,connection,repository,prompt);}
+ async readWorkspaceTask(project:string,task:string){return this.#workspace().read(project,task);}
+ async messageWorkspaceTask(project:string,task:string,text:string){return this.#workspace().message(project,task,text);}
+ async abortWorkspaceTask(project:string,task:string){return this.#workspace().abort(project,task);}
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];
   if(this.env.MNEMOS_LOGIN_PROFILES){
@@ -702,6 +719,22 @@ export class UserAccount extends DurableObject<Env> {
     const session = this.#account().session();
     try { return await session.whoAmI(); } finally { session.dispose(); }
   }
+  /** Счётчик «Входящих» для навигации: первая страница согласований и обращения человека.
+   * Недочитанное или медленное не выдаётся за ноль — тогда счётчика нет. */
+  async inboxCount(userId: string): Promise<number | undefined> {
+    const session = this.#account().session();
+    const count = (async () => {
+      const [reviews, requests] = await Promise.all([session.listPublicationReviews(""), session.listCollaborations("")]);
+      const mine = requests.requests.filter(request => request.requester_user_id === userId).slice(0, INBOX_PROGRESS_LIMIT);
+      const collaborations = await Promise.all(mine.map(async request => ({ request, progress: await session.readCollaborationProgress(request.request_id).catch(() => null) })));
+      return inboxDecisions(reviews.reviews, collaborations, userId);
+    })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([count, new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), INBOX_COUNT_MS); })]);
+    } catch { return undefined; }
+    finally { if (timer) clearTimeout(timer); count.catch(() => {}).finally(() => session.dispose()); }
+  }
   async setCallback(callback: Fetcher<GatekeeperConnectCallback>): Promise<string> {
     if (this.ctx.storage.kv.get("workshopCallback")) throw new Error("Connection already initialized");
     this.ctx.storage.kv.put("workshopCallback", callback);
@@ -765,6 +798,10 @@ export class UserAccount extends DurableObject<Env> {
       this.#browser().cancel();
       LoginFlow.cancelStored(this.ctx.storage.kv);
       await deadlines.clear('login');
+    }
+    if(deadlines.due('workspace')){
+      // Обновление ключа само переставляет будильник; сбой повторяется через минуту, раньше срока ключа.
+      try{await this.#workspace().refresh();}catch{await deadlines.reschedule('workspace',Date.now()+60000);}
     }
     if(deadlines.due('audit')){
       await deadlines.reschedule('audit',Date.now()+60000);
@@ -1000,6 +1037,9 @@ class MnemosNativeDocumentDownload extends RpcTarget {
 
 /** Имя связи агента: под ним запись видна в авторстве личного черновика (S14). */
 const WORKSHOP_AGENT_NAME = "Агент Workshop";
+/** Счётчик «Входящих» не должен задерживать описание аккаунта. */
+const INBOX_COUNT_MS = 1500;
+const INBOX_PROGRESS_LIMIT = 20;
 
 /** Запись черновика синглтоном под агентским credential; методов чтения публикаций и публикации здесь нет. */
 class MnemosAgentAdministration extends RpcTarget {
@@ -1424,6 +1464,13 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readGitCommit(project:string,connection:string,repository:string,ref:string){return this.#session.readGitCommit(project,connection,repository,ref);}
   async readGitTree(project:string,connection:string,repository:string,commit:string,path=""){return this.#session.readGitTree(project,connection,repository,commit,path);}
   async listGitBranches(project:string,connection:string,repository:string,page=1){return this.#session.listGitBranches(project,connection,repository,page);}
+  #workspace(){if(!this.#telegram)throw Error('Рабочие места агентов недоступны.');return this.#telegram;}
+  async workspaceAvailable(){return this.#telegram?this.#telegram.workspaceAvailable():false;}
+  async listWorkspaceTasks(project:string){return this.#workspace().listWorkspaceTasks(project);}
+  async startWorkspaceTask(project:string,connection:string,repository:string,prompt:string){return this.#workspace().startWorkspaceTask(project,connection,repository,prompt);}
+  async readWorkspaceTask(project:string,task:string){return this.#workspace().readWorkspaceTask(project,task);}
+  async messageWorkspaceTask(project:string,task:string,text:string){return this.#workspace().messageWorkspaceTask(project,task,text);}
+  async abortWorkspaceTask(project:string,task:string){return this.#workspace().abortWorkspaceTask(project,task);}
   async readGitLog(project:string,connection:string,repository:string,ref:string,path="",page=1){return this.#session.readGitLog(project,connection,repository,ref,path,page);}
   async compareGitRefs(project:string,connection:string,repository:string,base:string,head:string){return this.#session.compareGitRefs(project,connection,repository,base,head);}
   async readProjectOverview(project:string,node=""){return this.#session.readProjectOverview(project,node);}

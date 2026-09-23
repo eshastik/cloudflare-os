@@ -65,8 +65,10 @@ test("«Проекты»: пустая политика и отказ серве
     app.tab("Участники").click();
     await app.until(() => section("Правила согласования")?.textContent.includes("Правил согласования нет"), "пустые правила");
     app.button("Второй проект").click();
+    // Вкладки первого проекта ещё на экране: ждём заголовок второго, иначе щелчок уйдёт в старую страницу.
+    await app.until(() => [...app.document.querySelectorAll("#root h2")].some(h => h.textContent === "Второй проект"), "второй проект");
     await app.until(() => section("Ждёт решения")?.textContent.includes("ничего не ждёт вашего решения"), "у второго проекта ничего не ждёт решения");
-    await app.until(() => app.tab("Участники"), "второй проект"); app.tab("Участники").click();
+    app.tab("Участники").click();
     await app.until(() => section("Правила согласования")?.textContent.includes("нет права или сервер отказал"), "отказ показан");
   } finally { app.dispose(); }
 });
@@ -196,4 +198,24 @@ test("Поступления проекта показывают обработ�
   async inboxAlerts(){return {alerts:[],truncated:false};},
  },{section:"projects",project:"two"});
  try{await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
+});
+
+test("Переходы между разделами, проектами и вкладками не перезагружают данные", async () => {
+  let loads = 0;
+  const app = await mountMemoryApp({ async listProjects() { loads++; return { projects: [{ id: "one", name: "Общий проект", slug: "shared" }, { id: "two", name: "Второй проект", slug: "second" }] }; } }, { section: "projects", project: "one" });
+  try {
+    const heading = name => [...app.document.querySelectorAll("#root h2")].some(h => h.textContent === name);
+    await app.until(() => heading("Общий проект"), "первый проект");
+    const before = loads;
+    app.button("Второй проект").click();
+    await app.until(() => heading("Второй проект"), "второй проект без перезагрузки");
+    app.tab("Участники").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Правила согласования"]'), "вкладка сразу после смены проекта");
+    app.go("documents");
+    await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "раздел из меню");
+    app.go("projects", "one", "members");
+    await app.until(() => heading("Общий проект") && app.document.querySelector('#root section[aria-label="Правила согласования"]'), "проект и вкладка из адреса");
+    assert.equal(loads, before, "список проектов не загружался заново");
+    assert.ok(app.calls.some(([name, section, project]) => name === "openSection" && section === "projects" && project === "two"), "выбор проекта записан в адрес");
+  } finally { app.dispose(); }
 });

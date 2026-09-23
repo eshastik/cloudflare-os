@@ -54,6 +54,9 @@ interface TestHost extends RpcTarget {
 
 class EmptyUi extends RpcTarget {}
 
+// Files dragged over the window raise the drop layer; tests drive it the same way.
+function dragFiles(type:"dragenter"|"dragleave"){const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{types:["Files"]}});window.dispatchEvent(event);}
+
 describe("SandboxedGatekeeperApp navigation", () => {
   let container: HTMLDivElement | undefined;
   let root: Root | undefined;
@@ -208,7 +211,13 @@ describe("SandboxedGatekeeperApp navigation", () => {
     window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:iframe.contentWindow,ports:[port2]}));
     expect(await host.getSelectedSection()).toBe("intake");expect(await host.getPresentationMode()).toBe("panel");
     expect(router.state.location.href).toBe("/?chat=17");
-    expect(container.querySelector('[aria-label="Перетащите материалы организации"]')).not.toBeNull();
+    const layer=()=>container!.querySelector('[aria-label="Перетащите материалы организации"]');
+    expect(layer()).toBeNull();
+    await act(async()=>dragFiles("dragenter"));expect(layer()).not.toBeNull();
+    await act(async()=>dragFiles("dragleave"));expect(layer()).toBeNull();
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:window})));expect(layer()).toBeNull();
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:iframe.contentWindow})));expect(layer()).not.toBeNull();
+    await act(async()=>window.dispatchEvent(new Event("drop")));expect(layer()).toBeNull();
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:window}));expect(closed).not.toHaveBeenCalled();
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:iframe.contentWindow}));expect(closed).toHaveBeenCalledOnce();
   });
@@ -228,6 +237,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     let finish:((file:File)=>void)|undefined;
     const transfer={items:[{kind:"file",getAsFile:()=>null,webkitGetAsEntry:()=>({name:"Закрытая папка.txt",isFile:true,isDirectory:false,file:(done:(file:File)=>void)=>{finish=done}})}]};
     const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:transfer});
+    await act(async()=>dragFiles("dragenter"));
     await act(async()=>container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event));
     expect(finish).toBeDefined();
     const oldHost=host;
@@ -254,6 +264,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
     const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{files:[new File(["first"],"первый.txt"),new File(["second"],"второй.txt")],items:[]}});
+    await act(async()=>dragFiles("dragenter"));
     await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);await vi.waitFor(()=>expect(request).toHaveBeenCalledTimes(2));});
     expect(submitted).toEqual(["первый.txt"]);
     await act(async()=>root!.render(null));expect(signal?.aborted).toBe(true);expect(submitted).toEqual(["первый.txt"]);

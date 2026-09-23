@@ -8,7 +8,7 @@ import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import type { GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { createRateLimitedCapability } from './rateLimitedCapability'
 import { useTheme } from './ThemeContext'
@@ -137,6 +137,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly embeddedIntake = false,
     private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
     private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
+    private readonly navigateView: (view: string) => void = () => {},
   ) {
     super()
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
@@ -186,6 +187,20 @@ class GatekeeperAppHostImpl extends RpcTarget {
   getSelectedSection(): string {
     if (this.embeddedIntake) return "intake"
     return parseGatekeeperAppSection(new URLSearchParams(window.location.search).get('section'))
+  }
+
+  /** Вкладка раздела из URL хоста; как и проект, не даёт полномочий. */
+  getSelectedView(): string {
+    if (this.embeddedIntake) return ""
+    const value = new URLSearchParams(window.location.search).get('view') ?? ''
+    return /^[a-z]{1,20}$/.test(value) ? value : ''
+  }
+
+  /** Запоминает вкладку в адресе без перезагрузки фрейма, чтобы на экран можно было дать ссылку. */
+  selectView(view: string): void {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (typeof view !== 'string' || !/^[a-z]{1,20}$/.test(view)) throw new TypeError('Некорректная вкладка')
+    if (!this.embeddedIntake) this.navigateView(view)
   }
 
   /** Режим представления не меняет полномочия фрейма. */
@@ -508,6 +523,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   const invalidatedRef = useRef(false)
   const [dropState,setDropState]=useState({busy:false,active:false,done:0,total:0,message:""})
   const dropBusy=useRef(false)
+  const [dragOver,setDragOver]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   const overlayRef = useRef<OverlayState>(null)
   // Push the Workshop's resolved light/dark mode to the app whenever it changes.
@@ -616,7 +632,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.nativeDownloads,
         frame.mailDraftSender,
         frame.calendarDraftCreator,
-        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, ...(project === undefined ? {} : { project }) }) }) },
+        // Выбор проекта внутри раздела заменяет адрес, переход в другой раздел — новая запись истории.
+        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, view: undefined, ...(project === undefined ? {} : { project }) }), replace: new URLSearchParams(window.location.search).get('section') === section }) },
         () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
@@ -629,6 +646,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           if(!frame.textDownloads)throw Error('Хранилище шаблонов недоступно')
           await launchTemplateProposal(authenticatedApi,frame.textDownloads,scope,resource,proposal,signal,async id=>{await navigate({to:'/workspace/$id',params:{id}})})
         },
+        view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view }), replace: true }) },
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -644,6 +662,9 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       if (!frameWindow || event.source !== frameWindow || event.origin !== 'null') return
       if (invalidatedRef.current) return
       if (embeddedIntake && event.data?.type === 'mnemos-intake-close') { closePanelRef.current?.(); return }
+      // The sandboxed frame receives drag events itself; it may ask the host to
+      // raise the drop layer, which then takes the rest of the gesture.
+      if (event.data?.type === 'mnemos-drag-enter') { setDragOver(true); return }
       if (event.data?.type === 'gatekeeper-audio-cancel') {
         closeRecording?.()
         closeRecording = undefined
@@ -680,6 +701,20 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   }, [accountId, authenticatedApi, frame.iframeHtml, frame.ui, frame.mailDraftSender, frame.calendarDraftCreator, frame.textUploads, frame.inboxUploads, frame.textDownloads, frame.reviewDownloads, frame.nativeDownloads, gatekeeperVendorId, openPrompt, openTarget,
       present, resolveWorkspaceTitles, setOverlayPhase, navigate, embeddedIntake])
 
+  // Раздел, проект и вкладка живут в адресе, а фрейм при их смене не перезагружается:
+  // приложение перечитывает выбор у хоста по этому сигналу и сохраняет загруженные данные.
+  const locationKey = useRouterState({ select: state => {
+    const search = new URLSearchParams(state.location.searchStr)
+    return `${search.get('section') ?? ''}\n${search.get('project') ?? ''}\n${search.get('view') ?? ''}`
+  } })
+  const announcedLocation = useRef(locationKey)
+  useEffect(() => {
+    if (announcedLocation.current === locationKey) return
+    announcedLocation.current = locationKey
+    if (!connectedRef.current || embeddedIntake) return
+    iframeRef.current?.contentWindow?.postMessage({ type: 'gatekeeper-location' }, '*')
+  }, [locationKey, embeddedIntake])
+
   const intakeDrop=!!frame.inboxUploads && (embeddedIntake || new URLSearchParams(window.location.search).get('section')==='intake' || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
   const drop=async(transfer:DataTransfer)=>{
     setDropState(previous=>({...previous,active:false}))
@@ -709,13 +744,35 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     return()=>onIntakeDropReady?.(null);
   });
 
+  useEffect(()=>{
+    if(!intakeDrop)return
+    // Nested elements fire enter/leave in pairs; the layer hides when the count returns to zero.
+    let depth=0
+    const files=(event:DragEvent)=>!!event.dataTransfer&&Array.from(event.dataTransfer.types).includes('Files')
+    const enter=(event:DragEvent)=>{if(!files(event))return;depth++;setDragOver(true)}
+    const leave=(event:DragEvent)=>{if(!files(event))return;depth=Math.max(0,depth-1);if(!depth)setDragOver(false)}
+    const end=()=>{depth=0;setDragOver(false)}
+    window.addEventListener('dragenter',enter)
+    window.addEventListener('dragleave',leave)
+    window.addEventListener('drop',end)
+    window.addEventListener('dragend',end)
+    return()=>{window.removeEventListener('dragenter',enter);window.removeEventListener('dragleave',leave);window.removeEventListener('drop',end);window.removeEventListener('dragend',end)}
+  },[intakeDrop])
+
+  const dropStatus=dropState.busy||!!dropState.message
   return (
-    <div className="flex h-full min-h-0 flex-col">
-    {intakeDrop&&<div className={embeddedIntake?"px-4 pt-3":"px-4 pt-4 sm:px-8"}><div role="region" aria-label="Перетащите материалы организации" onDragOver={event=>{event.preventDefault();event.stopPropagation();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}} onDragLeave={()=>setDropState(previous=>({...previous,active:false}))} onDrop={event=>{event.preventDefault();event.stopPropagation();void drop(event.dataTransfer)}} className={`rounded-xl border border-dashed p-5 text-center text-sm ${dropState.active?'border-kumo-brand bg-kumo-fill':'border-kumo-line bg-kumo-elevated'}`}>
-      <p className="m-0 font-medium">Перетащите сюда файлы или папку</p><p className="mb-0 mt-1 text-xs text-kumo-subtle">Или выберите файлы и папку кнопками ниже.</p>
-      {dropState.busy&&<div role="status" className="mt-3">{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-2 h-1 w-full" max={dropState.total||1} value={dropState.done}/></div>}
-      {dropState.message&&<p role="status" className="mb-0 mt-3 break-words">{dropState.message}</p>}
-    </div></div>}
+    <div className="relative flex h-full min-h-0 flex-col">
+    {intakeDrop&&dropStatus&&<div role="status" className={`${embeddedIntake?"px-4 pt-3":"px-4 pt-3 sm:px-8"} text-[13px] leading-[18px] text-kumo-subtle`}>
+      {dropState.busy&&<div>{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-1 block h-1 w-full max-w-md" max={dropState.total||1} value={dropState.done}/></div>}
+      {dropState.message&&<p className="m-0 break-words">{dropState.message}</p>}
+    </div>}
+    {intakeDrop&&dragOver&&<div role="region" aria-label="Перетащите материалы организации" data-testid="intake-drop-layer"
+      onDragOver={event=>{event.preventDefault();event.stopPropagation();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}}
+      onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false);setDropState(previous=>({...previous,active:false}))}}
+      onDrop={event=>{event.preventDefault();event.stopPropagation();setDragOver(false);void drop(event.dataTransfer)}}
+      className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border border-dashed border-kumo-brand bg-kumo-base/85 text-center">
+      <div><p className="m-0 text-[15px] font-semibold text-kumo-strong">Отпустите, чтобы загрузить</p><p className="mb-0 mt-1 text-[12px] text-kumo-subtle">Файлы и папки попадут в приёмную{new URLSearchParams(window.location.search).get('project')?' проекта':''}.</p></div>
+    </div>}
     <div className="min-h-0 flex-1"><iframe
       ref={iframeRef}
       srcDoc={frame.iframeHtml}

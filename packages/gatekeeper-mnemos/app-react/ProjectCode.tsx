@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@cloudflare/kumo";
 import { CaretRight, FileText, Folder, GitBranch } from "@phosphor-icons/react";
 import type { GitBranch as Branch, GitChangedFile, GitComparison, GitProjectRepository, GitTreeEntry } from "../src/git-connections.ts";
@@ -16,8 +16,11 @@ const CHANGE: Record<GitChangedFile["status"], { tone: BadgeTone; label: string 
 };
 
 /** Код проекта только на чтение: дерево и файл выбранной ветки, ветки агентов и их изменения. */
-export default function ProjectCode({ projectId, repositories }: { projectId: string; repositories: GitProjectRepository[] }) {
-  const [repoKey, setRepoKey] = useState(() => key(repositories[0]));
+/** Сравнение, открытое из задачи агента: репозиторий и ветка задачи. */
+export interface CompareTarget { connection_id: string; repository_id: string; branch: string }
+
+export default function ProjectCode({ projectId, repositories, compareTo, actions }: { projectId: string; repositories: GitProjectRepository[]; compareTo?: CompareTarget | null; actions?: ReactNode }) {
+  const [repoKey, setRepoKey] = useState(() => key(repositories.find(r => compareTo && key(r) === key(compareTo)) ?? repositories[0]));
   const repo = repositories.find(r => key(r) === repoKey) ?? repositories[0];
   return (
     <div>
@@ -29,16 +32,16 @@ export default function ProjectCode({ projectId, repositories }: { projectId: st
           </Select>
         </label>
       )}
-      <Repository key={key(repo)} projectId={projectId} repo={repo} />
+      <Repository key={key(repo)} projectId={projectId} repo={repo} compareBranch={compareTo && key(compareTo) === key(repo) ? compareTo.branch : ""} actions={actions} />
     </div>
   );
 }
 
-function key(r: GitProjectRepository | undefined): string {
+function key(r: { connection_id: string; repository_id: string } | undefined): string {
   return r ? `${r.connection_id}/${r.repository_id}` : "";
 }
 
-function Repository({ projectId, repo }: { projectId: string; repo: GitProjectRepository }) {
+function Repository({ projectId, repo, compareBranch, actions }: { projectId: string; repo: GitProjectRepository; compareBranch: string; actions?: ReactNode }) {
   const ui = useUi();
   const coords = [projectId, repo.connection_id, repo.repository_id] as const;
   const branches = useLoad(() => ui.listGitBranches(...coords, 1), "Ветки репозитория не прочитаны. Проверьте доступ к проекту и обновите страницу.", [ui, ...coords]);
@@ -48,6 +51,11 @@ function Repository({ projectId, repo }: { projectId: string; repo: GitProjectRe
   const [compare, setCompare] = useState<Branch | null>(null);
   const branch = all.find(b => b.name === selected) ?? main;
   const agentBranches = all.filter(b => b.name.startsWith(AGENT_PREFIX));
+  // Переход из задачи агента открывает сравнение её ветки, как только ветки прочитаны.
+  useEffect(() => {
+    const target = compareBranch ? all.find(b => b.name === compareBranch) : undefined;
+    if (target) setCompare(target);
+  }, [compareBranch, branches.value]);
 
   if (branches.loading) return <Notice>Загружаем репозиторий…</Notice>;
   if (branches.error) return <Notice tone="danger">{branches.error}</Notice>;
@@ -61,7 +69,10 @@ function Repository({ projectId, repo }: { projectId: string; repo: GitProjectRe
         <Select aria-label="Ветка" value={branch.name} onChange={e => setSelected(e.target.value)}>
           {all.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
         </Select>
+        <div className="flex-1" />
+        {actions}
       </div>
+      {compareBranch && !all.some(b => b.name === compareBranch) && <div className="mb-3"><Notice>Ветка задачи {compareBranch} ещё не отправлена: агент пока не сохранил изменения.</Notice></div>}
       <Browser key={branch.sha} projectId={projectId} repo={repo} branch={branch} />
       <Block title="Ветки агентов" count={agentBranches.length} empty="Агенты ещё не отправляли изменений. Их ветки появятся здесь.">
         <RowList>

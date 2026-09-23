@@ -1,8 +1,8 @@
 import type { WhoAmI } from "./mnemos-api.ts";
 /** Навигация отражает свежие полномочия; каждую операцию по-прежнему проверяет API. */
-export function managementSections(identity: WhoAmI): {id:string;title:string;group:"work"|"manage"}[] {
-  const sections: {id:string;title:string;group:"work"|"manage"}[] = [
-    {id:"my-work",title:"Входящие",group:"work"},
+export function managementSections(identity: WhoAmI, inbox?: number): {id:string;title:string;group:"work"|"manage";count?:number}[] {
+  const sections: {id:string;title:string;group:"work"|"manage";count?:number}[] = [
+    {id:"my-work",title:"Входящие",group:"work",...(inbox === undefined ? {} : {count:inbox})},
     {id:"approvals",title:"Согласования",group:"work"},
     {id:"documents",title:"Материалы",group:"work"},
     {id:"projects",title:"Проекты",group:"work"},

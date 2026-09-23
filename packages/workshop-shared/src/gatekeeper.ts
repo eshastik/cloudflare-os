@@ -1820,4 +1820,6 @@ export interface GatekeeperUiSection {
   title: string;
   /** Группа повседневной работы или управления. */
   group?: "work" | "manage";
+  /** Сколько элементов ждёт решения пользователя; оболочка показывает число рядом с названием. */
+  count?: number;
 }

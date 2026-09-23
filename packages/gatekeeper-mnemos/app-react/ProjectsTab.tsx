@@ -6,20 +6,34 @@ import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
 import { agentEnvironment, documentRows, myApprovals, useLoad, type MemoryData, type ProjectData } from "./data.ts";
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
-import { Block, EmptyTab, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
+import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
-import ProjectCode from "./ProjectCode.tsx";
+import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
+import ProjectTasks, { AssignTask } from "./ProjectTasks.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 
-export default function ProjectsTab({ data, initialProject = "", onSelectProject, onOpenDocuments, onOpenSources }: { initialProject?: string; data: MemoryData; onSelectProject(project: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
+export default function ProjectsTab({ data, initialProject = "", initialView = "", onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
   const legacy = useLegacySection();
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
   // Вкладка каждого проекта переживает возврат из прежних разделов, которые на время заменяют страницу.
   const [views, setViews] = useState<Record<string, ProjectView>>({});
   const selected = selectedId ? data.projects.find(p => p.id === selectedId) ?? null : data.projects[0] ?? null;
+  // Вкладка из адреса действует только для проекта, с которым открыт раздел.
+  const linked = viewFromAddress(initialView);
+  // Адрес меняется и без перезагрузки фрейма (история, ссылка из другого раздела): выбор следует за ним.
+  // Пустая вкладка в адресе ничего не сбрасывает — иначе поздний сигнал отменил бы щелчок пользователя.
+  useEffect(() => { if (initialProject) setSelectedId(initialProject); }, [initialProject]);
+  useEffect(() => {
+    // Вкладка в адресе относится к проекту в адресе, а не к выбранному щелчком: поздний сигнал не должен
+    // переносить вкладку прежнего проекта на новый.
+    const project = initialProject || data.projects[0]?.id;
+    if (linked && project) setViews(all => all[project] === linked ? all : { ...all, [project]: linked });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialView, initialProject]);
+  const viewOf = (id: string) => views[id] ?? (linked && (id === initialProject || !initialProject && id === data.projects[0]?.id) ? linked : "overview");
 
   return (
     <LegacySwitch state={legacy}>
@@ -41,7 +55,7 @@ export default function ProjectsTab({ data, initialProject = "", onSelectProject
         </nav>
         <div className="min-w-0">
           {selected
-            ? <ProjectPage key={selected.id} project={selected} data={data} view={views[selected.id] ?? "overview"} onView={view => setViews(all => ({ ...all, [selected.id]: view }))} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} openLegacy={legacy.open} />
+            ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} openLegacy={legacy.open} />
             : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
         </div>
       </div>
@@ -50,6 +64,12 @@ export default function ProjectsTab({ data, initialProject = "", onSelectProject
 }
 
 type ProjectView = "overview" | "materials" | "code" | "tasks" | "people";
+/** Имена вкладок в адресе страницы; «Участники» в адресе — members. */
+const ADDRESS: Record<ProjectView, string> = { overview: "overview", materials: "materials", code: "code", tasks: "tasks", people: "members" };
+function viewFromAddress(value: string): ProjectView | null {
+  const found = (Object.entries(ADDRESS) as [ProjectView, string][]).find(([, name]) => name === value);
+  return found ? found[0] : null;
+}
 const VIEWS: { id: ProjectView; title: string }[] = [
   { id: "overview", title: "Обзор" },
   { id: "materials", title: "Материалы" },
@@ -66,6 +86,7 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
   const overview = useLoad(() => ui.readProjectOverview(project.id, ""), "", [ui, project.id]);
   const repositories = useLoad(async () => (await ui.listProjectGitRepositories(project.id, "")).repositories.filter(r => r.enabled), "", [ui, project.id]);
   const hasCode = (repositories.value?.length ?? 0) > 0;
+  const [compareTo, setCompareTo] = useState<CompareTarget | null>(null);
   const views = VIEWS.filter(v => v.id !== "code" || hasCode);
   const current = views.some(v => v.id === view) ? view : "overview";
 
@@ -88,8 +109,10 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
       <div role="tabpanel" aria-label={views.find(v => v.id === current)?.title}>
         {current === "overview" && <ProjectOverview project={project} data={data} l1={overview.value?.l1 ?? ""} pending={overview.value?.pending ?? false} onOpenMaterials={() => onView("materials")} />}
         {current === "materials" && <ProjectMaterials project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} />}
-        {current === "code" && repositories.value && <ProjectCode projectId={project.id} repositories={repositories.value} />}
-        {current === "tasks" && <ProjectTasks />}
+        {current === "code" && repositories.value && <ProjectCode key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo}
+          actions={<AssignTask projectId={project.id} repositories={repositories.value} onStarted={() => { setCompareTo(null); onView("tasks"); }} />} />}
+        {current === "tasks" && <ProjectTasks projectId={project.id} repositories={repositories.value ?? (repositories.error ? [] : undefined)}
+          onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); onView("code"); }} />}
         {current === "people" && <ProjectPeople project={project} data={data} onOpenSources={onOpenSources} openLegacy={openLegacy} />}
       </div>
     </div>
@@ -222,15 +245,6 @@ function ProjectMaterials({ project, data, descriptions, onOpenDocuments }: { pr
         {project.truncated && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показана первая страница проекта; остальное — во вкладке «Материалы» слева.</p>}
       </Block>
     </div>
-  );
-}
-
-function ProjectTasks() {
-  return (
-    <Block title="Задачи агентов" actions={<Button size="sm" disabled title="Поручение задач агентам появится в следующем обновлении">Поручить агенту</Button>}>
-      <EmptyTab description="Здесь появятся задачи, которые вы поручите агентам: ход работы, результат и изменения в коде." />
-      <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Поручение задач агентам появится в следующем обновлении.</p>
-    </Block>
   );
 }
 

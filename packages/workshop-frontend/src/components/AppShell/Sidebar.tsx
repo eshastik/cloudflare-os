@@ -20,6 +20,7 @@ import {
   SidebarWorkspacesLists,
 } from './SidebarWorkspaces'
 import SidebarUtilityStrip from './SidebarUtilityStrip'
+import { SectionCount } from './SectionCount'
 
 // Daily work sections of a gatekeeper app, in rail order. Labels are fixed here so the rail reads
 // the same whatever an app calls its sections internally.
@@ -145,6 +146,7 @@ export default function Sidebar({
                     matchDefaultAccount={!multiple}
                     label={multiple ? `${label} — ${app.accountName || app.title}` : label}
                     icon={icon}
+                    trailing={<SectionCount count={section.count} />}
                     collapsed={collapsed}
                   />,
                 ]
@@ -167,3 +169,4 @@ export default function Sidebar({
     </aside>
   )
 }
+
