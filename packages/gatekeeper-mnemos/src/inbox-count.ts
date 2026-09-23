@@ -1,6 +1,7 @@
 import type { CollaborationProgress, CollaborationRequest, PublicationReview } from "./mnemos-api.ts";
 import type { TemplatePromotionReview, TemplateScope } from "./work-templates.ts";
 import type { IntakeAlert } from "./intake.ts";
+import type { ShareRequest } from "./project-sharing.ts";
 
 /** Обращение с его текущим состоянием; состояние может быть не прочитано. */
 export interface InboxCollaboration { request: CollaborationRequest; progress: CollaborationProgress | null }
@@ -9,10 +10,10 @@ export interface InboxTemplate { scope: TemplateScope; review: TemplatePromotion
 /** Вопрос приёмной вместе с проектом, в приёмную которого загружен файл. */
 export interface InboxAlert { project: string; alert: IntakeAlert }
 
-export type InboxKind = "approval" | "publish" | "template" | "acceptance" | "intake";
+export type InboxKind = "approval" | "publish" | "template" | "acceptance" | "intake" | "share";
 export type InboxFilter = "approvals" | "agents" | "intake" | "access";
-/** Фильтр «Входящих», к которому относится каждый вид решения. Запросов доступа как источника пока нет. */
-export const INBOX_FILTER: Record<InboxKind, InboxFilter> = { approval: "approvals", publish: "approvals", template: "approvals", acceptance: "agents", intake: "intake" };
+/** Фильтр «Входящих», к которому относится каждый вид решения. */
+export const INBOX_FILTER: Record<InboxKind, InboxFilter> = { approval: "approvals", publish: "approvals", template: "approvals", acceptance: "agents", intake: "intake", share: "access" };
 
 export interface InboxEntry {
   key: string;
@@ -24,6 +25,7 @@ export interface InboxEntry {
   collaboration?: InboxCollaboration;
   template?: InboxTemplate;
   alert?: InboxAlert;
+  share?: ShareRequest;
 }
 
 export interface InboxSources {
@@ -31,6 +33,8 @@ export interface InboxSources {
   collaborations: InboxCollaboration[];
   templates?: InboxTemplate[];
   alerts?: InboxAlert[];
+  /** Запросы открыть проект отделу или организации, которые ждут решения этого человека. */
+  shares?: ShareRequest[];
 }
 
 /** Всё, что ждёт решения человека. Один список для экрана и для счётчика в навигации,
@@ -60,11 +64,17 @@ export function inboxEntries(sources: InboxSources, userId: string): InboxEntry[
     seen.add(item.alert.id);
     out.push({ key: `intake/${item.alert.id}`, kind: "intake", at: item.alert.raised_at ?? "", alert: item });
   }
+  const shared = new Set<string>();
+  for (const share of sources.shares ?? []) {
+    if (share.status !== "pending" || share.requested_by === userId || shared.has(share.request_id)) continue;
+    shared.add(share.request_id);
+    out.push({ key: `share/${share.request_id}`, kind: "share", at: share.created_at ?? "", share });
+  }
   const time = (entry: InboxEntry) => { const t = Date.parse(entry.at); return Number.isFinite(t) ? t : Infinity; };
   return out.map((entry, index) => ({ entry, index })).sort((a, b) => time(b.entry) - time(a.entry) || a.index - b.index).map(x => x.entry);
 }
 
 /** Число решений, которые ждут человека во «Входящих». */
-export function inboxDecisions(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[] } = {}): number {
+export function inboxDecisions(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[] } = {}): number {
   return inboxEntries({ reviews, collaborations, ...extra }, userId).length;
 }

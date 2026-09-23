@@ -4,7 +4,8 @@ import { FileText, Folder, UploadSimple } from "@phosphor-icons/react";
 import type { PickedIntakeFile } from "../src/intake.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
-import { agentEnvironment, documentRows, myApprovals, useLoad, type MemoryData, type ProjectData } from "./data.ts";
+import { actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
+import { SharePanel, VisibilityBadge } from "./ProjectSharing.tsx";
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
 import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
 
@@ -83,6 +84,7 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
   const ui = useUi();
   const host = useHost();
   const [actionError, setActionError] = useState("");
+  const [sharing, setSharing] = useState(false);
   const overview = useLoad(() => ui.readProjectOverview(project.id, ""), "", [ui, project.id]);
   const repositories = useLoad(async () => (await ui.listProjectGitRepositories(project.id, "")).repositories.filter(r => r.enabled), "", [ui, project.id]);
   const hasCode = (repositories.value?.length ?? 0) > 0;
@@ -96,10 +98,13 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-lg font-semibold text-kumo-strong">{project.name}</h2>
           {overview.value?.l0 && <p className="mt-1 mb-0 max-w-[650px] text-[13px] text-kumo-subtle">{overview.value.l0}</p>}
+          <div className="mt-1.5"><VisibilityBadge project={project} /></div>
         </div>
+        <Button variant="secondary" size="sm" aria-expanded={sharing} onClick={() => setSharing(!sharing)}>Поделиться</Button>
         <Button size="sm" onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}».\n\n`, {projectId:project.id,title:project.name}).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
       </div>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
+      {sharing && <SharePanel project={project} onClose={() => setSharing(false)} onChanged={data.reloadProjects} />}
       <div role="tablist" aria-label="Разделы проекта" className="mb-5 flex flex-wrap gap-1 border-b border-kumo-line pb-2">
         {views.map(v => (
           <button key={v.id} type="button" role="tab" aria-selected={current === v.id} onClick={() => onView(v.id)}
@@ -109,9 +114,9 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
       <div role="tabpanel" aria-label={views.find(v => v.id === current)?.title}>
         {current === "overview" && <ProjectOverview project={project} data={data} l1={overview.value?.l1 ?? ""} pending={overview.value?.pending ?? false} onOpenMaterials={() => onView("materials")} />}
         {current === "materials" && <ProjectMaterials project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} />}
-        {current === "code" && repositories.value && <ProjectCode key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo}
+        {current === "code" && repositories.value && <ProjectCode admin={isAdministrator(data.identity)} key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo}
           actions={<AssignTask projectId={project.id} repositories={repositories.value} onStarted={() => { setCompareTo(null); onView("tasks"); }} />} />}
-        {current === "tasks" && <ProjectTasks projectId={project.id} repositories={repositories.value ?? (repositories.error ? [] : undefined)}
+        {current === "tasks" && <ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={repositories.value ?? (repositories.error ? [] : undefined)}
           onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); onView("code"); }} />}
         {current === "people" && <ProjectPeople project={project} data={data} onOpenSources={onOpenSources} openLegacy={openLegacy} />}
       </div>
@@ -150,7 +155,7 @@ function ProjectOverview({ project, data, l1, pending, onOpenMaterials }: { proj
   const approvals = myApprovals(data.reviews, userId).filter(item => item.review.project_id === project.id && item.mine === null && !item.review.stale && !item.review.withdrawn);
   const work = data.collaborations.filter(item => item.request.project_id === project.id);
   const task = data.task && (data.task.tracker?.project_id === project.id || data.task.team_budget?.project_id === project.id || data.task.budget_request?.project_id === project.id) ? data.task : null;
-  const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name ?? project.privateDocs.get(id)?.name ?? id;
+  const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name || project.privateDocs.get(id)?.name || UNNAMED_DOCUMENT;
   const waiting = approvals.length + work.length + (task ? 1 : 0);
   return (
     <div>
@@ -160,19 +165,19 @@ function ProjectOverview({ project, data, l1, pending, onOpenMaterials }: { proj
         <RowList>
           {approvals.map(item => (
             <Row key={`${item.review.candidate_id}/${item.domain.domain_id}`}>
-              <RowText title={`Согласовать: ${item.domain.node_ids.map(nodeName).join(", ")}`} note={`направление ${item.domain.domain_id} · автор ${item.review.author_id}`} />
+              <RowText title={`Согласовать: ${item.domain.node_ids.map(nodeName).join(", ")}`} note={`направление ${item.domain.domain_id} · автор ${personName(item.review.author_id)}`} />
               <StatusBadge tone="warning">Ваше решение</StatusBadge>
             </Row>
           ))}
           {task && (
             <Row>
-              <RowText title={`Задача агента: ${task.message.slice(0, 80)}`} note={`ведёт агент ${task.binding_id}`} />
+              <RowText title={`Задача агента: ${task.message.slice(0, 80)}`} note={`ведёт ${agentNames(data.connections).get(task.binding_id) ?? "ваш агент"}`} />
               <StatusBadge tone={task.outcome?.state === "completed" ? "warning" : "info"}>{task.outcome?.state === "completed" ? "Ждёт приёмки" : task.submitted ? "В работе" : "Не отправлена"}</StatusBadge>
             </Row>
           )}
           {work.map(item => (
             <Row key={item.request.request_id}>
-              <RowText title={item.request.title} note={`ведёт ${item.request.target_agent_id ? `агент ${item.request.target_agent_id}` : item.request.target_user_id} · от ${item.request.requester_agent_id || item.request.requester_user_id} · документ ${nodeName(item.request.node_id)}`} />
+              <RowText title={item.request.title} note={`ведёт: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)} · от: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)} · документ «${nodeName(item.request.node_id)}»`} />
               <StatusBadge tone={item.progress?.state === "accepted" ? "success" : item.progress?.state === "changes_requested" ? "danger" : "neutral"}>{item.progress ? COLLABORATION_STATES[item.progress.state] : "Состояние недоступно"}</StatusBadge>
             </Row>
           ))}
@@ -255,14 +260,15 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
   const mail = useLoad(() => ui.listMailConnections(""), "почта: сервер отказал", [ui]);
   const calendars = useLoad(() => ui.listCalendarConnections(""), "календарь: сервер отказал", [ui]);
   const databases = useLoad(() => ui.listVisibleDatabaseConnections(), "базы: сервер отказал", [ui]);
-  const names = useMemo(() => new Map((approvers.value?.approvers ?? []).map(a => [a.principal_id, a.display_name || a.principal_id])), [approvers.value]);
-  const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name ?? project.privateDocs.get(id)?.name ?? id;
+  const names = useMemo(() => new Map((approvers.value?.approvers ?? []).map(a => [a.principal_id, a.display_name || personName(a.principal_id)])), [approvers.value]);
+  const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name || project.privateDocs.get(id)?.name || UNNAMED_DOCUMENT;
+  const agentTitles = useMemo(() => agentNames(data.connections), [data.connections]);
   const members = useMemo(() => membersByDomain(policy.value, names), [policy.value, names]);
   const absence = data.absences.get(project.id);
   const agents = data.connections.filter(c => !c.revoked && c.document_grants?.some(g => g.project_id === project.id));
   const sources = [
     ...(mail.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `mail/${c.connection_id}`, kind: "Почта", title: c.provider, note: c.enabled ? "чтение агентом · отправка письма только после согласования" : "отключено" })),
-    ...(calendars.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `cal/${c.connection_id}`, kind: "Календарь", title: `${c.provider} · ${c.calendar_id}`, note: c.enabled ? "чтение окна · встреча только после согласования черновика" : "отключено" })),
+    ...(calendars.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `cal/${c.connection_id}`, kind: "Календарь", title: looksLikeId(c.calendar_id) ? c.provider : `${c.provider} · ${c.calendar_id}`, note: c.enabled ? "чтение окна · встреча только после согласования черновика" : "отключено" })),
     ...(databases.value?.databases ?? []).filter(d => d.project_id === project.id).map(d => ({ key: `db/${d.db_id}`, kind: "База", title: `${d.name} · ${d.driver}`, note: d.unreachable_since ? `ошибка доступа с ${new Date(d.unreachable_since).toLocaleString("ru-RU")}` : "запросы агента только на чтение" })),
   ];
   const sourceErrors = [mail.error, calendars.error, databases.error].filter(Boolean);
@@ -279,7 +285,7 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
             const role = absence?.enabled && absence.local_binding_id === agent.binding_id ? "замещается" : absence?.enabled && absence.managed_binding_id === agent.binding_id ? `замещает до ${new Date(absence.ends_at).toLocaleString("ru-RU")}` : "";
             return (
               <Row key={agent.binding_id}>
-                <RowText title={agent.agent_principal_id} note={`${agentEnvironment(agent)}${role ? ` · ${role}` : ""}`} />
+                <RowText title={agentTitles.get(agent.binding_id) ?? "Агент"} note={`${agentEnvironment(agent)}${role ? ` · ${role}` : ""}`} />
               </Row>
             );
           })}
@@ -290,7 +296,7 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
         <RowList>
           {(policy.value?.domains ?? []).map(domain => (
             <Row key={domain.domain_id}>
-              <RowText title={domain.all_documents ? "Все документы проекта, включая новые" : domain.node_ids.map(nodeName).join(", ")} note={`согласуют: ${domain.approver_ids.map(id => names.get(id) ?? id).join(", ") || "никто не назначен"}`} />
+              <RowText title={domain.all_documents ? "Все документы проекта, включая новые" : domain.node_ids.map(nodeName).join(", ")} note={`согласуют: ${domain.approver_ids.map(id => personName(id, names)).join(", ") || "никто не назначен"}`} />
               <StatusBadge tone="info">{domain.domain_id}</StatusBadge>
             </Row>
           ))}
@@ -321,7 +327,7 @@ function membersByDomain(policy: PublicationPolicy | null, names: Map<string, st
     for (const id of domain.approver_ids) byId.set(id, [...(byId.get(id) ?? []), domain.domain_id]);
   }
   for (const id of names.keys()) if (!byId.has(id)) byId.set(id, []);
-  return [...byId].map(([id, domains]) => ({ id, name: names.get(id) ?? id, domains })).sort((a, b) => b.domains.length - a.domains.length || a.name.localeCompare(b.name, "ru"));
+  return [...byId].map(([id, domains]) => ({ id, name: personName(id, names), domains })).sort((a, b) => b.domains.length - a.domains.length || a.name.localeCompare(b.name, "ru"));
 }
 
 function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise<void>; onCancel(): void }) {

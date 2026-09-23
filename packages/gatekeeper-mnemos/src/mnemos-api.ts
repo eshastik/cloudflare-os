@@ -22,6 +22,7 @@ import {validTemplatePromotionReview,type TemplatePromotionReview,type TemplateP
 import type {TemplatePromotionInput,TemplatePromotion} from "./work-templates.ts";
 import {validScopedWorkTemplate,type TemplateScopePage,type ScopedWorkTemplatePage,type ScopedWorkTemplateVersion,type ScopedWorkTemplateApplied} from "./work-templates.ts";
 import {validWorkTemplate, type WorkTemplateVersion, type WorkTemplatePage, type WorkTemplateSave, type WorkTemplateApplication, type WorkTemplateApplied} from "./work-templates.ts";
+import { checkedSharingSettings, isProjectVisibility, validShareRequest, validSharingSettings, validVisibilityResult, type ProjectSharingSettings, type ProjectVisibility, type ProjectVisibilityResult, type ShareRequest } from "./project-sharing.ts";
 import type { ReviewDecisions } from "./review-decisions.ts";
 import type { ReviewTiming } from "./review-timing.ts";
 import { UI_READINESS_SURFACES, isUIReadinessSample, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
@@ -703,6 +704,41 @@ export class MnemosAPI {
   listProjects(signal?: AbortSignal): Promise<ProjectPage> {
     return this.#request("/v1/projects", "GET", signal);
   }
+  /** Сервер либо меняет видимость сразу, либо заводит запрос руководителю или администратору. */
+  async setProjectVisibility(project: string, level: ProjectVisibility, canEdit: boolean, signal?: AbortSignal): Promise<ProjectVisibilityResult> {
+    segment(project);
+    if (!isProjectVisibility(level) || typeof canEdit !== "boolean") throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>(`/v1/projects/${segment(project)}/visibility`, "POST", signal, { level, can_edit: canEdit });
+    if (!validVisibilityResult(out, project)) throw new MnemosAPIError(502);
+    return out;
+  }
+  /** mine=false — ждущие моего решения; mine=true — мои собственные запросы. */
+  async listShareRequests(mine: boolean, signal?: AbortSignal): Promise<{ requests: ShareRequest[] }> {
+    if (typeof mine !== "boolean") throw new MnemosAPIError(400);
+    const out = await this.#request<{ requests?: unknown }>(`/v1/share-requests${mine ? "?mine=true" : ""}`, "GET", signal);
+    // Пустой список Go отдаёт как null.
+    const requests = out?.requests ?? [];
+    if (!Array.isArray(requests) || requests.length > 500 || !requests.every(validShareRequest)) throw new MnemosAPIError(502);
+    return { requests };
+  }
+  async decideShareRequest(request: string, approve: boolean, signal?: AbortSignal): Promise<ShareRequest> {
+    segment(request);
+    if (typeof approve !== "boolean") throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>(`/v1/share-requests/${segment(request)}/decision`, "POST", signal, { approve });
+    if (!validShareRequest(out) || out.request_id !== request) throw new MnemosAPIError(502);
+    return out;
+  }
+  async readProjectSharingSettings(signal?: AbortSignal): Promise<ProjectSharingSettings> {
+    try { return checkedSharingSettings(await this.#request<unknown>("/v1/organization/settings", "GET", signal)); }
+    catch (error) { throw error instanceof MnemosAPIError ? error : new MnemosAPIError(502); }
+  }
+  async updateProjectSharingSettings(settings: ProjectSharingSettings, signal?: AbortSignal): Promise<ProjectSharingSettings> {
+    let body: ProjectSharingSettings;
+    try { body = checkedSharingSettings(settings); } catch { throw new MnemosAPIError(400); }
+    const out = await this.#request<unknown>("/v1/organization/settings", "PUT", signal, body);
+    if (!validSharingSettings(out) || JSON.stringify(checkedSharingSettings(out)) !== JSON.stringify(body)) throw new MnemosAPIError(502);
+    return checkedSharingSettings(out);
+  }
   browseProject(projectId: string, cursor = "", signal?: AbortSignal): Promise<NodePage> {
     return this.#request(`/v1/projects/${segment(projectId)}/nodes?cursor=${encodeURIComponent(cursor)}`, "GET", signal);
   }
@@ -891,7 +927,8 @@ export interface AgentCredential { access_token: string; token_type: string; exp
 export interface NodeHistoryPage { events: { event_id: string; head: string; recorded_at: string; exists: boolean; content_type?: string; observed: boolean; actor: string; on_behalf_of: string }[]; next_cursor?: string }
 
 export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string; capabilities?: string[] }
-export interface ProjectPage { projects: { id: string; name: string; slug: string }[] }
+/** visibility, can_edit, created_by и pending_share приходят с сервером, где есть видимость проектов. */
+export interface ProjectPage { projects: { id: string; name: string; slug: string; org_unit_id?: string; visibility?: ProjectVisibility; can_edit?: boolean; created_by?: string; pending_share?: ProjectVisibility }[] }
 
 export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean }[]; next_cursor?: string; truncated: boolean }
 export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean }

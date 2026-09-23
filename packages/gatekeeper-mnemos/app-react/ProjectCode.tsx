@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@cloudflare/kumo";
 import { CaretRight, FileText, Folder, GitBranch } from "@phosphor-icons/react";
+import type { WorkspaceTaskView } from "../src/workspace-tasks.ts";
 import type { GitBranch as Branch, GitChangedFile, GitComparison, GitProjectRepository, GitTreeEntry } from "../src/git-connections.ts";
 import { useUi } from "./host.ts";
 import { useLoad } from "./data.ts";
-import { Block, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { AdminDetails, Block, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
 
 const AGENT_PREFIX = "agents/";
 const DIFF_LINES = 400;
@@ -19,20 +20,28 @@ const CHANGE: Record<GitChangedFile["status"], { tone: BadgeTone; label: string 
 /** Сравнение, открытое из задачи агента: репозиторий и ветка задачи. */
 export interface CompareTarget { connection_id: string; repository_id: string; branch: string }
 
-export default function ProjectCode({ projectId, repositories, compareTo, actions }: { projectId: string; repositories: GitProjectRepository[]; compareTo?: CompareTarget | null; actions?: ReactNode }) {
+/** Имя версии для человека: основная, изменения агента по заголовку задачи, иначе имя ветки как его дал человек. */
+function branchLabel(name: string, main: string, tasks: Map<string, string>, agentIndex: Map<string, number>): string {
+  if (name === main) return "Основная версия";
+  if (!name.startsWith(AGENT_PREFIX)) return name;
+  const title = tasks.get(name);
+  return title ? `Изменения агента: ${title}` : `Изменения агента № ${agentIndex.get(name) ?? 1}`;
+}
+
+export default function ProjectCode({ projectId, repositories, compareTo, actions, admin = false }: { projectId: string; repositories: GitProjectRepository[]; compareTo?: CompareTarget | null; actions?: ReactNode; admin?: boolean }) {
   const [repoKey, setRepoKey] = useState(() => key(repositories.find(r => compareTo && key(r) === key(compareTo)) ?? repositories[0]));
   const repo = repositories.find(r => key(r) === repoKey) ?? repositories[0];
   return (
     <div>
       {repositories.length > 1 && (
         <label className="mb-3 flex items-center gap-2 text-[13px] text-kumo-subtle">
-          Репозиторий
+          Код
           <Select aria-label="Репозиторий" value={key(repo)} onChange={e => setRepoKey(e.target.value)}>
             {repositories.map(r => <option key={key(r)} value={key(r)}>{r.repository_name}</option>)}
           </Select>
         </label>
       )}
-      <Repository key={key(repo)} projectId={projectId} repo={repo} compareBranch={compareTo && key(compareTo) === key(repo) ? compareTo.branch : ""} actions={actions} />
+      <Repository key={key(repo)} admin={admin} projectId={projectId} repo={repo} compareBranch={compareTo && key(compareTo) === key(repo) ? compareTo.branch : ""} actions={actions} />
     </div>
   );
 }
@@ -41,16 +50,20 @@ function key(r: { connection_id: string; repository_id: string } | undefined): s
   return r ? `${r.connection_id}/${r.repository_id}` : "";
 }
 
-function Repository({ projectId, repo, compareBranch, actions }: { projectId: string; repo: GitProjectRepository; compareBranch: string; actions?: ReactNode }) {
+function Repository({ admin, projectId, repo, compareBranch, actions }: { admin: boolean; projectId: string; repo: GitProjectRepository; compareBranch: string; actions?: ReactNode }) {
   const ui = useUi();
+  // Заголовки задач дают изменениям агентов человеческое имя; без них — порядковый номер.
+  const tasks = useLoad(async () => new Map((await ui.listWorkspaceTasks(projectId)).tasks.map((t: WorkspaceTaskView) => [t.branch, t.title])), "", [ui, projectId]);
   const coords = [projectId, repo.connection_id, repo.repository_id] as const;
-  const branches = useLoad(() => ui.listGitBranches(...coords, 1), "Ветки репозитория не прочитаны. Проверьте доступ к проекту и обновите страницу.", [ui, ...coords]);
+  const branches = useLoad(() => ui.listGitBranches(...coords, 1), "Код проекта не прочитан. Проверьте доступ к проекту и обновите страницу.", [ui, ...coords]);
   const all = branches.value?.branches ?? [];
   const main = all.find(b => b.name === "main") ?? all.find(b => b.name === "master") ?? all.find(b => !b.name.startsWith(AGENT_PREFIX)) ?? all[0];
   const [selected, setSelected] = useState("");
   const [compare, setCompare] = useState<Branch | null>(null);
   const branch = all.find(b => b.name === selected) ?? main;
   const agentBranches = all.filter(b => b.name.startsWith(AGENT_PREFIX));
+  const agentIndex = new Map(agentBranches.map((b, i) => [b.name, i + 1]));
+  const label = (name: string) => branchLabel(name, main?.name ?? "", tasks.value ?? new Map(), agentIndex);
   // Переход из задачи агента открывает сравнение её ветки, как только ветки прочитаны.
   useEffect(() => {
     const target = compareBranch ? all.find(b => b.name === compareBranch) : undefined;
@@ -59,28 +72,28 @@ function Repository({ projectId, repo, compareBranch, actions }: { projectId: st
 
   if (branches.loading) return <Notice>Загружаем репозиторий…</Notice>;
   if (branches.error) return <Notice tone="danger">{branches.error}</Notice>;
-  if (!branch) return <Notice>В репозитории пока нет веток. Код появится после первой отправки изменений.</Notice>;
-  if (compare && main) return <Comparison projectId={projectId} repo={repo} base={main} head={compare} onBack={() => setCompare(null)} />;
+  if (!branch) return <Notice>Код пока пуст. Он появится после первой отправки изменений.</Notice>;
+  if (compare && main) return <Comparison admin={admin} projectId={projectId} repo={repo} base={main} head={compare} title={label(compare.name)} onBack={() => setCompare(null)} />;
 
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-[13px] font-medium text-kumo-default">{repo.repository_name}</span>
-        <Select aria-label="Ветка" value={branch.name} onChange={e => setSelected(e.target.value)}>
-          {all.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+        <Select aria-label="Версия кода" value={branch.name} onChange={e => setSelected(e.target.value)}>
+          {all.map(b => <option key={b.name} value={b.name}>{label(b.name)}</option>)}
         </Select>
         <div className="flex-1" />
         {actions}
       </div>
-      {compareBranch && !all.some(b => b.name === compareBranch) && <div className="mb-3"><Notice>Ветка задачи {compareBranch} ещё не отправлена: агент пока не сохранил изменения.</Notice></div>}
+      {compareBranch && !all.some(b => b.name === compareBranch) && <div className="mb-3"><Notice>Изменений задачи пока нет: агент ещё не сохранил их.</Notice></div>}
       <Browser key={branch.sha} projectId={projectId} repo={repo} branch={branch} />
-      <Block title="Ветки агентов" count={agentBranches.length} empty="Агенты ещё не отправляли изменений. Их ветки появятся здесь.">
+      <Block title="Изменения агентов" count={agentBranches.length} empty="Агенты ещё не отправляли изменений. Они появятся здесь.">
         <RowList>
           {agentBranches.map(b => (
-            <Row key={b.name}>
-              <GitBranch size={16} className="shrink-0 text-kumo-subtle" aria-hidden="true" />
-              <RowText title={b.name.split("/").at(-1) ?? b.name} note={b.name} />
-              <Button variant="secondary" size="sm" onClick={() => setCompare(b)} disabled={!main || main.name === b.name}>Сравнить с {main?.name ?? "main"}</Button>
+            <Row key={b.name} className="items-start">
+              <GitBranch size={16} className="mt-0.5 shrink-0 text-kumo-subtle" aria-hidden="true" />
+              <RowText title={label(b.name)} note="ещё не в основной версии"><AdminDetails show={admin} items={[["Ветка", b.name]]} /></RowText>
+              <Button variant="secondary" size="sm" onClick={() => setCompare(b)} disabled={!main || main.name === b.name}>Показать изменения</Button>
             </Row>
           ))}
         </RowList>
@@ -118,7 +131,7 @@ function Browser({ projectId, repo, branch }: { projectId: string; repo: GitProj
             </span>
           ))}
         </nav>
-        {commit.value && <span className="text-[12px] text-kumo-subtle">{commit.value.sha.slice(0, 7)} · {commit.value.message.split("\n")[0].slice(0, 72)} · {new Date(commit.value.committed_at).toLocaleDateString("ru-RU")}</span>}
+        {commit.value && <span className="text-[12px] text-kumo-subtle">{commit.value.message.split("\n")[0].slice(0, 72)} · {new Date(commit.value.committed_at).toLocaleDateString("ru-RU")}</span>}
       </div>
       {file
         ? <FileView projectId={projectId} repo={repo} commit={branch.sha} path={file} onClose={() => setFile("")} />
@@ -176,20 +189,21 @@ function FileView({ projectId, repo, commit, path, onClose }: { projectId: strin
   );
 }
 
-function Comparison({ projectId, repo, base, head, onBack }: { projectId: string; repo: GitProjectRepository; base: Branch; head: Branch; onBack(): void }) {
+function Comparison({ admin, projectId, repo, base, head, title, onBack }: { admin: boolean; projectId: string; repo: GitProjectRepository; base: Branch; head: Branch; title: string; onBack(): void }) {
   const ui = useUi();
   const result = useLoad(() => ui.compareGitRefs(projectId, repo.connection_id, repo.repository_id, base.name, head.name), "Сравнение не получено. Проверьте доступ и повторите.", [ui, projectId, repo.connection_id, repo.repository_id, base.name, head.name]);
   const value = result.value;
   return (
-    <section aria-label="Сравнение веток">
+    <section aria-label="Сравнение версий">
       <div className="mb-3 flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="m-0 text-[15px] font-semibold text-kumo-strong">Изменения ветки {head.name.split("/").at(-1)}</h3>
-          <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">{head.name} относительно {base.name}{value ? ` · коммитов: ${value.total_commits}` : ""}</p>
+          <h3 className="m-0 text-[15px] font-semibold text-kumo-strong">{title}</h3>
+          <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">по сравнению с основной версией{value ? ` · сохранений: ${value.total_commits}` : ""}</p>
+          <AdminDetails show={admin} items={[["Ветка", head.name], ["Основа", base.name]]} />
         </div>
-        <Button variant="ghost" size="sm" onClick={onBack}>К репозиторию</Button>
+        <Button variant="ghost" size="sm" onClick={onBack}>К коду проекта</Button>
       </div>
-      {result.loading ? <Notice>Сравниваем ветки…</Notice>
+      {result.loading ? <Notice>Сравниваем версии…</Notice>
         : result.error ? <Notice tone="danger">{result.error}</Notice>
         : value && <ComparisonBody value={value} />}
     </section>
@@ -198,7 +212,7 @@ function Comparison({ projectId, repo, base, head, onBack }: { projectId: string
 
 function ComparisonBody({ value }: { value: GitComparison }) {
   const sections = useMemo(() => splitDiff(value.diff), [value.diff]);
-  if (value.files.length === 0) return <Notice>Ветка не отличается от основной.</Notice>;
+  if (value.files.length === 0) return <Notice>Изменений по сравнению с основной версией нет.</Notice>;
   return (
     <div>
       <Block title="Изменённые файлы" count={value.files.length}>

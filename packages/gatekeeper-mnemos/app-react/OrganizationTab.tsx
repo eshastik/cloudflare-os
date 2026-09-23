@@ -3,6 +3,7 @@ import { Button } from "@cloudflare/kumo";
 import type { MemoryData } from "./data.ts";
 import { LegacySwitch, useLegacySection, type LegacySection } from "./legacy.tsx";
 import { Block, Notice, Row, RowList, RowText, Select } from "./ui.tsx";
+import { OrganizationSharingSettings } from "./ProjectSharing.tsx";
 
 interface SectionItem { title: string; note: string; section: LegacySection; capability?: string }
 
@@ -54,6 +55,11 @@ export default function OrganizationTab({ data }: { data: MemoryData }) {
           </RowList>
           {data.projects.length === 0 && !data.projectsLoading && <Notice>Проектов нет: профиль пересчитывать не для чего.</Notice>}
         </Block>}
+        {data.identity?.capabilities?.includes("principal.manage") && <details aria-label="Дополнительно" className="mb-6">
+          <summary className="cursor-pointer py-1 text-[15px] font-semibold text-kumo-strong">Дополнительно</summary>
+          <p className="mt-2 mb-2 text-[12px] text-kumo-subtle">Правила проектов: кто их создаёт и как ими делятся с отделом и организацией.</p>
+          <OrganizationSharingSettings />
+        </details>}
       </section>
     </LegacySwitch>
   );

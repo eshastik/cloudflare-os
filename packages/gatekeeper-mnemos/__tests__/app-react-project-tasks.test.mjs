@@ -67,7 +67,7 @@ test("Задачи агентов: пустое состояние и поруч
   } finally { app.dispose(); }
 });
 
-test("Задачу можно остановить, а её ветку сравнить с main во вкладке «Код»", async () => {
+test("Задачу можно остановить, а её изменения показать во вкладке «Код»", async () => {
   const calls = [];
   const app = await mountMemoryApp(methods(calls, { tasks: [taskView("running")] }), { section: "projects", project: "one" });
   try {
@@ -77,7 +77,7 @@ test("Задачу можно остановить, а её ветку срав�
     await app.until(() => app.text().includes("Остановлена"), "задача остановлена");
     assert.deepEqual(calls.find(c => c[0] === "abortWorkspaceTask"), ["abortWorkspaceTask", "one", "0123456789abcdef"]);
     assert.equal(app.button("Остановить"), undefined, "остановленную задачу не остановить повторно");
-    app.button("Сравнить с main").click();
+    app.button("Показать изменения").click();
     await app.until(() => app.document.querySelector('section[aria-label="Изменения по строкам"] pre'), "сравнение ветки задачи");
     assert.deepEqual(calls.find(c => c[0] === "compareGitRefs"), ["compareGitRefs", "main", BRANCH]);
     assert.equal(app.tab("Код").getAttribute("aria-selected"), "true");
@@ -94,7 +94,7 @@ test("Без настройки рабочих мест кнопка поруч�
     assert.equal(app.button("Поручить агенту").disabled, true);
     assert.match(reason(), /не настроены/);
     app.tab("Код").click();
-    await app.until(() => app.tab("Код").getAttribute("aria-selected") === "true" && app.document.querySelector('select[aria-label="Ветка"]') && reason(), "кнопка во вкладке кода");
+    await app.until(() => app.tab("Код").getAttribute("aria-selected") === "true" && app.document.querySelector('select[aria-label="Версия кода"]') && reason(), "кнопка во вкладке кода");
     assert.equal(app.button("Поручить агенту").disabled, true);
   } finally { app.dispose(); }
 });

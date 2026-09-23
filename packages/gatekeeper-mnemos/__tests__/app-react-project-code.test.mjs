@@ -42,7 +42,7 @@ test("Код проекта: дерево, папка, файл с номера�
     await app.until(() => app.button("services") && app.button("README.md"), "корень репозитория");
     const names = [...app.document.querySelectorAll('section[aria-label="Файлы репозитория"] [data-document], section[aria-label="Файлы репозитория"] button')].map(b => b.textContent);
     assert.ok(names.indexOf("services") < names.indexOf("README.md"), "папки выше файлов");
-    assert.ok(app.text().includes("1111111 · Внутренний хостинг кода"), "коммит ветки");
+    assert.ok(app.text().includes("Внутренний хостинг кода ·") && !app.text().includes("1111111"), "последнее сохранение без хеша");
     assert.ok(calls.some(c => c[0] === "readGitTree" && c[1] === MAIN && c[2] === ""), "основная ветка по умолчанию");
     app.button("services").click();
     await app.until(() => app.button("go.mod"), "содержимое папки");
@@ -59,14 +59,16 @@ test("Код проекта: дерево, папка, файл с номера�
   } finally { app.dispose(); }
 });
 
-test("Ветка агента сравнивается с основной: список файлов и дифф построчно", async () => {
+test("Изменения агента сравниваются с основной версией: список файлов и дифф построчно", async () => {
   const calls = [];
   const app = await mountMemoryApp(codeMethods(calls), { section: "projects", project: "one" });
   try {
     await app.until(() => app.tab("Код"), "вкладка кода"); app.tab("Код").click();
-    const agents = () => app.document.querySelector('#root section[aria-label="Ветки агентов"]');
-    await app.until(() => agents()?.textContent.includes("task-7"), "ветки агентов");
-    app.button("Сравнить с main").click();
+    const agents = () => app.document.querySelector('#root section[aria-label="Изменения агентов"]');
+    await app.until(() => agents()?.textContent.includes("Изменения агента № 1"), "изменения агентов по-человечески");
+    const shown = el => { const copy = el.cloneNode(true); copy.querySelectorAll("[data-admin-details]").forEach(d => d.remove()); return copy.textContent; };
+    assert.ok(!shown(agents()).includes("agents/"), "имя ветки — только в «Подробнее»");
+    app.button("Показать изменения").click();
     await app.until(() => app.document.querySelector('section[aria-label="Изменения по строкам"] pre'), "дифф построен");
     assert.deepEqual(calls.find(c => c[0] === "compareGitRefs"), ["compareGitRefs", "main", "agents/agent-alice/task-7"]);
     const files = app.document.querySelector('#root section[aria-label="Изменённые файлы"]').textContent;
@@ -75,7 +77,7 @@ test("Ветка агента сравнивается с основной: сп
     assert.ok(lines.find(l => l.textContent === "+Новая строка").className.includes("bg-kumo-success-tint"));
     assert.ok(lines.find(l => l.textContent === "-Старая строка").className.includes("bg-kumo-danger-tint"));
     assert.equal(lines.some(l => l.textContent.startsWith("+++") || l.textContent.startsWith("index ")), false, "служебные строки скрыты");
-    app.button("К репозиторию").click();
+    app.button("К коду проекта").click();
     await app.until(() => agents(), "возврат к репозиторию");
   } finally { app.dispose(); }
 });

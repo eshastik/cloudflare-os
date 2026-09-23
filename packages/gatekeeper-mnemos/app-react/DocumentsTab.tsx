@@ -3,7 +3,7 @@ import { Button } from "@cloudflare/kumo";
 import { ArrowLeft, CaretRight, Clock, FileText, MagnifyingGlass } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
-import { documentRows, type DocumentRow, type MemoryData } from "./data.ts";
+import { documentRows, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
 import { LegacyPanel } from "./legacy.tsx";
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { relativeTime } from "./time.ts";
@@ -102,7 +102,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     const known = rowsByProject.get(hit.project_id)?.find(r => r.nodeId === hit.node_id);
     if (known) return hit.name ? { ...known, name: hit.name } : known;
     const project = data.projects.find(p => p.id === hit.project_id);
-    return { projectId: hit.project_id, projectName: project?.name ?? hit.project_id, nodeId: hit.node_id, name: hit.name || hit.node_id, status: { tone: "success", label: "Опубликовано" } };
+    return { projectId: hit.project_id, projectName: project?.name ?? "проект, недоступный вам", nodeId: hit.node_id, name: hit.name || UNNAMED_DOCUMENT, status: { tone: "success", label: "Опубликовано" } };
   }
 
   if (administrative) return <AdministrativeDocuments data={data} initialProject={selected} onClose={()=>setAdministrative(false)} />;

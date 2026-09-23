@@ -3,7 +3,7 @@ import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import { useUi } from "./host.ts";
-import { documentNames, myApprovals, projectName, type MemoryData, type PendingApproval } from "./data.ts";
+import { documentNames, myApprovals, personName, projectName, UNNAMED_DOCUMENT, type MemoryData, type PendingApproval } from "./data.ts";
 import { EmptyTab, Notice, Row, RowList, RowText, StatusBadge } from "./ui.tsx";
 
 /** Запись решения по направлению; общая для «Согласований» и «Моей работы». */
@@ -31,7 +31,7 @@ export function ApprovalRow({ item, data, busy, decide }: { item: PendingApprova
   const names = documentNames(data.projects);
   const key = `${item.review.candidate_id}/${item.domain.domain_id}`;
   const approved = item.domain.decisions.filter(d => d.approved).length;
-  const documents = item.domain.node_ids.map(id => names.get(`${item.review.project_id}/${id}`) ?? id).join(", ");
+  const documents = item.domain.node_ids.map(id => names.get(`${item.review.project_id}/${id}`) || UNNAMED_DOCUMENT).join(", ");
   const [expanded, setExpanded] = useState(false);
   const pending = item.mine === null && !item.review.stale && !item.review.withdrawn;
   return (
@@ -40,7 +40,7 @@ export function ApprovalRow({ item, data, busy, decide }: { item: PendingApprova
       <RowText
         title={<>«{documents}» — ваше решение по направлению {item.domain.domain_id}</>}
         note={<>
-          {projectName(data.projects, item.review.project_id)} · автор {item.review.author_id} · одобрений {approved} из {item.domain.approvers.length}
+          проект «{projectName(data.projects, item.review.project_id)}» · автор {personName(item.review.author_id)} · одобрений {approved} из {item.domain.approvers.length}
           {item.review.withdrawn && " · автор отозвал предложение"}
           {item.review.stale && " · предложение устарело: права, политика или общая версия изменились"}
           {item.mine === true && " · вы одобрили"}

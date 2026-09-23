@@ -65,6 +65,11 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  grantPersonRight: MnemosAccountSession["grantPersonRight"];
  removePersonRight: MnemosAccountSession["removePersonRight"];
  createProject:MnemosAccountSession["createProject"];
+ setProjectVisibility:MnemosAccountSession["setProjectVisibility"];
+ listShareRequests:MnemosAccountSession["listShareRequests"];
+ decideShareRequest:MnemosAccountSession["decideShareRequest"];
+ readProjectSharingSettings:MnemosAccountSession["readProjectSharingSettings"];
+ updateProjectSharingSettings:MnemosAccountSession["updateProjectSharingSettings"];
  readWorkshopAgentScope:MnemosAccountSession["readWorkshopAgentScope"];
  updateWorkshopAgentScope:MnemosAccountSession["updateWorkshopAgentScope"];
  readCalendarConnection:MnemosAccountSession["readCalendarConnection"];

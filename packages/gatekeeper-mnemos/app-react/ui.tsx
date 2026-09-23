@@ -73,6 +73,20 @@ export function Block({ title, count, actions, empty, children }: { title: strin
   );
 }
 
+/** Служебные идентификаторы для администратора — свёрнуты под «Подробнее»; остальным не показываются. */
+export function AdminDetails({ show, items }: { show: boolean; items: [string, string | undefined][] }) {
+  const shown = items.filter((item): item is [string, string] => !!item[1]);
+  if (!show || shown.length === 0) return null;
+  return (
+    <details data-admin-details="" className="mt-2 text-[12px] text-kumo-subtle">
+      <summary className="cursor-pointer select-none">Подробнее</summary>
+      <div className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+        {shown.map(([label, value]) => <div key={label} className="contents"><span>{label}</span><span className="break-all font-mono">{value}</span></div>)}
+      </div>
+    </details>
+  );
+}
+
 const inputClass = "h-8 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring";
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {

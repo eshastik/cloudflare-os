@@ -24,7 +24,8 @@ test("«Агенты»: карточки по среде, выдача аген�
     const managed = card("b-managed"), external = card("b-external");
     assert.ok(managed.textContent.includes("AgenticOS") && managed.textContent.includes("Владелец — вы"), "среда и владелец");
     assert.ok(managed.textContent.includes("ограничены текущими правами владельца"), "права — собственные, в пределах прав владельца");
-    assert.ok(managed.querySelector("dd").textContent.includes("узел doc") && !managed.querySelector("dd").textContent.includes("Второй проект"), "показана выданная область, а не все проекты владельца");
+    await app.until(() => managed.querySelector("dd").textContent.includes("документ «Заметка команды»"), "документ назван по имени, а не по идентификатору");
+    assert.ok(!managed.querySelector("dd").textContent.includes("Второй проект"), "показана выданная область, а не все проекты владельца");
     await app.until(() => managed.textContent.includes("Инструкция агента"), "память агента");
     await app.until(() => managed.textContent.includes("@acme_bot"), "канал Telegram");
     assert.ok(managed.textContent.includes("Текущих задач нет"), "задачи");
@@ -47,7 +48,7 @@ test("«Агенты»: карточки по среде, выдача аген�
     app.button("Подготовить заявку").click();
     await app.until(() => app.button("Выполнить выдачу"), "заявка сохранена");
     app.button("Выполнить выдачу").click();
-    await app.until(() => app.text().includes("agent-new"), "агент выдан");
+    await app.until(() => app.text().includes("Агент подготовлен"), "агент выдан");
     assert.deepEqual(app.calls.filter(([m]) => m === "prepareManagedAgent"), [["prepareManagedAgent", "analyst"]]);
     assert.deepEqual(app.calls.filter(([m]) => m === "submitManagedAgent"), [["submitManagedAgent", "req-1"]], "повтор идёт по той же заявке");
 

@@ -3,6 +3,7 @@ import {useEffect,useState} from "react";
 import {Button} from "@cloudflare/kumo";
 import {useHost,useUi} from "./host.ts";
 import {Block,Notice,Row,RowText,TextInput} from "./ui.tsx";
+import {personName} from "./data.ts";
 import {readTemplateProposalText,readTemplateBaselineText} from "../app/template-source.ts";
 import type {TemplatePromotionReview,TemplateScope} from "../src/work-templates.ts";
 import type {SavedTemplateDecision} from "../src/template-review-actions.ts";
@@ -53,7 +54,7 @@ export function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionRevi
   }catch{setReady(false);setError("Решение не подтверждено. Сначала проверьте его состояние.");}finally{setBusy(false);}
  }
  return <div className="border-b border-kumo-line py-2">
-  <Row><RowText title={proposal.message} note={`${scope.name} · версия ${proposal.template_revision} · от ${proposal.user_id}`}/><Button size="sm" variant="secondary" disabled={busy} onClick={()=>open?setOpen(false):void inspect()}>{open?"Свернуть":"Проверить шаблон"}</Button></Row>
+  <Row><RowText title={proposal.message} note={`${scope.name} · версия ${proposal.template_revision} · от ${personName(proposal.user_id)}`}/><Button size="sm" variant="secondary" disabled={busy} onClick={()=>open?setOpen(false):void inspect()}>{open?"Свернуть":"Проверить шаблон"}</Button></Row>
   {open&&<div className="space-y-3 px-3 pb-3 text-sm">
    <p className="text-kumo-subtle">{proposal.expected_catalogue_revision?"Сравните предложение с общей версией, на основе которой оно подготовлено.":"Предлагается сделать шаблон доступным этому подразделению."}</p>
    {error&&<Notice tone="danger">{error}</Notice>}

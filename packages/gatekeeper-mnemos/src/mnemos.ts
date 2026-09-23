@@ -770,10 +770,12 @@ export class UserAccount extends DurableObject<Env> {
         const pages = await Promise.all(projects.map(async project => (await session.inboxAlerts(false, project.id).catch(() => ({ alerts: [] }))).alerts.map(alert => ({ project: project.id, alert }))));
         return pages.flat();
       })().catch(() => []);
+      // Запросы видимости: сервер без этой возможности или отказ — пусто, как у шаблонов.
+      const shares = session.listShareRequests(false).then(page => page.requests, () => []);
       const [reviews, requests] = await Promise.all([session.listPublicationReviews(""), session.listCollaborations("")]);
       const mine = requests.requests.filter(request => request.requester_user_id === userId).slice(0, INBOX_PROGRESS_LIMIT);
       const collaborations = await Promise.all(mine.map(async request => ({ request, progress: await session.readCollaborationProgress(request.request_id).catch(() => null) })));
-      return inboxDecisions(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts });
+      return inboxDecisions(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts, shares: await shares });
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1358,6 +1360,11 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async recordUIReadiness(sample:Parameters<MnemosAccountSession["recordUIReadiness"]>[0]) { return this.#session.recordUIReadiness(sample); }
   async readPlatformMetrics() { return this.#session.readPlatformMetrics(); }
   async listProjects() { return this.#session.listProjects(); }
+  async setProjectVisibility(...args: Parameters<MnemosAccountSession["setProjectVisibility"]>) { return this.#session.setProjectVisibility(...args); }
+  async listShareRequests(...args: Parameters<MnemosAccountSession["listShareRequests"]>) { return this.#session.listShareRequests(...args); }
+  async decideShareRequest(...args: Parameters<MnemosAccountSession["decideShareRequest"]>) { return this.#session.decideShareRequest(...args); }
+  async readProjectSharingSettings() { return this.#session.readProjectSharingSettings(); }
+  async updateProjectSharingSettings(...args: Parameters<MnemosAccountSession["updateProjectSharingSettings"]>) { return this.#session.updateProjectSharingSettings(...args); }
   async nodeHistory(projectId: string, nodeId: string, cursor: string) { return this.#session.nodeHistory(projectId, nodeId, cursor, 50); }
   async searchProject(projectId: string, query: string) { return this.#session.searchProject(projectId, query); }
   async readProjectDocument(projectId: string, nodeId: string) { return this.#session.readProjectDocument(projectId, nodeId); }

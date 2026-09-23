@@ -20,6 +20,8 @@ export function defaultMethods(calls) {
     async inboxStatus(){return {total:0,in_queue:0,awaiting_classification:0,awaiting_placement:0,placed_in_tree:0,dead_lettered:0,dead_letters:[],dead_letters_truncated:false};},
     async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример команды", capabilities:["project.create","principal.manage","platform.metrics.read"] }; },
     async listProjects() { return { projects: [{ id: "one", name: "Общий проект", slug: "shared" }, { id: "two", name: "Второй проект", slug: "second" }] }; },
+    async listShareRequests() { return { requests: [] }; },
+    async readProjectSharingSettings() { return { personal_projects_enabled: true, project_create_by: "everyone", share_department_approval: "head", share_organization_by: "head", share_organization_approval: "none", default_visibility: "private" }; },
     async browseProject(id) {
       if (id === "one") return { nodes: [{ node_id: "doc", name: "Заметка команды", is_dir: false }, { node_id: "dir", name: "Папка", is_dir: true }, { node_id: "plan", name: "План", is_dir: false }], truncated: false };
       return { nodes: [{ node_id: "other", name: "Другой документ", is_dir: false }], truncated: false };

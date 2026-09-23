@@ -3,9 +3,9 @@ import { Button, Dialog } from "@cloudflare/kumo";
 import type { ManagedAgentRequest } from "../src/account-session.ts";
 import { formatBudgetUSD } from "../app/budget-money.ts";
 import { useUi } from "./host.ts";
-import { agentEnvironment, projectName, useLoad, type AgentConnection, type MemoryData } from "./data.ts";
+import { agentEnvironment, agentNames, isAdministrator, projectName, UNNAMED_DOCUMENT, useLoad, type AgentConnection, type MemoryData } from "./data.ts";
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
-import { Block, Notice, Select, StatusBadge, TextInput } from "./ui.tsx";
+import { AdminDetails, Block, Notice, Select, StatusBadge, TextInput } from "./ui.tsx";
 
 type OpenLegacy = ReturnType<typeof useLegacySection>["open"];
 
@@ -23,6 +23,7 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
   const task = data.task;
   const usage = useLoad(async () => task?.team_budget ? ui.readTeamBudgetUsage(task.team_budget.project_id, task.team_budget.proposal_id) : null, "расход не прочитан", [task?.team_budget?.proposal_id, ui]);
   const connections = [...data.connections].sort((a, b) => Number(a.revoked) - Number(b.revoked));
+  const titles = agentNames(data.connections);
 
   return (
     <LegacySwitch state={legacy}>
@@ -31,14 +32,14 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
         <Button variant="secondary" size="sm" onClick={() => setPanel(panel === "external" ? "" : "external")}>Подключить Codex / Claude Code</Button>
         <Button variant="primary" size="sm" onClick={() => setPanel(panel === "provision" ? "" : "provision")}>Выдать агента</Button>
       </div>
-      {panel === "provision" && <ProvisionPanel onDone={() => void data.reloadConnections()} />}
+      {panel === "provision" && <ProvisionPanel admin={isAdministrator(data.identity)} onDone={() => void data.reloadConnections()} />}
       <ExternalAgentDialog open={panel === "external"} onClose={() => setPanel("")} data={data} />
       {data.connectionsError && <div className="mb-3"><Notice tone="danger">{data.connectionsError}</Notice></div>}
       {data.taskError && <div className="mb-3"><Notice tone="danger">{data.taskError}</Notice></div>}
       {!data.connectionsError && !data.connectionsCursor && connections.length === 0 && <Notice>Агентов пока нет: выдайте управляемого агента или подключите своего.</Notice>}
       {data.connectionsCursor && <Button disabled={data.connectionsLoading} onClick={()=>void data.loadMoreConnections()}>Загрузить ещё агентов</Button>}
       {connections.map(agent => (
-        <AgentCard key={agent.binding_id} agent={agent} data={data} openLegacy={legacy.open}
+        <AgentCard key={agent.binding_id} agent={agent} title={titles.get(agent.binding_id) ?? "Агент"} data={data} openLegacy={legacy.open}
           memory={memory.value?.selection.node_id ? memory.value.name : memory.error || "Память отключена"}
           telegram={telegram.error ? telegram.error : (telegram.value?.connections ?? []).filter(c => c.binding === agent.binding_id).map(c => `@${c.username}${c.disconnected ? " — отключён" : c.channel_registered ? " — подключён" : " — требуется подтверждение"}`).join(", ") || "канал не подключён"}
           usage={task?.binding_id === agent.binding_id && task.team_budget ? (usage.value ? `расход ${formatBudgetUSD(usage.value.actual_usd_micros)} $ · зарезервировано ${formatBudgetUSD(usage.value.reserved_usd_micros)} $` : usage.error || "расход читается…") : "бюджет задаётся заявкой на задачу; текущей заявки нет"} />
@@ -47,7 +48,7 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
   );
 }
 
-function AgentCard({ agent, data, openLegacy, memory, telegram, usage }: { agent: AgentConnection; data: MemoryData; openLegacy: OpenLegacy; memory: string; telegram: string; usage: string }) {
+function AgentCard({ agent, title, data, openLegacy, memory, telegram, usage }: { agent: AgentConnection; title: string; data: MemoryData; openLegacy: OpenLegacy; memory: string; telegram: string; usage: string }) {
   const ui = useUi();
   const [confirming, setConfirming] = useState(false);
   const [rights, setRights] = useState(false);
@@ -88,8 +89,9 @@ function AgentCard({ agent, data, openLegacy, memory, telegram, usage }: { agent
     <article data-agent={agent.binding_id} className="mb-4 rounded-xl border border-kumo-line bg-kumo-base p-4">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="m-0 text-[15px] font-semibold text-kumo-strong">{agent.agent_principal_id}</h2>
-          <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">Владелец — вы · среда {agentEnvironment(agent)}{managed ? ", управляемый" : ""} · {agent.runtime_id} · {agent.runtime_agent_id}</p>
+          <h2 className="m-0 text-[15px] font-semibold text-kumo-strong">{title}</h2>
+          <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">Владелец — вы · среда {agentEnvironment(agent)}{managed ? ", управляемый" : ""}</p>
+          <AdminDetails show={isAdministrator(data.identity)} items={[["Подключение", agent.binding_id], ["Учётная запись агента", agent.agent_principal_id], ["Среда", agent.runtime_id], ["Агент в среде", agent.runtime_agent_id]]} />
         </div>
         <StatusBadge tone={agent.revoked ? "neutral" : running ? "info" : "success"}>{agent.revoked ? "Доступ отозван" : running ? "Работает" : "Ожидает"}</StatusBadge>
       </div>
@@ -98,7 +100,7 @@ function AgentCard({ agent, data, openLegacy, memory, telegram, usage }: { agent
       <dl className="mt-3 mb-0 grid grid-cols-[160px_minmax(0,1fr)] gap-x-4 gap-y-2 text-[13px] leading-[18px] text-kumo-default max-md:grid-cols-1">
         <dt className="m-0 text-kumo-subtle">Проекты и права</dt>
         <dd className="m-0">
-          {agent.revoked ? "Доступ отозван." : agent.document_grants === undefined ? "Права не прочитаны. Обновите подключение." : agent.document_grants.length === 0 ? "Разрешений на документы не выдано." : agent.document_grants.map((g, i) => <div key={i}>{projectName(data.projects,g.project_id)} · {g.node_id ? `узел ${g.node_id}` : "весь проект"} · {g.mode === "write" ? "чтение и черновики" : "чтение"}{rights ? ` · выдано: ${g.granted_to} · ${g.resource_class}` : ""}</div>)}
+          {agent.revoked ? "Доступ отозван." : agent.document_grants === undefined ? "Права не прочитаны. Обновите подключение." : agent.document_grants.length === 0 ? "Разрешений на документы не выдано." : agent.document_grants.map((g, i) => <div key={i}>«{projectName(data.projects,g.project_id)}» · {g.node_id ? documentLabel(data, g.project_id, g.node_id) : "весь проект"} · {g.mode === "write" ? "чтение и черновики" : "чтение"}{rights ? ` · ${g.resource_class === "database" ? "база данных" : "файлы"}` : ""}</div>)}
           <span className="block text-kumo-subtle">Выданные разрешения ограничены текущими правами владельца. Доступ к каждому документу сервер проверяет при обращении.</span>
         {agent.runtime_id !== "workshop" && !agent.revoked && data.identity?.capabilities?.includes('principal.manage') && <>
           <Button size="sm" variant="secondary" onClick={()=>setEditingScope(!editingScope)}>Настроить доступ к проекту</Button>
@@ -136,7 +138,7 @@ function AgentCard({ agent, data, openLegacy, memory, telegram, usage }: { agent
             <Button variant="secondary" size="sm" onClick={() => setRights(!rights)}>Выданные права</Button>
           </>
         )}
-        <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "engagement", binding: agent.binding_id, name: agent.agent_principal_id }, "Разрешения на привлечение")}>Кто может привлекать</Button>
+        <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "engagement", binding: agent.binding_id, name: title }, "Разрешения на привлечение")}>Кто может привлекать</Button>
         <div className="flex-1" />
         {!agent.revoked && !confirming && <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming(true)}>Отозвать доступ</Button>}
         {!agent.revoked && confirming && <>
@@ -155,7 +157,7 @@ function AgentCard({ agent, data, openLegacy, memory, telegram, usage }: { agent
 }
 
 /** Выдача управляемого агента: заявка с устойчивым request_id, повтор не создаёт второго агента. */
-function ProvisionPanel({ onDone }: { onDone: () => void }) {
+function ProvisionPanel({ admin, onDone }: { admin: boolean; onDone: () => void }) {
   const ui = useUi();
   const saved = useLoad(() => ui.managedAgentRequest(), "Сохранённая заявка не прочитана: проверьте сессию.", [ui]);
   const [request, setRequest] = useState<ManagedAgentRequest | null | undefined>(undefined);
@@ -177,10 +179,11 @@ function ProvisionPanel({ onDone }: { onDone: () => void }) {
       {error && <Notice tone="danger">{error}</Notice>}
       {current ? (
         <div className="text-[13px] leading-[18px] text-kumo-default">
-          <p className="m-0">Шаблон: {current.template_id} · заявка {current.request_id}</p>
+          <p className="m-0">Шаблон: {current.template_id}</p>
+          <AdminDetails show={admin} items={[["Заявка", current.request_id]]} />
           {current.result ? (
             <>
-              <p className="mt-1 mb-2">Агент подготовлен: {current.result.agent_principal_id}. Права на документы назначаются отдельно.</p>
+              <p className="mt-1 mb-2">Агент подготовлен и появится в списке. Права на документы назначаются отдельно.</p>
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(async () => { await ui.finishManagedAgentRequest(current.request_id); onDone(); return null; })}>Новая заявка</Button>
             </>
           ) : (
@@ -200,10 +203,18 @@ function ProvisionPanel({ onDone }: { onDone: () => void }) {
   );
 }
 
+function documentLabel(data: MemoryData, project: string, node: string): string {
+  const found = data.projects.find(p => p.id === project);
+  // Пока документы проекта не прочитаны, имя неизвестно — это не «документ без названия».
+  const name = found?.nodes.find(n => n.node_id === node)?.name || found?.privateDocs.get(node)?.name;
+  if (name) return `документ «${name}»`;
+  return (found?.nodes.length ? `документ «${UNNAMED_DOCUMENT}»` : "отдельный документ");
+}
+
 function WorkshopScope({agent,data,onDone}:{agent:AgentConnection;data:MemoryData;onDone():void}) {
  const ui=useUi();const [selected,setSelected]=useState<string[]>([]);const [error,setError]=useState("");const [busy,setBusy]=useState(false);
  const scope=useLoad(async()=>{const result=await ui.readWorkshopAgentScope(agent.binding_id);setSelected(result.project_ids);return result},"Область доступа не прочитана.",[ui,agent.binding_id]);
- const projects=[...data.projects.map(p=>({id:p.id,name:p.name})),...(scope.value?.project_ids??[]).filter(id=>!data.projects.some(p=>p.id===id)).map(id=>({id,name:"Проект больше недоступен: "+id}))];
+ const projects=[...data.projects.map(p=>({id:p.id,name:p.name})),...(scope.value?.project_ids??[]).filter(id=>!data.projects.some(p=>p.id===id)).map(id=>({id,name:"Проект, который вам больше недоступен"}))];
  return <section aria-label="Проекты агента"><p>Выберите проекты. Сервер ограничит доступ вашими текущими правами. Переподключение не требуется.</p>
  {projects.map(p=><label key={p.id} className="block"><input type="checkbox" checked={selected.includes(p.id)} disabled={busy||scope.loading} onChange={e=>setSelected(ids=>e.target.checked?[...ids,p.id]:ids.filter(id=>id!==p.id))}/>{p.name}</label>)}
  {(error||scope.error)&&<Notice tone="danger">{error||scope.error}</Notice>}

@@ -714,6 +714,22 @@ export class MnemosAccountSession {
     const page = await this.#client.listProjects(this.#lifetime.signal);
     this.#check(); return page;
   }
+  /** Поделиться может только человек: whoAmI отсекает агентскую сессию до обращения к серверу. */
+  async setProjectVisibility(project: string, level: import("./project-sharing.ts").ProjectVisibility, canEdit: boolean) {
+    await this.whoAmI(); const out = await this.#client.setProjectVisibility(project, level, canEdit, this.#lifetime.signal); this.#check(); return out;
+  }
+  async listShareRequests(mine = false) {
+    await this.whoAmI(); const out = await this.#client.listShareRequests(mine, this.#lifetime.signal); this.#check(); return out;
+  }
+  async decideShareRequest(request: string, approve: boolean) {
+    await this.whoAmI(); const out = await this.#client.decideShareRequest(request, approve, this.#lifetime.signal); this.#check(); return out;
+  }
+  async readProjectSharingSettings() {
+    this.#check(); const out = await this.#client.readProjectSharingSettings(this.#lifetime.signal); this.#check(); return out;
+  }
+  async updateProjectSharingSettings(settings: import("./project-sharing.ts").ProjectSharingSettings) {
+    await this.requirePeopleManager(); const out = await this.#client.updateProjectSharingSettings(settings, this.#lifetime.signal); this.#check(); return out;
+  }
   async browseProject(projectId: string, cursor = "") {
     this.#check();
     const page = await this.#client.browseProject(projectId, cursor, this.#lifetime.signal);

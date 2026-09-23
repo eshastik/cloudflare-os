@@ -3,6 +3,7 @@ import { Button } from "@cloudflare/kumo";
 import type { PublicationReview } from "../src/mnemos-api.ts";
 import { useHost } from "./host.ts";
 import { Notice } from "./ui.tsx";
+import { personName, UNNAMED_DOCUMENT } from "./data.ts";
 
 export default function ReviewDetails({ review, names }: { review: PublicationReview; names: Map<string, string> }) {
   const host = useHost();
@@ -20,22 +21,19 @@ export default function ReviewDetails({ review, names }: { review: PublicationRe
     }
   }
   return <div className="space-y-3 text-[13px]">
-    <p>Версия согласования: {review.decision_version}. Требуются решения всех назначенных специалистов. Одобрение одной области не заменяет остальные.</p>
-    <div className="overflow-x-auto">
-      <table className="w-full text-left">
-        <thead><tr><th className="p-2">Область</th><th className="p-2">Согласующие</th><th className="p-2">Документы</th></tr></thead>
-        <tbody>{review.domains.map(domain => <tr key={domain.domain_id} className="border-t border-kumo-line">
-          <td className="p-2 align-top">{domain.domain_id}</td>
-          <td className="p-2 align-top">{domain.approvers.map(person => {
-            const decision = domain.decisions.find(item => item.approver_id === person);
-            return <div key={person}>{person}: {decision ? decision.approved ? "одобрено" : "отклонено" : "ожидает решения"}</div>;
-          })}</td>
-          <td className="p-2 align-top">{domain.node_ids.map(node => <div key={node}><Button variant="ghost" size="sm" onClick={() => void open(node)}>{names.get(`${review.project_id}/${node}`) || node}</Button></div>)}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>
+    <p className="m-0 text-kumo-subtle">Нужны решения всех назначенных согласующих: одобрение одного направления не заменяет остальные.</p>
+    <ul aria-label="Направления согласования" className="m-0 grid list-none gap-2 p-0">
+      {review.domains.map(domain => <li key={domain.domain_id} className="rounded-lg border border-kumo-line p-3">
+        <div className="font-medium text-kumo-default">Направление {domain.domain_id}</div>
+        <div className="mt-1 text-kumo-subtle">{domain.approvers.map(person => {
+          const decision = domain.decisions.find(item => item.approver_id === person);
+          return <div key={person}>{personName(person)}: {decision ? decision.approved ? "одобрено" : "отклонено" : "ожидает решения"}</div>;
+        })}</div>
+        <div className="mt-1 flex flex-wrap gap-1">{domain.node_ids.map(node => <Button key={node} variant="ghost" size="sm" onClick={() => void open(node)}>{names.get(`${review.project_id}/${node}`) || UNNAMED_DOCUMENT}</Button>)}</div>
+      </li>)}
+    </ul>
     {preview && <section aria-label="Изменения документа" className="rounded-lg border border-kumo-line p-3">
-      <div className="flex items-center justify-between"><h3>{names.get(`${review.project_id}/${preview.node}`) || preview.node}</h3><Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Закрыть просмотр</Button></div>
+      <div className="flex items-center justify-between"><h3>{names.get(`${review.project_id}/${preview.node}`) || UNNAMED_DOCUMENT}</h3><Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Закрыть просмотр</Button></div>
       {preview.loading ? <Notice>Загрузка версии…</Notice> : preview.error ? <Notice tone="danger">{preview.error}</Notice> : <div className="grid gap-3 md:grid-cols-2">
         <div><h4>До изменения</h4><pre className="whitespace-pre-wrap break-words font-sans">{preview.before ?? "Нет текстового представления"}</pre></div>
         <div><h4>Предлагаемая версия</h4><pre className="whitespace-pre-wrap break-words font-sans">{preview.after ?? "Нет текстового представления"}</pre></div>

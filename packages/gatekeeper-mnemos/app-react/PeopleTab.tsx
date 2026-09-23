@@ -92,7 +92,7 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
         if(visited.has(cursor)||visited.size>=200)throw Error("Каталог областей неполон");
         visited.add(cursor);
         const page=await ui.browseProject(project,cursor);
-        for(const entry of page.nodes)if(entry.functional_role_id){const id=entry.functional_role_id;found.set(id,{id,name:STANDARD_RESOURCE_DOMAINS.find(domain=>domain.id===id)?.name||entry.name||id});}
+        for(const entry of page.nodes)if(entry.functional_role_id){const id=entry.functional_role_id;found.set(id,{id,name:STANDARD_RESOURCE_DOMAINS.find(domain=>domain.id===id)?.name||entry.name||"Область без названия"});}
         if(page.truncated&&!page.next_cursor)throw Error("Каталог областей неполон");
         cursor=page.next_cursor||"";
       if(!current)return;
@@ -101,10 +101,10 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
     })().catch(()=>{if(current)setDomainsError(true);}).finally(()=>{if(current)setDomainsLoading(false);});
     return()=>{current=false;};
   },[ui,project]);
-  const summary=(r:AdminRight)=> r.kind==="capability" ? `Полномочие: ${r.capability}` : `${data.projects.find(p=>p.id===r.project_id)?.name || r.project_id} · ${r.functional_role_id ? roles.find(a=>a.id===r.functional_role_id)?.name || r.functional_role_id : "все предметные области"} · ${r.class==="database"?"база данных":"файлы"} · ${r.mode==="write"?"чтение и запись":"чтение"} · ${r.node_id ? "узел: "+r.node_id : "весь проект"}`;
+  const summary=(r:AdminRight)=> r.kind==="capability" ? `Полномочие: ${r.capability}` : `${projectName(r)} · ${domainName(r)} · ${r.class==="database"?"база данных":"файлы"} · ${r.mode==="write"?"чтение и запись":"чтение"} · ${r.node_id ? "часть проекта" : "весь проект"}`;
   const change=async(request=pending)=>{if(!request||busy)return;setBusy(true);setError("");setNotice("");try {if(request.remove){const r=await ui.removePersonRight(request.right);setNotice(r.outcome==="removed"?"Назначение отозвано.":r.outcome==="absent"?"Это назначение уже отсутствует.":r.outcome==="subject_unknown"?"Человек больше не найден в организации.":"Результат отзыва неизвестен. Проверьте список назначений.");}else{await ui.grantPersonRight(request.right);setNotice("Назначение сохранено.");}setPending(null);setEditing(false);setRevision(v=>v+1);}catch{setError("Сервер не подтвердил изменение. Обновите назначения перед повтором.");setPending(null);setRevision(v=>v+1);}finally{setBusy(false);}};
   const projectName=(r:AdminRight)=>data.projects.find(p=>p.id===r.project_id)?.name||"Проект недоступен";
-  const domainName=(r:AdminRight)=>r.functional_role_id ? STANDARD_RESOURCE_DOMAINS.find(d=>d.id===r.functional_role_id)?.name||roles.find(d=>d.id===r.functional_role_id)?.name||r.functional_role_id : "Все области";
+  const domainName=(r:AdminRight)=>r.functional_role_id ? STANDARD_RESOURCE_DOMAINS.find(d=>d.id===r.functional_role_id)?.name||roles.find(d=>d.id===r.functional_role_id)?.name||"Область без названия" : "Все области";
   return <section aria-label={`Доступ: ${person.displayName||person.userName}`} className="min-w-0">
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0"><h2 className="m-0 break-words text-base font-semibold">{person.displayName||person.userName}</h2><div className="mt-2"><StatusBadge tone={person.active?"success":"neutral"}>{person.active?"Активен":"Доступ приостановлен"}</StatusBadge></div></div>

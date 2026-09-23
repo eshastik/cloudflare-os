@@ -31,7 +31,7 @@ test("«Проекты»: список, страница проекта с уч�
     await app.until(() => section("Участники и направления")?.textContent.includes("Кэрол"), "участники из политики");
     assert.ok(section("Участники и направления").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
     assert.ok(section("Участники и направления").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
-    await app.until(() => section("Агенты проекта")?.textContent.includes("agent-alice"), "агенты");
+    await app.until(() => section("Агенты проекта")?.textContent.includes("Агент AgenticOS") && !section("Агенты проекта").textContent.includes("agent-alice"), "агенты по имени, без идентификатора");
     await app.until(() => section("Правила согласования")?.textContent.includes("Папка"), "правило по папке");
     assert.ok(section("Правила согласования").textContent.includes("Все документы проекта"), "правило на весь проект");
     await app.until(() => section("Источники проекта")?.textContent.includes("Аналитика") && section("Источники проекта").textContent.includes("yandex"), "источники проекта");

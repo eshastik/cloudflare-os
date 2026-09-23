@@ -2,9 +2,9 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@cloudflare/kumo";
 import type { CorporateOrigin } from "../src/corporate-import.ts";
 import { useUi } from "./host.ts";
-import { projectName, useLoad, type MemoryData } from "./data.ts";
+import { agentNames, isAdministrator, looksLikeId, projectName, UNNAMED_DOCUMENT, useLoad, type MemoryData } from "./data.ts";
 import { LegacySwitch, useLegacySection, type LegacySection } from "./legacy.tsx";
-import { Block, Notice, Row, RowList, RowText, Select, StatusBadge } from "./ui.tsx";
+import { AdminDetails, Block, Notice, Row, RowList, RowText, Select, StatusBadge } from "./ui.tsx";
 
 interface SourceRow {
   key: string;
@@ -41,19 +41,20 @@ export default function SourcesTab({ data }: { data: MemoryData }) {
   const databases = useLoad(() => ui.listVisibleDatabaseConnections(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
   const telegram = useLoad(() => ui.listTelegram(), "не удалось загрузить подключения; проверьте их настройку и права доступа", [ui]);
   const project = (id: string) => projectName(data.projects, id);
+  const agents = agentNames(data.connections);
 
   const mailRows: SourceRow[] = [
     ...(imap.value?.accounts ?? []).map(a => ({ key: `imap/${a.id}`, title: `Почта · ${imap.value?.servers.find(s => s.id === a.server)?.title ?? a.server}`, scope: `${a.username} · папка ${a.mailbox}`, project: "личный аккаунт, проект назначается подключением ниже", actions: `чтение агентом · наружу: отправка письма${a.send_from ? ` от ${a.send_from}` : ""} только после согласования черновика`, loaded: loadedAt(a), error: loadError(a) || (a.enabled ? "" : "аккаунт отключён"), copies: false })),
-    ...(mail.value?.connections ?? []).map(c => ({ key: `mail/${c.connection_id}`, title: `Почта · ${c.provider}`, scope: `подключение ${c.connection_id}`, project: project(c.project_id), actions: "чтение агентом · наружу: отправка письма только после согласования черновика", loaded: loadedAt(c), error: loadError(c) || (c.enabled ? "" : "подключение отключено"), copies: false })),
+    ...(mail.value?.connections ?? []).map(c => ({ key: `mail/${c.connection_id}`, title: `Почта · ${c.provider}`, scope: "подключение к проекту", project: project(c.project_id), actions: "чтение агентом · наружу: отправка письма только после согласования черновика", loaded: loadedAt(c), error: loadError(c) || (c.enabled ? "" : "подключение отключено"), copies: false })),
   ];
   const calendarRows: SourceRow[] = [
     ...(caldav.value?.accounts ?? []).map(a => ({ key: `caldav/${a.id}`, title: `Календарь · ${caldav.value?.servers.find(s => s.id === a.server)?.title ?? a.server} (CalDAV)`, scope: `${a.username} · ${a.calendars.map(c => c.title).join(", ") || "календари не выбраны"}`, project: "личный аккаунт, проект назначается подключением ниже", actions: "чтение окна событий · наружу: встреча только после согласования черновика", loaded: loadedAt(a), error: loadError(a) || (a.enabled ? "" : "аккаунт отключён"), copies: false })),
-    ...(calendars.value?.connections ?? []).map(c => ({ key: `cal/${c.connection_id}`, title: `Календарь · ${c.provider}`, scope: `календарь ${c.calendar_id}`, project: project(c.project_id), actions: "чтение окна событий · наружу: встреча только после согласования черновика", loaded: loadedAt(c), error: loadError(c) || (c.enabled ? "" : "подключение отключено"), copies: false })),
+    ...(calendars.value?.connections ?? []).map(c => ({ key: `cal/${c.connection_id}`, title: `Календарь · ${c.provider}`, scope: looksLikeId(c.calendar_id) ? "выбранный календарь" : `календарь ${c.calendar_id}`, project: project(c.project_id), actions: "чтение окна событий · наружу: встреча только после согласования черновика", loaded: loadedAt(c), error: loadError(c) || (c.enabled ? "" : "подключение отключено"), copies: false })),
   ];
   const driveRows: SourceRow[] = (webdav.value?.accounts ?? []).map(a => ({ key: `dav/${a.id}`, title: `Диск · ${webdav.value?.servers.find(s => s.id === a.server)?.title ?? a.server} (WebDAV)`, scope: `${a.username} · выбранные файлы`, project: "проект выбирается при импорте файла", actions: "импорт копий · наружу ничего не пишется", loaded: loadedAt(a), error: loadError(a) || (a.enabled ? "" : "аккаунт отключён"), copies: true }));
   const gitRows: SourceRow[] = (git.value?.connections ?? []).map(c => ({ key: `git/${c.connection_id}`, title: `${c.name} · ${c.provider}`, scope: `${c.account_login} · ${c.api_base}`, project: "репозитории привязываются к проекту в настройке", actions: "чтение файлов и коммитов · наружу: push через подключённого агента только после согласования", loaded: loadedAt(c), error: loadError(c) || (c.enabled ? "" : "подключение отключено"), copies: false }));
   const databaseRows: SourceRow[] = (databases.value?.databases ?? []).map(d => ({ key: `db/${d.db_id}`, title: `${d.name} · ${d.driver}`, scope: d.configured ? "схема прочитана" : "схема ещё не прочитана", project: project(d.project_id), actions: "запросы агента только на чтение", loaded: d.last_sweep_at ? `последняя проверка схемы ${timeOf(d.last_sweep_at)}` : NO_LOAD_TIME, error: d.unreachable_since ? `база недоступна с ${timeOf(d.unreachable_since)}` : "", copies: false }));
-  const telegramRows: SourceRow[] = (telegram.value?.connections ?? []).map(c => ({ key: `tg/${c.bot}`, title: `Telegram · @${c.username}`, scope: `бот ${c.bot} · агент ${c.binding}`, project: "проект задаётся задачей агента", actions: "задачи агенту через бот · наружу: ответы в чат от имени того же агента, с журналом", loaded: NO_LOAD_TIME, error: c.disconnected ? "бот отключён" : c.channel_registered ? "" : c.ready ? "требуется подтверждение в чате" : "бот недоступен", copies: false }));
+  const telegramRows: SourceRow[] = (telegram.value?.connections ?? []).map(c => ({ key: `tg/${c.bot}`, title: `Telegram · @${c.username}`, scope: `отвечает: ${agents.get(c.binding) ?? "ваш агент"}`, project: "проект задаётся задачей агента", actions: "задачи агенту через бот · наружу: ответы в чат от имени того же агента, с журналом", loaded: NO_LOAD_TIME, error: c.disconnected ? "бот отключён" : c.channel_registered ? "" : c.ready ? "требуется подтверждение в чате" : "бот недоступен", copies: false }));
 
   const groups: { title: string; rows: SourceRow[]; error: string; loading: boolean; section: LegacySection; sectionTitle: string; extra?: { section: LegacySection; title: string } }[] = [
     { title: "Почта", rows: mailRows, error: [imap.error && `аккаунты: ${imap.error}`, mail.error && `подключения: ${mail.error}`].filter(Boolean).join("; "), loading: imap.loading || mail.loading, section: { kind: "imap" }, sectionTitle: "Аккаунты почты", extra: { section: { kind: "mail" }, title: "Доступ к почте" } },
@@ -123,9 +124,12 @@ function OriginBlock({ data }: { data: MemoryData }) {
   if (result?.busy) outcome = <Notice>Читаем…</Notice>;
   else if (result?.error) outcome = <Notice tone="danger">{result.error}</Notice>;
   else if (result?.origin) outcome = (
-    <Notice>
-      Оригинал: {result.origin.provider} · {result.origin.entity_kind} {result.origin.entity_id} (узел источника {result.origin.source_node_id}) · рабочая копия: «{documents.find(d => d.id === nodeId)?.name ?? nodeId}» в проекте «{project?.name}» · внешний источник не изменяется.
-    </Notice>
+    <div>
+      <Notice>
+        Оригинал: {result.origin.provider}{looksLikeId(result.origin.entity_id) ? "" : ` · ${result.origin.entity_id}`} · рабочая копия: «{documents.find(d => d.id === nodeId)?.name || UNNAMED_DOCUMENT}» в проекте «{project?.name}» · внешний источник не изменяется.
+      </Notice>
+      <AdminDetails show={isAdministrator(data.identity)} items={[["Запись источника", `${result.origin.entity_kind} ${result.origin.entity_id}`], ["Узел источника", result.origin.source_node_id]]} />
+    </div>
   );
 
   return (
@@ -138,7 +142,7 @@ function OriginBlock({ data }: { data: MemoryData }) {
         </Select>
         <Select aria-label="Документ копии" value={nodeId} onChange={e => { setNodeId(e.target.value); setResult(null); }} disabled={!projectId}>
           <option value="">Документ личной версии…</option>
-          {documents.map(d => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
+          {documents.map(d => <option key={d.id} value={d.id}>{d.name || UNNAMED_DOCUMENT}</option>)}
         </Select>
         <Button variant="secondary" size="sm" disabled={!projectId || !nodeId || !!result?.busy} onClick={() => void show()}>Показать происхождение</Button>
       </div>

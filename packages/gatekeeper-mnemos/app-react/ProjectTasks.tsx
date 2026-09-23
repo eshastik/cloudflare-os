@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "@cloudflare/kumo";
-import { CheckCircle, CircleNotch, GitBranch, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, WarningCircle } from "@phosphor-icons/react";
 import type { GitProjectRepository } from "../src/git-connections.ts";
 import type { WorkspaceState, WorkspaceTaskDetails, WorkspaceTaskView } from "../src/workspace-tasks.ts";
 import type { WorkspaceStep } from "../src/workspace-steps.ts";
 import { useUi } from "./host.ts";
-import { Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { AdminDetails, Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
 
 /** Опрос хода задачи, пока агент работает. */
 export const TASK_POLL_MS = 2000;
@@ -78,10 +78,10 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
     <Dialog.Root open={open} onOpenChange={value => { if (!value && !busy) onClose(); }}>
       <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto bg-kumo-base p-6">
         <Dialog.Title className="text-lg font-semibold">Поручить агенту</Dialog.Title>
-        <Dialog.Description className="mt-2 text-sm text-kumo-subtle">Агент работает в отдельной копии репозитория и отправляет изменения в свою ветку. Основная ветка меняется только после вашего решения.</Dialog.Description>
+        <Dialog.Description className="mt-2 text-sm text-kumo-subtle">Агент работает в отдельной копии кода проекта. Основная версия меняется только после вашего решения.</Dialog.Description>
         <form aria-label="Задача агенту" className="mt-5 grid gap-3 text-sm" onSubmit={e => { e.preventDefault(); void submit(); }}>
           {repositories.length > 1 && (
-            <label className="grid gap-1.5">Репозиторий
+            <label className="grid gap-1.5">Код проекта
               <Select aria-label="Репозиторий задачи" value={selected ? repoKey(selected) : ""} onChange={e => setRepo(e.target.value)} disabled={busy}>
                 {repositories.map(r => <option key={repoKey(r)} value={repoKey(r)}>{r.repository_name}</option>)}
               </Select>
@@ -104,7 +104,7 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
 }
 
 /** Вкладка «Задачи агентов»: список задач проекта и ход выбранной. */
-export default function ProjectTasks({ projectId, repositories, onCompare }: { projectId: string; repositories: GitProjectRepository[] | undefined; onCompare(task: WorkspaceTaskView): void }) {
+export default function ProjectTasks({ projectId, repositories, onCompare, admin = false }: { projectId: string; repositories: GitProjectRepository[] | undefined; onCompare(task: WorkspaceTaskView): void; admin?: boolean }) {
   const ui = useUi();
   const [tasks, setTasks] = useState<WorkspaceTaskView[] | null>(null);
   const [error, setError] = useState("");
@@ -135,12 +135,12 @@ export default function ProjectTasks({ projectId, repositories, onCompare }: { p
           </RowList>
         )}
       </Block>
-      {current && <TaskDetails key={current.task_id} projectId={projectId} task={current} onChanged={task => setTasks(list => (list ?? []).map(t => t.task_id === task.task_id ? task : t))} onCompare={onCompare} />}
+      {current && <TaskDetails key={current.task_id} admin={admin} projectId={projectId} task={current} onChanged={task => setTasks(list => (list ?? []).map(t => t.task_id === task.task_id ? task : t))} onCompare={onCompare} />}
     </div>
   );
 }
 
-function TaskDetails({ projectId, task: initial, onChanged, onCompare }: { projectId: string; task: WorkspaceTaskView; onChanged(task: WorkspaceTaskView): void; onCompare(task: WorkspaceTaskView): void }) {
+function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: { admin: boolean; projectId: string; task: WorkspaceTaskView; onChanged(task: WorkspaceTaskView): void; onCompare(task: WorkspaceTaskView): void }) {
   const ui = useUi();
   const [details, setDetails] = useState<WorkspaceTaskDetails | null>(null);
   const [error, setError] = useState("");
@@ -189,7 +189,8 @@ function TaskDetails({ projectId, task: initial, onChanged, onCompare }: { proje
         <h2 className="m-0 min-w-0 flex-1 truncate text-[15px] font-semibold text-kumo-strong">{task.title}</h2>
         <StatusBadge tone={STATE[task.state].tone}>{STATE[task.state].label}</StatusBadge>
       </div>
-      <p className="mt-0 mb-3 flex items-center gap-1.5 text-[12px] text-kumo-subtle"><GitBranch size={14} aria-hidden="true" />{task.branch}{task.reason && ` · ${task.reason}`}</p>
+      {task.reason && <p className="mt-0 mb-3 text-[12px] text-kumo-subtle">{task.reason}</p>}
+      <AdminDetails show={admin} items={[["Задача", task.task_id], ["Ветка", task.branch]]} />
       {error && <div className="mb-2"><Notice tone="danger">{error}</Notice></div>}
       {details && details.steps.length > 0 && (
         <ol aria-label="Шаги агента" className="m-0 mb-4 grid list-none gap-1 p-0">
@@ -201,7 +202,7 @@ function TaskDetails({ projectId, task: initial, onChanged, onCompare }: { proje
         <div aria-label="Ответ агента" className="mb-4 max-w-[650px] whitespace-pre-wrap rounded-xl border border-kumo-line bg-kumo-base p-3 text-sm leading-[1.43] text-kumo-default">{details.answer}</div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => onCompare(task)}>Сравнить с main</Button>
+        <Button variant="secondary" size="sm" onClick={() => onCompare(task)}>Показать изменения</Button>
         {!finished && <Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(() => ui.abortWorkspaceTask(projectId, task.task_id), "Задача не остановлена. Повторите.")}>Остановить</Button>}
       </div>
       {!finished && (
