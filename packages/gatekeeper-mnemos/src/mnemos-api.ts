@@ -107,7 +107,7 @@ export class MnemosAPI {
   }
   submitProjectUpload(projectId: string, uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {
     if (typeof projectId !== "string" || !projectId || projectId.length > 255) throw new TypeError("Не выбран проект");
-    return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId,review_required:true});
+    return this.#request('/v1/inbox','POST',signal,{...checkedIntakeSubmit(uploadId,sourcePath,modifiedAt),project_id:projectId});
   }
   submitInboxUpload(uploadId: string, sourcePath: string, modifiedAt?: number, signal?: AbortSignal): Promise<IntakeReceipt> {return this.#request('/v1/inbox','POST',signal,checkedIntakeSubmit(uploadId,sourcePath,modifiedAt));}
   inboxStatus(signal?: AbortSignal, projectId?:string): Promise<IntakeStatus> {return this.#request('/v1/inbox/status?limit=200'+(projectId?'&project_id='+encodeURIComponent(projectId):''),'GET',signal);}
