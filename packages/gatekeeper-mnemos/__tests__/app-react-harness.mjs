@@ -14,6 +14,7 @@ export function defaultMethods(calls) {
   const record = (name, ...args) => { calls.push([name, ...args]); };
   return {
     async listTemplateReviewScopes(){return {scopes:[],next_cursor:""};},
+    async inboxAlerts(){return {alerts:[],truncated:false};},
     async workspaceAvailable(){return false;},
     async listWorkspaceTasks(){return {tasks:[]};},
     async inboxStatus(){return {total:0,in_queue:0,awaiting_classification:0,awaiting_placement:0,placed_in_tree:0,dead_lettered:0,dead_letters:[],dead_letters_truncated:false};},

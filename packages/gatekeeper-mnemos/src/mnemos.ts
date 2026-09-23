@@ -724,10 +724,22 @@ export class UserAccount extends DurableObject<Env> {
   async inboxCount(userId: string): Promise<number | undefined> {
     const session = this.#account().session();
     const count = (async () => {
+      // Шаблоны и приёмная — те же источники, что строки «Входящих»; источник, в котором человеку
+      // отказано, для него пуст, а медленный — снимает весь счётчик через общий срок ниже.
+      const templates = (async () => {
+        const scopes = (await session.listTemplateReviewScopes("")).scopes.slice(0, INBOX_TEMPLATE_SCOPES);
+        const pages = await Promise.all(scopes.map(async scope => (await session.listTemplateProposals(scope.scope_id, "").catch(() => ({ proposals: [] }))).proposals.map(review => ({ scope, review }))));
+        return pages.flat();
+      })().catch(() => []);
+      const alerts = (async () => {
+        const projects = (await session.listProjects()).projects.slice(0, INBOX_ALERT_PROJECTS);
+        const pages = await Promise.all(projects.map(async project => (await session.inboxAlerts(false, project.id).catch(() => ({ alerts: [] }))).alerts.map(alert => ({ project: project.id, alert }))));
+        return pages.flat();
+      })().catch(() => []);
       const [reviews, requests] = await Promise.all([session.listPublicationReviews(""), session.listCollaborations("")]);
       const mine = requests.requests.filter(request => request.requester_user_id === userId).slice(0, INBOX_PROGRESS_LIMIT);
       const collaborations = await Promise.all(mine.map(async request => ({ request, progress: await session.readCollaborationProgress(request.request_id).catch(() => null) })));
-      return inboxDecisions(reviews.reviews, collaborations, userId);
+      return inboxDecisions(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts });
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1040,6 +1052,8 @@ const WORKSHOP_AGENT_NAME = "Агент Workshop";
 /** Счётчик «Входящих» не должен задерживать описание аккаунта. */
 const INBOX_COUNT_MS = 1500;
 const INBOX_PROGRESS_LIMIT = 20;
+const INBOX_TEMPLATE_SCOPES = 5;
+const INBOX_ALERT_PROJECTS = 10;
 
 /** Запись черновика синглтоном под агентским credential; методов чтения публикаций и публикации здесь нет. */
 class MnemosAgentAdministration extends RpcTarget {

@@ -85,6 +85,8 @@ test("прямые разделы Mnemos: документы, согласова
     await until(() => text().includes("Содержимое документа") && text().includes("Текст документа"), "просмотр документа");
 
     await app.open("Согласования");
+    await until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");
+    app.document.querySelector('#root [data-inbox="approval"] button').click();
     await until(() => button("Одобрить") && button("Отклонить"), "кнопки решения");
     assert.ok(text().includes("Инженерия") && text().includes("bob") && text().includes("1 из 2"));
     button("Одобрить").click();

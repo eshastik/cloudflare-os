@@ -3,7 +3,6 @@ import { Button } from "@cloudflare/kumo";
 import { useHost, useUi } from "./host.ts";
 import { useMemoryData } from "./data.ts";
 import DocumentsTab from "./DocumentsTab.tsx";
-import ApprovalsTab from "./ApprovalsTab.tsx";
 import MyWorkTab from "./MyWorkTab.tsx";
 import ProjectsTab from "./ProjectsTab.tsx";
 import SourcesTab from "./SourcesTab.tsx";
@@ -79,10 +78,10 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
     {notice && <p role="alert">{notice}</p>}
     {!section && <p>Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел недоступен с вашими текущими полномочиями."}</p> : <LegacySwitch state={tools}>
-      {section === "my-work" && <MyWorkTab data={data} />}
+      {section === "my-work" && <MyWorkTab key="my-work" data={data} />}
       {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("sources")} />}
       {section === "documents" && <DocumentsTab key={documentsProject} data={data} initialProject={documentsProject} />}
-      {section === "approvals" && <ApprovalsTab data={data} />}
+      {section === "approvals" && <MyWorkTab key="approvals" data={data} initialFilter="approvals" />}
       {section === "sources" && <SourcesTab data={data} />}
       {section === "agents" && <AgentsTab data={data} />}
       {section === "people" && <PeopleTab data={data} />}

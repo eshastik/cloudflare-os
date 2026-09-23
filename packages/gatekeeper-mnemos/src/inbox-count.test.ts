@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inboxDecisions } from "./inbox-count.ts";
+import { INBOX_FILTER, inboxDecisions, inboxEntries } from "./inbox-count.ts";
 import { managementSections } from "./management-sections.ts";
 
 const review = (extra: Record<string, unknown>) => ({ candidate_id: "c", project_id: "p", author_id: "bob", ready: false, stale: false, domains: [], ...extra }) as never;
@@ -28,4 +28,18 @@ test("Счётчик попадает только в раздел «Входя�
   assert.equal(managementSections(identity, 4).find(s => s.id === "my-work")?.count, 4);
   assert.equal("count" in managementSections(identity).find(s => s.id === "my-work")!, false);
   assert.equal(managementSections(identity, 4).filter(s => s.count !== undefined).length, 1);
+});
+
+test("Входящие: шаблоны и вопросы приёмной входят в список и в счётчик, отозванное и своё — нет, новое сверху", () => {
+  const scope = { scope_id: "s" } as never;
+  const proposal = (id: string, user: string, at: string) => ({ proposal: { proposal_id: id, user_id: user, created_at: at } }) as never;
+  const alert = (id: string, status: string, at: string) => ({ id, status, raised_at: at, paths: [] }) as never;
+  const reviews = [review({ domains: [domain(["alice"])] }), review({ candidate_id: "w", withdrawn: true, domains: [domain(["alice"])] })];
+  const templates = [{ scope, review: proposal("p1", "bob", "2026-09-20T00:00:00Z") }, { scope, review: proposal("p2", "alice", "2026-09-21T00:00:00Z") }, { scope, review: { ...proposal("p3", "bob", "2026-09-19T00:00:00Z"), decision: {} } as never }];
+  const alerts = [{ project: "a", alert: alert("x", "open", "2026-09-22T00:00:00Z") }, { project: "b", alert: alert("x", "open", "2026-09-22T00:00:00Z") }, { project: "a", alert: alert("y", "decided", "2026-09-23T00:00:00Z") }];
+  const entries = inboxEntries({ reviews, collaborations: [], templates, alerts }, "alice");
+  assert.deepEqual(entries.map(e => e.key), ["approval/c/d", "intake/x", "template/p1"]);
+  assert.equal(inboxDecisions(reviews, [], "alice", { templates, alerts }), 3);
+  assert.equal(INBOX_FILTER.intake, "intake");
+  assert.equal(INBOX_FILTER.acceptance, "agents");
 });

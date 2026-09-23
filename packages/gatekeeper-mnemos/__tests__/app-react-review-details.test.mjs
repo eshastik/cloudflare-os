@@ -15,8 +15,9 @@ const review = {
 test("согласующий проверяет точную версию и видит решения всех доступных областей", async () => {
   const app = await mountMemoryApp({ async listPublicationReviews() { return { reviews: [review], next_cursor: "" }; } }, { section: "approvals" });
   try {
-    await app.until(() => app.button("Проверить изменения"), "просмотр согласования");
-    app.button("Проверить изменения").click();
+    // Строка списка открывает подробности предложения в панели справа.
+    await app.until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");
+    app.document.querySelector('#root [data-inbox="approval"] button').click();
     await app.until(() => app.text().includes("dave: ожидает решения"), "матрица областей");
     assert.ok(app.text().includes("carol: одобрено"));
     assert.ok(app.text().includes("Юридическая") && app.text().includes("Финансовая"));

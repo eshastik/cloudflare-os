@@ -8,6 +8,13 @@ import type {TemplatePromotionReview,TemplateScope} from "../src/work-templates.
 import type {SavedTemplateDecision} from "../src/template-review-actions.ts";
 
 type Page={scope:TemplateScope;items:TemplatePromotionReview[];cursor:string};
+/** Первая страница предложений каждой области, где человек согласует шаблоны. */
+export async function loadTemplateReviews(ui:ReturnType<typeof useUi>):Promise<{scope:TemplateScope;review:TemplatePromotionReview}[]>{
+ const scopes:TemplateScope[]=[];let cursor="";
+ do{const page=await ui.listTemplateReviewScopes(cursor);scopes.push(...page.scopes);cursor=page.next_cursor||"";}while(cursor);
+ const pages=await Promise.all(scopes.map(async scope=>(await ui.listTemplateProposals(scope.scope_id,"")).proposals.map(review=>({scope,review}))));
+ return pages.flat();
+}
 export default function TemplateApprovals({userId}:{userId:string}){
  const ui=useUi();const [pages,setPages]=useState<Page[]>([]),[error,setError]=useState(""),[revision,setRevision]=useState(0);
  useEffect(()=>{let cancelled=false;void(async()=>{
@@ -29,7 +36,7 @@ export default function TemplateApprovals({userId}:{userId:string}){
   </div>)}
  </Block></div>;
 }
-function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
+export function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
  const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
  const [baseline,setBaseline]=useState<string|null>(null);
  const [gadget,setGadget]=useState<{project:string;node:string}|null>(null);
