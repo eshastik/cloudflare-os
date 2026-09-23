@@ -700,7 +700,8 @@ function getToolCallSummary(
     case "requestConnection":
       return { verb: "Попросил подключение", target: tc.input.vendorId };
     case "codeWork":
-      return { verb: "Перешёл к работе с кодом проекта", target: tc.output?.projectTitle ?? tc.input.projectId };
+      // Без названия из ответа проект не подписываем: внутренний идентификатор человеку ничего не говорит.
+      return { verb: "Перешёл к работе с кодом проекта", target: tc.output?.projectTitle };
     case "codeAsk":
       return { verb: "Спросил агента кода", target: tc.output?.projectTitle };
   }
