@@ -39,7 +39,7 @@ test("Потерянный ответ требует проверки сохра
   app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),"Проверено");
   await app.until(()=>app.button("Одобрить шаблон")&&!app.button("Одобрить шаблон").disabled,"версия прочитана");app.button("Одобрить шаблон").click();
   await app.until(()=>app.button("Повторить проверку"),"нужна сверка");assert.equal(app.button("Отклонить шаблон").disabled,true);
-  app.button("Повторить проверку").click();await app.until(()=>app.button("Повторить сохранённое решение"),"сохранённое намерение прочитано");
+  app.button("Повторить проверку").click();await app.until(()=>app.button("Повторить сохранённое решение")&&!app.button("Повторить сохранённое решение").disabled,"сохранённое намерение прочитано");
   assert.equal(app.button("Отклонить шаблон"),undefined);app.button("Повторить сохранённое решение").click();
   await app.until(()=>!app.document.querySelector('section[aria-label="Шаблоны на согласовании"]'),"повтор подтверждён");assert.equal(backend.writes.length,1);
  }finally{app.dispose();}
