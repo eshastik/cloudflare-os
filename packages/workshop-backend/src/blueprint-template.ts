@@ -24,13 +24,21 @@ async function readBounded(stream: ReadableStream<Uint8Array>, maximum: number):
     while (true) {
       const {done, value} = await reader.read(); if (done) break;
       size += value.byteLength;
-      if (size > maximum) { await reader.cancel(); throw new Error('Снимок шаблона слишком велик'); }
+      if (size > maximum) throw new Error('Снимок шаблона слишком велик');
       chunks.push(value);
     }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
   } finally { reader.releaseLock(); }
   const result = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
   return result;
+}
+
+/** Дочитывает отклонённый снимок без сохранения, в пределах того же размера. */
+export async function discardBlueprintTemplate(stream: ReadableStream<Uint8Array>): Promise<void> {
+  await readBounded(stream, MAX_BLUEPRINT_TEMPLATE_BYTES).catch(() => {});
 }
 
 export async function readBlueprintTemplate(stream: ReadableStream<Uint8Array>) {

@@ -113,6 +113,9 @@ async function makeTargetOverseer(gadgetId?: number) {
     impl: {
       ownerId: "user-id",
       ensureAmbientCapsules: async () => {},
+      // open() now verifies observer coverage for the owner too; hooks don't depend on it.
+      ensureObserver: async () => {},
+      maintainNativeAccess: () => () => {},
       markOutputsDirty: () => {},
       joinPresence: () => () => {},
       joinOutputsFanout: () => () => {},

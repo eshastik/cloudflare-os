@@ -2,7 +2,7 @@ import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@g
 import {chatProjects, validateChatProjects, type AgentStep, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import {acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
-import {readBlueprintTemplate} from "./blueprint-template";
+import {readBlueprintTemplate, discardBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
 import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
@@ -7429,7 +7429,12 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): ReturnType<Overseer["importTemplateIntoChat"]> {
     try { return {gadgetId:await this.#importTemplateIntoChat(stream,chatId,operationId)}; }
-    catch(error) { return {error:error instanceof Error?error.message:"Не удалось добавить шаблон"}; }
+    catch(error) {
+      // Непрочитанный RPC-поток дочитывается: отмена или брошенный поток в capnweb
+      // оставляют записи отправителя без обработчика ошибки.
+      if (!stream.locked) await discardBlueprintTemplate(stream);
+      return {error:error instanceof Error?error.message:"Не удалось добавить шаблон"};
+    }
   }
 
   async #importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): Promise<WorkpieceId> {
