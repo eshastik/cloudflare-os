@@ -269,6 +269,11 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   readOperationAudit:MnemosAccountSession["readOperationAudit"];
   readGitFile:MnemosAccountSession["readGitFile"];
   readGitCommit:MnemosAccountSession["readGitCommit"];
+  readGitTree:MnemosAccountSession["readGitTree"];
+  listGitBranches:MnemosAccountSession["listGitBranches"];
+  readGitLog:MnemosAccountSession["readGitLog"];
+  compareGitRefs:MnemosAccountSession["compareGitRefs"];
+  readProjectOverview:MnemosAccountSession["readProjectOverview"];
   readOwnedGitBinding:MnemosAccountSession["readOwnedGitBinding"];
   listProjectGitRepositories: MnemosAccountSession["listProjectGitRepositories"];
   bindGitRepository: MnemosAccountSession["bindGitRepository"];

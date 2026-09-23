@@ -1422,6 +1422,11 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readOperationAudit(after:number){return this.#session.readOperationAudit(after);}
   async readGitFile(project:string,connection:string,repository:string,commit:string,path:string){return this.#session.readGitFile(project,connection,repository,commit,path);}
   async readGitCommit(project:string,connection:string,repository:string,ref:string){return this.#session.readGitCommit(project,connection,repository,ref);}
+  async readGitTree(project:string,connection:string,repository:string,commit:string,path=""){return this.#session.readGitTree(project,connection,repository,commit,path);}
+  async listGitBranches(project:string,connection:string,repository:string,page=1){return this.#session.listGitBranches(project,connection,repository,page);}
+  async readGitLog(project:string,connection:string,repository:string,ref:string,path="",page=1){return this.#session.readGitLog(project,connection,repository,ref,path,page);}
+  async compareGitRefs(project:string,connection:string,repository:string,base:string,head:string){return this.#session.compareGitRefs(project,connection,repository,base,head);}
+  async readProjectOverview(project:string,node=""){return this.#session.readProjectOverview(project,node);}
   async readOwnedGitBinding(project:string,connection:string,repository:string){return this.#session.readOwnedGitBinding(project,connection,repository);}
   async listProjectGitRepositories(project:string,cursor=""){return this.#session.listProjectGitRepositories(project,cursor);}
   async bindGitRepository(project:string,connection:string,repository:string,input:GitRepositorySelection){return this.#session.bindGitRepository(project,connection,repository,input);}

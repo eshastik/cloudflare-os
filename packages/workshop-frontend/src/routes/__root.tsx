@@ -24,7 +24,7 @@ export const Route = createRootRoute({
 function ConnectionLostBanner() {
   return (
     <div className="sticky top-0 z-[100] bg-kumo-warning-tint border-b border-kumo-warning/30 px-4 py-2 text-center text-sm text-kumo-warning">
-      Connection lost — reconnecting…
+      Связь потеряна, переподключаемся…
     </div>
   )
 }
@@ -76,7 +76,7 @@ function RootComponent() {
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         {connectionLost && <ConnectionLostBanner />}
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">{connectionLost ? 'Waiting for server…' : 'Loading...'}</p>
+        <p className="text-sm text-kumo-subtle">{connectionLost ? 'Ждём сервер…' : 'Загрузка…'}</p>
       </div>
     )
   }
@@ -198,22 +198,15 @@ function AuthenticatedShell({
     return <OnboardingWizard onComplete={() => setOnboardingNeeded(false)} />
   }
 
-  // Normal app shell. The workspace editor is rendered fullscreen (no chrome); everything else
-  // gets the persistent left-rail AppShell.
-  const fullscreen = isWorkspaceEditor
+  // One chrome everywhere: the conversation editor keeps the left rail too, it only brings its own
+  // header instead of the shell's top strip.
   return (
     <>
       {connectionLost && <ConnectionLostBanner />}
       <AccountSelectionModal />
-      {fullscreen ? (
-        <main>
-          <Outlet />
-        </main>
-      ) : (
-        <AppShell>
-          <Outlet />
-        </AppShell>
-      )}
+      <AppShell bare={isWorkspaceEditor}>
+        <Outlet />
+      </AppShell>
     </>
   )
 }

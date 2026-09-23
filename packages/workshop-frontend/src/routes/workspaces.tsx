@@ -29,7 +29,7 @@ function WorkspacesPage() {
           className="press inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover"
         >
           <Plus size={14} weight="bold" />
-          Новый чат
+          Новая беседа
         </Link>
       </header>
       <div className="min-h-0 flex-1">

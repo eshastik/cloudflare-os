@@ -12,7 +12,8 @@ import type {CorporateFilePrepared,CorporateUpdateResolution,CorporateRecordUpda
 import type {DatabaseConnection,DatabaseRegistration} from "./database-connections.ts";
 import type {OperationAuditPage} from "./operation-audit.ts";
 import type {GitFile,GitCommit,GitBindingState} from "./git-connections.ts";
-import type {GitProjectRepositoryPage,GitProjectRepository,GitRepositorySelection} from "./git-connections.ts";
+import type {GitProjectRepositoryPage,GitProjectRepository,GitRepositorySelection,GitTree,GitBranchPage,GitLogPage,GitComparison} from "./git-connections.ts";
+import {checkedGitTree,checkedGitBranches,checkedGitLog,checkedGitComparison} from "./git-connections.ts";
 import type {GitConnection,GitConnectionPage,GitRegistration,GitRepositoryPage,GitDisabled} from "./git-connections.ts";
 import type {PersonalWorkTemplateSelection,WorkTemplateResolution} from "./work-templates.ts";
 import {validTemplateScopeConfig,type TemplateScope,type TemplateScopeConfig} from "./work-templates.ts";
@@ -770,6 +771,12 @@ export class MnemosAPI {
   readOperationAudit(after:number,signal?:AbortSignal):Promise<OperationAuditPage>{if(!Number.isSafeInteger(after)||after<0)throw Error("Invalid audit cursor");return this.#request(`/v1/admin/audit?${new URLSearchParams({after:String(after),limit:"100"})}`,"GET",signal);}
   readGitFile(project:string,connection:string,repository:string,commit:string,path:string,signal?:AbortSignal):Promise<GitFile>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/file?${new URLSearchParams({commit,path})}`,"GET",signal);}
   readGitCommit(project:string,connection:string,repository:string,ref:string,signal?:AbortSignal):Promise<GitCommit>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/commit?${new URLSearchParams({ref})}`,"GET",signal);}
+  async readGitTree(project:string,connection:string,repository:string,commit:string,path="",signal?:AbortSignal):Promise<GitTree>{const q=new URLSearchParams({commit});if(path)q.set("path",path);return checkedGitTree(await this.#request(`${gitRepositoryPath(project,connection,repository)}/tree?${q}`,"GET",signal));}
+  async listGitBranches(project:string,connection:string,repository:string,page=1,signal?:AbortSignal):Promise<GitBranchPage>{return checkedGitBranches(await this.#request(`${gitRepositoryPath(project,connection,repository)}/branches?${new URLSearchParams({page:String(page)})}`,"GET",signal));}
+  async readGitLog(project:string,connection:string,repository:string,ref:string,path="",page=1,signal?:AbortSignal):Promise<GitLogPage>{const q=new URLSearchParams({ref,page:String(page)});if(path)q.set("path",path);return checkedGitLog(await this.#request(`${gitRepositoryPath(project,connection,repository)}/log?${q}`,"GET",signal));}
+  async compareGitRefs(project:string,connection:string,repository:string,base:string,head:string,signal?:AbortSignal):Promise<GitComparison>{return checkedGitComparison(await this.#request(`${gitRepositoryPath(project,connection,repository)}/compare?${new URLSearchParams({base,head})}`,"GET",signal));}
+  /** Описания L0/L1 проекта или узла и краткие описания видимых детей. */
+  async readProjectOverview(project:string,node="",signal?:AbortSignal):Promise<ProjectOverview>{const value:ProjectOverview=await this.#request(`/v1/projects/${segment(project)}/overview${node?`?${new URLSearchParams({node})}`:""}`,"GET",signal);if(!value||!Array.isArray(value.children)||typeof value.pending!=="boolean")throw new MnemosAPIError(502);return value;}
   async readOwnedGitBinding(project:string,connection:string,repository:string,signal?:AbortSignal):Promise<GitBindingState>{
     const state=await this.#request<GitBindingState>(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/binding`,"GET",signal);
     // Only the configured Mnemos origin can receive the agent credential. A
@@ -1123,3 +1130,8 @@ export interface PrincipalMembership {container_id:string;container_kind:string;
 export interface OrganizationRole {id:string;kind:string;name:string;active:boolean;}
 /** One administrative catalog page at an authorization generation. */
 export interface OrganizationRolePage {roles:OrganizationRole[];next_cursor:string;generation:number;}
+
+function gitRepositoryPath(project:string,connection:string,repository:string):string{return `/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}`;}
+
+export interface ProjectOverviewChild {node_id:string;name:string;is_dir:boolean;l0:string}
+export interface ProjectOverview {project_id:string;node_id:string;l0?:string;l1?:string;pending:boolean;children:ProjectOverviewChild[]}

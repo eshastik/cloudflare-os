@@ -46,6 +46,7 @@ test("Назад не теряет настройки предметного с�
   const app=await mountMemoryApp({}, {section:"projects"});
   try {
     await app.until(()=>app.button("Общий проект"),"проект"); app.button("Общий проект").click();
+    await app.until(()=>app.tab("Участники"),"вкладки проекта"); app.tab("Участники").click();
     await app.until(()=>app.button("Настроить согласования"),"настройки проекта"); app.button("Настроить согласования").click();
     await app.until(()=>app.button("Добавить направление"),"политика"); app.button("Добавить направление").click();
     await app.until(()=>app.document.querySelector("#legacy input"),"новое направление");

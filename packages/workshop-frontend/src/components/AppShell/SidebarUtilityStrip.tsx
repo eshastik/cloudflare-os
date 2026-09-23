@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { Desktop, Moon, Plug, Sun } from '@phosphor-icons/react'
+import { Desktop, GearSix, Moon, Sun } from '@phosphor-icons/react'
 import { Tooltip } from '@cloudflare/kumo'
 import UserMenu from '../UserMenu'
 import { useTheme } from '../../ThemeContext'
@@ -42,35 +42,24 @@ function ThemeModeButton() {
   )
 }
 
-// Bottom strip on the sidebar: tiny iconography for connections, theme, and the user menu. Mirrors
-// the very low-chrome bottom row in the reference design and surfaces Profile / Providers / Admin
-// from the user-menu dropdown rather than duplicating them as separate icons.
-function StripLink({
-  to,
-  label,
-  children,
-}: {
-  to: '/gatekeepers'
-  label: string
-  children: React.ReactNode
-}) {
+// Settings is a labelled row, not a bare icon: it is where every service section now lives.
+function SettingsLink({ collapsed }: { collapsed: boolean }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const active = pathname === to
+  const active = pathname === '/settings' || pathname.startsWith('/settings/')
   return (
-    <Tooltip content={label}>
-      <Link
-        to={to}
-        aria-label={label}
-        className={[
-          'flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-          active
-            ? 'bg-kumo-fill text-kumo-brand'
-            : 'text-kumo-inactive hover:bg-kumo-tint hover:text-kumo-default',
-        ].join(' ')}
-      >
-        {children}
-      </Link>
-    </Tooltip>
+    <Link
+      to="/settings"
+      aria-current={active ? 'page' : undefined}
+      aria-label={collapsed ? 'Настройки' : undefined}
+      title={collapsed ? 'Настройки' : undefined}
+      className={[
+        'group flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] leading-[18px] tracking-[-0.25px] transition-colors',
+        active ? 'bg-kumo-fill font-medium text-kumo-strong' : 'text-kumo-default hover:bg-kumo-tint',
+      ].join(' ')}
+    >
+      <GearSix size={15} className={active ? 'text-kumo-brand' : 'text-kumo-subtle group-hover:text-kumo-default'} />
+      {!collapsed && <span>Настройки</span>}
+    </Link>
   )
 }
 
@@ -80,13 +69,11 @@ export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?:
       className={[
         // shrink-0 + solid base so the strip is visually pinned above the scrolling rail body
         // and content can't bleed through it. Flat treatment — no top shadow.
-        'shrink-0 flex items-center gap-1 border-t border-kumo-line bg-kumo-elevated px-3 py-2',
+        'shrink-0 flex items-center gap-1 border-t border-kumo-line bg-kumo-elevated px-2 py-2',
         collapsed ? 'flex-col justify-center gap-2 px-1.5' : '',
       ].join(' ')}
     >
-      <StripLink to="/gatekeepers" label="Подключения">
-        <Plug size={15} />
-      </StripLink>
+      <SettingsLink collapsed={collapsed} />
       <div className={collapsed ? 'flex flex-col items-center gap-2' : 'ml-auto flex items-center gap-1'}>
         <ThemeModeButton />
         <UserMenu />

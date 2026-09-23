@@ -18,6 +18,7 @@ import { Route as GatekeepersRouteImport } from './routes/gatekeepers'
 import { Route as OutputsRouteImport } from './routes/outputs'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as WorkspacesRouteImport } from './routes/workspaces'
 import { Route as BlueprintIdRouteImport } from './routes/blueprint.$id'
@@ -70,6 +71,11 @@ const ProvidersRoute = ProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/outputs': typeof OutputsRoute
   '/profile': typeof ProfileRoute
   '/providers': typeof ProvidersRoute
+  '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/outputs': typeof OutputsRoute
   '/profile': typeof ProfileRoute
   '/providers': typeof ProvidersRoute
+  '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/outputs': typeof OutputsRoute
   '/profile': typeof ProfileRoute
   '/providers': typeof ProvidersRoute
+  '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/outputs'
     | '/profile'
     | '/providers'
+    | '/settings'
     | '/signup'
     | '/workspaces'
     | '/blueprint/$id'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/outputs'
     | '/profile'
     | '/providers'
+    | '/settings'
     | '/signup'
     | '/workspaces'
     | '/blueprint/$id'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/outputs'
     | '/profile'
     | '/providers'
+    | '/settings'
     | '/signup'
     | '/workspaces'
     | '/blueprint/$id'
@@ -217,6 +229,7 @@ export interface RootRouteChildren {
   OutputsRoute: typeof OutputsRoute
   ProfileRoute: typeof ProfileRoute
   ProvidersRoute: typeof ProvidersRoute
+  SettingsRoute: typeof SettingsRoute
   SignupRoute: typeof SignupRoute
   WorkspacesRoute: typeof WorkspacesRoute
   BlueprintIdRoute: typeof BlueprintIdRoute
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -345,6 +365,7 @@ const rootRouteChildren: RootRouteChildren = {
   OutputsRoute: OutputsRoute,
   ProfileRoute: ProfileRoute,
   ProvidersRoute: ProvidersRoute,
+  SettingsRoute: SettingsRoute,
   SignupRoute: SignupRoute,
   WorkspacesRoute: WorkspacesRoute,
   BlueprintIdRoute: BlueprintIdRoute,

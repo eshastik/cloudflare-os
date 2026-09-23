@@ -18,13 +18,19 @@ test("«Проекты»: список, страница проекта с уч�
     assert.ok(app.button("Создать проект"), "проект можно создать прямо во вкладке");
     app.button("Общий проект").click();
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
+    await app.until(() => section("Последние материалы")?.textContent.includes("Заметка команды"), "обзор проекта по умолчанию");
+    assert.ok(section("Последние материалы").textContent.includes("На согласовании · 1 из 2"), "статус документа в обзоре");
+    await app.until(() => section("Ждёт решения")?.textContent.includes("Проверить ТЗ на страницу цен"), "текущая работа проекта");
+    assert.ok(section("Ждёт решения").textContent.includes("alice"), "кто ведёт");
+    assert.ok(section("Ждёт решения").textContent.includes("Согласовать: Заметка команды"), "согласование, где решение за текущим человеком");
+    app.tab("Материалы").click();
+    await app.until(() => section("Материалы")?.textContent.includes("Заметка команды"), "материалы проекта");
+    assert.ok(section("Материалы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
+    assert.ok(section("Папки")?.textContent.includes("Папка"), "папки проекта");
+    app.tab("Участники").click();
     await app.until(() => section("Участники и направления")?.textContent.includes("Кэрол"), "участники из политики");
     assert.ok(section("Участники и направления").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
     assert.ok(section("Участники и направления").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
-    await app.until(() => section("Материалы")?.textContent.includes("Заметка команды"), "материалы проекта");
-    assert.ok(section("Материалы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
-    await app.until(() => section("Текущая работа")?.textContent.includes("Проверить ТЗ на страницу цен"), "текущая работа проекта");
-    assert.ok(section("Текущая работа").textContent.includes("alice"), "кто ведёт");
     await app.until(() => section("Агенты проекта")?.textContent.includes("agent-alice"), "агенты");
     await app.until(() => section("Правила согласования")?.textContent.includes("Папка"), "правило по папке");
     assert.ok(section("Правила согласования").textContent.includes("Все документы проекта"), "правило на весь проект");
@@ -36,6 +42,8 @@ test("«Проекты»: список, страница проекта с уч�
     app.button("Назад").click();
     await app.until(() => section("Правила согласования"), "возврат на страницу проекта");
 
+    app.tab("Материалы").click();
+    await app.until(() => app.button("Все документы проекта"), "вкладка материалов");
     app.button("Все документы проекта").click();
     await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "переход к документам");
     // Кнопка проекта в «Документах» несёт счётчик документов, поэтому ищется по началу текста.
@@ -52,25 +60,27 @@ test("«Проекты»: пустая политика и отказ серве
     await app.open("Проекты");
     await app.until(() => app.button("Общий проект"), "список проектов");
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
+    await app.until(() => section("Ждёт решения"), "обзор проекта");
+    assert.equal(section("Ждёт решения").textContent.includes("Проверить ТЗ"), false, "обращений нет");
+    app.tab("Участники").click();
     await app.until(() => section("Правила согласования")?.textContent.includes("Правил согласования нет"), "пустые правила");
-    assert.ok(section("Текущая работа").textContent.includes("Текущей работы нет"), "пустая работа");
     app.button("Второй проект").click();
+    await app.until(() => section("Ждёт решения")?.textContent.includes("ничего не ждёт вашего решения"), "у второго проекта ничего не ждёт решения");
+    await app.until(() => app.tab("Участники"), "второй проект"); app.tab("Участники").click();
     await app.until(() => section("Правила согласования")?.textContent.includes("нет права или сервер отказал"), "отказ показан");
   } finally { app.dispose(); }
 });
 
 
-test("«Мои проекты»: материалы видны сразу, настройки свёрнуты, беседа начинается с выбранным проектом", async () => {
+test("«Мои проекты»: обзор с материалами открыт сразу, скрытых настроек нет, беседа начинается с выбранным проектом", async () => {
   const app = await mountMemoryApp({}, {section: "projects", project: "two"});
   try {
     await app.until(() => app.button("Начать беседу"), "страница проекта");
     assert.ok(app.text().includes("Мои проекты"));
-    const settings = [...app.document.querySelectorAll("#root details")].find(e => e.querySelector("summary")?.textContent === "Участники и настройки проекта");
-    assert.ok(settings);
-    assert.equal(settings.open, false);
-    const materials = app.document.querySelector('#root section[aria-label="Материалы"]');
-    assert.ok(materials);
-    assert.equal(materials.closest("details"), null);
+    assert.equal(app.document.querySelectorAll("#root details").length, 0, "главное содержимое не свёрнуто");
+    assert.equal(app.tab("Обзор").getAttribute("aria-selected"), "true");
+    assert.deepEqual(app.tabs().map(t => t.textContent), ["Обзор", "Материалы", "Задачи агентов", "Участники"], "без репозитория вкладки «Код» нет");
+    await app.until(() => app.document.querySelector('#root section[aria-label="Последние материалы"]')?.textContent.includes("Другой документ"), "материалы в обзоре");
     app.button("Начать беседу").click();
     await app.until(() => app.calls.some(c => c[0] === "openPrompt"), "подготовка беседы");
     const prompt = app.calls.find(c => c[0] === "openPrompt")[1];
@@ -83,7 +93,7 @@ test("«Мои проекты»: материалы видны сразу, на�
 
 test("Файлы и папки загружаются в выбранный проект, а не в беседу", async () => {
   const app = await mountMemoryApp({}, {section: "projects", project: "two", pickedFiles: [{path: "договор.pdf", receipt: {outcome: "placed", enqueued: false, placement_state: "personal"}}]});
-  try {
+  try {await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();
     await app.until(() => app.button("Загрузить файлы"), "загрузка проекта");
     app.button("Загрузить файлы").click();
     await app.until(() => app.text().includes("Принято файлов: 1 из 1"), "результат загрузки");
@@ -119,7 +129,7 @@ test("Материалы проекта: подтверждение област
   },
   async decideInboxAlert(id,decision){decisions.push({id,decision});confirmed=true;return {alert:{...alert,status:"approved"}};},
  },{section:"projects",project:"two"});
- try {
+ try {await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();
   await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"область готова к подтверждению");
   app.button("Подтвердить: 1").click();
   await app.until(()=>app.text().includes("Список документов обновлён"),"результат размещения прочитан");
@@ -141,7 +151,7 @@ test("Потерянный ответ подтверждения блокиру�
   },
   async decideInboxAlert(){writes++;sent=true;throw Error("response lost");},
  },{section:"projects",project:"two"});
- try {
+ try {await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();
   await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"первое подтверждение доступно");
   app.button("Подтвердить: 1").click();
   await app.until(()=>app.text().includes("Остальные решения проверяем по серверу"),"неизвестный результат показан");
@@ -160,7 +170,7 @@ test("Область меняется у выбранных файлов до п
   async inboxAlerts(decided){return {alerts:decided?[]:alerts,truncated:false};},
   async decideInboxAlert(id,decision){decisions.push({id,decision});return {};},
  },{section:"projects",project:"two"});
- try {
+ try {await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();
   await app.until(()=>app.button("Подтвердить: 3")&&!app.button("Подтвердить: 3").closest("fieldset").disabled,"список поступлений");
   const area=name=>app.document.querySelector(`[aria-label="Область: ${name}.txt"]`);
   const checks=app.document.querySelectorAll('section[aria-label="Проверьте загруженные материалы"] input[type="checkbox"]');
@@ -185,5 +195,5 @@ test("Поступления проекта показывают обработ�
   async inboxStatus(project){assert.equal(project,"two");return {total:3,in_queue:2,awaiting_classification:0,awaiting_placement:1,placed_in_tree:0,dead_lettered:0,dead_letters:[]};},
   async inboxAlerts(){return {alerts:[],truncated:false};},
  },{section:"projects",project:"two"});
- try{await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
+ try{await app.until(()=>app.tab("Материалы"),"вкладки проекта");app.tab("Материалы").click();await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
 });

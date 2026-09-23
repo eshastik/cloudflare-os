@@ -1,17 +1,13 @@
-import { useAuthenticatedApi } from '../../AuthContext'
 import { Link } from '@tanstack/react-router'
 import {
-  Blueprint,
   BookOpen,
-  Compass,
   FolderOpen,
   Hexagon,
   House,
   MagnifyingGlass,
+  Robot,
   SidebarSimple,
-  SquaresFour,
-  GearSix,
-  Stack,
+  Tray,
 } from '@phosphor-icons/react'
 import { useSiteName } from '../../ServerConfigContext'
 import SiteLogo from '../SiteLogo'
@@ -24,6 +20,15 @@ import {
   SidebarWorkspacesLists,
 } from './SidebarWorkspaces'
 import SidebarUtilityStrip from './SidebarUtilityStrip'
+
+// Daily work sections of a gatekeeper app, in rail order. Labels are fixed here so the rail reads
+// the same whatever an app calls its sections internally.
+const PRIMARY_SECTIONS = [
+  { id: 'my-work', label: 'Входящие', icon: <Tray size={14} /> },
+  { id: 'projects', label: 'Проекты', icon: <FolderOpen size={14} /> },
+  { id: 'documents', label: 'Материалы', icon: <BookOpen size={14} /> },
+  { id: 'agents', label: 'Агенты', icon: <Robot size={14} /> },
+] as const
 
 // The persistent left rail. Three pinned regions sandwich a single scrolling region of lists, so
 // the user can always reach Search, primary nav, and the bottom utility strip no matter how many
@@ -43,7 +48,6 @@ export default function Sidebar({
   onToggleCollapsed: () => void
 }) {
   const siteName = useSiteName()
-  const { isAdmin } = useAuthenticatedApi()
   // Gatekeeper-served management apps the user can reach now (one per gatekeeper that provides a UI
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
@@ -117,37 +121,35 @@ export default function Sidebar({
       <SidebarWorkspacesProvider>
         {/* Pinned top stack. shrink-0 keeps it from squishing when the lists below grow. */}
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pt-3">
-          {/* Primary nav */}
+          {/* Primary nav: the few places people work every day. Service sections live in Settings. */}
           <nav className="flex flex-col gap-0.5 px-2">
             <SidebarItem
               to="/"
-              label="Новый чат"
+              label="Новая беседа"
               icon={<House size={14} weight="regular" />}
               collapsed={collapsed}
             />
-            <SidebarItem
-              to="/workspaces"
-              label="Беседы"
-              icon={<SquaresFour size={14} weight="regular" />}
-              collapsed={collapsed}
-            />
-            {gatekeeperApps.flatMap(app=>(app.sections??[]).filter(section=>section.id==='projects'||section.id==='documents').toSorted((a,b)=>Number(b.id==='projects')-Number(a.id==='projects')).map(section=>(
-              <SidebarItem key={`${app.id}:${app.accountId}:${section.id}`} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={section.id==='projects'?<FolderOpen size={14}/>:<BookOpen size={14}/>} collapsed={collapsed}/>
-            )))}
-            <details className="mt-2">
-              <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] text-kumo-subtle hover:bg-kumo-tint" aria-label="Управление и инструменты" title={collapsed?"Управление и инструменты":undefined}><GearSix size={14}/>{!collapsed&&'Управление и инструменты'}</summary>
-              {gatekeeperApps.map(app=>{
-                const sections=(app.sections??[]).filter(section=>section.id!=='documents'&&section.id!=='projects');
-                return <div key={`${app.id}:${app.accountId}`}>
-                  {!app.sections?.length&&<SidebarItem to="/gatekeepers/$appId" params={{appId:app.id}} search={{account:app.accountId}} account={app.accountId} label={app.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>}
-                  {sections.map(section=><SidebarItem key={section.id} to="/gatekeepers/$appId" params={{appId:app.id}} search={{section:section.id,account:app.accountId}} section={section.id} account={app.accountId} matchDefaultAccount={gatekeeperApps.filter(other=>other.id===app.id).length===1} label={gatekeeperApps.filter(other=>other.id===app.id).length>1?`${section.title} — ${app.accountName||app.title}`:section.title} icon={<BookOpen size={14}/>} collapsed={collapsed}/>)}
-                </div>;
-              })}
-              <SidebarItem to="/outputs" label="Результаты бесед" icon={<Stack size={14}/>} collapsed={collapsed}/>
-              <SidebarItem to="/blueprints" label="Сохранённые приложения" icon={<Blueprint size={14}/>} collapsed={collapsed}/>
-              <SidebarItem to="/explore" label="Каталог приложений" icon={<Compass size={14}/>} collapsed={collapsed}/>
-              {isAdmin&&<SidebarItem to="/admin" label="Настройки платформы" icon={<SquaresFour size={14}/>} collapsed={collapsed}/>}
-            </details>
+            {gatekeeperApps.flatMap(app => {
+              const multiple = gatekeeperApps.filter(other => other.id === app.id).length > 1
+              return PRIMARY_SECTIONS.flatMap(({ id, label, icon }) => {
+                const section = (app.sections ?? []).find(item => item.id === id)
+                if (!section) return []
+                return [
+                  <SidebarItem
+                    key={`${app.id}:${app.accountId}:${id}`}
+                    to="/gatekeepers/$appId"
+                    params={{ appId: app.id }}
+                    search={{ section: id, account: app.accountId }}
+                    section={id}
+                    account={app.accountId}
+                    matchDefaultAccount={!multiple}
+                    label={multiple ? `${label} — ${app.accountName || app.title}` : label}
+                    icon={icon}
+                    collapsed={collapsed}
+                  />,
+                ]
+              })
+            })}
           </nav>
 
           {/* Workspace tools: search. Pinned so it's always reachable. */}

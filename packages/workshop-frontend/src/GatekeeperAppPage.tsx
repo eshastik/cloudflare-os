@@ -4,7 +4,7 @@ import DriveImportPanel from "./DriveImportPanel"
 import CalendarConnectionPanel from "./CalendarConnectionPanel"
 import { useEffect, useState } from 'react'
 import { Button, Dialog, Select } from '@cloudflare/kumo'
-import { ChartBar, PlugsConnected, X } from '@phosphor-icons/react'
+import { X } from '@phosphor-icons/react'
 import { WorkshopIconButton } from './components/WorkshopControls'
 import type { GatekeeperUiFrame, SupportedResource } from '@gadgets/workshop-shared/gatekeeper'
 import { useAuthenticatedApi } from './AuthContext'
@@ -19,7 +19,7 @@ type UiAccount = { name: string; resources: SupportedResource[] }
 
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
-export default function GatekeeperAppPage({ appId, section, project, accountId, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
+export default function GatekeeperAppPage({ appId, section, project, accountId, tool, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; tool?:'connections'|'summary'; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, UiAccount>>(new Map())
   const [ready, setReady] = useState(false)
@@ -65,11 +65,11 @@ export default function GatekeeperAppPage({ appId, section, project, accountId, 
       </Select>
     </div>}
     {notice && <p role="alert">{notice}</p>}
-    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}`} appId={appId} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
+    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${section ?? ''}:${project ?? ''}:${tool ?? ''}`} appId={appId} requestedTool={tool} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
   </>
 }
 
-function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, onClosePanel, onIntakeDropReady }: { appId: string; accountId?: number; resources: SupportedResource[]; embeddedIntake: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
+function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, requestedTool, onClosePanel, onIntakeDropReady }: { appId: string; accountId?: number; resources: SupportedResource[]; embeddedIntake: boolean; requestedTool?: 'connections' | 'summary'; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // Wrap the frame in an object: it holds a `ui` RPC stub, and we never want useState's setter to
   // treat a stored value as an updater function.
@@ -77,6 +77,7 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, onC
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [tool, setTool] = useState<'mail' | 'calendar' | 'drive' | 'summary' | null>(null)
+  const [toolOpened, setToolOpened] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -121,18 +122,20 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, onC
   const mail = receives(resources, 'mail') || !!state.frame.mailDraftSender
   const calendar = receives(resources, 'calendar') || !!state.frame.calendarDraftCreator
   const drive = receives(resources, 'drive')
+  // Settings links here with ?tool=…; the dialog opens once the frame has declared what it offers.
+  if (tool === null && requestedTool && !toolOpened) {
+    const initial = requestedTool === 'summary' ? (state.frame.organizationMetrics ? 'summary' : null) : mail ? 'mail' : calendar ? 'calendar' : drive ? 'drive' : null
+    setToolOpened(true)
+    if (initial) setTool(initial)
+  }
   // Fill the viewport below the header so the embedded app can manage its own internal layout.
   return (
     <div style={{ height: embeddedIntake ? '100%' : 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
-      {!embeddedIntake && (mail || calendar || drive || state.frame.organizationMetrics) && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-kumo-line px-4 py-2">
-        {(mail || calendar || drive) && <Button variant="ghost" size="sm" onClick={() => setTool(mail ? 'mail' : calendar ? 'calendar' : 'drive')}><PlugsConnected size={16} />Подключения</Button>}
-        {state.frame.organizationMetrics && <Button variant="ghost" size="sm" onClick={() => setTool('summary')}><ChartBar size={16} />Свод организаций</Button>}
-      </div>}
       <Dialog.Root open={tool !== null} onOpenChange={open => { if (!open) setTool(null) }}>
         <Dialog size="lg" className="!w-[min(600px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto bg-kumo-base p-0">
           <div className="flex items-start justify-between gap-4 border-b border-kumo-line p-5">
             <div>
-              <Dialog.Title className="text-lg font-medium">{tool === 'summary' ? 'Организации' : 'Подключения'}</Dialog.Title>
+              <Dialog.Title className="text-lg font-medium">{tool === 'summary' ? 'Свод организаций' : 'Почта, календари и файлы'}</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-kumo-subtle">{tool === 'summary' ? 'Общий свод по вашим организациям.' : 'Почта, календари и файлы для работы команды.'}</Dialog.Description>
             </div>
             <Dialog.Close render={props => <WorkshopIconButton {...props} aria-label="Закрыть"><X size={18} /></WorkshopIconButton>} />
@@ -198,7 +201,7 @@ function GatekeeperAppRecovery({ appId, retry }: { appId: string, error: string,
     {[...accounts].map(([id, name]) => <div key={id}>
       <Button variant="primary" type="button" disabled={busy} onClick={() => void reconnect(id)}>Переподключить {name}</Button>
     </div>)}
-    {loginUrl && <p><a className="font-medium underline text-kumo-default" href={loginUrl} rel="noopener noreferrer">Продолжить вход →</a></p>}
+    {loginUrl && <p><a className="font-medium underline text-kumo-default" href={loginUrl} rel="noopener noreferrer">Продолжить вход</a></p>}
     {notice && <p role="status">{notice}</p>}
     <Button variant="secondary" type="button" disabled={busy} onClick={retry}>Открыть приложение ещё раз</Button>
   </div>

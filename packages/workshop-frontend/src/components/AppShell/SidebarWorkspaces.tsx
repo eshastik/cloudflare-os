@@ -12,7 +12,6 @@ import {
 } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
-  ArrowRight,
   CaretDown,
   MagnifyingGlass,
   Star,
@@ -31,7 +30,7 @@ import DeleteConfirmationDialog from '../DeleteConfirmationDialog'
 import SidebarGadgetRow from './SidebarGadgetRow'
 
 // Cap on items shown in the Recent list before the user clicks through to /workspaces.
-const RECENT_INITIAL_LIMIT = 6
+const RECENT_INITIAL_LIMIT = 5
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shape of the workspaces state shared between the rail's pinned tools (search) and the scrolling
@@ -332,7 +331,8 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
 
   return (
     <div className="flex flex-col pb-3">
-      {/* Favorites */}
+      {/* Favorites appear only once something is pinned: an empty group is noise in the rail. */}
+      {favorites.length > 0 && (
       <SidebarSection
         label="Избранное"
         count={favorites.length}
@@ -340,11 +340,6 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
         onToggle={() => setFavOpen((o) => !o)}
         icon={<Star size={12} weight="regular" className="text-kumo-inactive" />}
       >
-        {favorites.length === 0 ? (
-          <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
-            Закрепите нужную беседу, чтобы быстро вернуться к ней.
-          </p>
-        ) : (
           <div className="flex flex-col">
             {favorites.map((g) => (
               <SidebarGadgetRow
@@ -357,12 +352,12 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
               />
             ))}
           </div>
-        )}
       </SidebarSection>
+      )}
 
       {/* Recent workspaces — no count here; the "Show all (N)" link already carries it. */}
       <SidebarSection
-        label="Недавние беседы"
+        label="Беседы"
         open={recentOpen}
         onToggle={() => setRecentOpen((o) => !o)}
       >
@@ -394,8 +389,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
               to="/workspaces"
               className="mt-0.5 flex h-7 items-center gap-1 rounded-md px-2.5 text-[12px] font-medium tracking-[-0.2px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
             >
-              {recentHidden > 0 ? `Показать все (${recent.length})` : 'Показать все'}
-              <ArrowRight size={11} weight="bold" />
+              {recentHidden > 0 ? `Все беседы (${recent.length})` : 'Все беседы'}
             </Link>
           </>
         )}
@@ -425,7 +419,7 @@ function SidebarSection({
       <button
         type="button"
         onClick={onToggle}
-        className="flex h-6 cursor-pointer items-center gap-1 px-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-kumo-inactive transition-colors hover:text-kumo-subtle"
+        className="flex h-6 cursor-pointer items-center gap-1 px-1.5 text-[12px] font-medium text-kumo-subtle transition-colors hover:text-kumo-default"
       >
         <CaretDown
           size={10}

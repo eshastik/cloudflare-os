@@ -27,7 +27,7 @@ const resource = (receives: SupportedResource['receives']): SupportedResource =>
 function addAccount(s: ConnectedAccountsSubscriber, id: number, name: string, vendorId = 'memory', resources: SupportedResource[] = []) {
   s.add(id, { displayName: name, ...ui }, vendor, resources, true, vendorId)
 }
-const page = (key = 0) => <GatekeeperAppPage key={key} appId="memory" />
+const page = (key = 0, tool?: 'connections' | 'summary') => <GatekeeperAppPage key={`${key}:${tool ?? ''}`} appId="memory" tool={tool} />
 async function chooseAccount(name: string) {
   const trigger = document.querySelector<HTMLElement>('[role="combobox"]')
   expect(trigger).not.toBeNull()
@@ -58,7 +58,7 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
     await React.act(async () => button!.click())
   }
   try {
-    await React.act(async () => root.render(page()))
+    await React.act(async () => root.render(page(0, 'connections')))
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.querySelector('select')).toBeNull()
     expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory', 7)
@@ -71,8 +71,8 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
     expect(link.rel).toBe('noopener noreferrer')
     await click('Открыть приложение ещё раз')
     expect(container.textContent).toContain('Opened application')
-    expect(container.textContent).not.toContain('Панель календаря')
-    await click('Подключения')
+    // Подключения открываются ссылкой из «Настроек», кнопки над приложением больше нет.
+    expect([...container.querySelectorAll('button')].some(b => b.textContent === 'Подключения')).toBe(false)
     expect(document.body.textContent).toContain('Панель календаря')
     expect(container.textContent).not.toContain('Панель почты')
     expect(api.getGatekeeperApp).toHaveBeenCalledTimes(2)
@@ -92,25 +92,28 @@ it('shows the mail panel only for an account receiving mail and the summary only
     expect(button).toBeDefined()
     await React.act(async () => button!.click())
   }
-  const render = async (resources: SupportedResource[], frame: object) => {
+  const render = async (resources: SupportedResource[], frame: object, tool?: 'connections' | 'summary') => {
     api.subscribeConnectedAccounts.mockImplementation(async (s: ConnectedAccountsSubscriber) => { addAccount(s, 3, 'Org', 'memory', resources); s.ready(); return { [Symbol.dispose]: vi.fn<() => void>() } })
     api.getGatekeeperApp.mockResolvedValue(frame)
-    await React.act(async () => root.render(page(resources.length)))
+    await React.act(async () => root.render(page(resources.length, tool)))
     expect(container.textContent).toContain('Opened application')
   }
+  const metrics = { html: '', organizationMetrics: { read: vi.fn<() => void>() } }
   try {
-    await render([resource('mail'), resource('drive')], { html: '', organizationMetrics: { read: vi.fn<() => void>() } })
+    await render([resource('mail'), resource('drive')], metrics)
     expect(document.body.textContent).not.toContain('Панель почты')
     expect(document.body.textContent).not.toContain('Панель диска')
-    await click('Подключения')
+    expect(document.body.textContent).not.toContain('Свод организаций memory')
+    await render([resource('mail'), resource('drive')], metrics, 'connections')
     expect(document.body.textContent).toContain('Панель почты')
     expect(document.body.textContent).not.toContain('Панель календаря')
     await click('Файлы')
     expect(document.body.textContent).toContain('Панель диска')
     await React.act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Закрыть"]')!.click())
-    await click('Свод организаций')
+    await render([resource('mail'), resource('drive')], metrics, 'summary')
     expect(document.body.textContent).toContain('Свод организаций memory')
-    await render([], { html: '' })
+    await React.act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Закрыть"]')!.click())
+    await render([], { html: '' }, 'summary')
     expect(container.textContent).not.toContain('Панель почты')
     expect(container.textContent).not.toContain('Панель диска')
     expect(container.textContent).not.toContain('Свод организаций')

@@ -19,14 +19,14 @@ function readCollapsed(): boolean {
   }
 }
 
-// The authenticated, non-fullscreen application chrome: a persistent left rail + a thin top notice
-// strip + the routed content. Replaces the old <Header /> on these routes. Chat and Gadget editor
-// pages are still rendered fullscreen by __root.tsx without this shell.
+// The authenticated application chrome: a persistent left rail + a thin top notice strip + the
+// routed content. `bare` is for pages with their own header (the conversation editor): the rail
+// stays, the top strip is dropped on desktop and the page manages its own scrolling.
 //
 // Mobile: below `md` the rail collapses to an overlay drawer triggered by a hamburger button in a
 // minimal top bar. We don't try to gracefully shrink the rail at narrow widths; the overlay model
 // is simpler and matches how the rest of the app handles small screens.
-export default function AppShell({ children }: { children: React.ReactNode }) {
+export default function AppShell({ children, bare = false }: { children: React.ReactNode; bare?: boolean }) {
   const { authenticatedApi } = useAuthenticatedApi()
   useEffect(() => { reportShellStage("layout", "ready", authenticatedApi) }, [authenticatedApi])
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed)
@@ -103,7 +103,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {/* Top bar. Same height as the sidebar's brand row (h-14) so they read as one continuous
             chrome strip across the top. Mostly empty — carries the mobile hamburger on the left and
             any admin TopBarNotice centered. */}
-        <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-line bg-kumo-base px-3">
+        <div className={`relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-line bg-kumo-base px-3 ${bare ? 'md:hidden' : ''}`}>
           <button
             type="button"
             onClick={() => setMobileOpen((o) => !o)}
@@ -117,7 +117,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Routed content. Flat enterprise canvas — no texture. */}
-        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+        <main className={`min-h-0 flex-1 ${bare ? 'overflow-hidden [--shell-top:56px] md:[--shell-top:0px]' : 'overflow-y-auto'}`}>{children}</main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

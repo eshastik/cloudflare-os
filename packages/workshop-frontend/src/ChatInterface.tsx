@@ -1,3 +1,4 @@
+import { displayChatTitle } from './chatTitle'
 import ChatTemplatePicker, { messageWithTemplate, type ChatTemplate } from "./ChatTemplatePicker";
 import { VoiceInput } from "./components/chat/VoiceInput";
 import CorporateWorkContext from "./CorporateWorkContext";
@@ -6514,12 +6515,12 @@ function ChatInterface({
                             spellCheck={false}
                             autoCapitalize="off"
                             autoCorrect="off"
-                            aria-label={`Rename ${chat.title}`}
+                            aria-label={`Переименовать «${displayChatTitle(chat.title)}»`}
                             className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
                           />
                         ) : (
                           <span className="truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                            {chat.title}
+                            {displayChatTitle(chat.title)}
                           </span>
                         )}
                         {!isRenaming && chat.activeAgent ? (
@@ -6745,7 +6746,7 @@ function ChatInterface({
                   ) : (
                     <>
                       <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                        {currentChatMetadata?.title || "Беседа"}
+                        {displayChatTitle(currentChatMetadata?.title)}
                         {currentChatMetadata?.projectContext&&<span className="block truncate text-[11px] font-normal text-kumo-subtle">Проект: {currentChatMetadata.projectContext.title}</span>}
                       </span>
                       <WorkshopIconButton

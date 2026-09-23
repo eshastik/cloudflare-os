@@ -1,25 +1,21 @@
 import ChatTemplateLibrary from './ChatTemplateLibrary'
-import {Dialog} from '@cloudflare/kumo'
+import {Dialog, DropdownMenu} from '@cloudflare/kumo'
 import { reportShellStage } from "./shellReadiness"
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import { useParams, useNavigate, useSearch, Link } from '@tanstack/react-router'
+import { useParams, useNavigate, useSearch } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import {
-  ShareNetwork,
+  DotsThree,
   Pencil,
   Check,
   X,
-  Hexagon,
-  Blueprint,
-  Trash,
   ArrowsOutSimple,
   Pulse,
   type Icon,
 } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget } from 'capnweb'
 import { useAuthenticatedApi } from './AuthContext'
-import UserMenu from './components/UserMenu'
-import SiteLogo from './components/SiteLogo'
+import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './components/menuStyles'
 
 import {
   GadgetClient,
@@ -1268,7 +1264,7 @@ export default function GadgetEditor() {
   // ── shared height tokens ──────────────────────────────────────────────────────
   const TOPBAR_H = 56   // h-14 (matches home page Header)
   const TABBAR_H = 48   // h-12
-  const RIGHT_CONTENT_H = `calc(100vh - ${TOPBAR_H}px - ${TABBAR_H}px)`
+  const RIGHT_CONTENT_H = `calc(100dvh - var(--shell-top, 0px) - ${TOPBAR_H}px - ${TABBAR_H}px)`
 
   // ── error / loading states ────────────────────────────────────────────────────
   if (error?.kind === 'open') {
@@ -1283,7 +1279,7 @@ export default function GadgetEditor() {
 
   if (error?.kind === 'message') {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
+      <div className="h-full flex items-center justify-center flex-col gap-4 bg-kumo-base">
         {/* Observer-verification denials list one line per failed connection, so preserve newlines. */}
         <p className="text-sm text-kumo-danger whitespace-pre-line text-center max-w-lg">
           {error.message}
@@ -1305,7 +1301,7 @@ export default function GadgetEditor() {
   if (!metadata || !overseer || !workpiecesReady ||
       (selectedGadgetId !== null && gadget === null)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-kumo-base">
+      <div className="h-full flex items-center justify-center bg-kumo-base">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
           <p className="text-sm text-kumo-subtle">Загрузка пространства…</p>
@@ -1340,7 +1336,7 @@ export default function GadgetEditor() {
 
   // ── always render the full two-pane edit layout; preview overlays on top ──────
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-kumo-base relative">
+    <div className="flex flex-col h-full overflow-hidden bg-kumo-base relative">
       {/* ═══ SHARED TOP BAR (visible in both modes) ════════════════════════════ */}
       <div
         className="relative flex items-center justify-between px-4 sm:px-6 backdrop-blur-md border-b border-kumo-line flex-shrink-0 gap-3"
@@ -1348,19 +1344,8 @@ export default function GadgetEditor() {
       >
         <TopBarNotice />
         {/* Left: logo / title */}
-        <div className="flex items-center gap-2 min-w-0">
-          <Link
-            to="/"
-            aria-label="Главная"
-            className="flex-shrink-0 hover:opacity-80 transition-opacity"
-          >
-            <SiteLogo size={22}>
-              <Hexagon size={22} className="text-kumo-brand" weight="bold" />
-            </SiteLogo>
-          </Link>
-
-          <span className="text-kumo-inactive flex-shrink-0">/</span>
-
+        {/* The rail carries the logo and profile; on phones its menu button sits over our left edge. */}
+        <div className="flex items-center gap-2 min-w-0 pl-10 md:pl-0">
           {isEditingTitle ? (
             <div className="flex items-center gap-1">
               <WorkshopInput
@@ -1413,20 +1398,13 @@ export default function GadgetEditor() {
           )}
         </div>
 
-        {/* Right: presence, cost, workspace, share, blueprints */}
+        {/* Right: who is here, pending actions, and one labelled menu for everything else. */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          {effectiveSelectedChatId!==null&&<WorkshopButton onClick={()=>setSharedTemplatesOpen(true)}>Шаблон</WorkshopButton>}
           <GadgetPresence
             overseer={overseer.stub}
             authenticatedApi={authenticatedApi}
             currentUserId={userInfo?.id ?? null}
           />
-
-          {metadata.totalCost != null && (
-            <span className="mr-2 text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-              {formatHeaderCost(metadata.totalCost)}
-            </span>
-          )}
 
           <ActivityNotifications
             overseer={overseer.stub}
@@ -1440,38 +1418,32 @@ export default function GadgetEditor() {
             </span>
           )}
 
-          <WorkshopIconButton
-            onClick={() => setShareModalOpen(true)}
-            title="Поделиться пространством"
-            aria-label="Поделиться пространством"
-          >
-            <ShareNetwork size={15} />
-          </WorkshopIconButton>
-
-          <WorkshopIconButton
-            onClick={() => setBlueprintModalOpen(true)}
-            disabled={!selectedGadgetStub}
-            title="Шаблоны"
-            aria-label="Шаблоны"
-          >
-            <Blueprint size={16} />
-          </WorkshopIconButton>
-
-          {!metadata.owner && (
-            <WorkshopIconButton
-              danger
-              onClick={() => setDeleteDialogOpen(true)}
-              title="Удалить пространство"
-              aria-label="Удалить пространство"
-            >
-              <Trash size={16} />
-            </WorkshopIconButton>
-          )}
-
-          {/* User menu */}
-          <div className="ml-2">
-            <UserMenu />
-          </div>
+          <DropdownMenu>
+            <DropdownMenu.Trigger
+              render={
+                <WorkshopIconButton title="Действия с беседой" aria-label="Действия с беседой">
+                  <DotsThree size={18} weight="bold" />
+                </WorkshopIconButton>
+              }
+            />
+            <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
+              <DropdownMenu.Item onClick={() => setShareModalOpen(true)} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
+              {effectiveSelectedChatId !== null && (
+                <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
+              )}
+              <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
+              <DropdownMenu.Item onClick={() => openActivity('history')} className={MENU_ITEM}>Журнал действий</DropdownMenu.Item>
+              {metadata.totalCost != null && (
+                <div className="px-2.5 py-1.5 text-[12px] leading-4 text-kumo-subtle">Расходы: {formatHeaderCost(metadata.totalCost)}</div>
+              )}
+              {!metadata.owner && (
+                <>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item variant="danger" onClick={() => setDeleteDialogOpen(true)} className={MENU_ITEM_DANGER}>Удалить беседу</DropdownMenu.Item>
+                </>
+              )}
+            </DropdownMenu.Content>
+          </DropdownMenu>
         </div>
       </div>
 

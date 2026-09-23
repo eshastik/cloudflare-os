@@ -59,7 +59,7 @@ export default function GadgetUseView({
   const nativeSnapshotSource = useRef<NativeSnapshotSource | null>(null)
   const outputId = gadgets.find(g => g.id === selectedGadgetId)?.output?.id
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-kumo-base relative">
+    <div className="flex flex-col h-full overflow-hidden bg-kumo-base relative">
       {/* ═══ TOP BAR ════════════════════════════════════════════════════════════ */}
       <div
         className="relative flex items-center justify-between px-4 sm:px-6 backdrop-blur-md border-b border-kumo-line flex-shrink-0 gap-3"
