@@ -10,7 +10,7 @@
 // Env:
 //   VITE_BACKEND_HOST=localhost:9000  Also pass --port 9000 to wrangler dev.
 
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,32 @@ function loadDevVars() {
   }
 }
 loadDevVars();
+
+// Secrets must not travel as plain `vars`: wrangler prints every var at startup (the start of each
+// value ends up in the service journal) and the generated wrangler.dev.jsonc lies in the release
+// directory. Values whose names look secret go to a `.dev.vars` next to the generated config:
+// wrangler loads it as secrets and shows them as hidden. Other lines of an existing file are kept.
+const SECRET_VAR = /(TOKEN|SECRET|KEY|PASSWORD|LOGIN_CONFIG|LOGIN_PROFILES)/;
+export function moveSecretsToDevVars(config, dir) {
+  const secrets = {};
+  for (const [name, value] of Object.entries(config.vars ?? {})) {
+    if (typeof value !== "string" || !SECRET_VAR.test(name)) continue;
+    if (/['\n\r]/.test(value)) throw new Error(`Secret ${name} cannot be written to .dev.vars`);
+    secrets[name] = value;
+    delete config.vars[name];
+  }
+  if (Object.keys(secrets).length === 0) return;
+  const path = join(dir, ".dev.vars");
+  const kept = existsSync(path)
+    ? readFileSync(path, "utf8").split("\n").filter(line => {
+        const eq = line.indexOf("=");
+        return line.trim() && !line.startsWith("#") && !(eq > 0 && line.slice(0, eq).trim() in secrets);
+      })
+    : [];
+  const lines = [...kept, ...Object.entries(secrets).map(([name, value]) => `${name}='${value}'`)];
+  writeFileSync(path, lines.join("\n") + "\n", { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
 if (process.env.DEV_DRIVE_FIXTURE && !["yandex", "google"].includes(process.env.DEV_DRIVE_FIXTURE)) throw new Error("Unknown local drive fixture");
 
 const useWorkersAi = process.argv.includes("--use-workers-ai-binding");
@@ -250,6 +276,7 @@ for (const gk of gatekeepers) {
     config.main = process.env.DEV_DRIVE_FIXTURE === "google" ? "../../scripts/local-google-drive-fixture-worker.ts" : "../../scripts/local-drive-fixture-worker.ts";
   }
 
+  moveSecretsToDevVars(config, gk.dir);
   const outPath = join(gk.dir, "wrangler.dev.jsonc");
   writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
   console.log(`generated: ${outPath}`);
@@ -321,6 +348,7 @@ for (const gk of gatekeepers) {
 
   config.build = { ...config.build, cwd: WORKSHOP_BACKEND_DIR };
 
+  moveSecretsToDevVars(config, WORKSHOP_BACKEND_DIR);
   const outPath = join(ROOT, "packages", "workshop-backend", "wrangler.dev.jsonc");
   writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
   console.log(`generated: ${outPath}`);
