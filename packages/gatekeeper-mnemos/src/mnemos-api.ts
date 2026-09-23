@@ -791,6 +791,12 @@ export class MnemosAPI {
     }
     return state;
   }
+  /** Внутренний механизм «Принять»: работа агента из его ветки предлагается в основную ветку. */
+  openMergeRequest(project:string,connection:string,repository:string,head:string,title:string,body:string,signal?:AbortSignal):Promise<MergeRequestView>{return this.#request(`${gitRepositoryPath(project,connection,repository)}/merge-requests`,"POST",signal,{head,title,body});}
+  /** Вливает, если человек может принять; иначе сервер отправляет ответственному (outcome awaiting_approval). */
+  acceptMergeRequest(project:string,connection:string,repository:string,index:number,expectedHead:string,signal?:AbortSignal):Promise<MergeRequestView>{if(!Number.isSafeInteger(index)||index<1)throw new MnemosAPIError(400);return this.#request(`${gitRepositoryPath(project,connection,repository)}/merge-requests/${index}/accept`,"POST",signal,{expected_head:expectedHead});}
+  /** «Вернуть как было»: отменяет принятые изменения (outcome reverted). */
+  revertMergeRequest(project:string,connection:string,repository:string,index:number,signal?:AbortSignal):Promise<MergeRequestView>{if(!Number.isSafeInteger(index)||index<1)throw new MnemosAPIError(400);return this.#request(`${gitRepositoryPath(project,connection,repository)}/merge-requests/${index}/revert`,"POST",signal,{});}
   listProjectGitRepositories(project:string,cursor="",signal?:AbortSignal):Promise<GitProjectRepositoryPage>{return this.#request(`/v1/projects/${segment(project)}/git-repositories?cursor=${encodeURIComponent(cursor)}&limit=25`,"GET",signal);}
   bindGitRepository(project:string,connection:string,repository:string,input:GitRepositorySelection,signal?:AbortSignal):Promise<Omit<GitProjectRepository,"provider"|"connection_revision">>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}`,"POST",signal,input);}
   listGitConnections(cursor="",signal?:AbortSignal):Promise<GitConnectionPage>{return this.#request(`/v1/git/connections?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
@@ -855,8 +861,8 @@ function segment(id: string): string {
 }
 export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
-async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|undefined>{
- if(response.status!==409&&response.status!==429){await response.body?.cancel();return undefined;}
+async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|GitFailureCode|undefined>{
+ if(response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
  const reader=response.body?.getReader();if(!reader)return undefined;
  try{const chunks:Uint8Array[]=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>1024){await reader.cancel();return undefined;}chunks.push(part.value);}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
@@ -864,15 +870,22 @@ async function safeFailureCode(response:Response):Promise<'agent.memory_unavaila
   if(body&&typeof body==='object'&&'code' in body&&response.status===409&&body.code==='agent.memory_unavailable')return 'agent.memory_unavailable';
   if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='request.rate_limit')return 'request.rate_limit';
   if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='external_db.query_busy')return 'external_db.query_busy';
+  if(body&&typeof body==='object'&&'code' in body&&typeof body.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(body.code))return body.code as GitFailureCode;
  }catch{return undefined;}finally{reader.releaseLock();}
  return undefined;
 }
 export const REQUEST_RATE_ERROR="Request rate limit exceeded";
+/** Отказы операций с кодом, которые клиент показывает человеку своими словами. */
+export const GIT_FAILURE_CODES=["git.merge.no_approver","git.merge.stale","git.merge.not_ready","git.merge.not_responsible","git.merge.not_approved","git.merge.revert_conflict","git.merge.revert_unsupported","git.unavailable"] as const;
+export type GitFailureCode=typeof GIT_FAILURE_CODES[number];
 export class MnemosAPIError extends Error {
   readonly status: number;
-  constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit") { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; }
+  readonly code?: string;
+  constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit"|GitFailureCode) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
+/** Запрос на слияние с человеческим состоянием результата. */
+export interface MergeRequestView { index: number; head_sha?: string; state?: "open" | "closed" | "merged"; outcome?: "draft" | "awaiting_approval" | "accepted" | "rejected" | "closed" | "reverted"; summary?: string; approval_required?: boolean; responsible?: { principal_id: string; display_name?: string }[]; revert_commit_sha?: string }
 export interface WorkshopAgentConnection { binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; revoked: boolean; connection_name: string; project_ids: string[] }
 export interface AgentCredential { access_token: string; token_type: string; expires_in: number }
 export interface NodeHistoryPage { events: { event_id: string; head: string; recorded_at: string; exists: boolean; content_type?: string; observed: boolean; actor: string; on_behalf_of: string }[]; next_cursor?: string }

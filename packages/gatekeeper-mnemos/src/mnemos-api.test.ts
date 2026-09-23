@@ -164,3 +164,22 @@ test("corporate JSON card creation sends the original receipt and request",async
  const api=new MnemosAPI("https://memory.example",async()=>"token",async(url,init)=>{calls++;assert.equal(String(url),"https://memory.example/v1/projects/project/draft/create");assert.deepEqual(JSON.parse(String(init?.body)),request);return Response.json({node_id:"copy",head:version});});
  assert.equal((await api.createPrivateDocument("project",request)).node_id,"copy");assert.equal(calls,1);
 });
+
+test("запросы на слияние: принять и вернуть как было идут по адресу репозитория, коды отказа видны вызывающему", async () => {
+  const requests: { path: string; method?: string; body: unknown }[] = [];
+  let answer: Response = Response.json({ index: 7, outcome: "reverted" });
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
+    requests.push({ path: new URL(String(url)).pathname, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return answer;
+  });
+  assert.equal((await api.revertMergeRequest("p", "c", "1", 7)).outcome, "reverted");
+  assert.match(requests[0].path, /\/merge-requests\/7\/revert$/);
+  assert.equal(requests[0].method, "POST");
+  assert.throws(() => api.revertMergeRequest("p", "c", "1", 0), MnemosAPIError);
+  answer = Response.json({ code: "git.merge.revert_conflict", message: "details" }, { status: 409 });
+  await assert.rejects(api.revertMergeRequest("p", "c", "1", 7), (e: unknown) => e instanceof MnemosAPIError && e.status === 409 && e.code === "git.merge.revert_conflict");
+  answer = Response.json({ code: "git.merge.no_approver" }, { status: 409 });
+  await assert.rejects(api.acceptMergeRequest("p", "c", "1", 7, "abc"), (e: unknown) => e instanceof MnemosAPIError && e.code === "git.merge.no_approver");
+  answer = Response.json({ code: "internal.secret" }, { status: 409 });
+  await assert.rejects(api.acceptMergeRequest("p", "c", "1", 7, "abc"), (e: unknown) => e instanceof MnemosAPIError && e.code === undefined, "незнакомый код не передаётся");
+});

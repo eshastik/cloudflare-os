@@ -631,6 +631,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   async registerCalendarSelection(targetAccountId: number, project: string, request: string, selection: string) {
     return this.user.registerCalendarSelection(targetAccountId,project,request,selection);
   }
+  async listChatProjects() { return this.user.listChatProjects(); }
   async registerMailSelection(targetAccountId: number, project: string, request: string, selection: string) {
     return this.user.registerMailSelection(targetAccountId,project,request,selection);
   }

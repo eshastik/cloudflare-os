@@ -19,7 +19,9 @@ import {
   persistSelectedModel,
 } from "../modelSelection";
 import { useDocumentTitle } from "../useDocumentTitle";
-import { homePromptFromSearch, homeProjectFromSearch } from "../homePrompt";
+import { homePromptFromSearch, homeProjectFromSearch, projectContextFromProjects } from "../homePrompt";
+import { ProjectChips } from "../components/chat/ProjectChips";
+import { chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
 
 type HomeSearch = { prompt?: string; projectContext?: import('@gadgets/workshop-shared/api').ChatProjectContext };
 
@@ -45,8 +47,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
   const navigate = useNavigate();
   const toasts = useKumoToastManager();
 
-  const [projectContext,setProjectContext]=useState(project);
-  useEffect(()=>{if(project)setProjectContext(project)},[project]);
+  const [projects, setProjects] = useState<ChatProject[]>(() => chatProjects(project));
+  useEffect(() => { if (project) setProjects(chatProjects(project)); }, [project]);
+  const loadProjectChoices = useCallback(() => authenticatedApi.listChatProjects(), [authenticatedApi]);
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -115,8 +118,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
         ensureProvisionalGadget();
         const overseer = provisionalOverseerRef.current!.stub;
         // Pipeline both independent calls in one batch, but settle both before releasing the stub.
+        const projectContext = projectContextFromProjects(projects);
         const [chat, {id}] = await Promise.all([
-          projectContext ? overseer.newChat(message, modelId, capsules, attachments, formats,projectContext) : overseer.newChat(message, modelId, capsules, attachments, formats),
+          projectContext ? overseer.newChat(message, modelId, capsules, attachments, formats, projectContext) : overseer.newChat(message, modelId, capsules, attachments, formats),
           overseer.getMetadata(),
         ]);
         provisionalOverseerRef.current?.stub[Symbol.dispose]();
@@ -137,7 +141,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
         throw err;
       }
     },
-    [ensureProvisionalGadget, navigate, toasts, projectContext],
+    [ensureProvisionalGadget, navigate, toasts, projects],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -166,8 +170,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           </p>
         </header>
 
-        {projectContext&&<div className="flex items-center justify-between rounded-lg border border-kumo-line px-3 py-2 text-sm"><span>Проект: {projectContext.title}</span><button type="button" onClick={()=>setProjectContext(undefined)} aria-label="Убрать проект из беседы">Убрать</button></div>}
-        {/* Composer */}
+        {/* Composer: проекты беседы — тихие чипы над полем ввода. */}
+        <div>
+        <ProjectChips projects={projects} onChange={setProjects} loadChoices={loadProjectChoices} />
         <ChatInput
           createCapsuleGatekeeper={createCapsuleGatekeeper}
           getOverseer={getOverseer}
@@ -182,6 +187,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           seedText={seed.text}
           seedNonce={seed.nonce}
         />
+        </div>
 
         {/* A few example work tasks to spark ideas. Picking one seeds the composer above. */}
         <HomeTaskSuggestions

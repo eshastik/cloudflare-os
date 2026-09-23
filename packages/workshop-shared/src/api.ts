@@ -28,6 +28,7 @@ import type { UIReadinessSample } from "./ui-readiness.js";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
+import type { AgentStep, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile } from "./code-work.js";
 
 export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
@@ -616,6 +617,9 @@ export interface AuthenticatedApi extends RpcTarget {
   // in a sandboxed iframe and exposes `ui` to it over a MessagePort RPC session.
   /** Open the app from the selected connected account; omitted accountId keeps the default account. */
   getGatekeeperApp(id: string, accountId?: number): Promise<GatekeeperUiFrame | null>;
+
+  /** Проекты из подключённой памяти человека для набора проектов беседы. */
+  listChatProjects(): Promise<ChatProjectChoice[]>;
 
   /** Register an owner-prepared selection. The request must remain unchanged on retry. */
   registerMailSelection(targetAccountId: number, project: string, request: string, selection: string): ReturnType<NonNullable<GatekeeperUser["registerMailSelection"]>>;
@@ -1634,6 +1638,20 @@ export interface Overseer extends RpcTarget {
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
                   formats?: MessageFormatRef[]): Promise<void>;
 
+  // Набор проектов беседы (чипы над полем ввода). Проверяется владение подключениями.
+  setChatProjects(chatId: number, projects: ChatProject[]): Promise<void>;
+
+  // Вернуть сообщения человека агенту беседы, когда на переднем плане работа с кодом.
+  leaveCodeWork(chatId: number): Promise<void>;
+
+  // «Что изменилось» в работе с кодом беседы.
+  readChatCodeChanges(chatId: number): Promise<ChatCodeChanges | null>;
+
+  // «Принять» все изменения работы с кодом беседы.
+  acceptChatCodeChanges(chatId: number): Promise<ChatCodeAcceptResult>;
+  // «Вернуть как было» для принятых изменений работы с кодом беседы.
+  revertChatCodeChanges(chatId: number): Promise<ChatCodeAcceptResult>;
+
   // Upload an attachment for use in a future chat message. This way by the time the user wants to
   // send the message, likely uploading is complete. `modelId` determines whether the
   // selected provider can receive a raw file attachment.
@@ -1810,15 +1828,37 @@ export interface Overseer extends RpcTarget {
   previewRevokeShareLink(linkId: string): Promise<AffectedCollaborator[]>;
 }
 
-/** Контекст работы, а не право доступа. accountId принадлежит создателю беседы. */
+/** Контекст работы, а не право доступа. accountId принадлежит создателю беседы.
+ * Одиночные поля — первый проект набора (старые беседы знают только их). */
 export type ChatProjectContext = {
   accountId: number;
   projectId: string;
   title: string;
+  /** Набор проектов беседы; пустой — проект определится по задаче. */
+  projects?: ChatProject[];
 };
+
+/** Проект, который человек может подключить к беседе (из его подключённой памяти). */
+export type ChatProjectChoice = {accountId: number; projectId: string; title: string; hasCode: boolean};
+
+/** «Что изменилось» в работе с кодом беседы. */
+export type ChatCodeChanges = {
+  projectTitle: string;
+  summary: string;
+  files: ChangedFile[];
+  /** Построчные изменения для «Подробнее»; может быть обрезано. */
+  diff: string;
+  truncated: boolean;
+  review?: ChatCodeWork["review"];
+};
+
+/** Итог нажатия «Принять». */
+export type ChatCodeAcceptResult = {outcome: NonNullable<ChatCodeWork["review"]>["outcome"]; note: string};
 
 export type AiChatMetadata = {
   projectContext?: ChatProjectContext & {creatorId: string;creatorProfileId:string};
+  /** Работа с кодом этой беседы, если агент к ней переходил. */
+  codeWork?: ChatCodeWork;
   id: number,
   title: string,
   started: Date,
@@ -2287,6 +2327,18 @@ export type AiToolCall = {
     bindingName?: string;
   };
   output?: string;
+} | {
+  // Агент беседы переходит к работе с кодом проекта в рабочем месте (OpenCode). Шаги рабочего
+  // места хранятся в output и в ленте показываются вложенными строками. Ход, начатый сообщением
+  // человека при работе с кодом на переднем плане, записывается так же (input.task — его текст).
+  toolName: "codeWork";
+  input: {task: string; projectId: string};
+  output?: CodeWorkOutput;
+} | {
+  // Вопрос агента беседы к той же сессии работы с кодом («почему так сделал»).
+  toolName: "codeAsk";
+  input: {question: string};
+  output?: CodeWorkOutput;
 });
 
 // TODO: Extend AiToolCall for code-mode tool calls.
@@ -2461,6 +2513,11 @@ export type AiChatStreamEvent = {
 } | {
   type: "codeUpdate";
   update: Uint8Array;
+} | {
+  // Шаг работы с кодом внутри вызова codeWork/codeAsk: вставка или обновление по step.id.
+  type: "toolStep";
+  toolCallId: string;
+  step: AgentStep;
 };
 
 // Interface implemented by the client to receive action-log upserts.

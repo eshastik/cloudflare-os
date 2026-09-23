@@ -1,6 +1,7 @@
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
+import { formatCodeWorkResult, type AgentStep, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
 import { createWorkshopLogger } from "./observability";
 import * as Y from "yjs";
 import { Type } from "@earendil-works/pi-ai";
@@ -369,6 +370,17 @@ export interface AgentHooks {
   // doesn't exist.
   fetchBlueprint(blueprintId: string)
       : Promise<{files: Record<string, string>, notes: string, output?: BlueprintOutput}>;
+
+  // Работа с кодом проекта. Необязательные: без них агент работает как раньше.
+  //
+  // Проекты беседы и есть ли у человека память с кодом; null — инструменты кода не даются.
+  describeCodeWork?(chatId: number, initiator: AiChatAuthorInfo)
+      : Promise<{projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}} | null>;
+  // Один ход работы с кодом: шаги идут через onStep, текст агента кода — через onText.
+  runCodeWork?(chatId: number, initiator: AiChatAuthorInfo, request: {
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean;
+    signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
+  }): Promise<CodeWorkOutput>;
 }
 
 // =======================================================================================
@@ -554,6 +566,35 @@ Write a complete file, creating it if it doesn't exist, or replacing it if it do
 let EDIT_FILE_TOOL_DESCRIPTION = `
 Edit content of a file. If you need to edit multiple places in a file or across multiple files, you should issue multiple tool calls simultaneously, rather than in series.
 `.trim();
+
+let CODE_WORK_TOOL_DESCRIPTION = `
+Перейти к работе с кодом проекта: агент кода в отдельном рабочем месте с копией репозитория проекта выполняет задачу (читает и меняет файлы, запускает команды, ищет в памяти) и возвращает ответ, шаги и изменённые файлы. Человек видит шаги в ленте. Используй для любой задачи, которая требует прочитать или изменить код проекта. Если работа с кодом этого проекта уже идёт, вызов продолжает ту же сессию.
+
+Изменения не сохраняются в проект сами: человек видит «Что изменилось» и решает «Принять». Не говори, что изменения уже сохранены, и не проси человека создавать запросы на слияние или ветки.
+`.trim();
+
+let CODE_ASK_TOOL_DESCRIPTION = `
+Спросить агента кода той же живой сессии, что и почему он сделал. Используй, только если ответа нет в сохранённом итоге работы с кодом; если сессия завершена, ответь по сохранённой истории.
+`.trim();
+
+function formatCodeWorkPrompt(info: {projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}}): string {
+  let lines = ["# Проекты беседы и работа с кодом", ""];
+  if (info.projects.length) {
+    lines.push("Человек подключил к беседе проекты:");
+    for (let p of info.projects) {
+      lines.push(`* «${p.title}» (projectId: ${p.projectId}${p.hasCode ? ", есть код" : ""}${p.pinnedBy === "agent" ? ", подключил ты" : ""})`);
+    }
+  } else {
+    lines.push("Проекты к беседе не подключены: проект определится по задаче. Если задача про код конкретного проекта, передай его projectId или название в codeWork — проект подключится к беседе сам.");
+  }
+  lines.push("", "Для задач про код проекта вызывай codeWork. Отвечай человеку простым языком, без слов «ветка», «коммит», «запрос на слияние».");
+  if (info.active) {
+    lines.push("", info.active.alive
+      ? `Работа с кодом проекта «${info.active.projectTitle}» идёт; codeWork продолжит её, codeAsk задаст вопрос агенту кода.`
+      : `Работа с кодом проекта «${info.active.projectTitle}» завершена; на вопросы о ней отвечай по сохранённой истории.`);
+  }
+  return lines.join("\n");
+}
 
 let WEBFETCH_TOOL_DESCRIPTION = `
 Fetch the contents of a public web URL via HTTPS GET. Use this to look up documentation, fetch API references, or read pages the user has linked, when doing so would help you answer accurately. Prefer it over guessing when you're unsure about an API or library.
@@ -1687,6 +1728,14 @@ export async function runAgent(
                 case "requestConnection":
                   toolOutput = {text: toolCall.output ?? ""};
                   break;
+                case "codeWork":
+                case "codeAsk":
+                  // Ход работы с кодом не переигрывается: его итог записан при вызове.
+                  if (toolCall.output === undefined) {
+                    throw new Error(`${toolCall.toolName} tool call in log is missing its result`);
+                  }
+                  toolOutput = {text: formatCodeWorkResult(toolCall.output)};
+                  break;
                 default:
                   toolCall satisfies never;
                   throw new Error("Unknown tool.");
@@ -2198,6 +2247,15 @@ export async function runAgent(
           (alwaysAvailableResourcesPrompt ? `\n\n${alwaysAvailableResourcesPrompt}` : ""),
     ];
   }
+
+  // Работа с кодом даётся агенту беседы, если у человека есть память с проектами (не саб-агентам).
+  let codeWorkInfo = hooks.describeCodeWork && !agentContext.spawnerConfig
+      ? await hooks.describeCodeWork(chatId, initiator).catch(error => {
+          logger.warn("code work description failed", {event: "agent.code_work.describe_failed", chatId, error});
+          return null;
+        })
+      : null;
+  if (codeWorkInfo) systemPromptSlots[1] += `\n\n${formatCodeWorkPrompt(codeWorkInfo)}`;
 
   let systemPrompt = `${systemPromptSlots[0]}\n\n${systemPromptSlots[1]}`;
 
@@ -2811,6 +2869,42 @@ export async function runAgent(
       }
     }),
   };
+
+  if (codeWorkInfo && hooks.runCodeWork) {
+    let runCodeWork = hooks.runCodeWork.bind(hooks);
+    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean}) => {
+      try {
+        let output = await runCodeWork(chatId, initiator, {
+          toolCallId, ...request, signal: abortSignal,
+          onStep: step => emitStreamEvent({type: "toolStep", toolCallId, step}),
+          onText: delta => emitStreamEvent({type: "toolOutputDelta", toolCallId, delta}),
+        });
+        return toolResult(formatCodeWorkResult(output), {output} as Partial<AiToolCall>);
+      } catch (error) {
+        toolCallNotes.set(toolCallId, {error: toolErrorText(error)});
+        throw error;
+      }
+    };
+    tools.codeWork = defineTool({
+      name: "codeWork",
+      label: "Работа с кодом",
+      description: CODE_WORK_TOOL_DESCRIPTION,
+      parameters: Type.Object({
+        task: Type.String({description: "Что сделать в коде проекта: задача человека своими словами, с нужными подробностями из беседы."}),
+        projectId: Type.String({description: "projectId проекта из списка в системной подсказке."}),
+      }),
+      execute: (toolCallId, {task, projectId}) => codeTurn(toolCallId, {prompt: task, projectId}),
+    });
+    tools.codeAsk = defineTool({
+      name: "codeAsk",
+      label: "Вопрос агенту кода",
+      description: CODE_ASK_TOOL_DESCRIPTION,
+      parameters: Type.Object({
+        question: Type.String({description: "Вопрос агенту кода о том, что и почему он сделал."}),
+      }),
+      execute: (toolCallId, {question}) => codeTurn(toolCallId, {prompt: question, continueOnly: true}),
+    });
+  }
 
   // When the agent was started to handle callbacks, add the giveUp tool so it can bail out.
   if (callbackInitiated) {

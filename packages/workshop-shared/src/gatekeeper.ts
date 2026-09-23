@@ -992,6 +992,12 @@ export interface MailSendSource extends WorkerEntrypoint {
   }>;
 }
 
+/** Подключённый к проекту код: служба рабочих мест клонирует его через Mnemos. */
+/** Итог «Принять» или «Вернуть как было». */
+export type CodeWorkReview = {outcome: "accepted" | "awaiting_approval" | "rejected" | "no_approver" | "reverted"; note: string; mergeRequest?: number};
+export type CodeWorkTarget = {connectionId: string; repositoryId: string; repositoryName: string};
+export type CodeWorkState = "starting" | "running" | "idle" | "stopped" | "failed";
+
 export interface GatekeeperUser extends WorkerEntrypoint {
   /** Issue calendar creation authority for a host-selected account/calendar. */
   getCalendarWriteSource?(calendarId:string):Promise<{
@@ -1081,6 +1087,24 @@ export interface GatekeeperUser extends WorkerEntrypoint {
     /** Exact selected query for human review. */
     query: string;
   }>;
+
+  /** Проекты человека для набора проектов беседы; code — подключённый код проекта. */
+  listChatProjects?(): Promise<{projects: Array<{projectId: string; title: string; code?: CodeWorkTarget}>}>;
+  /** Начать работу с кодом проекта в рабочем месте от имени агента этого человека.
+   * scopeExtended — область агента расширена этим вызовом (права не шире прав человека). */
+  codeWorkStart?(project: string, target: CodeWorkTarget, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;
+  /** Следующее сообщение в ту же сессию работы с кодом. */
+  codeWorkMessage?(project: string, taskId: string, text: string): Promise<void>;
+  /** События сессии после after (долгий опрос не дольше waitMs). */
+  codeWorkEvents?(project: string, taskId: string, after: number, waitMs: number): Promise<{events: Array<{seq: number; type: string; data: unknown}>; next: number; state: CodeWorkState}>;
+  /** Остановить работу с кодом. */
+  codeWorkAbort?(project: string, taskId: string): Promise<void>;
+  /** Изменения рабочей копии, включая ещё не сохранённые. */
+  codeWorkChanges?(project: string, taskId: string): Promise<{files: Array<{path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number}>; diff: string; truncated: boolean}>;
+  /** «Принять»: сохранить работу и влить её в проект (или отправить на согласование, если оно включено). */
+  codeWorkAccept?(project: string, taskId: string, summary: string): Promise<CodeWorkReview>;
+  /** «Вернуть как было» для принятых изменений задачи. */
+  codeWorkRevert?(project: string, taskId: string, mergeRequest: number): Promise<CodeWorkReview>;
 
   /** List safe identifiers for this human's enabled WebDAV connections. */
   listDriveImportAccounts?(): Promise<Array<{

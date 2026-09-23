@@ -1,0 +1,203 @@
+import { describe, it, expect } from "vitest";
+import type { AiChatMetadata, AiChatStreamEvent } from "@gadgets/workshop-shared/api";
+import type { AgentStep, ChangedFile } from "@gadgets/workshop-shared/code-work";
+import { formatCodeWorkResult, validateChatProjects, chatProjects } from "@gadgets/workshop-shared/code-work";
+import { CodeWorkTimeline, type CodeWorkEvent } from "../src/code-work-timeline";
+import { runCodeWorkTurn, type CodeWorkBackend } from "../src/code-work";
+import {
+  acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, revertChatCodeChanges, runChatCodeWork, setChatProjects,
+  type ChatCodeWorkHost, type CodeWorkUser,
+} from "../src/chat-code-work";
+
+const part = (seq: number, p: Record<string, unknown>): CodeWorkEvent => ({ seq, type: "message.part.updated", data: { part: p } });
+const role = (seq: number, id: string, r: string): CodeWorkEvent => ({ seq, type: "message.updated", data: { info: { id, role: r } } });
+
+describe("шаги рабочего места для человека", () => {
+  it("инструменты становятся глаголами, технические слова — только в подробностях", () => {
+    const t = new CodeWorkTimeline(0);
+    const { steps } = t.apply([
+      role(1, "a1", "assistant"),
+      part(2, { id: "x1", messageID: "a1", type: "tool", tool: "read", callID: "c1", state: { status: "completed", input: { filePath: "/workspace/repo/go.mod" }, output: "module x" } }),
+      part(3, { id: "x2", messageID: "a1", type: "tool", tool: "edit", callID: "c2", state: { status: "completed", input: { filePath: "/workspace/repo/a.go", oldString: "a", newString: "b\nc" } } }),
+      part(4, { id: "x3", messageID: "a1", type: "tool", tool: "bash", callID: "c3", state: { status: "error", input: { command: "go test ./...", description: "Запустить тесты" }, error: "FAIL" } }),
+      part(5, { id: "x4", messageID: "a1", type: "tool", tool: "mnemos_mnemos_search", callID: "c4", state: { status: "completed", input: { query: "регламент" } } }),
+      part(6, { id: "x5", messageID: "a1", type: "tool", tool: "todowrite", callID: "c5", state: { status: "completed", input: {} } }),
+    ]);
+    expect(steps.map(s => [s.kind, s.title, s.status])).toEqual([
+      ["file", "Прочитал файл go.mod", "done"],
+      ["edit", "Изменил файл a.go +2 −1", "done"],
+      ["run", "Команда завершилась с ошибкой: Запустить тесты", "error"],
+      ["memory", "Поискал в памяти «регламент»", "done"],
+    ]);
+    expect(steps[2].detail).toBe("go test ./...");
+    expect(steps[2].output).toBe("FAIL");
+    expect(steps.every(s => !/bash|grep|mnemos_/.test(s.title))).toBe(true);
+  });
+
+  it("шаг обновляется по мере работы, повторные события и текст человека не учитываются", () => {
+    const t = new CodeWorkTimeline(1);
+    const running = t.apply([
+      { seq: 1, type: "workspace.state", data: { state: "failed" } },
+      role(2, "u1", "user"),
+      part(3, { id: "t0", messageID: "u1", type: "text", text: "Задача человека" }),
+      role(4, "a1", "assistant"),
+      part(5, { id: "k", messageID: "a1", type: "tool", tool: "read", callID: "c", state: { status: "running", input: { filePath: "x" } } }),
+      part(6, { id: "t1", messageID: "a1", type: "text", text: "Гото" }),
+    ]);
+    expect(running.steps.map(s => s.title)).toEqual(["Читаю файл x"]);
+    expect(running.textDelta).toBe("Гото");
+    const done = t.apply([
+      part(5, { id: "k", messageID: "a1", type: "tool", tool: "read", callID: "c", state: { status: "error", input: { filePath: "x" } } }),
+      part(7, { id: "k", messageID: "a1", type: "tool", tool: "read", callID: "c", state: { status: "completed", input: { filePath: "x" } } }),
+      part(8, { id: "t1", messageID: "a1", type: "text", text: "Готово" }),
+    ]);
+    expect(done.steps.map(s => s.status)).toEqual(["done"]);
+    expect(done.textDelta).toBe("во");
+    expect(t.steps()).toHaveLength(1);
+    expect(t.answer()).toBe("Готово");
+    expect(t.cursor).toBe(8);
+  });
+});
+
+class FakeBackend implements CodeWorkBackend {
+  calls: unknown[][] = [];
+  pages: {events: CodeWorkEvent[]; state: "starting" | "running" | "idle" | "stopped" | "failed"}[] = [];
+  files: ChangedFile[] = [{path: "a.go", status: "modified", additions: 1, deletions: 0}];
+  scopeExtended = false;
+  async start(project: string, _target: unknown, prompt: string) { this.calls.push(["start", project, prompt]); return {taskId: "t1", state: "starting" as const, scopeExtended: this.scopeExtended}; }
+  async message(project: string, task: string, text: string) { this.calls.push(["message", project, task, text]); }
+  async events(_p: string, _t: string, after: number) {
+    this.calls.push(["events", after]);
+    const page = this.pages.shift() ?? {events: [], state: "idle" as const};
+    return {events: page.events, next: page.events.at(-1)?.seq ?? after, state: page.state};
+  }
+  async abort(project: string, task: string) { this.calls.push(["abort", project, task]); }
+  async changes() { return {files: this.files, diff: "", truncated: false}; }
+}
+const TARGET = {connectionId: "c", repositoryId: "1", repositoryName: "org/repo"};
+
+describe("ход работы с кодом", () => {
+  it("новый ход запускает задачу, читает события до «свободен» и возвращает итог", async () => {
+    const backend = new FakeBackend();
+    backend.scopeExtended = true;
+    backend.pages = [
+      {events: [], state: "running"},
+      {events: [role(1, "a1", "assistant"), part(2, {id: "k", messageID: "a1", type: "tool", tool: "read", callID: "c", state: {status: "completed", input: {filePath: "x"}}}), part(3, {id: "t", messageID: "a1", type: "text", text: "Сделал"})], state: "idle"},
+    ];
+    const streamed: AgentStep[] = [];
+    const {output, cursor} = await runCodeWorkTurn({backend, projectId: "p", projectTitle: "Продажи", target: TARGET, cursor: 0, prompt: "задача",
+      signal: new AbortController().signal, onStep: s => streamed.push(s), clock: () => 0});
+    expect(backend.calls[0]).toEqual(["start", "p", "задача"]);
+    expect(output.state).toBe("idle");
+    expect(output.answer).toBe("Сделал");
+    expect(output.steps.map(s => s.title)).toEqual(["Подключил проект «Продажи»", "Прочитал файл x"]);
+    expect(streamed.map(s => s.title)).toEqual(output.steps.map(s => s.title));
+    expect(output.changedFiles).toHaveLength(1);
+    expect(cursor).toBe(3);
+    expect(formatCodeWorkResult(output)).toContain("Не обещай, что изменения уже сохранены");
+  });
+
+  it("продолжение отправляет сообщение и читает только новые события", async () => {
+    const backend = new FakeBackend();
+    backend.pages = [{events: [role(10, "a2", "assistant")], state: "idle"}];
+    await runCodeWorkTurn({backend, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 9, prompt: "ещё", signal: new AbortController().signal, onStep: () => {}});
+    expect(backend.calls[0]).toEqual(["message", "p", "t1", "ещё"]);
+    expect(backend.calls[1]).toEqual(["events", 9]);
+  });
+
+  it("«свободен» до начала работы не заканчивает ход сразу; остановка прерывает задачу", async () => {
+    const backend = new FakeBackend();
+    backend.pages = [{events: [], state: "idle"}, {events: [], state: "idle"}, {events: [role(1, "a", "assistant")], state: "idle"}];
+    const {output} = await runCodeWorkTurn({backend, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 0, prompt: "x", signal: new AbortController().signal, onStep: () => {}, idleWithoutWorkPolls: 5});
+    expect(backend.calls.filter(c => c[0] === "events")).toHaveLength(3);
+    expect(output.state).toBe("idle");
+
+    const stop = new AbortController();
+    const stopped = new FakeBackend();
+    stopped.pages = [{events: [], state: "running"}];
+    const run = runCodeWorkTurn({backend: stopped, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 0, prompt: "x", signal: stop.signal, onStep: () => stop.abort()});
+    stopped.pages.push({events: [part(1, {id: "k", type: "tool", tool: "read", callID: "c", state: {status: "running", input: {}}})], state: "running"});
+    stopped.pages.shift();
+    const result = await run;
+    expect(result.output.state).toBe("stopped");
+    expect(stopped.calls.some(c => c[0] === "abort")).toBe(true);
+  });
+});
+
+function fakeHost(meta: AiChatMetadata, user: Partial<CodeWorkUser>) {
+  const events: AiChatStreamEvent[] = [];
+  let current = structuredClone(meta);
+  const host: ChatCodeWorkHost = {
+    chatMeta: () => structuredClone(current),
+    putChatMeta: m => { current = structuredClone(m); },
+    user: () => user as CodeWorkUser,
+    emit: (_id, e) => events.push(e),
+  };
+  return {host, events, meta: () => current};
+}
+const baseMeta = (extra: Partial<AiChatMetadata> = {}): AiChatMetadata => ({id: 1, title: "t", started: new Date(0), lastActive: new Date(0), ...extra});
+
+describe("работа с кодом в беседе", () => {
+  it("набор проектов проверяется, старое одиночное поле читается как проект человека", () => {
+    expect(chatProjects({accountId: 1, projectId: "p", title: "Продажи"})).toEqual([{accountId: 1, projectId: "p", title: "Продажи", pinnedBy: "user"}]);
+    expect(() => validateChatProjects([{accountId: 1, projectId: "p", title: "a", pinnedBy: "user"}, {accountId: 1, projectId: "p", title: "b", pinnedBy: "user"}])).toThrow("Проект указан дважды");
+    expect(() => validateChatProjects([{accountId: 1, projectId: "p", title: "a", pinnedBy: "admin"}])).toThrow();
+    const {host, meta} = fakeHost(baseMeta({projectContext: {accountId: 1, projectId: "p", title: "P", creatorId: "u1", creatorProfileId: "pr"}}), {});
+    expect(() => setChatProjects(host, 1, "u2", "pr2", [])).toThrow("тот, кто начал беседу");
+    setChatProjects(host, 1, "u1", "pr", [{accountId: 1, projectId: "s", title: "Склад", pinnedBy: "user"}]);
+    expect(meta().projectContext).toMatchObject({projectId: "s", title: "Склад", creatorId: "u1"});
+  });
+
+  it("агент сам подключает проект по названию и переходит к коду; сообщение человека потом идёт в ту же сессию", async () => {
+    const backend = new FakeBackend();
+    backend.pages = [{events: [role(1, "a", "assistant")], state: "idle"}];
+    const user: Partial<CodeWorkUser> = {
+      async listChatProjects() { return [{accountId: 3, projectId: "sales", title: "Продажи", hasCode: true}]; },
+      async codeWorkTarget() { return {title: "Продажи", code: TARGET}; },
+      codeWorkStart: (_a, p, t, prompt) => backend.start(p, t, prompt),
+      codeWorkMessage: (_a, p, t, text) => backend.message(p, t, text),
+      codeWorkEvents: (_a, p, t, after, wait) => backend.events(p, t, after),
+      codeWorkAbort: (_a, p, t) => backend.abort(p, t),
+      codeWorkChanges: () => backend.changes(),
+    };
+    const {host, events, meta} = fakeHost(baseMeta(), user);
+    const signal = new AbortController().signal;
+    const output = await runChatCodeWork(host, {chatId: 1, toolCallId: "call", prompt: "почини", projectId: "продажи", userId: "u1", profileId: "pr", signal});
+    expect(output.steps[0].title).toBe("Подключил проект «Продажи»");
+    expect(chatProjects(meta().projectContext)).toEqual([{accountId: 3, projectId: "sales", title: "Продажи", pinnedBy: "agent", hasCode: true}]);
+    expect(events.some(e => e.type === "toolStep" && e.toolCallId === "call")).toBe(true);
+    expect(meta().codeWork).toMatchObject({taskId: "t1", state: "idle", foreground: true, cursor: 1, review: {outcome: "draft"}});
+    expect(codeWorkForeground(meta())).toBe(true);
+
+    backend.pages = [{events: [role(2, "a2", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "call2", prompt: "а почему так?", continueOnly: true, userId: "u1", profileId: "pr", signal});
+    expect(backend.calls.find(c => c[0] === "message")).toEqual(["message", "sales", "t1", "а почему так?"]);
+    leaveCodeWork(host, 1);
+    expect(codeWorkForeground(meta())).toBe(false);
+  });
+
+  it("без кода у проекта — понятный отказ; вопрос к завершённой работе — ответ по истории", async () => {
+    const {host} = fakeHost(baseMeta({projectContext: {accountId: 1, projectId: "p", title: "P", projects: [{accountId: 1, projectId: "p", title: "P", pinnedBy: "user"}], creatorId: "u1", creatorProfileId: "pr"}}),
+      {async codeWorkTarget() { return {title: "P"}; }});
+    const signal = new AbortController().signal;
+    await expect(runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "x", userId: "u1", profileId: "pr", signal})).rejects.toThrow("нет подключённого кода");
+    await expect(runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "x", continueOnly: true, userId: "u1", profileId: "pr", signal})).rejects.toThrow("уже завершена");
+  });
+
+  it("«Принять» и «Вернуть как было»: только создатель беседы; итог записывается в беседу", async () => {
+    const calls: unknown[][] = [];
+    const work = {accountId: 1, projectId: "p", projectTitle: "P", taskId: "t1", state: "idle" as const, foreground: false, cursor: 3, summary: "Итог", review: {outcome: "draft" as const}};
+    const {host, meta} = fakeHost(baseMeta({codeWork: work, projectContext: {accountId: 1, projectId: "p", title: "P", creatorId: "u1", creatorProfileId: "pr"}}), {
+      async codeWorkAccept(...args) { calls.push(["accept", ...args]); return {outcome: "accepted", note: "Принято", mergeRequest: 7}; },
+      async codeWorkRevert(...args) { calls.push(["revert", ...args]); return {outcome: "reverted", note: "Возвращено как было.", mergeRequest: 7}; },
+    });
+    await expect(acceptChatCodeChanges(host, 1, "u2")).rejects.toThrow("тот, кто начал беседу");
+    await expect(revertChatCodeChanges(host, 1, "u1")).rejects.toThrow("только принятые");
+    expect(await acceptChatCodeChanges(host, 1, "u1")).toEqual({outcome: "accepted", note: "Принято"});
+    expect(calls[0]).toEqual(["accept", 1, "p", "t1", "Итог"]);
+    expect(meta().codeWork?.review).toEqual({outcome: "accepted", note: "Принято", mergeRequest: 7});
+    expect((await revertChatCodeChanges(host, 1, "u1")).outcome).toBe("reverted");
+    expect(calls[1]).toEqual(["revert", 1, "p", "t1", 7]);
+    expect(meta().codeWork?.review?.outcome).toBe("reverted");
+  });
+});

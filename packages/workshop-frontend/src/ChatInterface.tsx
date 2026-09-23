@@ -114,6 +114,12 @@ import AutoApproveConfirmDialog from "./components/AutoApproveConfirmDialog";
 import { AlwaysApproveButton, ResolveButton } from "./components/ResolveButton";
 import { WorkshopButton, WorkshopIconButton } from "./components/WorkshopControls";
 import { ChatSubline } from "./ChatSubline";
+import type { AgentStep } from "@gadgets/workshop-shared/code-work";
+import { chatListState, upsertAgentStep } from "./codeWorkSteps";
+import { CodeWorkRow } from "./components/chat/CodeWorkRow";
+import { CodeChangesCard } from "./components/chat/CodeChangesCard";
+import { ProjectChips } from "./components/chat/ProjectChips";
+import { chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
 import { useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
 import { useResolveAction } from "./useResolveAction";
@@ -632,32 +638,31 @@ function getToolCallSummary(
 ): { verb: string; target?: string } {
   switch (tc.toolName) {
     case "readFile":
-      return { verb: "Read", target: tc.input.filename };
+      return { verb: "Прочитал файл", target: tc.input.filename };
     case "writeFile":
-      return { verb: "Wrote", target: tc.input.filename };
+      return { verb: "Записал файл", target: tc.input.filename };
     case "editFile":
-      return { verb: "Edited", target: tc.input.filename };
+      return { verb: "Изменил файл", target: tc.input.filename };
     case "describeBinding":
-      return { verb: "Inspected", target: `${String(tc.input.name)} binding` };
+      return { verb: "Посмотрел подключение", target: String(tc.input.name) };
     case "setBindingHook":
       return {
-        verb: "Connected",
+        verb: "Подключил",
         target: tc.input.entrypoint
           ? `${tc.input.bindingName} → ${tc.input.entrypoint}`
           : tc.input.bindingName,
       };
     case "setGadgetBinding":
       return {
-        verb: "Подключено",
+        verb: "Подключил",
         target: formatGadgetBindingTarget(tc.input.gadget, tc.input.name ?? tc.input.source),
       };
     // Obsolete predecessor of `setGadgetBinding`; appears only in old chat logs.
     case "saveCapsuleAsBinding":
-      return { verb: "Ресурс сохранён", target: tc.input.bindingName };
+      return { verb: "Сохранил ресурс", target: tc.input.bindingName };
     case "createGadget": {
-
       const output = outputOf?.(tc);
-      return { verb: `Created ${output?.noun ?? "gadget"}`, target: tc.input.title };
+      return { verb: output ? `Создал: ${output.noun}` : "Создал приложение", target: tc.input.title };
     }
     case "executeCode": {
       // Prefer the first non-empty line as a preview. `code` may be absent while the tool call's
@@ -667,7 +672,7 @@ function getToolCallSummary(
         .map((line) => line.trim())
         .find((line) => line.length > 0);
       return {
-        verb: "Код выполнен",
+        verb: "Выполнил действие",
         target: firstLine
           ? firstLine.length > 60
             ? `${firstLine.slice(0, 57)}…`
@@ -676,7 +681,7 @@ function getToolCallSummary(
       };
     }
     case "giveUp":
-      return { verb: "Stopped" };
+      return { verb: "Остановился" };
     case "webFetch": {
       let target = tc.input.url;
       try {
@@ -684,16 +689,20 @@ function getToolCallSummary(
       } catch {
         // Leave as the raw URL.
       }
-      return { verb: "Fetched", target };
+      return { verb: "Открыл страницу", target };
     }
     case "observeUserChanges":
-      return { verb: "Правки пользователя проверены" };
+      return { verb: "Посмотрел ваши правки" };
     case "listBlueprints":
-      return { verb: "Шаблоны приложений получены" };
+      return { verb: "Посмотрел шаблоны приложений" };
     case "listConnectableResources":
-      return { verb: "Доступные ресурсы получены", target: tc.input.vendorId };
+      return { verb: "Посмотрел доступные подключения", target: tc.input.vendorId };
     case "requestConnection":
-      return { verb: "Подключение запрошено", target: tc.input.vendorId };
+      return { verb: "Попросил подключение", target: tc.input.vendorId };
+    case "codeWork":
+      return { verb: "Перешёл к работе с кодом проекта", target: tc.output?.projectTitle ?? tc.input.projectId };
+    case "codeAsk":
+      return { verb: "Спросил агента кода", target: tc.output?.projectTitle };
   }
   // Compile-time exhaustiveness check.
   const _exhaustive: never = tc;
@@ -729,12 +738,16 @@ function lowerFirst(text: string): string {
   return text ? text[0].toLowerCase() + text.slice(1) : text;
 }
 
-function pluralize(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
+// Русское склонение по числу: 1 файл, 2 файла, 5 файлов.
+function pluralize(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10, mod100 = count % 100;
+  const word = mod10 === 1 && mod100 !== 11 ? one
+    : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+  return `${count} ${word}`;
 }
 
 function formatTimes(count: number): string {
-  return pluralize(count, "time");
+  return pluralize(count, "раз", "раза", "раз");
 }
 
 function describeObservationCount(count: number): string {
@@ -744,35 +757,38 @@ function describeObservationCount(count: number): string {
 function describeToolCallCount(toolName: AiToolCall["toolName"], count: number): string {
   switch (toolName) {
     case "readFile":
-      return `Read ${pluralize(count, "file")}`;
+      return `Прочитал ${pluralize(count, "файл", "файла", "файлов")}`;
     case "writeFile":
-      return `Wrote ${pluralize(count, "file")}`;
+      return `Записал ${pluralize(count, "файл", "файла", "файлов")}`;
     case "editFile":
-      return count === 1 ? "Внесена 1 правка" : `Внесено правок: ${count}`;
+      return `Внёс ${pluralize(count, "правку", "правки", "правок")}`;
     case "webFetch":
-      return `Fetched ${pluralize(count, "page")}`;
+      return `Открыл ${pluralize(count, "страницу", "страницы", "страниц")}`;
     case "executeCode":
-      return count === 1 ? "Код выполнен" : `Код выполнен ${formatTimes(count)}`;
+      return count === 1 ? "Выполнил действие" : `Выполнил действия ${formatTimes(count)}`;
     case "describeBinding":
-      return `Inspected ${pluralize(count, "binding")}`;
+      return `Посмотрел ${pluralize(count, "подключение", "подключения", "подключений")}`;
     case "setBindingHook":
-      return `Connected ${pluralize(count, "binding")}`;
     case "setGadgetBinding":
-      return `Подключено ${pluralize(count, "binding")}`;
+      return `Подключил ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
     case "saveCapsuleAsBinding":
-      return `Saved ${pluralize(count, "resource")}`;
+      return `Сохранил ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
     case "createGadget":
-      return `Created ${pluralize(count, "gadget")}`;
+      return `Создал ${pluralize(count, "приложение", "приложения", "приложений")}`;
     case "observeUserChanges":
-      return `Observed ${pluralize(count, "change set")}`;
+      return "Посмотрел ваши правки";
     case "giveUp":
-      return count === 1 ? "Stopped" : `Stopped ${count} times`;
+      return "Остановился";
     case "listBlueprints":
-      return `Шаблоны приложений получены`;
+      return "Посмотрел шаблоны приложений";
     case "listConnectableResources":
-      return `Доступные ресурсы получены`;
+      return "Посмотрел доступные подключения";
     case "requestConnection":
-      return count === 1 ? "Запрошено подключение" : `Requested ${count} connections`;
+      return count === 1 ? "Попросил подключение" : `Попросил ${pluralize(count, "подключение", "подключения", "подключений")}`;
+    case "codeWork":
+      return "Работал с кодом проекта";
+    case "codeAsk":
+      return "Спросил агента кода";
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -808,6 +824,9 @@ function getToolIcon(
       return MagnifyingGlass;
     case "giveUp":
       return Question;
+    case "codeWork":
+    case "codeAsk":
+      return Code;
     default:
       return Question;
   }
@@ -816,31 +835,35 @@ function getToolIcon(
 function getProvisionalToolLabel(toolName: AiToolCall["toolName"] | null | undefined) {
   switch (toolName) {
     case "readFile":
-      return "Чтение файла";
+      return "Читаю файл";
     case "writeFile":
-      return "Запись файла";
+      return "Записываю файл";
     case "editFile":
-      return "Изменение файла";
+      return "Меняю файл";
     case "describeBinding":
-      return "Проверка подключения";
+      return "Смотрю подключение";
     case "setBindingHook":
-      return "Подключение ресурса";
+      return "Подключаю ресурс";
     case "setGadgetBinding":
-      return "Настройка подключения";
+      return "Настраиваю подключение";
     case "saveCapsuleAsBinding":
-      return "Сохранение ресурса";
+      return "Сохраняю ресурс";
     case "createGadget":
-      return "Создание приложения";
+      return "Создаю приложение";
     case "executeCode":
-      return "Выполнение кода";
+      return "Выполняю действие";
     case "webFetch":
-      return "Загрузка страницы";
+      return "Открываю страницу";
     case "observeUserChanges":
-      return "Проверка правок пользователя";
+      return "Смотрю ваши правки";
     case "giveUp":
-      return "Stopping";
+      return "Останавливаюсь";
+    case "codeWork":
+      return "Работаю с кодом проекта";
+    case "codeAsk":
+      return "Спрашиваю агента кода";
     default:
-      return "Выполнение действия";
+      return "Выполняю действие";
   }
 }
 
@@ -851,21 +874,23 @@ function getToolTarget(tc: AiToolCall): string | undefined {
 // Present-tense verb for an in-progress tool call.
 function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
   switch (toolName) {
-    case "readFile": return "Reading";
-    case "writeFile": return "Writing";
-    case "editFile": return "Editing";
-    case "describeBinding": return "Inspecting";
-    case "setBindingHook": return "Connecting";
-    case "setGadgetBinding": return "Wiring up";
-    case "saveCapsuleAsBinding": return "Saving";
-    case "createGadget": return "Создание приложения";
-    case "executeCode": return "Выполнение кода";
-    case "webFetch": return "Fetching";
-    case "observeUserChanges": return "Проверка правок пользователя";
-    case "giveUp": return "Stopping";
-    case "listBlueprints": return "Поиск шаблонов приложений";
-    case "listConnectableResources": return "Поиск доступных ресурсов";
-    case "requestConnection": return "Запрос подключения";
+    case "readFile": return "Читаю";
+    case "writeFile": return "Записываю";
+    case "editFile": return "Меняю";
+    case "describeBinding": return "Смотрю";
+    case "setBindingHook": return "Подключаю";
+    case "setGadgetBinding": return "Подключаю";
+    case "saveCapsuleAsBinding": return "Сохраняю";
+    case "createGadget": return "Создаю приложение";
+    case "executeCode": return "Выполняю действие";
+    case "webFetch": return "Открываю";
+    case "observeUserChanges": return "Смотрю ваши правки";
+    case "giveUp": return "Останавливаюсь";
+    case "listBlueprints": return "Ищу шаблоны приложений";
+    case "listConnectableResources": return "Ищу доступные подключения";
+    case "requestConnection": return "Прошу подключение";
+    case "codeWork": return "Работаю с кодом проекта";
+    case "codeAsk": return "Спрашиваю агента кода";
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -875,21 +900,23 @@ function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
 function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: number): string {
   if (count <= 1) return getProvisionalToolLabel(toolName);
   switch (toolName) {
-    case "readFile": return `Reading ${pluralize(count, "file")}`;
-    case "writeFile": return `Writing ${pluralize(count, "file")}`;
-    case "editFile": return `Making ${count} edits`;
-    case "webFetch": return `Fetching ${pluralize(count, "page")}`;
-    case "executeCode": return count === 1 ? "Выполнение кода" : `Выполнение кода ${formatTimes(count)}`;
-    case "describeBinding": return `Inspecting ${pluralize(count, "binding")}`;
-    case "setBindingHook": return `Connecting ${pluralize(count, "binding")}`;
-    case "setGadgetBinding": return `Wiring up ${pluralize(count, "binding")}`;
-    case "saveCapsuleAsBinding": return `Saving ${pluralize(count, "resource")}`;
-    case "createGadget": return `Creating ${pluralize(count, "gadget")}`;
-    case "observeUserChanges": return `Observing ${pluralize(count, "change set")}`;
-    case "giveUp": return "Stopping";
-    case "listBlueprints": return "Поиск шаблонов приложений";
-    case "listConnectableResources": return "Поиск доступных ресурсов";
-    case "requestConnection": return `Requesting ${pluralize(count, "connection")}`;
+    case "readFile": return `Читаю ${pluralize(count, "файл", "файла", "файлов")}`;
+    case "writeFile": return `Записываю ${pluralize(count, "файл", "файла", "файлов")}`;
+    case "editFile": return `Вношу ${pluralize(count, "правку", "правки", "правок")}`;
+    case "webFetch": return `Открываю ${pluralize(count, "страницу", "страницы", "страниц")}`;
+    case "executeCode": return `Выполняю действия ${formatTimes(count)}`;
+    case "describeBinding": return `Смотрю ${pluralize(count, "подключение", "подключения", "подключений")}`;
+    case "setBindingHook":
+    case "setGadgetBinding": return `Подключаю ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
+    case "saveCapsuleAsBinding": return `Сохраняю ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
+    case "createGadget": return `Создаю ${pluralize(count, "приложение", "приложения", "приложений")}`;
+    case "observeUserChanges": return "Смотрю ваши правки";
+    case "giveUp": return "Останавливаюсь";
+    case "listBlueprints": return "Ищу шаблоны приложений";
+    case "listConnectableResources": return "Ищу доступные подключения";
+    case "requestConnection": return `Прошу ${pluralize(count, "подключение", "подключения", "подключений")}`;
+    case "codeWork": return "Работаю с кодом проекта";
+    case "codeAsk": return "Спрашиваю агента кода";
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -901,7 +928,7 @@ function buildProvisionalToolSummary(
 ): { label: string; detailLines: string[] } {
 
   if (calls.length === 1 && calls[0].outputFormat) {
-    return { label: `Creating ${calls[0].outputFormat.noun}`, detailLines: [] };
+    return { label: `Создаю: ${calls[0].outputFormat.noun}`, detailLines: [] };
   }
   const toolNames = Array.from(
     new Set(calls.map((c) => c.toolName).filter((n): n is AiToolCall["toolName"] => !!n)),
@@ -943,7 +970,37 @@ function buildProvisionalToolSummary(
   return { label, detailLines };
 }
 
+type CodeWorkToolCall = Extract<AiToolCall, { toolName: "codeWork" | "codeAsk" }>;
+
+function isCodeWorkCall(tc: AiToolCall): tc is CodeWorkToolCall {
+  return tc.toolName === "codeWork" || tc.toolName === "codeAsk";
+}
+
+// Работа с кодом — отдельная строка со своими шагами, не смешивается с остальными действиями.
 function buildToolCallGroups(
+  toolCalls: AiToolCall[],
+  observations: ObservationChatMessage[] = [],
+  outputOf?: ToolOutputResolver,
+): ToolCallGroup[] {
+  const codeGroups = toolCalls.filter(isCodeWorkCall).map((tc): ToolCallGroup => {
+    const summary = getToolCallSummary(tc);
+    return {
+      key: `group-${tc.toolCallId}`,
+      Icon: Code,
+      label: `${summary.verb}${summary.target ? ` «${summary.target}»` : ""}`,
+      detailLines: [],
+      calls: [tc],
+      observations: [],
+      hasError: Boolean(tc.error),
+    };
+  });
+  return [
+    ...buildPlainToolCallGroups(toolCalls.filter((tc) => !isCodeWorkCall(tc)), observations, outputOf),
+    ...codeGroups,
+  ];
+}
+
+function buildPlainToolCallGroups(
   toolCalls: AiToolCall[],
   observations: ObservationChatMessage[] = [],
   outputOf?: ToolOutputResolver,
@@ -974,7 +1031,7 @@ function buildToolCallGroups(
       return describeToolCallCount(toolName, count);
     }));
   } else if (toolCalls.length > 0) {
-    labelParts.push(`${toolCalls.length} tool calls`);
+    labelParts.push(`Действий: ${toolCalls.length}`);
   }
 
   if (observations.length > 0) {
@@ -1592,7 +1649,7 @@ const NestedObservationRow = memo(function NestedObservationRow({
 }) {
   const key = `observation-${observation.chatId}-${observation.sequence}`;
   const log = observation.actionLog;
-  const label = `Read ${log.description.title || log.resourceTitle || "resource"}`;
+  const label = `Прочитал ${log.description.title || log.resourceTitle || "ресурс"}`;
 
   return (
     <div className="group/nested">
@@ -1662,6 +1719,20 @@ const ToolGroupRow = memo(function ToolGroupRow({
   onFooterRevert?: (sequence: number) => void;
   outputOf?: ToolOutputResolver;
 }) {
+  const codeCall = group.calls.length === 1 && group.observations.length === 0 && isCodeWorkCall(group.calls[0])
+    ? group.calls[0] : null;
+  if (codeCall) {
+    return (
+      <CodeWorkRow
+        title={group.label}
+        steps={codeCall.output?.steps ?? []}
+        running={false}
+        durationMs={codeCall.output?.durationMs}
+        changedFiles={codeCall.output?.changedFiles}
+        error={codeCall.error}
+      />
+    );
+  }
   const footerLabel = footerChangeSequence !== undefined
     ? getDiscardLabel(footerIsTrailing, footerCreatedGadgetTitles)
     : null;
@@ -4124,6 +4195,8 @@ type ProvisionalToolCallState = {
   code: string;
   output: string;
   finished: boolean;
+  // Шаги работы с кодом (codeWork/codeAsk) по мере прихода.
+  steps?: AgentStep[];
 };
 
 type ProvisionalChatState = {
@@ -4228,7 +4301,7 @@ function ChatInterface({
 }: ChatInterfaceProps) {
   // Persistent cache that survives reconnects
   const toasts = useKumoToastManager();
-  const { currentUser } = useAuthenticatedApi();
+  const { currentUser, authenticatedApi } = useAuthenticatedApi();
   const getOverseer = useCallback(() => overseer, [overseer]);
   const cacheRef = useRef<ChatCache>({
     chats: new Map(),
@@ -4723,6 +4796,49 @@ function ChatInterface({
   const isAgentActive = !!currentChatMetadata?.activeAgent;
   const activeAgent = currentChatMetadata?.activeAgent;
 
+  // Проекты беседы и работа с кодом.
+  const chatProjectList = useMemo(
+    () => chatProjects(currentChatMetadata?.projectContext),
+    [currentChatMetadata?.projectContext],
+  );
+  const codeWork = currentChatMetadata?.codeWork;
+  const codeWorkForeground = !!codeWork?.foreground &&
+    (codeWork.state === "starting" || codeWork.state === "running" || codeWork.state === "idle");
+  const loadProjectChoices = useCallback(
+    () => authenticatedApi.listChatProjects(),
+    [authenticatedApi],
+  );
+  const changeChatProjects = useCallback(async (projects: ChatProject[]) => {
+    if (selectedChatId === null) return;
+    try {
+      await overseer.setChatProjects(selectedChatId, projects);
+    } catch (err) {
+      logRpcFailure("Не удалось изменить проекты беседы:", err);
+      toasts.add({ title: err instanceof Error && err.message ? err.message : "Не удалось изменить проекты беседы", variant: "error" });
+    }
+  }, [overseer, selectedChatId, toasts]);
+  const loadCodeChanges = useCallback(
+    () => selectedChatId === null ? Promise.resolve(null) : overseer.readChatCodeChanges(selectedChatId),
+    [overseer, selectedChatId],
+  );
+  const acceptCodeChanges = useCallback(
+    () => overseer.acceptChatCodeChanges(selectedChatId!),
+    [overseer, selectedChatId],
+  );
+  const revertCodeChanges = useCallback(
+    () => overseer.revertChatCodeChanges(selectedChatId!),
+    [overseer, selectedChatId],
+  );
+  const leaveCodeWork = useCallback(async () => {
+    if (selectedChatId === null) return;
+    try {
+      await overseer.leaveCodeWork(selectedChatId);
+    } catch (err) {
+      logRpcFailure("Не удалось вернуться к беседе:", err);
+      toasts.add({ title: "Не удалось вернуться к беседе", variant: "error" });
+    }
+  }, [overseer, selectedChatId, toasts]);
+
   // Notify parent when agent active state changes
   const onAgentActiveChangeRef = useRef(onAgentActiveChange);
   onAgentActiveChangeRef.current = onAgentActiveChange;
@@ -5094,6 +5210,15 @@ function ChatInterface({
             null,
           );
           toolCall.output += event.delta;
+          break;
+        }
+        case "toolStep": {
+          const toolCall = getOrCreateProvisionalToolCall(
+            provisional,
+            event.toolCallId,
+            null,
+          );
+          toolCall.steps = upsertAgentStep(toolCall.steps ?? [], event.step);
           break;
         }
         case "toolCallFinished": {
@@ -6481,10 +6606,20 @@ function ChatInterface({
                             {displayChatTitle(chat.title)}
                           </span>
                         )}
-                        {!isRenaming && chat.activeAgent ? (
+                        {!isRenaming && chatListState(chat) === "working" ? (
                           <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-brand">
                             <span className="h-1.5 w-1.5 rounded-full bg-kumo-brand animate-pulse" />
-                            В работе
+                            Работает
+                          </span>
+                        ) : !isRenaming && chatListState(chat) === "review" ? (
+                          <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-warning">
+                            <span className="h-1.5 w-1.5 rounded-full bg-kumo-warning" />
+                            Готово к проверке
+                          </span>
+                        ) : !isRenaming && chatListState(chat) === "awaiting" ? (
+                          <span className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1 text-[11px] leading-4 font-medium text-kumo-subtle">
+                            <span className="h-1.5 w-1.5 rounded-full bg-kumo-inactive" />
+                            Ждёт согласования
                           </span>
                         ) : !isRenaming && chat.hasProposedChanges ? (
                           <Tooltip content="В беседе есть непринятые изменения" asChild>
@@ -6663,7 +6798,7 @@ function ChatInterface({
               {!sidebarMode && (
                 <ChatSubline
                   chatCount={chatList.length}
-                  projectTitle={currentChatMetadata?.projectContext?.title}
+                  projectTitle={chatProjectList.map((p) => p.title).join(" · ") || undefined}
                   onBack={() => onNavigateToChat(null)}
                 />
               )}
@@ -7366,7 +7501,7 @@ function ChatInterface({
                         <div className={`group/agent min-w-0 w-full max-w-[860px] space-y-2 ${provisionalTopClass}`}>
                           {isCompacting && (
                             <div className={`inline-flex px-1.5 py-1 text-[14px] leading-5 tracking-[-0.25px] ${styles.thinkingShimmer}`}>
-                              Compacting…
+                              Сокращаю контекст…
                             </div>
                           )}
 
@@ -7386,13 +7521,27 @@ function ChatInterface({
                             </div>
                           )}
 
-                          {provisionalToolCalls.length > 0 && (() => {
-                            const first = provisionalToolCalls[0];
+                          {provisionalToolCalls
+                            .filter((t) => t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps)
+                            .map((t) => (
+                              <CodeWorkRow
+                                key={`stream-code-${t.toolCallId}`}
+                                title={t.toolName === "codeAsk" ? "Спрашиваю агента кода" : "Работаю с кодом проекта"}
+                                steps={t.steps ?? []}
+                                running
+                              />
+                            ))}
+
+                          {provisionalToolCalls.some((t) => !(t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps)) && (() => {
+                            const plainCalls = provisionalToolCalls.filter(
+                              (t) => !(t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps),
+                            );
+                            const first = plainCalls[0];
                             const { label, detailLines } =
-                              buildProvisionalToolSummary(provisionalToolCalls);
+                              buildProvisionalToolSummary(plainCalls);
                             const expansionKey = `group-${first.toolCallId}`;
                             const isExpanded = expandedToolCalls.has(expansionKey);
-                            const detailCalls = provisionalToolCalls.filter(
+                            const detailCalls = plainCalls.filter(
                               (t) => t.code || t.output,
                             );
                             return (
@@ -7464,6 +7613,37 @@ function ChatInterface({
               {/* ── Bottom: input, update state, and cost ──────────────── */}
               <div className={`flex-shrink-0 bg-kumo-base ${sidebarMode ? "" : "border-t border-kumo-line"}`}>
                 <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
+                  {codeWork && codeWork.review && (
+                    <div className="pt-2">
+                      <CodeChangesCard
+                        refreshKey={`${codeWork.taskId}:${codeWork.cursor}:${codeWork.review.outcome}`}
+                        review={codeWork.review}
+                        load={loadCodeChanges}
+                        accept={acceptCodeChanges}
+                        revert={revertCodeChanges}
+                        disabled={isAgentActive}
+                      />
+                    </div>
+                  )}
+                  <ProjectChips
+                    projects={chatProjectList}
+                    onChange={changeChatProjects}
+                    loadChoices={loadProjectChoices}
+                    disabled={isAgentActive}
+                  />
+                  {codeWorkForeground && (
+                    <div className="flex items-center gap-1.5 px-4 pt-1.5 text-[12px] leading-4 text-kumo-subtle" role="status">
+                      <span>Сейчас отвечает: работа с кодом</span>
+                      <span aria-hidden>·</span>
+                      <button
+                        type="button"
+                        onClick={leaveCodeWork}
+                        className="cursor-pointer text-kumo-brand hover:underline"
+                      >
+                        Вернуться к беседе
+                      </button>
+                    </div>
+                  )}
                   <ChatInput
                     chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>

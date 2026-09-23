@@ -97,6 +97,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Vendor {
 }
 
 /** Human account capability, retained by Workshop rather than handed to agents. */
+/** Набор проектов беседы: сколько проектов показать и у скольких проверить подключённый код. */
+const CHAT_PROJECTS_LIMIT=50;
+const CHAT_PROJECTS_WITH_CODE_CHECK=20;
+
 export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: string }> implements GatekeeperUser {
   #account() { return this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId)); }
   async describe(): Promise<AccountDescription> {
@@ -146,6 +150,15 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     return this.#account().acceptCalendarReadSource(project, request, sourceKey, source);
   }
 
+  /** Работа с кодом беседы: хост вызывает от имени этого человека; фрейм управления их не видит. */
+  async listChatProjects(){return this.#account().listChatProjects();}
+  async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string;repositoryName:string},prompt:string){return this.#account().codeWorkStart(project,target,prompt);}
+  async codeWorkMessage(project:string,task:string,text:string){return this.#account().codeWorkMessage(project,task,text);}
+  async codeWorkEvents(project:string,task:string,after:number,waitMs:number){return this.#account().codeWorkEvents(project,task,after,waitMs);}
+  async codeWorkAbort(project:string,task:string){return this.#account().codeWorkAbort(project,task);}
+  async codeWorkChanges(project:string,task:string){return this.#account().codeWorkChanges(project,task);}
+  async codeWorkAccept(project:string,task:string,summary:string){return this.#account().codeWorkAccept(project,task,summary);}
+  async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#account().codeWorkRevert(project,task,mergeRequest);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
     const nonce = await this.#account().prepareReconnect();
@@ -203,7 +216,7 @@ export class UserAccount extends DurableObject<Env> {
   if(this.env.MNEMOS_WORKSPACE_ORIGIN&&this.env.MNEMOS_WORKSPACE_TOKEN){try{control=new WorkspaceClient(this.env.MNEMOS_WORKSPACE_ORIGIN,this.env.MNEMOS_WORKSPACE_TOKEN);}catch{control=null;}}
   return new WorkspaceTasks(this.ctx.storage.kv,{control,
    agent:()=>this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME),
-   human:()=>{const session=this.#account().session();return {issueAgentCredential:(b:string)=>session.issueAgentCredential(b),readWorkshopAgentScope:(b:string)=>session.readWorkshopAgentScope(b),listProjectGitRepositories:(p:string)=>session.listProjectGitRepositories(p,''),dispose:()=>session.dispose()};},
+   human:()=>{const session=this.#account().session();return {issueAgentCredential:(b:string)=>session.issueAgentCredential(b),readWorkshopAgentScope:(b:string)=>session.readWorkshopAgentScope(b),updateWorkshopAgentScope:(b:string,e:string[],p:string[])=>session.updateWorkshopAgentScope(b,e,p),listProjectGitRepositories:(p:string)=>session.listProjectGitRepositories(p,''),openMergeRequest:(p:string,c:string,r:string,h:string,t:string,b:string)=>session.openMergeRequest(p,c,r,h,t,b),acceptMergeRequest:(p:string,c:string,r:string,i:number,h:string)=>session.acceptMergeRequest(p,c,r,i,h),revertMergeRequest:(p:string,c:string,r:string,i:number)=>session.revertMergeRequest(p,c,r,i),dispose:()=>session.dispose()};},
    wake:at=>at===null?this.#alarms().clear('workspace'):this.#alarms().reschedule('workspace',at)});
  }
  async workspaceAvailable(){return this.#workspace().available();}
@@ -212,6 +225,27 @@ export class UserAccount extends DurableObject<Env> {
  async readWorkspaceTask(project:string,task:string){return this.#workspace().read(project,task);}
  async messageWorkspaceTask(project:string,task:string,text:string){return this.#workspace().message(project,task,text);}
  async abortWorkspaceTask(project:string,task:string){return this.#workspace().abort(project,task);}
+ /** Проекты человека для набора проектов беседы; у первых проектов проверяется подключённый код. */
+ async listChatProjects(){
+  const session=this.#account().session();
+  try{
+   const projects=(await session.listProjects()).projects.slice(0,CHAT_PROJECTS_LIMIT);
+   const out:{projectId:string;title:string;code?:{connectionId:string;repositoryId:string;repositoryName:string}}[]=[];
+   for(const [i,p] of projects.entries()){
+    let code:{connectionId:string;repositoryId:string;repositoryName:string}|undefined;
+    if(i<CHAT_PROJECTS_WITH_CODE_CHECK){try{const r=(await session.listProjectGitRepositories(p.id,'')).repositories.find(x=>x.enabled);if(r)code={connectionId:r.connection_id,repositoryId:r.repository_id,repositoryName:r.repository_name};}catch{/* проект без доступного кода */}}
+    out.push({projectId:p.id,title:p.name,...(code?{code}:{})});
+   }
+   return {projects:out};
+  }finally{session.dispose();}
+ }
+ async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string},prompt:string){const out=await this.#workspace().startTask(project,target.connectionId,target.repositoryId,prompt);return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended};}
+ async codeWorkMessage(project:string,task:string,text:string){return this.#workspace().message(project,task,text);}
+ async codeWorkEvents(project:string,task:string,after:number,waitMs:number){return this.#workspace().events(project,task,after,waitMs);}
+ async codeWorkAbort(project:string,task:string){return this.#workspace().abort(project,task);}
+ async codeWorkChanges(project:string,task:string){return this.#workspace().changes(project,task);}
+ async codeWorkAccept(project:string,task:string,summary:string){return this.#workspace().accept(project,task,summary);}
+ async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#workspace().revert(project,task,mergeRequest);}
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];
   if(this.env.MNEMOS_LOGIN_PROFILES){

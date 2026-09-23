@@ -1,5 +1,5 @@
 import type { AccountStorage } from "./account-session.ts";
-import type { AgentCredential, WorkshopAgentConnection } from "./mnemos-api.ts";
+import type { AgentCredential, MergeRequestView, WorkshopAgentConnection } from "./mnemos-api.ts";
 import type { GitProjectRepositoryPage } from "./git-connections.ts";
 import { workspaceProgress, type WorkspaceEvent, type WorkspaceProgress } from "./workspace-steps.ts";
 
@@ -22,7 +22,31 @@ export interface WorkspaceTaskView {
 }
 export interface WorkspaceTaskDetails extends WorkspaceProgress { task: WorkspaceTaskView }
 export class WorkspaceError extends Error {
-  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid", message: string) { super(message); }
+  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes", message: string) { super(message); }
+}
+/** Изменения рабочей копии задачи, включая ещё не сохранённые. */
+export interface WorkspaceChanges { files: { path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number }[]; diff: string; truncated: boolean }
+export interface WorkspaceEventsPage { events: WorkspaceEvent[]; next: number; state: WorkspaceState }
+export type AcceptOutcome = { outcome: "accepted" | "awaiting_approval" | "rejected" | "no_approver" | "reverted"; note: string; mergeRequest?: number };
+
+/** Отказы Mnemos по коду — словами для человека. */
+const GIT_FAILURE_NOTES: Record<string, string> = {
+  "git.merge.stale": "Агент изменил результат после вашего просмотра — проверьте снова.",
+  "git.merge.not_ready": "Изменения ещё не готовы к принятию — попробуйте через минуту.",
+  "git.merge.not_responsible": "Согласовать эти изменения может только ответственный за проект.",
+  "git.merge.not_approved": "Изменения ещё не согласованы.",
+  "git.merge.revert_conflict": "Файл уже изменили после принятия — вернуть автоматически нельзя.",
+  "git.merge.revert_unsupported": "Эти изменения нельзя вернуть автоматически.",
+  "git.unavailable": "Хранилище кода сейчас недоступно — попробуйте позже.",
+};
+function gitFailureCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+/** Понятная человеку ошибка вместо «Mnemos request failed» для известных отказов. */
+function humanGitError(error: unknown): unknown {
+  const note = GIT_FAILURE_NOTES[gitFailureCode(error) ?? ""];
+  return note ? new Error(note) : error;
 }
 
 export interface WorkspaceControl {
@@ -32,6 +56,11 @@ export interface WorkspaceControl {
   events(id: string): Promise<WorkspaceEvent[]>;
   message(id: string, text: string): Promise<void>;
   abort(id: string): Promise<void>;
+  /** Долгий опрос событий после after, без повторов. */
+  eventsAfter(id: string, after: number, waitMs: number): Promise<WorkspaceEventsPage>;
+  changes(id: string): Promise<WorkspaceChanges>;
+  /** Сохранить работу: коммит рабочей копии и отправка ветки агента. */
+  publish(id: string, message: string): Promise<{ branch: string; head_sha: string }>;
 }
 
 function remoteTask(value: unknown): RemoteTask {
@@ -48,7 +77,7 @@ export class WorkspaceClient implements WorkspaceControl {
     if (url.protocol !== "https:" || url.origin !== origin.replace(/\/$/, "") || !token) throw new WorkspaceError("unconfigured", "Рабочие места агентов не настроены.");
     this.#origin = url.origin; this.#token = token; this.#fetch = fetcher; this.#window = eventsWindowMs;
   }
-  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal): Promise<Response> {
+  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError): Promise<Response> {
     let response: Response;
     try {
       response = await this.#fetch(this.#origin + path, { method, signal, headers: { Authorization: `Bearer ${this.#token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -57,6 +86,7 @@ export class WorkspaceClient implements WorkspaceControl {
       throw new WorkspaceError("unavailable", "Служба рабочих мест недоступна.");
     }
     if (response.status === 404) throw new WorkspaceError("not_found", "Задача не найдена в службе рабочих мест.");
+    if (response.status === 409 && conflict) throw conflict;
     if (response.status === 409 || response.status === 429 || response.status === 503) throw new WorkspaceError("unavailable", "Сейчас все рабочие места заняты. Повторите позже.");
     if (!response.ok) throw new WorkspaceError("unavailable", "Служба рабочих мест отказала.");
     return response;
@@ -66,6 +96,29 @@ export class WorkspaceClient implements WorkspaceControl {
   async credential(id: string, token: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/credential`, "PUT", { agent_credential: token }); }
   async message(id: string, text: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/messages`, "POST", { text }); }
   async abort(id: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/abort`, "POST"); }
+  async eventsAfter(id: string, after: number, waitMs: number): Promise<WorkspaceEventsPage> {
+    if (!Number.isSafeInteger(after) || after < 0) throw new WorkspaceError("invalid", "Неверный курсор событий.");
+    const wait = Math.max(0, Math.min(30_000, Math.floor(waitMs)));
+    const value = await (await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/events?after=${after}&wait=${wait}`, "GET")).json() as { events?: unknown; next?: unknown; state?: unknown };
+    if (!Array.isArray(value.events) || !STATES.includes(value.state as WorkspaceState) || typeof value.next !== "number") throw new WorkspaceError("unavailable", "Служба рабочих мест ответила неожиданно.");
+    const events: WorkspaceEvent[] = [];
+    for (const raw of value.events as { seq?: unknown; type?: unknown; properties?: unknown; data?: unknown }[]) {
+      if (typeof raw?.seq === "number" && Number.isSafeInteger(raw.seq) && typeof raw.type === "string") events.push({ seq: raw.seq, type: raw.type, data: raw.properties ?? raw.data });
+    }
+    return { events, next: value.next, state: value.state as WorkspaceState };
+  }
+  async changes(id: string): Promise<WorkspaceChanges> {
+    const value = await (await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/changes`, "GET")).json() as WorkspaceChanges;
+    if (!value || !Array.isArray(value.files) || typeof value.diff !== "string") throw new WorkspaceError("unavailable", "Служба рабочих мест ответила неожиданно.");
+    const statuses = ["added", "modified", "deleted", "renamed"];
+    const files = value.files.filter(f => f && typeof f.path === "string" && statuses.includes(f.status)).map(f => ({ path: f.path, status: f.status, additions: Number.isSafeInteger(f.additions) ? f.additions : 0, deletions: Number.isSafeInteger(f.deletions) ? f.deletions : 0 }));
+    return { files, diff: value.diff, truncated: value.truncated === true };
+  }
+  async publish(id: string, message: string) {
+    const value = await (await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/publish`, "POST", { message }, undefined, new WorkspaceError("no_changes", "Изменений нет."))).json() as { branch?: unknown; head_sha?: unknown };
+    if (typeof value.branch !== "string" || !value.branch || typeof value.head_sha !== "string" || !value.head_sha) throw new WorkspaceError("unavailable", "Служба рабочих мест ответила неожиданно.");
+    return { branch: value.branch, head_sha: value.head_sha };
+  }
   /** Служба повторяет сохранённый хвост при каждом подключении, поэтому хватает короткого окна чтения. */
   async events(id: string): Promise<WorkspaceEvent[]> {
     const controller = new AbortController();
@@ -107,6 +160,11 @@ export class WorkspaceClient implements WorkspaceControl {
 export interface WorkspaceHuman {
   issueAgentCredential(binding: string): Promise<AgentCredential>;
   readWorkshopAgentScope(binding: string): Promise<WorkshopAgentConnection>;
+  /** Агент наследует права человека: область расширяется от его имени (не шире его прав). */
+  updateWorkshopAgentScope(binding: string, expected: string[], projects: string[]): Promise<WorkshopAgentConnection>;
+  openMergeRequest?(project: string, connection: string, repository: string, head: string, title: string, body: string): Promise<MergeRequestView>;
+  acceptMergeRequest?(project: string, connection: string, repository: string, index: number, expectedHead: string): Promise<MergeRequestView>;
+  revertMergeRequest?(project: string, connection: string, repository: string, index: number): Promise<MergeRequestView>;
   listProjectGitRepositories(project: string): Promise<GitProjectRepositoryPage>;
   dispose(): void;
 }
@@ -172,15 +230,28 @@ export class WorkspaceTasks {
 
   /** Поручает задачу Workshop-агенту человека в репозитории проекта. */
   async start(project: string, connection: string, repository: string, prompt: string): Promise<WorkspaceTaskView> {
+    return (await this.startTask(project, connection, repository, prompt)).task;
+  }
+
+  /** То же, что start; scopeExtended — проект добавлен в область агента этим вызовом. */
+  async startTask(project: string, connection: string, repository: string, prompt: string): Promise<{ task: WorkspaceTaskView; scopeExtended: boolean }> {
     const control = this.#control();
     const body = typeof prompt === "string" ? prompt.trim() : "";
     if (!body || body.length > MAX_PROMPT || [project, connection, repository].some(v => typeof v !== "string" || !v || v.length > 255)) throw new WorkspaceError("invalid", "Опишите задачу для агента.");
     const { bindingId } = await this.#deps.agent();
     const human = this.#deps.human();
     let repositoryName = "";
+    let scopeExtended = false;
     try {
       const scope = await human.readWorkshopAgentScope(bindingId);
-      if (scope.revoked || !scope.project_ids.includes(project)) throw new WorkspaceError("scope", "У вашего агента нет доступа к этому проекту. Добавьте проект агенту во вкладке «Агенты».");
+      if (scope.revoked) throw new WorkspaceError("scope", "Ваш агент отключён. Подключите его заново во вкладке «Агенты».");
+      if (!scope.project_ids.includes(project)) {
+        // Решение владельца 23.09: агент наследует права человека. Сервер откажет, если у самого
+        // человека нет права на проект, — тогда область не меняется.
+        try { await human.updateWorkshopAgentScope(bindingId, scope.project_ids, [...scope.project_ids, project]); }
+        catch { throw new WorkspaceError("scope", "Не удалось подключить проект агенту: проверьте, есть ли у вас доступ к проекту."); }
+        scopeExtended = true;
+      }
       const repos = await human.listProjectGitRepositories(project);
       const repo = repos.repositories.find(r => r.enabled && r.connection_id === connection && r.repository_id === repository);
       if (!repo) throw new WorkspaceError("repository", "Репозиторий не подключён к проекту.");
@@ -192,7 +263,79 @@ export class WorkspaceTasks {
     const task: WorkspaceTaskView = { task_id: remote.task_id, project_id: project, connection_id: connection, repository_id: repository, repository_name: repositoryName, title, prompt: body, branch: remote.branch, state: remote.state, reason: remote.reason ?? "", cost_usd: remote.cost_usd, created_at: remote.created_at, finished_at: "" };
     this.#save(task);
     await this.#arm();
-    return task;
+    return { task, scopeExtended };
+  }
+
+  /** События задачи после after; состояние задачи обновляется по ответу службы. */
+  async events(project: string, id: string, after: number, waitMs: number): Promise<WorkspaceEventsPage> {
+    let task = this.#own(project, id);
+    if (finished(task.state)) return { events: [], next: after, state: task.state };
+    let page: WorkspaceEventsPage;
+    try { page = await this.#control().eventsAfter(id, after, waitMs); }
+    catch (error) {
+      if (!(error instanceof WorkspaceError) || error.code !== "not_found") throw error;
+      task = { ...task, state: "stopped", reason: task.reason || "служба рабочих мест больше не знает эту задачу", finished_at: new Date(this.#clock()).toISOString() };
+      this.#save(task); await this.#arm();
+      return { events: [], next: after, state: "stopped" };
+    }
+    if (page.state !== task.state) {
+      task = { ...task, state: page.state };
+      if (finished(task.state) && !task.finished_at) task.finished_at = new Date(this.#clock()).toISOString();
+      this.#save(task); await this.#arm();
+    }
+    return page;
+  }
+
+  async changes(project: string, id: string): Promise<WorkspaceChanges> {
+    this.#own(project, id);
+    return this.#control().changes(id);
+  }
+
+  /** «Принять»: сохранить работу агента и влить её в проект (или отправить на согласование, если оно включено). */
+  async accept(project: string, id: string, summary: string): Promise<AcceptOutcome> {
+    const task = this.#own(project, id);
+    const control = this.#control();
+    const title = (summary.split("\n").find(line => line.trim()) ?? task.title).trim().slice(0, 200) || task.title;
+    let published: { branch: string; head_sha: string };
+    try { published = await control.publish(id, title); }
+    catch (error) {
+      if (error instanceof WorkspaceError && error.code === "no_changes") return { outcome: "accepted", note: "Изменений нет — принимать нечего." };
+      throw error;
+    }
+    const human = this.#deps.human();
+    try {
+      if (!human.openMergeRequest || !human.acceptMergeRequest) throw new WorkspaceError("unavailable", "Принятие изменений недоступно на этой установке.");
+      const opened = await human.openMergeRequest(project, task.connection_id, task.repository_id, published.branch, title, summary.slice(0, 16_000));
+      const mergeRequest = opened.index;
+      let result: MergeRequestView;
+      try { result = await human.acceptMergeRequest(project, task.connection_id, task.repository_id, mergeRequest, published.head_sha); }
+      catch (error) {
+        if (gitFailureCode(error) === "git.merge.no_approver") return { outcome: "no_approver", note: "Некому согласовать: назначьте ответственного за проект.", mergeRequest };
+        throw humanGitError(error);
+      }
+      if (result.outcome === "awaiting_approval") {
+        const names = (result.responsible ?? []).map(r => r.display_name || r.principal_id).filter(Boolean);
+        return { outcome: "awaiting_approval", note: names.length ? `Ждёт согласования у ${names.join(", ")}` : "Ждёт согласования", mergeRequest };
+      }
+      if (result.outcome === "rejected" || result.outcome === "closed") return { outcome: "rejected", note: "Изменения отклонены.", mergeRequest };
+      if (result.outcome === "reverted") return { outcome: "reverted", note: "Возвращено как было.", mergeRequest };
+      return { outcome: "accepted", note: "Принято", mergeRequest };
+    } catch (error) { throw humanGitError(error); }
+    finally { human.dispose(); }
+  }
+
+  /** «Вернуть как было»: отменить принятые изменения задачи. */
+  async revert(project: string, id: string, mergeRequest: number): Promise<AcceptOutcome> {
+    const task = this.#own(project, id);
+    if (!Number.isSafeInteger(mergeRequest) || mergeRequest < 1) throw new WorkspaceError("invalid", "Неизвестно, какие изменения вернуть.");
+    const human = this.#deps.human();
+    try {
+      if (!human.revertMergeRequest) throw new WorkspaceError("unavailable", "Возврат изменений недоступен на этой установке.");
+      const result = await human.revertMergeRequest(project, task.connection_id, task.repository_id, mergeRequest);
+      if (result.outcome !== "reverted") throw new Error("Вернуть изменения не удалось.");
+      return { outcome: "reverted", note: "Возвращено как было.", mergeRequest };
+    } catch (error) { throw humanGitError(error); }
+    finally { human.dispose(); }
   }
 
   /** Состояние и ход работы; закончившиеся задачи больше не опрашиваются. */

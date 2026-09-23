@@ -3,7 +3,8 @@ import { refreshAccountUiDescription } from "./account-ui-description";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
 import type {CalendarSourceAccounts} from "./calendar-source-lease.js";
 import { isUIReadinessSample, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
-import type { WorkspaceActivityReporting } from "@gadgets/workshop-shared/api";
+import type { WorkspaceActivityReporting, ChatProjectChoice } from "@gadgets/workshop-shared/api";
+import type { CodeWorkTarget } from "@gadgets/workshop-shared/gatekeeper";
 import { emptyWorkspaceActivity, recordWorkspaceActivity, type WorkspaceActivityState } from "./workspace-activity.js";
 import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
@@ -2008,6 +2009,52 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     await checkAccess();
     return verifier;
   }
+
+  /** Проекты из подключённой памяти человека для набора проектов беседы. Аккаунты без такой
+   * возможности пропускаются. */
+  async listChatProjects(): Promise<ChatProjectChoice[]> {
+    const out: ChatProjectChoice[] = [];
+    for (const record of this.storage.connectedAccounts.list()) {
+      if (!areCredentialsValid(record) || !record.description?.providesUi) continue;
+      const account = record.account as Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser, "listChatProjects">>;
+      try {
+        const result = await account.listChatProjects();
+        for (const p of result.projects ?? []) {
+          if (typeof p?.projectId !== "string" || !p.projectId || typeof p.title !== "string") continue;
+          out.push({accountId: record.id, projectId: p.projectId, title: p.title, hasCode: !!p.code});
+        }
+      } catch { /* подключение без проектов памяти */ }
+    }
+    return out;
+  }
+
+  /** Есть ли подключение, из которого беседа может брать проекты; без обращения к самим подключениям. */
+  async hasChatProjectSource(): Promise<boolean> {
+    for (const record of this.storage.connectedAccounts.list()) {
+      if (areCredentialsValid(record) && record.description?.providesUi) return true;
+    }
+    return false;
+  }
+
+  /** Работа с кодом беседы через подключение человека: только его собственное действующее подключение. */
+  #codeWorkAccount(accountId: number): Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser,
+      "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert">> {
+    const record = this.storage.connectedAccounts.get(accountId);
+    if (!Number.isSafeInteger(accountId) || !record || !areCredentialsValid(record)) throw new Error("Подключение проекта недоступно.");
+    return record.account as never;
+  }
+  async codeWorkTarget(accountId: number, projectId: string) {
+    const result = await this.#codeWorkAccount(accountId).listChatProjects();
+    const project = (result.projects ?? []).find(p => p.projectId === projectId);
+    return project ? {title: project.title, code: project.code} : null;
+  }
+  async codeWorkStart(accountId: number, project: string, target: CodeWorkTarget, prompt: string) { return this.#codeWorkAccount(accountId).codeWorkStart(project, target, prompt); }
+  async codeWorkMessage(accountId: number, project: string, task: string, text: string) { return this.#codeWorkAccount(accountId).codeWorkMessage(project, task, text); }
+  async codeWorkEvents(accountId: number, project: string, task: string, after: number, waitMs: number) { return this.#codeWorkAccount(accountId).codeWorkEvents(project, task, after, waitMs); }
+  async codeWorkAbort(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkAbort(project, task); }
+  async codeWorkChanges(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkChanges(project, task); }
+  async codeWorkAccept(accountId: number, project: string, task: string, summary: string) { return this.#codeWorkAccount(accountId).codeWorkAccept(project, task, summary); }
+  async codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number) { return this.#codeWorkAccount(accountId).codeWorkRevert(project, task, mergeRequest); }
 
   // Describe one of the user's connected accounts so a caller can name it in a message. Returns null
   // if it no longer exists.

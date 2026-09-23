@@ -16,5 +16,10 @@ it('сохраняет контекст проекта при повторном
  const chat=await workspace.newChat('Подготовь документ',null,undefined,undefined,undefined,context);
  using reopened=await owner.openGadget(info.id);
  const saved=(await reopened.listChats()).find(item=>item.id===chat)!;
- expect(saved.projectContext).toEqual({...context,creatorId:exports.UserDurableObject.idFromName(name).toString(),creatorProfileId:name});
+ // Старое одиночное поле сохраняется и читается как набор из одного проекта, выбранного человеком.
+ expect(saved.projectContext).toEqual({...context,projects:[{...context,pinnedBy:'user'}],creatorId:exports.UserDurableObject.idFromName(name).toString(),creatorProfileId:name});
+ const both=[{...context,pinnedBy:'user' as const},{accountId:3,projectId:'project-b',title:'Склад',pinnedBy:'user' as const}];
+ const second=await workspace.newChat('Сверь остатки',null,undefined,undefined,undefined,{...context,projects:both});
+ const savedSecond=(await reopened.listChats()).find(item=>item.id===second)!;
+ expect(savedSecond.projectContext?.projects).toEqual(both);
 });

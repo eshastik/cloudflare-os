@@ -82,9 +82,10 @@ describe("Home prompt route flow", () => {
     const context={accountId:3,projectId:'project-a',title:'Проект А'};
     await act(async()=>root!.render(<HomePageContent prompt="Работа над проектом" projectContext={context}/>));
     await act(async()=>root!.render(<HomePageContent/>));
-    expect(container.textContent).toContain('Проект: Проект А');
+    // Проект показан чипом над полем ввода и уходит в беседу набором из одного проекта.
+    expect(container.querySelector('[aria-label="Убрать проект «Проект А»"]')).not.toBeNull();
     await act(async()=>testState.send!('Подготовь документ',null));
-    expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,context);
+    expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,{...context,projects:[{...context,pinnedBy:'user'}]});
     expect(testState.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});
   });
 

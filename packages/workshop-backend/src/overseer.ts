@@ -1,4 +1,7 @@
-import type {ChatProjectContext} from "@gadgets/workshop-shared/api";
+import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
+import {chatProjects, validateChatProjects, type AgentStep, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+import {acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
+import {codeWorkAlive} from "./code-work.js";
 import {readBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
@@ -3987,6 +3990,7 @@ class OverseerImpl implements AgentHooks {
 
       let controller = liveChat.cancelController;
       controller.signal.throwIfAborted();
+      if (!callbackInitiated) await this.#routeToCodeWork(chatId, aiModel, initiator, controller.signal);
 
       let hasBeenNudged = false;
       let outcome: "ok" | "callbacks_stalled" = "ok";
@@ -5963,6 +5967,86 @@ class OverseerImpl implements AgentHooks {
         this.#chatSubscribers.delete(subscriber);
       });
     }
+  }
+
+  codeWorkHost(): ChatCodeWorkHost {
+    return {
+      chatMeta: chatId => this.storage.chatMeta.get(chatId),
+      putChatMeta: meta => this.storage.chatMeta.put(meta),
+      user: userId => this.users.get(this.users.idFromString(userId)) as unknown as CodeWorkUser,
+      emit: (chatId, event) => this.emitChatStreamEvent(chatId, event),
+    };
+  }
+
+  // Работа с кодом идёт через подключения человека, начавшего беседу; другой участник беседы
+  // не получает через агента чужие права.
+  #codeWorkUserId(chatId: number, initiator: AiChatAuthorInfo): string | null {
+    let userId = this.users.idFromName(initiator.id).toString();
+    let creator = this.storage.chatMeta.get(chatId)?.projectContext?.creatorId;
+    return !creator || creator === userId ? userId : null;
+  }
+
+  async describeCodeWork(chatId: number, initiator: AiChatAuthorInfo)
+      : Promise<{projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}} | null> {
+    let userId = this.#codeWorkUserId(chatId, initiator);
+    if (!userId) return null;
+    let meta = this.storage.chatMeta.get(chatId);
+    let projects = chatProjects(meta?.projectContext);
+    // Без проектов беседы инструменты кода даются, если у человека есть подключённая память;
+    // сами проекты не перечисляются на каждом ходе (это обращение к каждому подключению).
+    if (!projects.length && !meta?.codeWork &&
+        !await this.users.get(this.users.idFromString(userId)).hasChatProjectSource()) return null;
+    let work = meta?.codeWork;
+    return {projects, ...(work ? {active: {projectTitle: work.projectTitle, alive: codeWorkAlive(work.state)}} : {})};
+  }
+
+  async runCodeWork(chatId: number, initiator: AiChatAuthorInfo, request: {
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean;
+    signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
+  }): Promise<CodeWorkOutput> {
+    let userId = this.#codeWorkUserId(chatId, initiator);
+    if (!userId) throw new Error("Работу с кодом в этой беседе ведёт тот, кто её начал.");
+    let host = this.codeWorkHost();
+    // Шаги идут через onStep/onText вызывающего, а не напрямую в поток беседы.
+    let emit = host.emit;
+    host.emit = (id, event) => {
+      if (id !== chatId) return emit(id, event);
+      if (event.type === "toolStep") request.onStep(event.step);
+      else if (event.type === "toolOutputDelta") request.onText(event.delta);
+      else emit(id, event);
+    };
+    return runChatCodeWork(host, {chatId, toolCallId: request.toolCallId, prompt: request.prompt,
+      projectId: request.projectId, continueOnly: request.continueOnly, userId, profileId: initiator.id,
+      signal: request.signal});
+  }
+
+  // Сообщение человека, пока работа с кодом на переднем плане, уходит прямо агенту кода; ход
+  // записывается как вызов codeWork агента беседы, и агент беседы продолжает по его итогу.
+  async #routeToCodeWork(chatId: number, aiModel: UserAiModelRecord, initiator: AiChatAuthorInfo,
+                         signal: AbortSignal): Promise<void> {
+    let meta = this.storage.chatMeta.get(chatId);
+    if (!codeWorkForeground(meta) || !this.#codeWorkUserId(chatId, initiator)) return;
+    let last = [...this.storage.chats.list({prefix: `${keyString(chatId)}.`, reverse: true, limit: 1})][0];
+    if (!last || last.type !== "message" || last.author.type !== "user" || !last.message.trim()) return;
+    let toolCallId = `codework-${chatId}-${last.sequence}`;
+    let work = meta!.codeWork!;
+    let output: CodeWorkOutput | undefined, error: string | undefined;
+    this.emitChatStreamEvent(chatId, {type: "toolCallStarted", toolCallId, toolName: "codeWork"});
+    try {
+      output = await this.runCodeWork(chatId, initiator, {
+        toolCallId, prompt: last.message, projectId: work.projectId, continueOnly: true, signal,
+        onStep: step => this.emitChatStreamEvent(chatId, {type: "toolStep", toolCallId, step}),
+        onText: delta => this.emitChatStreamEvent(chatId, {type: "toolOutputDelta", toolCallId, delta}),
+      });
+    } catch (err) {
+      error = stringifyError(err);
+    }
+    this.addChatMessages(chatId, aiModel.profile, [{
+      type: "message", message: "",
+      toolCalls: [{toolCallId, toolName: "codeWork", input: {task: last.message, projectId: work.projectId},
+        ...(output ? {output} : {error: error ?? "Работа с кодом прервалась."})}],
+    }]);
+    signal.throwIfAborted();
   }
 
   // Selects the gatekeepers a non-owner observer with the given `role` must be verified against:
@@ -8340,8 +8424,12 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       if(!Number.isSafeInteger(projectContext.accountId)||projectContext.accountId<0||
           typeof projectContext.projectId!=="string"||!projectContext.projectId.trim()||projectContext.projectId.length>256||
           typeof projectContext.title!=="string"||!projectContext.title.trim()||projectContext.title.length>256) throw new Error("Неверный контекст проекта");
-      if(!await this.clientUser.describeConnectedAccount(projectContext.accountId)) throw new Error("Подключение проекта недоступно");
-      projectContext={accountId:projectContext.accountId,projectId:projectContext.projectId,title:projectContext.title.trim()};
+      let projects = projectContext.projects === undefined
+          ? chatProjects(projectContext) : validateChatProjects(projectContext.projects);
+      for (let accountId of new Set([projectContext.accountId, ...projects.map(p => p.accountId)])) {
+        if(!await this.clientUser.describeConnectedAccount(accountId)) throw new Error("Подключение проекта недоступно");
+      }
+      projectContext={accountId:projectContext.accountId,projectId:projectContext.projectId,title:projectContext.title.trim(),projects};
     }
     let userMeta = await this.clientUser.getChatContext(chosenModelId);
     return this.impl.newChat(this.clientUser, userMeta, initialMessage, capsules, attachments,
@@ -8365,6 +8453,36 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     meta.lastActive = this.impl.getChatTimestamp();
     meta.title = title;
     this.impl.storage.chatMeta.put(meta);
+  }
+
+  async setChatProjects(chatId: number, projects: ChatProject[]): Promise<void> {
+    let valid = validateChatProjects(projects);
+    for (let accountId of new Set(valid.map(p => p.accountId))) {
+      if (!await this.clientUser.describeConnectedAccount(accountId)) throw new Error("Подключение проекта недоступно");
+    }
+    let userMeta = await this.clientUser.getChatContext(null);
+    setChatProjects(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString(), userMeta.profile.id, valid);
+  }
+
+  async leaveCodeWork(chatId: number): Promise<void> {
+    leaveCodeWork(this.impl.codeWorkHost(), chatId);
+  }
+
+  async readChatCodeChanges(chatId: number): Promise<ChatCodeChanges | null> {
+    let meta = this.impl.getChatMetaOrThrow(chatId);
+    // Изменения видит тот, чьими правами они сделаны.
+    if (meta.projectContext?.creatorId !== this.clientUser.id.toString()) return null;
+    return readChatCodeChanges(this.impl.codeWorkHost(), chatId);
+  }
+
+  async acceptChatCodeChanges(chatId: number): Promise<ChatCodeAcceptResult> {
+    this.impl.assertChatNotActive(chatId);
+    return acceptChatCodeChanges(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString());
+  }
+
+  async revertChatCodeChanges(chatId: number): Promise<ChatCodeAcceptResult> {
+    this.impl.assertChatNotActive(chatId);
+    return revertChatCodeChanges(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString());
   }
 
   async mergeChanges(chatId: number, mergeThrough: number | null,
@@ -9108,6 +9226,11 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async getChatAttachmentContent(_chatId: number, _id: string): Promise<Uint8Array> { this.#deny(); }
   async deleteChatAttachment(_id: string): Promise<void> { this.#deny(); }
   async setChatTitle(_chatId: number, _title: string): Promise<void> { this.#deny(); }
+  async setChatProjects(_chatId: number, _projects: ChatProject[]): Promise<void> { this.#deny(); }
+  async leaveCodeWork(_chatId: number): Promise<void> { this.#deny(); }
+  async readChatCodeChanges(_chatId: number): Promise<ChatCodeChanges | null> { this.#deny(); }
+  async acceptChatCodeChanges(_chatId: number): Promise<ChatCodeAcceptResult> { this.#deny(); }
+  async revertChatCodeChanges(_chatId: number): Promise<ChatCodeAcceptResult> { this.#deny(); }
   async mergeChanges(_chatId: number, _mergeThrough: number | null,
                      _options?: { includeDraft?: boolean }): Promise<void> { this.#deny(); }
   async revertChanges(_chatId: number, _revertFrom: number): Promise<void> { this.#deny(); }
