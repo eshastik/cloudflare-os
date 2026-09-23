@@ -4,6 +4,7 @@ import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 import { mountLegacy, type Host } from "../app/main.ts";
 import { HostProvider, makeHostContext } from "./host.ts";
 import MemoryPage from "./MemoryPage.tsx";
+import ErrorBoundary from "./ErrorBoundary.tsx";
 import { applyThemeMode, applyAccentColor } from "./theme.ts";
 import "./styles.css";
 
@@ -45,7 +46,9 @@ function main() {
   renderer.render(
     <HostProvider value={makeHostContext(host, legacy)}>
       <TooltipProvider>
-        <MemoryPage legacy={legacy} />
+        <ErrorBoundary>
+          <MemoryPage legacy={legacy} />
+        </ErrorBoundary>
       </TooltipProvider>
     </HostProvider>,
   );
