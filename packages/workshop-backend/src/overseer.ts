@@ -1,4 +1,4 @@
-import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
+import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext, UsedGadget} from "@gadgets/workshop-shared/api";
 import { findInvitees, notYetSignedInProfile, rankInvitees } from './user-directory.js';
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import {acceptChatCodeChanges, applyChatProjectChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
@@ -2710,7 +2710,14 @@ class OverseerImpl implements AgentHooks {
     switch (target.type) {
       case "gadget": {
         if (caller.from === "agent") {
-          this.#getOrCreateCapturedActions(caller.chatId).accessedGadget = true;
+          let captured = this.#getOrCreateCapturedActions(caller.chatId);
+          captured.accessedGadget = true;
+          // Заголовок и формат гаджета — для подписи шага в ходе работы беседы.
+          let record = this.storage.gadgets.get(target.id);
+          if (record && !captured.gadgets.some(g => g.id === record.id)) {
+            captured.gadgets.push({id: record.id, title: record.title, bindingName: record.bindingName,
+                ...(record.output?.id ? {outputId: record.output.id} : {})});
+          }
         }
         let chatId = "chatId" in caller ? caller.chatId : undefined;
         return this.getGadgetFacet(target.id, chatId);
@@ -2731,7 +2738,7 @@ class OverseerImpl implements AgentHooks {
   // Maps chat ID to action numbers recently performed by that chat's agent. These are drained into
   // the chat log after the tool returns. `awaitDecision` is true if any captured action needs it.
   #capturedActions = new Map<number, {actions: number[], accessedGadget: boolean,
-                                      awaitDecision: boolean}>();
+                                      awaitDecision: boolean, gadgets: UsedGadget[]}>();
 
   // Maps chat ID to connectionRequest message bodies created by that chat's agent during the
   // current step. Spliced into the chat log after the tool call returns (see
@@ -2741,7 +2748,7 @@ class OverseerImpl implements AgentHooks {
   #getOrCreateCapturedActions(chatId: number) {
     let result = this.#capturedActions.get(chatId);
     if (!result) {
-      result = {actions: [], accessedGadget: false, awaitDecision: false};
+      result = {actions: [], accessedGadget: false, awaitDecision: false, gadgets: []};
       this.#capturedActions.set(chatId, result);
     }
     return result;
@@ -5783,7 +5790,7 @@ class OverseerImpl implements AgentHooks {
   }
 
   consumeCapturedActions(chatId: number)
-      : {actions: number[], accessedGadget: boolean, awaitDecision: boolean} | undefined {
+      : {actions: number[], accessedGadget: boolean, awaitDecision: boolean, gadgets?: UsedGadget[]} | undefined {
     let result = this.#capturedActions.get(chatId);
     this.#capturedActions.delete(chatId);
     return result;

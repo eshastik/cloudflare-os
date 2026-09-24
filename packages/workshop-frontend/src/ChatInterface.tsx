@@ -127,8 +127,9 @@ import { StepLimitNotice } from "./components/chat/StepLimitNotice";
 import { ActionConfirmCard } from "./components/chat/ActionConfirmCard";
 import { useActionOpen } from "./components/chat/useActionOpen";
 import { LiveStep, WorkRun, type OpenDocument } from "./components/chat/WorkSteps";
-import { actionDisplay, describeLiveStep, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
+import { actionDisplay, describeLiveStep, type GadgetRef, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
 import { useMnemosLink } from "./components/chat/useMnemosLink";
+import { reasoningSections } from "./components/chat/reasoningSections";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
 import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, displayName, looksLikeId, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
@@ -760,7 +761,7 @@ type ToolCallGroup = {
 };
 
 // Сведения для хода работы, общие для всех строк беседы: имена проектов и переход к документу.
-const WorkRunContext = createContext<{ projectNames?: ReadonlyMap<string, string>; openDocument?: OpenDocument }>({});
+const WorkRunContext = createContext<{ projectNames?: ReadonlyMap<string, string>; gadgetNames?: ReadonlyMap<string, GadgetRef>; workspaceGadgets?: readonly GadgetRef[]; openDocument?: OpenDocument }>({});
 
 function observationRecord(msg: ObservationChatMessage): ObservationRecord {
   const log = msg.actionLog;
@@ -906,7 +907,7 @@ function buildToolCallGroups(
   if (work && plain.length > 0) {
     const shown = new Set(toolCalls.filter((tc) => !isCodeWorkCall(tc)).map((tc) => tc.toolCallId));
     plain[0].batches = work.batches
-      .map((batch) => ({ calls: batch.calls.filter((tc) => shown.has(tc.toolCallId)), observations: batch.observations }))
+      .map((batch) => ({ ...batch, calls: batch.calls.filter((tc) => shown.has(tc.toolCallId)) }))
       .filter((batch) => batch.calls.length > 0 || batch.observations.length > 0);
     plain[0].startedAt = work.startedAt;
     plain[0].finishedAt = work.finishedAt;
@@ -1594,6 +1595,47 @@ const NestedObservationRow = memo(function NestedObservationRow({
   );
 });
 
+// Размышления свёрнуты до заголовков блоков: беседа не превращается в простыню, текст блока
+// открывается щелчком. Пока ответ идёт, открыт последний блок — видно, о чём агент думает сейчас.
+function ReasoningBlocks({ text, streaming }: { text: string; streaming: boolean }) {
+  const sections = useMemo(() => reasoningSections(text), [text]);
+  const [opened, setOpened] = useState<ReadonlySet<number>>(() => new Set());
+  const toggle = (index: number) => setOpened((previous) => {
+    const next = new Set(previous);
+    if (next.has(index)) next.delete(index); else next.add(index);
+    return next;
+  });
+  return (
+    <div className="min-w-0 py-1 text-kumo-subtle" data-testid="reasoning">
+      {sections.map((section, index) => {
+        const live = streaming && index === sections.length - 1;
+        const open = opened.has(index) || live;
+        const title = section.title ?? section.body.split("\n")[0].replace(/[*_`#>]/g, "").trim();
+        const hasMore = section.title ? !!section.body : section.body.length > title.length;
+        return (
+          <div key={index} className="min-w-0">
+            <button
+              type="button"
+              disabled={!hasMore}
+              onClick={() => toggle(index)}
+              aria-expanded={hasMore ? open : undefined}
+              className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 text-left text-[13px] leading-[19px] transition-colors enabled:cursor-pointer enabled:hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+            >
+              <span className={`min-w-0 truncate ${section.title ? "font-medium" : ""} ${live ? styles.thinkingShimmer : ""}`}>{title}</span>
+              {hasMore && <CaretRight size={10} weight="bold" className={`flex-shrink-0 text-kumo-inactive transition-transform duration-150 ${open ? "rotate-90" : ""}`} aria-hidden="true" />}
+            </button>
+            {open && hasMore && (
+              <div className={`mb-1 ml-[3px] min-w-0 border-l border-kumo-line pl-3 text-[13px] leading-[19px] ${styles.markdownContent}`}>
+                <MarkdownMessage message={section.title ? section.body : section.body} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Размышления показываются на русском: перевод с сервера, либо исходник, если он уже по-русски.
 // Пока перевода нет, исходник на другом языке свёрнут: во время ответа — «Думает…», после —
 // «Размышления переводятся…» с кнопкой показать исходный текст.
@@ -1611,15 +1653,7 @@ export const ThinkingTraceRow = memo(function ThinkingTraceRow({
   if (!shown) return null;
   // В начале потока букв мало, язык ещё не ясен: не мелькаем английским.
   const undecided = streaming && !translation && reasoning.trim().length < 40;
-  if ("text" in shown && !undecided) {
-    return (
-      <div className="min-w-0 py-1 text-kumo-subtle">
-        <div className={`min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
-          <MarkdownMessage message={shown.text} />
-        </div>
-      </div>
-    );
-  }
+  if ("text" in shown && !undecided) return <ReasoningBlocks text={shown.text} streaming={streaming} />;
   return (
     <div className="min-w-0 py-1 text-kumo-subtle">
       <div className="flex min-w-0 items-center gap-2 text-[13px] leading-[19px]">
@@ -1647,11 +1681,13 @@ export const ThinkingTraceRow = memo(function ThinkingTraceRow({
 });
 
 function WorkRunFromContext({ group, open, onToggle, inProgress }: { group: ToolCallGroup; open: boolean; onToggle: (key: string) => void; inProgress: boolean }) {
-  const { projectNames, openDocument } = useContext(WorkRunContext);
+  const { projectNames, gadgetNames, workspaceGadgets, openDocument } = useContext(WorkRunContext);
   return (
     <WorkRun
       batches={group.batches!}
       projectNames={projectNames}
+      gadgetNames={gadgetNames}
+      workspaceGadgets={workspaceGadgets}
       startedAt={group.startedAt}
       finishedAt={group.finishedAt}
       inProgress={inProgress}
@@ -3571,6 +3607,18 @@ function isEmptyAssistantMessage(msg: AiChatMessage): boolean {
 
 // Assistant messages with tool calls but no text are displayed as work rows.
 function getWorkOnlyMessageParts(msg: AiChatMessage): WorkMessageParts | null {
+  // Отметка «агент открыл гаджет» — часть того же шага, а не отдельная строка: ход не рвётся, а
+  // заголовки гаджетов подписывают шаги кода.
+  if (msg.type === "useGadget") {
+    return {
+      toolCalls: [],
+      observations: [],
+      batches: [{ calls: [], observations: [], gadgets: (msg.gadgets ?? []).map((g) => ({ title: g.title, bindingName: g.bindingName, outputId: g.outputId })) }],
+      lastAgentMessageSequence: null,
+      lastWorkSequence: msg.sequence,
+      lastWorkTimestamp: msg.timestamp,
+    };
+  }
   if (isObservationActionMessage(msg)) {
     return {
       toolCalls: [],
@@ -3605,8 +3653,10 @@ function appendWorkParts(target: WorkMessageParts, source: WorkMessageParts) {
   target.observations.push(...source.observations);
   for (const batch of source.batches) {
     const last = target.batches.at(-1);
-    if (batch.calls.length === 0 && last) last.observations.push(...batch.observations);
-    else target.batches.push({ calls: [...batch.calls], observations: [...batch.observations] });
+    if (batch.calls.length === 0 && last) {
+      last.observations.push(...batch.observations);
+      if (batch.gadgets?.length) last.gadgets = [...last.gadgets ?? [], ...batch.gadgets];
+    } else target.batches.push({ calls: [...batch.calls], observations: [...batch.observations], ...(batch.gadgets ? { gadgets: [...batch.gadgets] } : {}) });
   }
   target.lastWorkSequence = source.lastWorkSequence;
   target.lastWorkTimestamp = source.lastWorkTimestamp;
@@ -3850,7 +3900,7 @@ export function buildChatDisplayEntries(
       const workParts: WorkMessageParts = {
         toolCalls: [...initialWorkParts.toolCalls],
         observations: [...initialWorkParts.observations],
-        batches: initialWorkParts.batches.map((batch) => ({ calls: [...batch.calls], observations: [...batch.observations] })),
+        batches: initialWorkParts.batches.map((batch) => ({ ...batch, calls: [...batch.calls], observations: [...batch.observations] })),
         lastAgentMessageSequence: initialWorkParts.lastAgentMessageSequence,
         lastWorkSequence: initialWorkParts.lastWorkSequence,
         lastWorkTimestamp: initialWorkParts.lastWorkTimestamp,
@@ -4135,6 +4185,8 @@ interface ChatInterfaceProps {
   // The output format a workpiece was built as, so a created-app card can name and draw it as the
   // Document (or whatever) it is rather than a generic app.
   outputOfWorkpiece: (gadgetId: WorkpieceId) => BlueprintOutput | undefined;
+  // Гаджеты рабочего места: заголовок для шагов кода в старых записях, где список гаджетов не сохранён.
+  workspaceGadgets?: readonly { title: string; output?: BlueprintOutput }[];
 }
 
 // Bucket a chat's lastActive into a time grouping for the chat list.
@@ -4318,6 +4370,7 @@ function ChatInterface({
   constrainChatWidth,
   onOpenGadget,
   outputOfWorkpiece,
+  workspaceGadgets,
 }: ChatInterfaceProps) {
   // Persistent cache that survives reconnects
   const toasts = useKumoToastManager();
@@ -5377,8 +5430,11 @@ function ChatInterface({
   const openMnemosDocument = useMnemosLink();
   const workRunContext = useMemo(() => ({
     projectNames: new Map(chatProjectList.flatMap((p) => p.title && !looksLikeId(p.title) ? [[p.projectId, p.title] as const] : [])),
+    // Гаджеты, созданные в этой беседе: имя привязки → заголовок, для записей без списка гаджетов.
+    gadgetNames: new Map(currentMessages.flatMap((m) => m.type === "changes" ? (m.createdGadgets ?? []).map((g) => [g.bindingName, { title: g.title, bindingName: g.bindingName }] as const) : [])),
+    workspaceGadgets: (workspaceGadgets ?? []).map((g) => ({ title: g.title, ...(g.output?.id ? { outputId: g.output.id } : {}) })),
     openDocument: openMnemosDocument,
-  }), [chatProjectList, openMnemosDocument]);
+  }), [chatProjectList, currentMessages, workspaceGadgets, openMnemosDocument]);
   useActionEntries(overseer, (record) => {
     if (applyActionLogUpdateToCachedMessages(record)) scheduleUpdate();
   });

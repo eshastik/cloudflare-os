@@ -10,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   buildWorkSteps, formatDuration, groupSteps, plural, STEP_DISPLAY, summarizeRun,
-  type FoundItem, type StepGroup, type StepIcon, type WorkBatch, type WorkStep,
+  type FoundItem, type GadgetRef, type StepGroup, type StepIcon, type WorkBatch, type WorkStep,
 } from "./toolDisplay";
 import styles from "../../ChatInterface.module.css";
 
@@ -109,6 +109,12 @@ function StepDetailView({ step, openDocument }: { step: WorkStep; openDocument?:
         <p key={index} className="m-0 break-words text-[13px] leading-[18px] text-kumo-subtle">{line}</p>
       ))}
       {detail.type === "text" && <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">{plainText(detail.text)}</p>}
+      {detail.type === "code" && detail.lines && (
+        <div className="space-y-1">
+          <p className="m-0 text-[12px] leading-4 text-kumo-inactive">Записано</p>
+          {detail.lines.map((line, index) => <p key={index} className="m-0 text-[13px] leading-[18px] text-kumo-default">{line}</p>)}
+        </div>
+      )}
       {detail.type === "code" && <CodeBlock code={detail.code} output={detail.output} />}
     </div>
   );
@@ -201,6 +207,8 @@ function CodeRuns({ runs }: { runs: { key: string; code: string; output?: string
 export type WorkRunProps = {
   batches: readonly WorkBatch[];
   projectNames?: ReadonlyMap<string, string>;
+  gadgetNames?: ReadonlyMap<string, GadgetRef>;
+  workspaceGadgets?: readonly GadgetRef[];
   /** Начало и конец хода: для «Готово за 42 с». */
   startedAt?: Date;
   finishedAt?: Date;
@@ -211,8 +219,8 @@ export type WorkRunProps = {
   openDocument?: OpenDocument;
 };
 
-export const WorkRun = memo(function WorkRun({ batches, projectNames, startedAt, finishedAt, inProgress = false, open, onToggle, openDocument }: WorkRunProps) {
-  const { steps, code } = useMemo(() => buildWorkSteps(batches, { projectNames }), [batches, projectNames]);
+export const WorkRun = memo(function WorkRun({ batches, projectNames, gadgetNames, workspaceGadgets, startedAt, finishedAt, inProgress = false, open, onToggle, openDocument }: WorkRunProps) {
+  const { steps, code } = useMemo(() => buildWorkSteps(batches, { projectNames, gadgetNames, workspaceGadgets }), [batches, projectNames, gadgetNames, workspaceGadgets]);
   const groups = useMemo(() => groupSteps(steps), [steps]);
   if (steps.length === 0 && code.length === 0) return null;
   if (steps.length === 1 && code.length === 0) {

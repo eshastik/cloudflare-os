@@ -72,9 +72,27 @@ describe("размышления по-русски", () => {
     expect(view.textContent).not.toContain("Planning");
   });
 
-  it("русские размышления показываются как есть", () => {
+  it("русские размышления свёрнуты до заголовка и раскрываются щелчком", () => {
     const view = render(<ThinkingTraceRow reasoning={RU} />);
+    expect(view.textContent).toBe("Планирую поиск");
+    act(() => [...view.querySelectorAll("button")].find((b) => b.textContent === "Планирую поиск")!.click());
     expect(view.textContent).toContain("Нужно найти");
+  });
+
+  it("склеенные блоки разводятся: заголовок следующего блока — отдельной строкой", () => {
+    const glued = "**Чтение документа**\n\nНужно получить текущее содержимое.**Выполнение проверки документа**\n\nПроверю через `getDocument` RPC-вызов для получения документа.Планирование обновлений документа\n\nЗатем `setDocument` с блоками `<p>`.";
+    const view = render(<ThinkingTraceRow reasoning={glued} />);
+    const titles = [...view.querySelectorAll("button")].map((b) => b.textContent);
+    expect(titles).toEqual(["Чтение документа", "Выполнение проверки документа", "Планирование обновлений документа"]);
+    expect(view.textContent).not.toContain("содержимое.Выполнение");
+    act(() => [...view.querySelectorAll("button")][2].click());
+    expect(view.textContent).toContain("Затем setDocument с блоками <p>.");
+  });
+
+  it("во время ответа последний блок открыт", () => {
+    const view = render(<ThinkingTraceRow reasoning={"**Первый**\n\nдолгий текст первого блока.\n\n**Второй**\n\nидёт сейчас"} streaming />);
+    expect(view.textContent).toContain("идёт сейчас");
+    expect(view.textContent).not.toContain("долгий текст");
   });
 
   it("пока перевода нет, английский исходник свёрнут и открывается по кнопке", () => {

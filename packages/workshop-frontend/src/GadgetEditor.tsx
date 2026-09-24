@@ -1520,6 +1520,7 @@ export default function GadgetEditor() {
                   onSelectedChatHasProposedChangesChange={setSelectedChatHasProposedChanges}
                   onOpenGadget={handleSelectWorkpiece}
                   outputOfWorkpiece={outputOfWorkpiece}
+                  workspaceGadgets={allGadgets}
                 />
               </div>
 

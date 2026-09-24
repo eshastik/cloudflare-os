@@ -2080,6 +2080,9 @@ export type AiChatMessageBody = {
   // Indicates that the AI agent accessed the gadget one or more times. This is logged in order
   // to track whether information known to the gadget may have tainted the agent session.
   type: "useGadget";
+  // Какие гаджеты агент открыл на этом шаге: ход работы в беседе называет их по заголовку, а не по
+  // имени привязки. Нет в записях, сделанных до 2026-09-25.
+  gadgets?: UsedGadget[];
 } | {
   // Indicates that the agent run ended with an error (e.g. LLM API failure, abort, server
   // restart). This is displayed to the user with a "retry" button, but is NOT included in the
@@ -2623,6 +2626,15 @@ export type ConsoleLogEvent = {
   // values.
   message: any[];
 }
+
+// Гаджет, к которому агент обращался из кода: заголовок, имя в env беседы и формат (документ,
+// таблица, презентация) для подписи шага.
+export type UsedGadget = {
+  id: WorkpieceId;
+  title: string;
+  bindingName?: string;
+  outputId?: string;
+};
 
 // Summary of one workpiece, delivered via Overseer.subscribeToWorkpieces(). In v1 only
 // gadget-type workpieces are published (gatekeeper workpieces -- chat capsules, ambient

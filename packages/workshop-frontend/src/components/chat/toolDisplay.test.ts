@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { AiToolCall } from "@gadgets/workshop-shared/api";
 import {
   AGENT_TOOL_DISPLAY, MNEMOS_ACTION_DISPLAY, MNEMOS_INFO_DISPLAY, MNEMOS_LEGACY_TITLES, MNEMOS_LIBRARY_METHODS,
-  SHARED_PAST_VERBS, STEP_DISPLAY, actionDisplay, buildWorkSteps, callStep, describeLiveStep, formatDuration,
+  GADGET_METHODS, SHARED_PAST_VERBS, STEP_DISPLAY, actionDisplay, buildWorkSteps, callStep, describeLiveStep, formatDuration,
   groupSteps, summarizeRun, type ObservationRecord, type WorkBatch,
 } from "./toolDisplay";
 
@@ -71,6 +71,13 @@ describe("сторож: у каждого инструмента есть опи
       expect(MNEMOS_LIBRARY_METHODS, method).toHaveProperty(method);
       expect(STEP_DISPLAY, method).toHaveProperty([MNEMOS_LIBRARY_METHODS[method]]);
     }
+  });
+
+  it("методы встроенных редакторов (workshop-backend/src/native-editor-guard.ts)", () => {
+    const guard = source("workshop-backend/src/native-editor-guard.ts");
+    const methods = new Set([...guard.matchAll(/\$\{env\}\.(\w+)\(/g)].map(m => m[1]));
+    expect(methods.size).toBeGreaterThanOrEqual(4);
+    for (const method of methods) expect(GADGET_METHODS, method).toHaveProperty(method);
   });
 
   it("у каждого вида свой глагол; общий — только с причиной; «Выполнил действие» и общее «Прочитал» запрещены", () => {
@@ -232,5 +239,52 @@ describe("идущий шаг", () => {
   it("длительность по-человечески", () => {
     expect(formatDuration(42_000)).toBe("42 с");
     expect(formatDuration(185_000)).toBe("3 мин 5 с");
+  });
+});
+
+// ---- беседа «Устройство льва» в рабочем месте с документом «Коммерческое предложение для АТБанк» ----
+
+describe("шаги кода с гаджетом беседы", () => {
+  const read = call("executeCode", { code: "const doc = await env.ATBANK_PROPOSAL.getDocument();\nreturn doc.blocks.length" }, { output: "12" });
+  const write = call("executeCode", { code: "await env.ATBANK_PROPOSAL.setDocument({title: 'КП', blocks: [{id: 'b1', html: '<h1>Коммерческое предложение</h1>'}, {id: 'b2', html: '<p>Срок поставки — 15 октября.</p>'}]})" });
+  const gadget = { title: "Коммерческое предложение для АТБанк", bindingName: "ATBANK_PROPOSAL", outputId: "document" };
+
+  it("по методу привязки: прочитал и изменил документ по заголовку, а не по имени привязки", () => {
+    const { steps } = buildWorkSteps([{ calls: [read], observations: [], gadgets: [gadget] }, { calls: [write], observations: [], gadgets: [gadget] }]);
+    expect(steps.map(step => step.label)).toEqual([
+      "Прочитал документ «Коммерческое предложение для АТБанк»",
+      "Изменил документ «Коммерческое предложение для АТБанк»",
+    ]);
+    expect(steps.map(step => step.label).join()).not.toMatch(/ATBANK_PROPOSAL|Запустил код/);
+    expect(steps[1].detail).toMatchObject({ type: "code", lines: ["Коммерческое предложение", "Срок поставки — 15 октября."] });
+  });
+
+  it("старая запись без списка гаджетов: заголовок — единственного документа рабочего места", () => {
+    const { steps } = buildWorkSteps([{ calls: [read], observations: [] }], { workspaceGadgets: [gadget, { title: "Смета", outputId: "spreadsheet" }] });
+    expect(steps[0].label).toBe("Прочитал документ «Коммерческое предложение для АТБанк»");
+    const unknown = buildWorkSteps([{ calls: [read], observations: [] }]);
+    expect(unknown.steps[0].label).toBe("Прочитал документ");
+  });
+
+  it("таблица и презентация — свои глаголы; приложение — «Обратился к приложению»", () => {
+    const sheet = call("executeCode", { code: "await env.SHEET.applyOperation({structure: {sheetOrder: []}, sheetReplacements: []})" });
+    const deck = call("executeCode", { code: "await env.DECK.mutateDocument(3, 'setDeck', [deck])" });
+    const app = call("executeCode", { code: "await env.CRM.addLead({name: 'x'})" });
+    const { steps } = buildWorkSteps([{ calls: [sheet, deck, app], observations: [], gadgets: [{ title: "Смета", bindingName: "SHEET", outputId: "spreadsheet" }, { title: "Питч", bindingName: "DECK", outputId: "presentation" }, { title: "CRM", bindingName: "CRM" }] }]);
+    expect(steps.map(step => step.label)).toEqual(["Изменил таблицу «Смета»", "Изменил презентацию «Питч»", "Обратился к приложению «CRM»"]);
+  });
+
+  it("четыре обращения к документу подряд — одна строка, ход сводится в итог", () => {
+    const batches = [read, write, read, write].map(c => ({ calls: [{ ...c, toolCallId: Math.random().toString() } as AiToolCall], observations: [], gadgets: [gadget] }));
+    const { steps, code } = buildWorkSteps(batches);
+    const groups = groupSteps(steps);
+    expect(groups).toHaveLength(4);
+    expect(summarizeRun(steps, code.length, 30_000)).toBe("Готово за 30 с · 2 чтения документа, 2 правки документа");
+    const reads = groupSteps(buildWorkSteps([read, read].map(c => ({ calls: [{ ...c, toolCallId: Math.random().toString() } as AiToolCall], observations: [], gadgets: [gadget] }))).steps);
+    expect(reads.map(group => group.label)).toEqual(["Прочитал документ «Коммерческое предложение для АТБанк» · 2 раза"]);
+  });
+
+  it("идущий шаг с гаджетом", () => {
+    expect(describeLiveStep("executeCode", undefined, "await env.ATBANK_PROPOSAL.setDocument({})")).toBe("Меняю документ");
   });
 });

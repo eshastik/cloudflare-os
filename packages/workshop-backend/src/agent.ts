@@ -1,4 +1,4 @@
-import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE } from '@gadgets/workshop-shared/api';
+import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE, type UsedGadget } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
 import { formatCodeWorkResult, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
@@ -291,7 +291,7 @@ export interface AgentHooks {
   activeAgentCallbackCount(chatId: number): number;
   rejectAllAgentCallbacks(chatId: number, error: string): void;
   consumeCapturedActions(chatId: number)
-      : {actions: number[], accessedGadget: boolean, awaitDecision: boolean} | undefined;
+      : {actions: number[], accessedGadget: boolean, awaitDecision: boolean, gadgets?: UsedGadget[]} | undefined;
   // Appends messages to the chat log and updates cost/token accounting. When both
   // `aiGatewayLogId` and `aiGatewayLogRoute` are present, the authoritative cost is fetched
   // asynchronously from the AI Gateway log, with `estimatedCost` (pi's catalog-priced estimate
@@ -3188,7 +3188,7 @@ export async function runAgent(
             msgs.push({type: "action", actionId});
           }
           if (capturedActions.accessedGadget) {
-            msgs.push({type: "useGadget"});
+            msgs.push({type: "useGadget", ...(capturedActions.gadgets?.length ? {gadgets: capturedActions.gadgets} : {})});
           }
           if (capturedActions.awaitDecision) {
             awaitingActionDecision = true;

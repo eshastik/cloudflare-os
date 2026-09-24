@@ -228,17 +228,36 @@ export const EXTERNAL_DISPLAY = {
   "external.mcp.call": spec("Вызвал инструмент", "Вызываю инструмент", "вызвать инструмент", ["вызов инструмента", "вызова инструментов", "вызовов инструментов"], "app"),
 } as Record<string, DisplaySpec>;
 
+// ---- гаджеты беседы: встроенные редакторы и приложения, которые агент зовёт из кода ----
+
+/** Методы сервера встроенных редакторов (workshop-backend/src/native-editor-guard.ts): чтение или правка. */
+export const GADGET_METHODS: Record<string, "read" | "write"> = {
+  getDocument: "read", setDocument: "write", applyOperation: "write", mutateDocument: "write",
+};
+
+export const GADGET_DISPLAY = {
+  "gadget.document.read": spec("Прочитал документ", "Читаю документ", "прочитать документ", ["чтение документа", "чтения документа", "чтений документа"], "document"),
+  "gadget.document.write": spec("Изменил документ", "Меняю документ", "изменить документ", ["правка документа", "правки документа", "правок документа"], "edit"),
+  "gadget.spreadsheet.read": spec("Прочитал таблицу", "Читаю таблицу", "прочитать таблицу", ["чтение таблицы", "чтения таблицы", "чтений таблицы"], "document"),
+  "gadget.spreadsheet.write": spec("Изменил таблицу", "Меняю таблицу", "изменить таблицу", ["правка таблицы", "правки таблицы", "правок таблицы"], "edit"),
+  "gadget.presentation.read": spec("Прочитал презентацию", "Читаю презентацию", "прочитать презентацию", ["чтение презентации", "чтения презентации", "чтений презентации"], "document"),
+  "gadget.presentation.write": spec("Изменил презентацию", "Меняю презентацию", "изменить презентацию", ["правка презентации", "правки презентации", "правок презентации"], "edit"),
+  "gadget.app.call": spec("Обратился к приложению", "Обращаюсь к приложению", "обратиться к приложению", ["обращение к приложению", "обращения к приложению", "обращений к приложению"], "app"),
+} as Record<string, DisplaySpec>;
+
 /** Все виды шагов ленты. */
 export const STEP_DISPLAY: Record<string, DisplaySpec> = {
   ...Object.fromEntries(Object.entries(AGENT_TOOL_DISPLAY).map(([name, value]) => [`tool.${name}`, value])),
   ...MNEMOS_OBSERVATION_DISPLAY,
   ...EXTERNAL_DISPLAY,
+  ...GADGET_DISPLAY,
 };
 
 /** Одинаковый глагол у разных видов допустим только здесь, с причиной. */
 export const SHARED_PAST_VERBS: Record<string, string> = {
   "Подключил": "setBindingHook и setGadgetBinding — одно и то же подключение ресурса, второе заменило первое",
   "Посмотрел список проектов": "каталог при старте и listProjects отдают один и тот же список проектов",
+  "Изменил документ": "черновик документа Mnemos и документ в редакторе беседы — для человека одна и та же правка документа",
 };
 
 // ---- склонение и время ----
@@ -284,7 +303,7 @@ export type FoundItem = {
 export type StepDetail =
   | { type: "found"; items: FoundItem[]; total?: number; note?: string; query?: string; where?: string }
   | { type: "lines"; lines: string[] }
-  | { type: "code"; code: string; output?: string }
+  | { type: "code"; code: string; output?: string; lines?: string[] }
   | { type: "text"; text: string }
   | { type: "none" };
 
@@ -310,12 +329,19 @@ export type ObservationRecord = {
   activity?: ObservationActivity;
 };
 
+/** Гаджет, открытый агентом на шаге: заголовок вместо имени привязки. */
+export type GadgetRef = { title: string; bindingName?: string; outputId?: string };
+
 /** Шаги одного ответа модели: вызовы инструментов и наблюдения, записанные во время их выполнения. */
-export type WorkBatch = { calls: AiToolCall[]; observations: ObservationRecord[] };
+export type WorkBatch = { calls: AiToolCall[]; observations: ObservationRecord[]; gadgets?: GadgetRef[] };
 
 export type BuildOptions = {
   /** Имена проектов беседы по идентификатору: подставляются, если имя не пришло с шагом. */
   projectNames?: ReadonlyMap<string, string>;
+  /** Гаджеты по имени привязки (из созданных в беседе): для записей без списка гаджетов. */
+  gadgetNames?: ReadonlyMap<string, GadgetRef>;
+  /** Гаджеты рабочего места: единственный гаджет нужного формата подписывает шаг старой записи. */
+  workspaceGadgets?: readonly GadgetRef[];
 };
 
 type Draft = WorkStep & {
@@ -550,6 +576,50 @@ export function callStep(call: AiToolCall): WorkStep {
   return { key, kind: `tool.${call.toolName}`, label, ...(meta ? { meta } : {}), ...(call.error ? { error: call.error } : {}), detail };
 }
 
+function gadgetFormat(ref: GadgetRef | undefined, code: string, methods: string[]): "document" | "spreadsheet" | "presentation" {
+  if (ref?.outputId === "spreadsheet" || ref?.outputId === "presentation" || ref?.outputId === "document") return ref.outputId;
+  if (methods.includes("mutateDocument")) return "presentation";
+  if (/sheet(Order|Replacements|Id)|cells\s*:/.test(code)) return "spreadsheet";
+  return "document";
+}
+
+/** Текст новых блоков из литералов html в коде правки документа: что именно агент записал. */
+function writtenBlocks(code: string): string[] {
+  const texts = [...code.matchAll(/html\s*:\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)]
+    .map(match => match[2].replace(/<[^>]+>/g, " ").replace(/\\n/g, " ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return texts.slice(0, 8).map(text => clip(text, 160)).concat(texts.length > 8 ? [`и ещё ${texts.length - 8}`] : []);
+}
+
+/**
+ * Шаг кода, который работает с гаджетом беседы (документом, таблицей, презентацией, приложением):
+ * «Прочитал документ «…»», «Изменил таблицу «…»». null — код гаджетов не трогает.
+ */
+export function gadgetStep(call: Extract<AiToolCall, { toolName: "executeCode" }>, gadgets: readonly GadgetRef[], names: ReadonlyMap<string, GadgetRef> = new Map(), workspace: readonly GadgetRef[] = []): WorkStep | null {
+  const code = call.input.code ?? "";
+  const methods = [...code.matchAll(/\.([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]).filter(method => GADGET_METHODS[method]);
+  const bindings = [...new Set([...code.matchAll(/\benv\.([A-Za-z_$][\w$]*)/g)].map(match => match[1]))];
+  const byBinding = (binding: string) => gadgets.find(gadget => gadget.bindingName === binding) ?? names.get(binding);
+  const bound = bindings.map(byBinding).find(Boolean);
+  const ref = bound ?? (gadgets.length === 1 ? gadgets[0] : undefined);
+  if (methods.length === 0 && !bound) return null;
+  const format = gadgetFormat(ref, code, methods);
+  const sameFormat = ref ? [] : workspace.filter(gadget => (gadget.outputId ?? "") === format);
+  const title = shown(ref?.title ?? (sameFormat.length === 1 ? sameFormat[0].title : undefined));
+  const native = methods.length > 0 || ["document", "spreadsheet", "presentation"].includes(ref?.outputId ?? "");
+  const write = methods.some(method => GADGET_METHODS[method] === "write");
+  const kind = native ? `gadget.${format}.${write ? "write" : "read"}` : "gadget.app.call";
+  const spec = STEP_DISPLAY[kind];
+  const target = title ? ` «${title}»` : "";
+  const lines = write ? writtenBlocks(code) : [];
+  return {
+    key: `call-${call.toolCallId}`, kind,
+    label: call.error ? `Не удалось ${spec.failed}${target}` : `${spec.past}${target}`,
+    ...(call.error ? { error: call.error } : {}),
+    detail: { type: "code", code, ...(call.output ? { output: call.output } : {}), ...(lines.length ? { lines } : {}) },
+  };
+}
+
 /**
  * Шаги хода работы. Код, через который агент зовёт подключения, отдельной строкой не показывается:
  * за него говорят наблюдения подключения («Искал …», «Открыл …»); сам код — в `code`.
@@ -569,6 +639,9 @@ export function buildWorkSteps(batches: readonly WorkBatch[], options: BuildOpti
       } else if (params.scopeId) pending = params.scopeId;
     }
   }
+  // Гаджет, открытый на одном шаге хода, подписывает и соседние шаги с той же привязкой.
+  const runGadgets = new Map(options.gadgetNames ?? []);
+  for (const gadget of batches.flatMap(batch => batch.gadgets ?? [])) if (gadget.bindingName) runGadgets.set(gadget.bindingName, gadget);
   const steps: WorkStep[] = [];
   const code: { key: string; code: string; output?: string }[] = [];
   for (const batch of batches) {
@@ -580,6 +653,8 @@ export function buildWorkSteps(batches: readonly WorkBatch[], options: BuildOpti
     const observed = drafts.map(({ ref: _r, scopeId: _s, subject: _j, awaitsResult: _a, wantsResource: _w, ...step }) => step as WorkStep);
     let placed = observed.length === 0;
     for (const call of batch.calls) {
+      const viaGadget = call.toolName === "executeCode" ? gadgetStep(call, batch.gadgets ?? [], runGadgets, options.workspaceGadgets) : null;
+      if (viaGadget && observed.length === 0) { steps.push(viaGadget); continue; }
       if (call.toolName === "executeCode" && !call.error && observed.length > 0) {
         code.push({ key: `call-${call.toolCallId}`, code: call.input.code ?? "", ...(call.output ? { output: call.output } : {}) });
         if (!placed) { steps.push(...observed); placed = true; }
@@ -603,7 +678,7 @@ export function groupSteps(steps: readonly WorkStep[]): StepGroup[] {
   const groups: StepGroup[] = [];
   for (const step of steps) {
     const last = groups.at(-1);
-    if (last && last.kind === step.kind && !step.error && !last.hasError && step.detail.type !== "code") last.steps.push(step);
+    if (last && last.kind === step.kind && !step.error && !last.hasError && step.kind !== "tool.executeCode") last.steps.push(step);
     else groups.push({ key: step.key, kind: step.kind, label: step.label, ...(step.meta ? { meta: step.meta } : {}), steps: [step], hasError: !!step.error });
   }
   for (const group of groups) {
@@ -621,7 +696,8 @@ export function groupSteps(steps: readonly WorkStep[]): StepGroup[] {
       case "tool.writeFile": group.label = `${spec.past} ${plural(n, ["файл", "файла", "файлов"])}`; break;
       case "tool.editFile": group.label = `Внёс ${plural(n, ["правку", "правки", "правок"])}`; break;
       case "tool.webFetch": group.label = `Открыл ${plural(n, ["страницу", "страницы", "страниц"])}`; break;
-      default: group.label = `${spec.past} · ${times(n)}`;
+      default: group.label = group.steps.every(step => step.label === group.steps[0].label)
+        ? `${group.steps[0].label} · ${times(n)}` : `${spec.past} · ${times(n)}`;
     }
     const totals = group.steps.map(step => step.detail.type === "found" ? step.detail.total : undefined);
     if (group.kind === "mnemos.search" && totals.every(total => total !== undefined)) {
@@ -647,6 +723,11 @@ export function summarizeRun(steps: readonly WorkStep[], codeRuns: number, durat
 export function describeLiveStep(toolName: AiToolCall["toolName"] | null, target: string | undefined, code: string | undefined): string {
   if (!toolName) return "Готовлю шаг";
   if (toolName === "executeCode") {
+    const methods = [...(code ?? "").matchAll(/\.([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1]).filter(method => GADGET_METHODS[method]);
+    if (methods.length) {
+      const write = methods.some(method => GADGET_METHODS[method] === "write");
+      return STEP_DISPLAY[`gadget.${gadgetFormat(undefined, code ?? "", methods)}.${write ? "write" : "read"}`].present;
+    }
     const described = describeCode(code ?? "");
     if (described.kinds.length) return `${displayFor(described.kinds[0]).present}${described.kinds.length > 1 ? " и не только" : ""}`;
     return `${AGENT_TOOL_DISPLAY.executeCode.present}${described.summary ? `: ${described.summary}` : ""}`;
