@@ -147,15 +147,24 @@ const GIT_SERVICES = { github: { title: "GitHub", api: "https://api.github.com" 
 function GitRow({ data }: { data: MemoryData }) {
   const ui = useUi();
   const connections = useLoad(() => ui.listGitConnections(""), FAILURE, [ui]);
-  const items: Item[] = (connections.value?.connections ?? []).map(c => ({ key: `git/${c.connection_id}`, title: c.name || "Хранилище кода",
-    note: `${c.provider === "github" ? "GitHub" : c.provider === "gitlab" ? "GitLab" : "Gitea"} · ${c.account_login} · изменения агент отправляет только после вашего согласования`, problem: c.enabled ? loadProblem(c) : "отключено",
+  const items: Item[] = (connections.value?.connections ?? []).map(c => ({ key: `git/${c.connection_id}`, ...gitWords(c),
+    problem: c.enabled ? loadProblem(c) : "отключено",
     disconnect: c.enabled ? () => ui.disableGitConnection(c.connection_id, c.revision) : undefined }));
   const enabled = (connections.value?.connections ?? []).filter(c => c.enabled);
   return <>
-    <ConnectionRow title="Код" what="Хранилища кода GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
+    <ConnectionRow title="Код" what="Внутреннее хранилище кода Mnemos, GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
       connect={done => <GitForm done={done} />} />
-    {enabled.length > 0 && <GitBinding data={data} connections={enabled} />}
+    {enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
   </>;
+}
+
+/** Строка подключения кода словами. Внутреннее хранилище установки (provider "gitea") работает от
+ * служебной учётной записи организации: ни название программы, ни эта учётная запись человеку ничего не говорят. */
+export function gitWords(c: { provider: string; name: string; account_login: string }): { title: string; note: string } {
+  const consent = "изменения агент отправляет только после вашего согласования";
+  if (c.provider !== "github" && c.provider !== "gitlab") return { title: "Внутреннее хранилище кода Mnemos", note: consent };
+  const service = c.provider === "github" ? "GitHub" : "GitLab";
+  return { title: c.name || `Хранилище кода ${service}`, note: `${service}${c.account_login ? ` · учётная запись ${c.account_login}` : ""} · ${consent}` };
 }
 
 function GitForm({ done }: { done(): void }) {

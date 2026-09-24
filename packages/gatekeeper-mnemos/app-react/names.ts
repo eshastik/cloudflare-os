@@ -28,11 +28,12 @@ export function agentKind(connection: Pick<AgentConnection, "runtime_id" | "mana
   return "Агент";
 }
 
-/** Имена всех подключений; одинаковые различаются номером по порядку. */
+/** Имена всех подключений; одинаковые различаются номером по порядку. Действующие нумеруются
+ * первыми: отозванные подключения не дают действующему агенту номер вроде «№ 6». */
 export function agentNames(connections: AgentConnection[]): Map<string, string> {
   const seen = new Map<string, number>();
   const out = new Map<string, string>();
-  for (const connection of connections) {
+  for (const connection of [...connections.filter(c => !c.revoked), ...connections.filter(c => c.revoked)]) {
     const kind = agentKind(connection);
     const n = (seen.get(kind) ?? 0) + 1;
     seen.set(kind, n);

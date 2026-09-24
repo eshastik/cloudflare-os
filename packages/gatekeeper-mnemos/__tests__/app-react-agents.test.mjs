@@ -106,3 +106,32 @@ test("«Агенты и расходы»: бюджет проекта — вла
     assert.deepEqual(saved, [["one", { revision: 3, owner_id: "u-7f3a", limit_usd_micros: "20000000", automatic_usd_micros: "2000000", automatic_team_size: 2 }]]);
   } finally { app.dispose(); }
 });
+
+test("«Агенты и расходы»: показаны только действующие агенты; отозванные свёрнуты внизу; состояние по смыслу", async () => {
+  const external = (id, revoked, grants = []) => ({ binding_id: id, agent_principal_id: `p-${id}`, document_grants: grants, runtime_id: "external", runtime_agent_id: "", managed_runtime: false, revoked });
+  const grant = [{ project_id: "one", node_id: "", mode: "read", resource_class: "filesystem", granted_to: "p-x" }];
+  const app = await mountMemoryApp({
+    async listAgentConnections() {
+      return { connections: [
+        ...["r1", "r2", "r3", "r4", "r5", "r6"].map(id => external(id, true)),
+        external("live", false, grant),
+        { binding_id: "chat", agent_principal_id: "p-chat", document_grants: [], runtime_id: "workshop", runtime_agent_id: "", managed_runtime: false, revoked: false },
+      ], next_cursor: "" };
+    },
+  }, { section: "agents" });
+  try {
+    await app.until(() => app.document.querySelector('#root [data-agent="live"]'), "карточки");
+    const agents = app.document.querySelector('#root section[aria-label="Агенты"]');
+    const off = agents.querySelector('details[aria-label="Отключённые агенты"]');
+    assert.ok(off && !off.open, "отозванные свёрнуты");
+    assert.match(off.querySelector("summary").textContent, /Отключённые \(6\)/);
+    const shown = [...agents.querySelectorAll("[data-agent]")].filter(card => !off.contains(card));
+    assert.deepEqual(shown.map(c => c.dataset.agent), ["live", "chat"], "в основном списке только действующие");
+    assert.equal(agents.querySelector("h2 + span").textContent, "2", "счётчик — действующие");
+    const live = app.document.querySelector('[data-agent="live"]'), chat = app.document.querySelector('[data-agent="chat"]');
+    assert.equal(live.querySelector("h3").textContent, "Свой агент (Claude Code или Codex)", "единственный действующий такого вида — без номера");
+    assert.ok(live.textContent.includes("Работает"), "есть доступ к проекту — работает");
+    assert.ok(chat.textContent.includes("Не подключён ни к одному проекту"), "без проектов — сказано словами");
+    assert.doesNotMatch(agents.textContent.replace(off.textContent, ""), /Ожидает|№/, "ни «Ожидает», ни номеров");
+  } finally { app.dispose(); }
+});

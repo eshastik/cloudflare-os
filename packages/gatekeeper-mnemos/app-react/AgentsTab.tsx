@@ -16,7 +16,7 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
   const [external, setExternal] = useState(false);
   return (
     <>
-      <Block title="Агенты" count={data.connectionsError || data.connectionsLoading ? undefined : data.connections.length}
+      <Block title="Агенты" count={data.connectionsError || data.connectionsLoading ? undefined : data.connections.filter(c => !c.revoked).length}
         actions={<Button variant="secondary" size="sm" onClick={() => setExternal(true)}>Подключить Codex или Claude Code</Button>}>
         <AgentList data={data} />
       </Block>
@@ -30,18 +30,23 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
 function AgentList({ data }: { data: MemoryData }) {
   const ui = useUi();
   const telegram = useLoad(() => ui.listTelegram(), "Каналы Telegram не прочитаны.", [ui]);
-  const connections = [...data.connections].sort((a, b) => Number(a.revoked) - Number(b.revoked));
+  // Отозванные подключения не работают и только засоряют список: они свёрнуты внизу.
+  const active = data.connections.filter(c => !c.revoked);
+  const revoked = data.connections.filter(c => c.revoked);
   const titles = agentNames(data.connections);
+  const card = (agent: AgentConnection) => <AgentCard key={agent.binding_id} agent={agent} title={titles.get(agent.binding_id) ?? agentKind(agent)} data={data}
+    telegram={telegram.error ? telegram.error : (telegram.value?.connections ?? []).filter(c => c.binding === agent.binding_id).map(c => `@${c.username}${c.disconnected ? " — отключён" : c.channel_registered ? "" : " — ждёт подтверждения"}`).join(", ")} />;
   if (data.connectionsError) return <Notice tone="danger">{data.connectionsError}</Notice>;
-  if (data.connectionsLoading && connections.length === 0) return <Notice>Загрузка агентов…</Notice>;
+  if (data.connectionsLoading && data.connections.length === 0) return <Notice>Загрузка агентов…</Notice>;
   return <>
     {data.taskError && <div className="mb-3"><Notice tone="danger">{data.taskError}</Notice></div>}
-    {!data.connectionsCursor && connections.length === 0 && <Notice>Агентов пока нет. Агент беседы появляется сам, когда сотрудник начинает беседу; свой Codex или Claude Code подключается кнопкой выше.</Notice>}
-    {connections.map(agent => (
-      <AgentCard key={agent.binding_id} agent={agent} title={titles.get(agent.binding_id) ?? agentKind(agent)} data={data}
-        telegram={telegram.error ? telegram.error : (telegram.value?.connections ?? []).filter(c => c.binding === agent.binding_id).map(c => `@${c.username}${c.disconnected ? " — отключён" : c.channel_registered ? "" : " — ждёт подтверждения"}`).join(", ")} />
-    ))}
+    {!data.connectionsCursor && active.length === 0 && <Notice>{revoked.length ? "Действующих агентов нет." : "Агентов пока нет."} Агент беседы появляется сам, когда сотрудник начинает беседу; свой Codex или Claude Code подключается кнопкой выше.</Notice>}
+    {active.map(card)}
     {data.connectionsCursor && <Button disabled={data.connectionsLoading} onClick={() => void data.loadMoreConnections()}>Показать ещё агентов</Button>}
+    {revoked.length > 0 && <details aria-label="Отключённые агенты" className="mt-2 text-[13px]">
+      <summary className="cursor-pointer text-kumo-subtle">Отключённые ({revoked.length})</summary>
+      <div className="mt-3">{revoked.map(card)}</div>
+    </details>}
   </>;
 }
 
@@ -80,6 +85,7 @@ function AgentCard({ agent, title, data, telegram }: { agent: AgentConnection; t
   }
 
   const taskState = task ? (task.outcome?.state === "completed" ? "ждёт вашей приёмки" : task.outcome?.state === "budget_blocked" ? "остановлена: закончился бюджет" : task.cancel_requested ? "останавливается" : task.submitted ? "в работе" : "не отправлена") : "";
+  const status = agentStatus(agent, running);
   const where = agent.runtime_id === "workshop" ? "работает в беседах" : agent.managed_runtime === true ? "работает на платформе агентов" : "подключён со своего компьютера";
 
   return (
@@ -90,7 +96,7 @@ function AgentCard({ agent, title, data, telegram }: { agent: AgentConnection; t
           <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">{where}</p>
           <AdminDetails show={admin} items={[["Подключение", agent.binding_id], ["Учётная запись агента", agent.agent_principal_id]]} />
         </div>
-        <StatusBadge tone={agent.revoked ? "neutral" : running ? "info" : "success"}>{agent.revoked ? "Доступ отозван" : running ? "Работает" : "Ожидает"}</StatusBadge>
+        <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
       </div>
       {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
 
@@ -122,6 +128,15 @@ function AgentCard({ agent, title, data, telegram }: { agent: AgentConnection; t
       </div>
     </article>
   );
+}
+
+/** Состояние агента словами: отозван, выполняет задачу, работает с проектами или ещё никуда не допущен.
+ * Сервер не сообщает, запущен ли агент сейчас; «Работает» значит, что доступ к проектам у агента есть. */
+export function agentStatus(agent: AgentConnection, running: boolean): { tone: "neutral" | "info" | "success" | "warning"; label: string } {
+  if (agent.revoked) return { tone: "neutral", label: "Доступ отозван" };
+  if (running) return { tone: "info", label: "Выполняет задачу" };
+  if (agent.document_grants?.length) return { tone: "success", label: "Работает" };
+  return { tone: "warning", label: "Не подключён ни к одному проекту" };
 }
 
 /** Завершённые задачи агента раскрываются прямо в карточке: что просили и что получилось. */

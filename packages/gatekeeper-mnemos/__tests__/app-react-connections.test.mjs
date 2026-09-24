@@ -7,7 +7,7 @@ const SOURCES = {
   async listMailConnections() { return { connections: [{ connection_id: "m-1", project_id: "one", provider: "yandex", query_sha256: "", revision: 1, enabled: true }] }; },
   async listCalDAVAccounts() { return { servers: [{ id: "icloud", title: "iCloud", url: "https://caldav.icloud.com" }], accounts: [] }; },
   async listWebDAVAccounts() { return { servers: [{ id: "corp-dav", title: "Диск компании", url: "https://dav.example.test/" }], accounts: [] }; },
-  async listGitConnections() { return { connections: [{ connection_id: "g-1", owner_id: "alice", provider: "gitlab", api_base: "https://gitlab.example.test/api/v4", account_id: "7", account_login: "sokolov", name: "GitLab компании", revision: 2, enabled: true }] }; },
+  async listGitConnections() { return { connections: [{ connection_id: "g-1", owner_id: "alice", provider: "gitlab", api_base: "https://gitlab.example.test/api/v4", account_id: "7", account_login: "sokolov", name: "GitLab компании", revision: 2, enabled: true }, { connection_id: "g-2", owner_id: "svc", provider: "gitea", api_base: "https://mnemos.example.test/api/v1", account_id: "1", account_login: "mnemos-service", name: "Gitea", revision: 1, enabled: true }] }; },
   async listGitRepositories() { return { repositories: [{ id: "r-9", name: "site", default_branch: "main" }] }; },
   async listVisibleDatabaseConnections() { return { databases: [{ db_id: "db-1", project_id: "two", name: "Аналитика", driver: "postgres", env_var: "MNEMOS_DB_A", registered_by: "alice", registered_at: "", configured: true, last_sweep_at: "", unreachable_since: "2026-09-13T08:00:00Z" }], truncated: false }; },
   async listTelegram() { return { connections: [], unavailable: 0 }; },
@@ -24,6 +24,8 @@ test("«Подключения»: одна страница строками, с
     assert.ok(row("Календарь").textContent.includes("Не подключено"), "пустая строка говорит, что не подключено");
     const text = app.text();
     assert.doesNotMatch(text, /https?:\/\/|api\/v4|MNEMOS_DB_|mnemos-service|imap\.yandex|:993/, "ни адресов, ни технических строк");
+    assert.ok(row("Код").textContent.includes("Внутреннее хранилище кода Mnemos"), "внутреннее хранилище названо словами");
+    assert.doesNotMatch(text, /Gitea|api\/v1/, "ни названия программы, ни служебной учётной записи");
     assert.equal(app.buttons().some(b => b.textContent === "Назад"), false, "без подэкранов");
   } finally { app.dispose(); }
 });
