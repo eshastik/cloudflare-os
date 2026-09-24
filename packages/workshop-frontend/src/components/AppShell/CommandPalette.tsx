@@ -17,6 +17,7 @@ import { displayName } from '@gadgets/workshop-shared/code-work'
 import { FormatGlyph } from '../format/FormatVisuals'
 import { localizedNoun } from '../format/formats'
 import { createFromFormat } from '../format/useOutputFormats'
+import { loadSharedDocuments, openSharedDocument, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
 
 // Поиск ⌘K (макет Search): поле, первым пунктом «Спросить агента», ниже группы — проекты, беседы,
 // файлы (результаты бесед), шаблоны и действия. Заменяет раздел «Материалы» в меню.
@@ -42,6 +43,7 @@ type PaletteData = {
   formats: OutputFormatOffer[]
   projects: ChatProjectChoice[]
   outputs: OutputSummary[]
+  shared: SharedDocumentItem[]
 }
 
 // Module-level cache shared across opens for the lifetime of the page. The palette serves this
@@ -173,6 +175,9 @@ export default function CommandPalette({
   const [outputs, setOutputs] = useState<OutputSummary[]>(
     () => paletteCache?.data.outputs ?? [],
   )
+  const [shared, setShared] = useState<SharedDocumentItem[]>(
+    () => paletteCache?.data.shared ?? [],
+  )
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -193,6 +198,7 @@ export default function CommandPalette({
       setFormats(paletteCache.data.formats)
       setProjects(paletteCache.data.projects)
       setOutputs(paletteCache.data.outputs)
+      setShared(paletteCache.data.shared)
     }
 
     let cancelled = false
@@ -206,14 +212,16 @@ export default function CommandPalette({
         authenticatedApi.listOutputFormats(),
         Promise.resolve().then(() => authenticatedApi.listChatProjects()).catch(() => [] as ChatProjectChoice[]),
         Promise.resolve().then(() => authenticatedApi.listOutputs()).then(r => r.outputs).catch(() => [] as OutputSummary[]),
+        Promise.resolve().then(() => loadSharedDocuments(authenticatedApi)).catch(() => [] as SharedDocumentItem[]),
       ])
-        .then(([gadgetList, own, library, formatList, projectList, outputList]) => {
+        .then(([gadgetList, own, library, formatList, projectList, outputList, sharedList]) => {
           const data: PaletteData = {
             gadgets: gadgetList,
             blueprints: mergeBlueprints(own, library),
             formats: formatList,
             projects: projectList,
             outputs: outputList,
+            shared: sharedList,
           }
           paletteCache = { data, fetchedAt: Date.now() }
           if (cancelled) return
@@ -222,6 +230,7 @@ export default function CommandPalette({
           setFormats(data.formats)
           setProjects(data.projects)
           setOutputs(data.outputs)
+          setShared(data.shared)
         })
         .catch((err) => console.error('Command palette: failed to load items', err))
     }
@@ -320,6 +329,15 @@ export default function CommandPalette({
         run: () => navigate({ to: '/workspace/$id', params: { id: o.workspaceId }, search: { w: o.workpieceId } }),
       }))
 
+    // Документы, которыми поделились: открываются сразу в своём редакторе.
+    const sharedBase: Command[] = shared.map((d) => ({
+      id: `shared-${d.accountId}-${d.scope}-${d.owner}-${d.resource}`,
+      label: d.name,
+      hint: sharedDocumentNote(d),
+      icon: <FileText size={18} />,
+      run: () => { void openSharedDocument(authenticatedApi, d, async id => { await navigate({ to: '/workspace/$id', params: { id } }) }).catch(() => toasts.add({ title: `Документ «${d.name}» не открылся`, variant: 'error' })) },
+    }))
+
     const bpBase: Command[] = blueprints
       .toSorted((a, b) => b.recency - a.recency)
       .map((b) => ({
@@ -358,19 +376,21 @@ export default function CommandPalette({
           { heading: 'В проектах', items: refine(projectBase, 5) },
           { heading: 'В беседах', items: refine(wsBase, 6) },
           { heading: 'Файлы', items: refine(fileBase, 6) },
+          { heading: 'Поделились с вами', items: refine(sharedBase, 5) },
           { heading: 'Шаблоны', items: refine(bpBase, 4) },
           { heading: 'Действия', items: refine(nav, nav.length) },
         ]
       : [
           { heading: 'Действия', items: refine(nav, nav.length) },
           { heading: 'Недавние беседы', items: refine(wsBase, 4) },
+          { heading: 'Поделились с вами', items: refine(sharedBase, 3) },
           { heading: 'Проекты', items: refine(projectBase, 4) },
         ]
 
     const groups = built.filter((g) => g.items.length > 0)
     const flat = groups.flatMap((g) => g.items)
     return { groups, flat }
-  }, [query, gadgets, blueprints, formats, projects, outputs, navigate, createFormat])
+  }, [query, gadgets, blueprints, formats, projects, outputs, shared, navigate, createFormat, authenticatedApi, toasts])
 
   // Keep the active index in range as the result set changes.
   useEffect(() => {

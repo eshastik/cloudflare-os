@@ -517,6 +517,8 @@ export interface GatekeeperNativeDocumentSelector extends RpcTarget {
     resourceUrl: string;
     /** Immutable, non-deleted native versions available to this account. */
     publications: { id: string; recordedAt: string; actor: string;
+      /** Имя того, кто сохранил личную версию (владелец или приглашённый); нет у старых служб. */
+      author?: string;
       /** Verified human owner when the publication actor is an agent; absent for older services. */
       onBehalfOf?: string;
       /** Recorder of this project snapshot, not the last edit of every document. */
@@ -559,8 +561,22 @@ export interface GatekeeperNativeDocumentWriter extends RpcTarget {
   head(): Promise<string>;
   /** Prepare an upload of at most 4 MiB against the displayed draft head. */
   issue(expectedHead: string, size: number, checksum: string): Promise<GatekeeperUploadTicket>;
-  /** Save this document only; a new-document retry returns its first result. Never publishes. */
+  /** Save this document only; a new-document retry returns its first result. Never publishes.
+   * Для существующего документа expectedHead — версия, от которой сделана правка; если сам документ
+   * с тех пор изменил другой человек, сохранение отклоняется ошибкой с текстом DOCUMENT_CHANGED. */
   save(expectedHead: string, uploadId: string): Promise<string>;
+}
+
+/** Правка существующего документа: своего или того, куда пригласили. */
+export interface GatekeeperNativeDocumentEditor extends GatekeeperNativeDocumentWriter {
+  /** Право на документ сейчас: свой, правка по приглашению или только чтение. */
+  access(): Promise<'owner' | 'write' | 'read'>;
+}
+
+/** Документ другого человека, открытый этому человеку. owner — служебный ключ, не для показа. */
+export interface GatekeeperSharedDocument {
+  scope: string; resource: string; owner: string; name: string; format: NativeDocumentFormat | null
+  projectName: string; ownerName: string; grantedByName: string; mode: 'read' | 'write'; grantedAt: string; seen: boolean
 }
 
 /** A new-document writer whose frozen request can survive a browser reload. */
@@ -682,8 +698,16 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean }[] }>;
   /** Change one invitation using the displayed mode; current ownership, folder rights and head are rechecked. */
   setParticipant(scope: string, resource: string, head: string, participant: string, expected: '' | 'read' | 'write', mode: '' | 'read' | 'write'): Promise<void>;
+  /** Документы других людей, открытые этому человеку («Поделились с вами»), новые сверху. */
+  sharedDocuments(): Promise<{ documents: GatekeeperSharedDocument[] }>;
+  /** Уровень доступа проекта документа. pending — запрошенное расширение, ждущее решения. */
+  projectLevel(scope: string): Promise<{ name: string; level: 'private' | 'department' | 'organization'; canEdit: boolean; pending: 'private' | 'department' | 'organization' | null }>;
+  /** Сменить уровень доступа проекта; applied=false — изменение ушло на подтверждение. */
+  setProjectLevel(scope: string, level: 'private' | 'department' | 'organization', canEdit: boolean): Promise<{ applied: boolean; level: 'private' | 'department' | 'organization'; canEdit: boolean }>;
+  /** Снять отметку «новое» у уведомления о доступе к документу. */
+  sharedDocumentSeen(scope: string, owner: string, resource: string): Promise<void>;
   /** Open the user's personal draft and bind editing to one document and format. */
-  select(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentWriter>>;
+  select(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentEditor>>;
   /** Bind one creation in the scope root; retries through this writer retain the operation identity. */
   create(scope: string, name: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
   /** Restore the exact creation request from this account's receipt; saving rechecks current rights. */
@@ -1417,7 +1441,8 @@ export interface Gatekeeper<Session> extends DurableObject {
   // Depending on policy conditions, an action may be approved and applied automatically. However,
   // the gatekeeper is nevertheless expected to submit all actions for approval; there is no mode
   // in which it's OK to skip the check.
-  applyAction(action: number): Promise<void>;
+  // May return an outcome: the chat card shows it and the resumed agent receives it.
+  applyAction(action: number): Promise<void | ActionOutcome>;
 
   // Indicates that an action was rejected by the user. The gatekeeper should clean up any
   // associated storage.
@@ -1792,7 +1817,38 @@ export type ActionDescription = {
   // any tag-keyed rule -- those always require manual approval. `actionKind.tag` is what auto-
   // approval rules and the future policy engine key on; `actionKind.label` is shown in the UI.
   actionKind?: ActionKind;
+
+  /** Карточка подтверждения в ленте беседы: вид действия для значка и строки подробностей
+   * словами. Если поле задано, лента рисует действие карточкой, а не строкой журнала. */
+  card?: ActionCard;
 }
+
+/** Вид действия для значка карточки; неизвестный вид рисуется общим значком. */
+export type ActionCardIcon =
+  | "share" | "review" | "publish" | "person" | "department" | "invitation" | "access"
+  | "visibility" | "budget" | "mail" | "calendar" | "code" | "connection" | "delete" | "other";
+
+export type ActionCard = {
+  icon: ActionCardIcon;
+  /** Одна-три короткие строки без идентификаторов. */
+  details: string[];
+  /** Карточка-переход: главная кнопка открывает человеку раздел приложения этого ресурса
+   * (например, «Подключения»), где он сам вводит пароль или выбирает файлы. */
+  open?: ActionCardOpen;
+};
+
+export type ActionCardOpen = {
+  section: string;
+  project?: string;
+  /** Надпись главной кнопки, например «Открыть «Подключения»». */
+  label: string;
+};
+
+/** Итог выполненного действия: одна фраза и, если есть, ссылка на результат. */
+export type ActionOutcome = {
+  summary: string;
+  url?: string;
+};
 
 // Describes a registered hook, for display purposes (e.g. so the user can see what hooks are
 // registered and choose whether to enable / disable a hook).

@@ -197,6 +197,13 @@ class GatekeeperAppHostImpl extends RpcTarget {
     return parseGatekeeperAppSection(new URLSearchParams(window.location.search).get('section'))
   }
 
+  /** Документ из URL хоста (ссылка открытия из письма); как и проект, не даёт полномочий. */
+  getSelectedDocument(): string {
+    if (this.embeddedIntake) return ""
+    const value = new URLSearchParams(window.location.search).get('document') ?? ''
+    return /^[A-Za-z0-9_-]{1,255}$/.test(value) ? value : ''
+  }
+
   /** Вкладка раздела из URL хоста; как и проект, не даёт полномочий. */
   getSelectedView(): string {
     if (this.embeddedIntake) return ""

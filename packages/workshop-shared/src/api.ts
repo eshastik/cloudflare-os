@@ -26,7 +26,7 @@ import type { UIReadinessSample } from "./ui-readiness.js";
 // Gadget a stub pointing to the Gadget's server-side Durable Object interface.
 
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
-import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
+import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, ActionOutcome, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
 import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
 
@@ -1345,6 +1345,9 @@ export type ActionLogEntry = {
   // True when the action was applied automatically by an auto-approval rule rather than by a human
   // clicking Approve. Only ever set alongside state "approved" (there is no automatic rejection).
   autoApproved?: boolean;
+
+  // Итог, который вернул ресурс после выполнения; есть только у выполненного действия.
+  outcome?: ActionOutcome;
 } | {
   type: "observation";
   description: ObservationDescription;

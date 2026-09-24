@@ -1,4 +1,9 @@
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
+
+/** Формат редактора по типу содержимого Mnemos; null — документ не для редактора. */
+export function nativeFormatOf(mime: string): NativeDocumentFormat | null {
+  return mime === "application/vnd.cloudflareos.document+json" ? "cloudflareos.document" : mime === "application/vnd.cloudflareos.spreadsheet+json" ? "cloudflareos.spreadsheet" : mime === "application/vnd.cloudflareos.presentation+json" ? "cloudflareos.presentation" : null;
+}
 import type {DriveImportCapture} from './drive-import-capture.ts';
 import {OfficeUpdateRecovery} from "./office-update-recovery.ts";
 import {OfficeUpdateWriter} from "./office-update-writer.ts";
@@ -142,19 +147,41 @@ export class NativeWriteSelector extends RpcTarget {
   async setParticipant(project: string, node: string, head: string, participant: string, expected: PrivateParticipantMode, mode: PrivateParticipantMode) {
     await this.#session.setPrivateDraftParticipant(project,node,head,participant,expected,mode);
   }
+  /** Документы других людей, открытые этому человеку, новые сверху. Владельца показывают по имени. */
+  async sharedDocuments() {
+    const documents = await this.#session.listSharedDocuments();
+    return { documents: documents.map(d => ({ scope: d.project_id, resource: d.node_id, owner: d.owner_id, name: d.name,
+      format: nativeFormatOf(d.content_type), projectName: d.project_name, ownerName: d.owner_name, grantedByName: d.granted_by_name,
+      mode: d.mode, grantedAt: d.granted_at, seen: d.seen })) };
+  }
+  /** Уровень доступа проекта документа: только приглашённые, отдел или вся организация. */
+  async projectLevel(scope: string) {
+    const project = (await this.#session.listProjects()).projects.find(p => p.id === scope);
+    if (!project) throw new Error("Project unavailable");
+    return { name: project.name, level: project.visibility ?? "private", canEdit: project.can_edit ?? false, pending: project.pending_share ?? null };
+  }
+  /** Сменить уровень доступа проекта; расширение может уйти на подтверждение руководителю — тогда applied=false. */
+  async setProjectLevel(scope: string, level: "private" | "department" | "organization", canEdit: boolean) {
+    const out = await this.#session.setProjectVisibility(scope, level, canEdit);
+    return { applied: out.applied, level: out.visibility, canEdit: out.can_edit };
+  }
+  /** Снять отметку «новое» у уведомления о доступе к документу. */
+  async sharedDocumentSeen(scope: string, owner: string, resource: string) { await this.#session.markSharedDocumentSeen(scope, owner, resource); }
   async select(project: string, node: string, format: NativeDocumentFormat) {
     if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
     await this.#session.openDraft(project);
-    let source = "";
+    let owner = "";
     let own;
     try { own = await this.#session.readDraftDocument(project, node); }
     catch (error) { if (!(error instanceof MnemosAPIError && [403, 404].includes(error.status))) throw error; }
     if (!own?.exists && !own?.conflicted) {
       const invited = (await this.#session.listInvitedDocuments(project, "", node)).documents;
       if (invited.length !== 1 || invited[0].content_type !== `application/vnd.${format}+json`) throw new Error("Select an accessible document of the same format");
-      source = invited[0].head;
+      owner = invited[0].owner_id;
+      // Открыл документ — уведомление прочитано. Сбой отметки открытию не мешает.
+      await this.#session.markSharedDocumentSeen(project, owner, node).catch(() => {});
     }
-    const writer = new NativeWriter(this.#session, project, node, format, source);
+    const writer = new NativeWriter(this.#session, project, node, format, owner);
     await writer.head();
     return new RpcStub(writer);
   }
@@ -201,41 +228,53 @@ class NativeConflict extends RpcTarget {
   }
 }
 
+/** Текст ошибки сохранения, когда документ изменили после версии, от которой сделана правка. */
+export const DOCUMENT_CHANGED = "DOCUMENT_CHANGED";
+
+/**
+ * Правка одного документа. Свой документ и документ, куда пригласили с правом
+ * правки, сохраняются одинаково — в ветку владельца, так что оба человека
+ * правят один документ. head — голова ветки владельца; сохранение от устаревшей
+ * головы проходит, только если сам документ с тех пор не менялся.
+ */
 class NativeWriter extends RpcTarget {
   #session: MnemosAccountSession;
   #project: string;
   #node: string;
   #mime: string;
-  #source: string;
-  constructor(session: MnemosAccountSession, project: string, node: string, format: NativeDocumentFormat, source = "") {
+  #owner: string;
+  constructor(session: MnemosAccountSession, project: string, node: string, format: NativeDocumentFormat, owner = "") {
     super(); this.#session = session; this.#project = project; this.#node = node;
-    this.#source = source;
+    this.#owner = owner;
     this.#mime = `application/vnd.${format}+json`;
   }
   async head() {
-    if (this.#source) {
-      await this.#session.checkPrivateVersionRead(this.#project, this.#node, this.#source);
-      const state = await this.#session.draftState(this.#project);
-      if (!state.personal_exists || !/^[a-f0-9]{64}$/.test(state.personal_head)) throw new Error("Personal draft unavailable");
-      return state.personal_head;
+    if (this.#owner) {
+      const invited = (await this.#session.listInvitedDocuments(this.#project, "", this.#node)).documents;
+      if (invited.length !== 1 || invited[0].owner_id !== this.#owner || invited[0].content_type !== this.#mime) throw new Error("Shared document unavailable");
+      await this.#session.checkPrivateVersionRead(this.#project, this.#node, invited[0].head);
+      return invited[0].head;
     }
     const doc = await this.#session.readDraftDocument(this.#project, this.#node);
     // Do not silently replace arbitrary JSON/text with a different native format.
     if (!doc.exists || doc.conflicted || doc.content_type !== this.#mime) throw new Error("Select an existing document of the same native format");
     return doc.head;
   }
-  async issue(expectedHead: string, size: number, checksum: string) {
-    if (await this.head() !== expectedHead) throw new Error("Draft changed; select the document again");
+  /** Право на документ сейчас: свой, правка по приглашению или только чтение. */
+  async access(): Promise<"owner" | "write" | "read"> {
+    if (!this.#owner) return "owner";
+    const shared = (await this.#session.listSharedDocuments()).find(d => d.project_id === this.#project && d.node_id === this.#node && d.owner_id === this.#owner);
+    return shared?.mode === "write" ? "write" : "read";
+  }
+  async issue(_expectedHead: string, size: number, checksum: string) {
+    // Версию сверяет save: выгрузка тела ничего не меняет в документе.
+    await this.head();
     return this.#session.beginNativeUpload(this.#project, size, checksum);
   }
   async save(expectedHead: string, uploadId: string) {
-    if (await this.head() !== expectedHead) throw new Error("Draft changed; select the document again");
-    if (this.#source) {
-      expectedHead = (await this.#session.adoptPrivateVersion(this.#project, this.#node, expectedHead, this.#source)).head;
-      // Adoption may succeed before saving fails. A retry must reread the new head.
-      this.#source = "";
-    }
-    return (await this.#session.saveDraftDocument(this.#project, this.#node, uploadId, expectedHead)).head;
+    const owner = this.#owner || (await this.#session.whoAmI()).subject.user_id;
+    try { return (await this.#session.saveSharedDocument(this.#project, this.#node, owner, expectedHead, uploadId)).head; }
+    catch (error) { if (error instanceof MnemosAPIError && error.status === 409) throw new Error(DOCUMENT_CHANGED); throw error; }
   }
 }
 

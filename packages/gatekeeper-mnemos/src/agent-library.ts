@@ -14,6 +14,11 @@ import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
 import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
 import type { MnemosVerifierApi } from "./mnemos.ts";
+import type { ActionDescription, ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
+import { ACTION_LABELS, AUTO_APPROVABLE_KINDS, READ_TITLES, checkedAgentAction, checkedAgentRead, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction, type ShareMode, type ConnectionType } from "./agent-actions.ts";
+import type { ProjectVisibility } from "./project-sharing.ts";
+import type { ScreenTarget, SourceType } from "./agent-actions-extra.ts";
+import type { InvitationRole, SpendingPeriod } from "./mnemos-api.ts";
 
 interface Env { MNEMOS_API_ORIGIN: string }
 export interface MnemosLibraryProps { userObjectId: string }
@@ -76,6 +81,10 @@ export interface LibraryAccount {
   workshopAgent(): Promise<{ connectionName: string }>;
   startWorkshopAgent(): Promise<LibraryAgent>;
   connectionIdentity(): Promise<{ subject: { tenant_id: string }; connectionName: string }>;
+  /** Действия агента от имени человека (agent-actions.ts); старые аккаунты их не знают. */
+  prepareAgentAction?(request: AgentActionRequest): Promise<PreparedAgentAction>;
+  executeAgentAction?(kind: AgentActionKind, resolved: PreparedAgentAction["resolved"]): Promise<ActionOutcome>;
+  readForAgent?(request: AgentReadRequest): Promise<unknown>;
 }
 
 export interface MnemosProject { id: string; name: string; slug: string }
@@ -92,7 +101,18 @@ export interface MnemosSearchAllResult {
 }
 export interface MnemosFolderEntry { id: string; name: string; path: string; kind: "folder" | "document" }
 export interface MnemosFolderListing { project: string; folder: string; entries: MnemosFolderEntry[]; truncated: boolean }
-export interface MnemosPublication { status: "published" | "awaiting_approval" | "nothing_to_publish" | "conflict"; message: string }
+export interface MnemosPublication { status: "published" | "awaiting_approval" | "nothing_to_publish" | "conflict" | "awaiting_confirmation"; message: string; action?: number }
+/** Действие ждёт решения человека карточкой в беседе; итог — в actionStatus(action). */
+export interface MnemosActionProposal { action: number; title: string; status: "awaiting_confirmation" }
+export interface MnemosActionStatus { action: number; title: string; status: "awaiting_confirmation" | "done" | "rejected"; result?: string; url?: string }
+/** Предложение агента, которое ждёт подтверждения; publish выполняется агентским credential, остальное — сессией человека. */
+interface StoredAction {
+  kind: AgentActionKind | "publish";
+  title: string;
+  state: "pending" | "applied" | "rejected";
+  resolved: PreparedAgentAction["resolved"];
+  outcome?: ActionOutcome;
+}
 export interface MnemosTracker { document: string; head: string; revision: number; title: string; stages: { id: string; name: string; department: string }[]; tasks: Task[] }
 export interface MnemosTrackerChange { document: string; head: string; revision: number; task: string }
 export interface MnemosDraftProposal { action: number; document: string; name: string; status: "saved"; head: string }
@@ -123,6 +143,8 @@ const TEXT_TYPES = new Set(["text/plain", "text/markdown"]);
 const TRACKER_TYPES = new Set(["application/vnd.mnemos.task-tracker+json"]);
 /** Сколько строк папки отдаётся за один обзор. */
 const FOLDER_ENTRIES_LIMIT = 500;
+/** Виды, которые человек может разрешить насовсем кнопкой «Разрешать всегда». */
+const AUTO_APPROVABLE_TAGS: (AgentActionKind | "publish")[] = ["publish", ...AUTO_APPROVABLE_KINDS];
 const UNSUPPORTED = "Эта версия подключения Mnemos не умеет выполнять действие; обновите приложение Mnemos.";
 const REVOKED = "Аккаунт Mnemos отключён или срок входа истёк; войдите заново в приложении Mnemos.";
 const AGENT_REVOKED = "Агентская связь Workshop с Mnemos отозвана или аккаунт отключён; переподключите аккаунт в приложении Mnemos.";
@@ -205,6 +227,9 @@ interface SessionCalls {
   publishDraft(queue: RpcStub<ApprovalQueue>, project: string, message: string): Promise<MnemosPublication>;
   readTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosTracker>;
   changeTrackerTask(queue: RpcStub<ApprovalQueue>, project: string, document: string, expectedHead: string, task: Task, create: boolean): Promise<MnemosTrackerChange>;
+  propose(queue: RpcStub<ApprovalQueue>, request: AgentActionRequest): Promise<MnemosActionProposal>;
+  read(queue: RpcStub<ApprovalQueue>, request: AgentReadRequest): Promise<unknown>;
+  actionStatus(queue: RpcStub<ApprovalQueue>, action: number): Promise<MnemosActionStatus>;
 }
 
 /** Сессия агента: чтение — наблюдение, запись личного черновика — сразу по выданным правам. */
@@ -227,6 +252,59 @@ export class MnemosLibrarySession extends RpcTarget {
   async changeTrackerTask(project: string, document: string, expectedHead: string, task: Task, create = false): Promise<MnemosTrackerChange> { return this.#calls.changeTrackerTask(this.#queue, project, document, expectedHead, task, create); }
   async createDraft(project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown" = "text/markdown") { return this.#calls.createDraft(this.#queue, project, parent, name, content, mediaType); }
   async saveDraft(project: string, document: string, content: string): Promise<MnemosDraftProposal> { return this.#calls.saveDraft(this.#queue, project, document, content); }
+  // ---- действия человека через карточку подтверждения ----
+  async shareDocument(project: string, document: string, person: string, mode: ShareMode) { return this.#calls.propose(this.#queue, {kind: "share_document", project, document, person, mode}); }
+  async requestReview(project: string) { return this.#calls.propose(this.#queue, {kind: "request_review", project}); }
+  async decideReview(review: string, approve: boolean) { return this.#calls.propose(this.#queue, {kind: "decide_review", review, approve}); }
+  async withdrawReview(review: string) { return this.#calls.propose(this.#queue, {kind: "withdraw_review", review}); }
+  async publishReviewed(review: string) { return this.#calls.propose(this.#queue, {kind: "publish_review", review}); }
+  async decideAccessRequest(request: string, approve: boolean) { return this.#calls.propose(this.#queue, {kind: "decide_access_request", request, approve}); }
+  async setProjectVisibility(project: string, level: ProjectVisibility, canEdit: boolean) { return this.#calls.propose(this.#queue, {kind: "set_project_visibility", project, level, canEdit}); }
+  async invitePerson(email: string, name: string, department: string, role: InvitationRole = "employee") { return this.#calls.propose(this.#queue, {kind: "invite_person", email, name, department, role}); }
+  async revokeInvitation(invitation: string) { return this.#calls.propose(this.#queue, {kind: "revoke_invitation", invitation}); }
+  async createDepartment(name: string) { return this.#calls.propose(this.#queue, {kind: "create_department", name}); }
+  async deleteDepartment(department: string) { return this.#calls.propose(this.#queue, {kind: "delete_department", department}); }
+  async setDepartmentMember(department: string, person: string, member: boolean, head = false) { return this.#calls.propose(this.#queue, {kind: "set_department_member", department, person, member, head}); }
+  async setProjectBudget(project: string, limitUsd: number) { return this.#calls.propose(this.#queue, {kind: "set_project_budget", project, limitUsd}); }
+  async disableConnection(type: ConnectionType | SourceType, connection: string) {
+    return this.#calls.propose(this.#queue, (type === "mail" || type === "calendar" || type === "git") ? {kind: "disable_connection", type, connection} : {kind: "disconnect_source", type, connection});
+  }
+  async updateOrgRules(rules: Record<string, string | boolean>) { return this.#calls.propose(this.#queue, {kind: "update_org_rules", rules} as AgentActionRequest); }
+  async setReviewDomain(project: string, domain: string, approvers: string[]) { return this.#calls.propose(this.#queue, {kind: "set_review_domain", project, domain, approvers}); }
+  async removeReviewDomain(project: string, domain: string) { return this.#calls.propose(this.#queue, {kind: "remove_review_domain", project, domain}); }
+  async revokePersonRight(person: string, project: string, mode: "read" | "write" | "all" = "all") { return this.#calls.propose(this.#queue, {kind: "revoke_person_right", person, project, mode}); }
+  async createCompetency(name: string) { return this.#calls.propose(this.#queue, {kind: "create_competency", name}); }
+  async setCompetencyMember(competency: string, person: string, member: boolean) { return this.#calls.propose(this.#queue, {kind: "set_competency_member", competency, person, member}); }
+  async decideAcceptance(request: string, accept: boolean, comment = "") { return this.#calls.propose(this.#queue, {kind: "decide_acceptance", request, accept, comment}); }
+  async decideTemplate(proposal: string, approve: boolean, comment: string) { return this.#calls.propose(this.#queue, {kind: "decide_template", proposal, approve, comment}); }
+  async decideIntake(alert: string, approve: boolean, project = "", domain = "", note = "") { return this.#calls.propose(this.#queue, {kind: "decide_intake", alert, approve, project, domain, note}); }
+  async decideTeamBudget(project: string, proposal: string, approve: boolean, comment = "") { return this.#calls.propose(this.#queue, {kind: "decide_team_budget", project, proposal, approve, comment}); }
+  async revokeAgent(agent: string) { return this.#calls.propose(this.#queue, {kind: "revoke_agent", agent}); }
+  async setAgentProjectRight(agent: string, project: string, mode: "read" | "write", enabled: boolean) { return this.#calls.propose(this.#queue, {kind: "set_agent_project_right", agent, project, mode, enabled}); }
+  async setAgentSourceAccess(type: "mail" | "calendar", connection: string, agent: string, enabled: boolean) { return this.#calls.propose(this.#queue, {kind: "set_agent_source_access", type, connection, agent, enabled}); }
+  async linkRepository(project: string, repository: string, visibility: "private" | "department" | "organization" = "private", branch = "", folder = "") { return this.#calls.propose(this.#queue, {kind: "create_sync_link", project, repository, branch, folder, visibility}); }
+  async refreshRepository(link: string) { return this.#calls.propose(this.#queue, {kind: "refresh_sync_link", link}); }
+  async openScreen(target: ScreenTarget, project = "") { return this.#calls.propose(this.#queue, {kind: "open_screen", target, project}); }
+  async actionStatus(action: number) { return this.#calls.actionStatus(this.#queue, action); }
+  // ---- чтения, которые человек видит на экранах ----
+  async documentAccess(project: string, document: string) { return this.#calls.read(this.#queue, {kind: "document_access", project, document}); }
+  async listReviews() { return this.#calls.read(this.#queue, {kind: "reviews"}); }
+  async listAccessRequests() { return this.#calls.read(this.#queue, {kind: "access_requests"}); }
+  async listDepartments() { return this.#calls.read(this.#queue, {kind: "departments"}); }
+  async listInvitations() { return this.#calls.read(this.#queue, {kind: "invitations"}); }
+  async readProjectBudget(project: string) { return this.#calls.read(this.#queue, {kind: "project_budget", project}); }
+  async listConnections(type: ConnectionType | SourceType) { return this.#calls.read(this.#queue, (type === "mail" || type === "calendar" || type === "git") ? {kind: "connections", type} : {kind: "sources", type}); }
+  async readOrgRules() { return this.#calls.read(this.#queue, {kind: "org_rules"}); }
+  async readReviewPolicy(project: string) { return this.#calls.read(this.#queue, {kind: "review_policy", project}); }
+  async readPersonRights(person: string) { return this.#calls.read(this.#queue, {kind: "person_rights", person}); }
+  async listCompetencies() { return this.#calls.read(this.#queue, {kind: "competencies"}); }
+  async listAcceptances() { return this.#calls.read(this.#queue, {kind: "acceptances"}); }
+  async listTemplateProposals() { return this.#calls.read(this.#queue, {kind: "template_proposals"}); }
+  async listIntakeQuestions(project = "") { return this.#calls.read(this.#queue, {kind: "intake_questions", project}); }
+  async listTeamBudgets(project: string) { return this.#calls.read(this.#queue, {kind: "team_budgets", project}); }
+  async listAgents() { return this.#calls.read(this.#queue, {kind: "agents"}); }
+  async readWorkJournal(project: string) { return this.#calls.read(this.#queue, {kind: "work_journal", project}); }
+  async readSpending(period: SpendingPeriod = "30d") { return this.#calls.read(this.#queue, {kind: "spending", period}); }
   [Symbol.dispose](): void { this.#queue[Symbol.dispose](); }
 }
 
@@ -248,7 +326,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     };
   }
   async getTypeScriptTypes(): Promise<string> { return MNEMOS_LIBRARY_TYPES; }
-  async getAutoApprovableActions() { return []; }
+  async getAutoApprovableActions() { return AUTO_APPROVABLE_TAGS.map(kind => ({tag: `mnemos.${kind}`, label: kind === "publish" ? "Публикация черновика" : ACTION_LABELS[kind]})); }
 
   async startSession(approvalQueue: RpcStub<ApprovalQueue>): Promise<MnemosLibrarySession> {
     // Аргументы RPC освобождаются по возврату; сессия живёт дольше и держит свою копию.
@@ -268,6 +346,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         changeTrackerTask: (q, project, document, expectedHead, task, create) => this.#changeTracker(q, project, document, expectedHead, task, create),
         createDraft: (q, project, parent, name, content, mediaType) => this.#createDraft(q, project, parent, name, content, mediaType),
         saveDraft: (q, project, document, content) => this.#saveDraft(q, project, document, content),
+        propose: (q, request) => this.#propose(q, request),
+        read: (q, request) => this.#read(q, request),
+        actionStatus: (q, action) => this.#actionStatus(q, action),
       }, queue);
     } catch (error) { queue[Symbol.dispose](); throw error; }
   }
@@ -304,7 +385,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
 
   // ---- запись черновика; applyAction также завершает старые уже выданные предложения ----
 
-  async applyAction(action: number): Promise<void> {
+  async applyAction(action: number): Promise<void | ActionOutcome> {
+    if (this.ctx.storage.kv.get<StoredAction>(`act:${action}`)) return this.#applyProposed(action);
     if (this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)) { await this.#applyAdmin(action); return; }
     const proposal = this.#proposal(action);
     if (proposal.state === "applied") throw new Error("Действие уже выполнено: черновик записан ранее.");
@@ -346,6 +428,11 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     } finally { release(app); }
   }
   async rejectAction(action: number): Promise<void> {
+    const proposed = this.ctx.storage.kv.get<StoredAction>(`act:${action}`);
+    if (proposed) {
+      if (proposed.state === "applied") throw new Error("Действие уже выполнено; отклонить его нельзя.");
+      this.ctx.storage.kv.put(`act:${action}`, {...proposed, state: "rejected"}); return;
+    }
     const admin = this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`);
     if (admin) {
       if (!admin.ownerRestricted) throw new Error("Предложение создано старой версией интерфейса. Подготовьте новое действие.");
@@ -357,6 +444,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     this.#settle(action, proposal, "rejected");
   }
   async revertAction(action: number): Promise<{ message: string }> {
+    if (this.ctx.storage.kv.get<StoredAction>(`act:${action}`)) return {message: "Отмена делается обратным действием: попросите агента предложить его или измените в приложении Mnemos."};
     if (this.ctx.storage.kv.get<StoredAdminProposal>(`admin:${action}`)) return {message: "Для отмены административного изменения нужно отдельное подтверждённое действие."};
     const proposal = this.#proposal(action);
     return { message: `Откат делается в приложении Mnemos: восстановите в документе «${proposal.name}» прежнюю версию из истории личного черновика.` };
@@ -694,8 +782,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     };
   }
 
-  /** Публикация личного черновика проекта: без политики согласования — сразу,
-   * с политикой — запрос ответственным; решение ответственных агент не обходит. */
+  /** Публикация личного черновика — после подтверждения человеком карточкой (его можно разрешить
+   * насовсем): без политики согласования — сразу, с политикой — запрос ответственным. */
   async #publish(queue: RpcStub<ApprovalQueue>, project: string, message: string): Promise<MnemosPublication> {
     identifier(project, "проект");
     if (typeof message !== "string" || message.includes("\0") || bytes(message) > 1024) throw new Error("Некорректное значение: сообщение публикации (до 1 КиБ).");
@@ -706,7 +794,27 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       description: `Публикация личного черновика в проекте «${project}».`,
       excludeObservers: await this.#excludedObservers(),
     });
-    // Запись — под агентским credential: в журнале действие агента от имени человека (ADR 0010).
+    const agent = await this.#agent();
+    let state: DraftState;
+    try { state = await this.#data(() => agent.ui.draftState(project)); } finally { release(agent); }
+    if (!state.personal_exists) return { status: "nothing_to_publish", message: "В проекте нет личного черновика: публиковать нечего." };
+    let policy: PublicationPolicy | null = null;
+    try { policy = await reader.readPublicationPolicy(project); }
+    catch (error) { if (!(error instanceof MnemosAPIError && error.status === 404)) throw failure(error); }
+    const projectName = (await this.#quiet(() => reader.listProjects()))?.projects.find(p => p.id === project)?.name ?? project;
+    const reviewed = !!policy && policy.domains.length > 0;
+    const action = await this.#submit(queue, {kind: "publish", title: `Опубликовать изменения проекта «${projectName}»`, state: "pending",
+      resolved: {project, projectName, message: message.trim() || "Публикация из беседы"}}, {
+      icon: "publish", ownerOnly: false,
+      details: [reviewed ? "В проекте включено согласование: изменения уйдут ответственным" : "Изменения личного черновика увидят все, у кого есть доступ к проекту"],
+    });
+    return { status: "awaiting_confirmation", action, message: "Публикация ждёт подтверждения человека карточкой в беседе." };
+  }
+
+  /** Сама публикация под агентским credential: в журнале действие агента от имени человека (ADR 0010). */
+  async #publishNow(project: string, message: string): Promise<MnemosPublication> {
+    using reader = await this.#open();
+    if (!reader.readPublicationPolicy || !reader.readPublicationReview) throw new Error(UNSUPPORTED);
     const agent = await this.#agent();
     try {
       const writer = agent.ui;
@@ -728,16 +836,78 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         const review = await this.#quiet(() => reader.readPublicationReview!(candidate_id));
         // Изменения не задели ни одного направления политики — согласовывать нечего, публикуем сразу.
         if (!review || review.stale || !review.ready) {
-          await this.#recordWorkContext(queue, reader, project);
           return { status: "awaiting_approval", message: "В проекте включено согласование: изменения отправлены ответственным. После их решения публикацию подтвердит человек во «Входящих»." };
         }
       }
-      const result = await written(() => writer.publishDraft!(project, state.personal_head, state.shared_head, message.trim() || "Публикация из беседы"));
-      await this.#recordWorkContext(queue, reader, project);
+      const result = await written(() => writer.publishDraft!(project, state.personal_head, state.shared_head, message));
       if (result.conflicted) return { status: "conflict", message: "Изменения конфликтуют с опубликованной версией. Конфликт сохранён в черновике; его решает человек в приложении Mnemos." };
       if (!result.published) return { status: "nothing_to_publish", message: "Черновик не отличается от опубликованной версии: публиковать нечего." };
       return { status: "published", message: "Изменения опубликованы: их видят все, у кого есть доступ к проекту." };
     } finally { release(agent); }
+  }
+
+  // ---- действия человека: предложение карточкой, выполнение после подтверждения ----
+
+  async #propose(queue: RpcStub<ApprovalQueue>, input: AgentActionRequest): Promise<MnemosActionProposal> {
+    const request = checkedAgentAction(input);
+    const prepare = this.#account().prepareAgentAction;
+    if (!prepare) throw new Error(UNSUPPORTED);
+    // Карточка показывает имена людей и документов: наблюдение — только владельцу.
+    await queue.authorizeObservation({ownerOnly: true, title: "Подготовка действия Mnemos", description: `${ACTION_LABELS[request.kind]}: проверка и описание для подтверждения.`});
+    let prepared: PreparedAgentAction;
+    try { prepared = await this.#account().prepareAgentAction!(request); }
+    catch (error) { throw failure(error); }
+    const action = await this.#submit(queue, {kind: prepared.kind, title: prepared.title, state: "pending", resolved: prepared.resolved}, prepared);
+    return { action, title: prepared.title, status: "awaiting_confirmation" };
+  }
+  async #submit(queue: RpcStub<ApprovalQueue>, stored: StoredAction, card: { icon: PreparedAgentAction["icon"]; details: string[]; ownerOnly: boolean; open?: PreparedAgentAction["open"] }): Promise<number> {
+    const action = this.#nextAction();
+    this.ctx.storage.kv.put(`act:${action}`, stored);
+    const label = stored.kind === "publish" ? "Публикация черновика" : ACTION_LABELS[stored.kind];
+    const description: ActionDescription = {
+      title: stored.title,
+      description: card.details.join("\n\n"),
+      implementsRevert: false,
+      // Карточка-переход ничего не меняет: ход агента не останавливается до нажатия.
+      awaitDecision: !card.open,
+      ...(card.ownerOnly ? {ownerApprovalRequired: true} : {autoApprovable: AUTO_APPROVABLE_TAGS.includes(stored.kind)}),
+      actionKind: {tag: `mnemos.${stored.kind}`, label},
+      card: {icon: card.icon, details: card.details, ...(card.open ? {open: card.open} : {})},
+    };
+    await queue.submitAction(action, description);
+    return action;
+  }
+  async #applyProposed(action: number): Promise<ActionOutcome> {
+    const stored = this.ctx.storage.kv.get<StoredAction>(`act:${action}`)!;
+    if (stored.state === "applied" && stored.outcome) return stored.outcome;
+    if (stored.state === "rejected") throw new Error("Действие отклонено ранее; выполнение запрещено.");
+    let outcome: ActionOutcome;
+    if (stored.kind === "publish") {
+      const result = await this.#publishNow(String(stored.resolved.project), String(stored.resolved.message));
+      outcome = {summary: result.message};
+    } else {
+      const execute = this.#account().executeAgentAction;
+      if (!execute) throw new Error(UNSUPPORTED);
+      try { outcome = await this.#account().executeAgentAction!(stored.kind, stored.resolved); }
+      catch (error) { throw failure(error); }
+    }
+    this.ctx.storage.kv.put(`act:${action}`, {...stored, state: "applied", outcome});
+    return outcome;
+  }
+  async #actionStatus(queue: RpcStub<ApprovalQueue>, action: number): Promise<MnemosActionStatus> {
+    if (!Number.isSafeInteger(action) || action <= 0) throw new Error(NOT_FOUND);
+    const stored = this.ctx.storage.kv.get<StoredAction>(`act:${action}`);
+    if (!stored) throw new Error(NOT_FOUND);
+    await queue.authorizeObservation({ownerOnly: true, title: "Итог действия Mnemos", description: stored.title});
+    const status = stored.state === "applied" ? "done" : stored.state === "rejected" ? "rejected" : "awaiting_confirmation";
+    return {action, title: stored.title, status, ...(stored.outcome ? {result: stored.outcome.summary, ...(stored.outcome.url ? {url: stored.outcome.url} : {})} : {})};
+  }
+  async #read(queue: RpcStub<ApprovalQueue>, input: AgentReadRequest): Promise<unknown> {
+    const request = checkedAgentRead(input);
+    if (!this.#account().readForAgent) throw new Error(UNSUPPORTED);
+    await queue.authorizeObservation({ownerOnly: true, title: "Сведения Mnemos", description: `Чтение: ${READ_TITLES[request.kind]}.`});
+    try { return await this.#account().readForAgent!(request); }
+    catch (error) { throw failure(error); }
   }
 
   async #readTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosTracker> {

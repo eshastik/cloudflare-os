@@ -213,6 +213,9 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
     setActionError("");
     void host.openNativeDocument(project.id, nodeId).then(opened => { if (!opened) void host.openSection("documents", project.id); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
   }
+  const ui = useUi();
+  // Личные документы других людей в этом проекте, открытые вам: в общих файлах проекта их нет.
+  const shared = useLoad(async () => (await ui.listSharedDocuments().catch(() => [])).filter(d => d.project_id === project.id), "", [ui, project.id]);
   const materials = useMemo(() => documentRows(project, data.reviews), [project, data.reviews]);
   const described = useMemo(() => new Map(descriptions.filter(d => d.l0).map(d => [d.node_id, d.l0])), [descriptions]);
   const folders = project.nodes.filter(n => n.is_dir);
@@ -236,7 +239,7 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
         {uploaded.filter(file => file.error).length > 5 && <p className="m-0 mt-1 text-kumo-subtle">Не подтверждено ещё {uploaded.filter(file => file.error).length - 5}.</p>}
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
-      {total === 0
+      {total === 0 && !shared.value?.length
         ? <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
         : <div>
           {shownFolders.map(folder => (
@@ -250,6 +253,13 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
               meta={row.status.tone === "success" ? undefined : <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>}>
               <button type="button" className={name} onClick={() => openDocument(row.nodeId)}>{row.name}</button>
               {described.get(row.nodeId) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(row.nodeId)}</div>}
+            </ListRow>
+          ))}
+          {(shared.value ?? []).map(doc => (
+            <ListRow key={`shared/${doc.owner_id}/${doc.node_id}`} data-shared-document="" icon={<FileText size={18} />}
+              meta={<StatusBadge tone="neutral">{doc.mode === "write" ? "можно править" : "можно читать"}</StatusBadge>}>
+              <button type="button" className={name} onClick={() => openDocument(doc.node_id)}>{doc.name}</button>
+              <div className="mt-0.5 text-[13px] text-kumo-subtle">поделился {doc.granted_by_name || doc.owner_name || "коллега"}</div>
             </ListRow>
           ))}
           <div className="flex flex-wrap items-center gap-3 px-1 pt-3 text-[14px]">

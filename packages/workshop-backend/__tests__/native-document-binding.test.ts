@@ -11,6 +11,14 @@ import { formatMnemosWorkPrompt } from "../src/mnemos-agent-guide";
 const T0 = 1_000_000;
 
 describe("автопривязка встроенного документа к Mnemos", () => {
+  it("привязка хранит версию документа, от которой правит редактор; чужая форма версии отвергается", () => {
+    const head = "a".repeat(64);
+    expect(validateMnemosBinding({accountId: 1, scope: "p", resource: "d", savedRevision: 3, savedHead: head}))
+      .toEqual({accountId: 1, scope: "p", resource: "d", savedRevision: 3, savedHead: head});
+    expect(validateMnemosBinding({accountId: 1, scope: "p", resource: "d"})).toEqual({accountId: 1, scope: "p", resource: "d"});
+    for (const savedHead of ["", "A".repeat(64), "a".repeat(63), 5]) expect(() => validateMnemosBinding({accountId: 1, scope: "p", resource: "d", savedHead})).toThrow();
+  });
+
   it("документ создаёт одна вкладка: второй захват при живом первом не выдаётся", () => {
     const first = claimMnemosCreation({}, 7, "project", "Статус проекта", T0, "claim-1");
     expect(first.creation).toEqual({claim: "claim-1", accountId: 7, scope: "project", name: "Статус проекта", at: T0});

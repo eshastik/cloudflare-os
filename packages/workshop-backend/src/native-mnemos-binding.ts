@@ -25,11 +25,13 @@ export function validateMnemosBinding(value: unknown): NativeMnemosBinding {
   let v = value as Partial<NativeMnemosBinding> | null;
   if (!v || typeof v !== "object" || !text(v.scope, 255) || !text(v.resource, 255) ||
       !(v.accountId === null || Number.isSafeInteger(v.accountId)) ||
-      !(v.savedRevision === undefined || (Number.isSafeInteger(v.savedRevision) && v.savedRevision! >= 0))) {
+      !(v.savedRevision === undefined || (Number.isSafeInteger(v.savedRevision) && v.savedRevision! >= 0)) ||
+      !(v.savedHead === undefined || (typeof v.savedHead === "string" && /^[a-f0-9]{64}$/.test(v.savedHead)))) {
     throw new Error("Invalid document binding.");
   }
   return {accountId: v.accountId!, scope: v.scope!, resource: v.resource!,
-    ...(v.savedRevision !== undefined ? {savedRevision: v.savedRevision} : {})};
+    ...(v.savedRevision !== undefined ? {savedRevision: v.savedRevision} : {}),
+    ...(v.savedHead !== undefined ? {savedHead: v.savedHead} : {})};
 }
 
 function stale(creation: NativeMnemosCreation, now: number) {

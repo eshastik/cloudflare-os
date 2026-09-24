@@ -3,7 +3,7 @@ import {collection, createTypedStorage} from "@gadgets/typed-storage";
 import type {ActionRecord} from "../src/overseer.js";
 import {findSubmittedAction} from "../src/action-submission.js";
 import {makeMockStorage} from "./mock-storage.js";
-import {OverseerDurableObject} from "../src/overseer.js";
+import {OverseerDurableObject, checkedActionOutcome, withCheckedActionCard} from "../src/overseer.js";
 
 vi.mock("capnweb-validate", () => ({validateRpc: () => () => undefined}));
 vi.mock("cloudflare:workers", async importOriginal => {
@@ -109,6 +109,35 @@ describe("повтор отправки действия в очередь", () 
     const {open, storage} = fixture();
     const record = storage.actions.get(8)!; storage.actions.put({...record, state});
     expect(findSubmittedAction(open().actions.list(), 3, 42, description)?.state).toBe(state);
+  });
+  it("карточка действия проверяется при отправке, итог ресурса сохраняется у выполненного действия", async () => {
+    const ctx = {storage: makeMockStorage(), id: {toString: () => "workspace"}, exports: {UserDurableObject: {}}, waitUntil: () => {}} as unknown as DurableObjectState;
+    const impl = new OverseerDurableObject(ctx, {} as Cloudflare.Env)["impl"];
+    const card = {icon: "rocket", details: ["Проект «Продажи»", "", 5, "Вторая", "Третья", "Четвёртая"]};
+    await impl.submitAction(3, 42, {...description, card} as never, {from: "agent", chatId: 1});
+    const record = [...impl.storage.actions.list()][0] as ActionRecord & {type: "action"};
+    expect(record.description.card).toEqual({icon: "other", details: ["Проект «Продажи»", "Вторая", "Третья"]});
+    const apply = vi.fn(async () => ({summary: "  Николай Деревцов может править «План»  ", url: "javascript:alert(1)"}));
+    vi.spyOn(impl, "getGatekeeperFacet").mockReturnValue({applyAction: apply} as unknown as ReturnType<typeof impl.getGatekeeperFacet>);
+    await impl.applyPendingAction(record, {type: "user", id: "owner", name: "Владелец"}, false, false);
+    const saved = impl.storage.actions.get(record.id) as ActionRecord & {type: "action"};
+    expect(saved.state).toBe("approved");
+    expect(saved.outcome).toEqual({summary: "Николай Деревцов может править «План»"});
+    expect(checkedActionOutcome({summary: "Готово", url: "https://mnemos.example/doc"})).toEqual({summary: "Готово", url: "https://mnemos.example/doc"});
+    expect(checkedActionOutcome(undefined)).toBeUndefined();
+    expect(checkedActionOutcome({summary: "   "})).toBeUndefined();
+    expect(withCheckedActionCard({...description, card: "плохо"} as never)).toEqual(description);
+    const open = (value: unknown) => withCheckedActionCard({...description, card: {icon: "connection", details: ["Пароль вводит человек"], open: value}} as never).card?.open;
+    expect(open({section: "connections", label: "  Открыть «Подключения»  "})).toEqual({section: "connections", label: "Открыть «Подключения»"});
+    expect(open({section: "projects", project: "p1", label: "Открыть проект"})).toEqual({section: "projects", project: "p1", label: "Открыть проект"});
+    for (const bad of [{section: "../admin", label: "x"}, {section: "connections", label: ""}, {section: "projects", project: "a/b?c", label: "x"}, "connections"]) expect(open(bad)).toBeUndefined();
+  });
+  it("подмена карточки подтверждения не меняет исходное действие", () => {
+    const {storage} = fixture();
+    const record = storage.actions.get(8)! as ActionRecord & {type: "action"};
+    storage.actions.put({...record, description: {...description, card: {icon: "share", details: ["Проект «Продажи»"]}}});
+    expect(() => findSubmittedAction(storage.actions.list(), 3, 42, {...description, card: {icon: "share", details: ["Проект «Архив»"]}})).toThrow(/другим описанием/);
+    expect(findSubmittedAction(storage.actions.list(), 3, 42, {...description, card: {icon: "share", details: ["Проект «Продажи»"]}})?.id).toBe(8);
   });
   it("подмена описания или автоматического одобрения не меняет исходную карточку", () => {
     const {storage} = fixture();

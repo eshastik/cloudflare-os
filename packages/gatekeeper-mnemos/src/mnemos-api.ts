@@ -133,7 +133,7 @@ export class MnemosAPI {
   listPersonRights(principal: string, signal?: AbortSignal): Promise<AdminRights> { return this.#request(`/v1/admin/rights?principal_id=${encodeURIComponent(principal)}`, 'GET', signal); }
   grantPersonRight(input: AdminRight, signal?: AbortSignal): Promise<{right: AdminRight}> { return this.#request('/v1/admin/rights', 'POST', signal, checkedAdminRight(input)); }
   removePersonRight(input: AdminRight, signal?: AbortSignal): Promise<{outcome: string; right: AdminRight}> { return this.#request('/v1/admin/rights/remove', 'POST', signal, checkedAdminRight(input)); }
-  listPrivateVersions(project:string,node:string,cursor='',signal?:AbortSignal):Promise<{versions:Array<{head:string;content_type:string;recorded_at:string}>;next_cursor?:string;limited?:boolean}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
+  listPrivateVersions(project:string,node:string,cursor='',signal?:AbortSignal):Promise<{versions:Array<{head:string;content_type:string;recorded_at:string;author_name?:string}>;next_cursor?:string;limited?:boolean}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
   restorePrivateDraftContent(project:string,node:string,source:string,expectedHead:string,signal?:AbortSignal):Promise<DraftHead>{return this.#request(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/restore-private`,"POST",signal,{source_head:source,expected_head:expectedHead});}
   checkPrivateVersionRead(project: string, node: string, version: string, signal?: AbortSignal): Promise<{node_id: string; head: string}> {
     head(version);
@@ -451,6 +451,21 @@ export class MnemosAPI {
   listInvitedDocuments(project: string, cursor = "", node = "", signal?: AbortSignal): Promise<InvitedDocumentPage> {
     if (typeof cursor !== "string" || cursor.length > 2048 || typeof node !== "string" || node.length > 255) throw new MnemosAPIError(400);
     return this.#request(`/v1/projects/${segment(project)}/draft/invitations?cursor=${encodeURIComponent(cursor)}&node_id=${encodeURIComponent(node)}`, "GET", signal);
+  }
+  /** Документы других людей, открытые этому человеку («Поделились со мной»), новые сверху. */
+  listSharedDocuments(signal?: AbortSignal): Promise<{documents: SharedDocument[]}> {
+    return this.#request("/v1/me/shared-documents", "GET", signal);
+  }
+  /** Отметка «прочитано» у уведомления о выданном доступе: человек открыл документ. */
+  markSharedDocumentSeen(project: string, owner: string, node: string, signal?: AbortSignal): Promise<{seen: boolean}> {
+    segment(project); segment(owner); segment(node);
+    return this.#request("/v1/me/shared-documents/seen", "POST", signal, {project_id: project, owner_id: owner, node_id: node});
+  }
+  /** Сохранить правку в ветку владельца документа; base — голова, от которой сделана правка. Изменённый с тех пор документ — 409. */
+  saveSharedDocument(project: string, node: string, owner: string, base: string, uploadId: string, signal?: AbortSignal): Promise<DraftHead> {
+    head(base); segment(owner);
+    if (typeof uploadId !== "string" || !uploadId || uploadId.length > 255) throw new MnemosAPIError(400);
+    return this.#request(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/shared-save`, "POST", signal, {owner_id: owner, base_head: base, upload_id: uploadId});
   }
   adoptPrivateVersion(project: string, node: string, expected: string, source: string, signal?: AbortSignal): Promise<DraftHead> {
     head(expected); head(source);
@@ -1186,6 +1201,12 @@ function validInvitation(value: unknown): value is OrganizationInvitation {
     ["open", "accepted", "revoked", "expired"].includes(i.status) && (i.accepted_by === undefined || shortText(i.accepted_by)) &&
     (i.accepted_by_name === undefined || shortText(i.accepted_by_name)) && (i.role === undefined || INVITATION_ROLES.includes(i.role)) &&
     (i.email_status === undefined || ["sent", "failed", "not_configured"].includes(i.email_status));
+}
+
+/** Документ другого человека, открытый вызывающему; mode — право на сейчас. */
+export interface SharedDocument {
+  project_id: string; project_name: string; node_id: string; owner_id: string; owner_name: string; granted_by_name: string;
+  name: string; content_type: string; head: string; mode: "read" | "write"; granted_at: string; seen: boolean;
 }
 
 /** Authorized immutable versions explicitly invited by their owners. */

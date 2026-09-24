@@ -9,6 +9,8 @@ import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, type StatusIn
 
 const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
+// Выгрузка тела в хранилище проверяется в своих тестах; здесь важна версия, от которой сохраняют.
+vi.mock('./gatekeeperAppUpload', () => ({ uploadGatekeeperNativeDocument: async () => 'upload-1' }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks() })
@@ -31,7 +33,7 @@ const base: StatusInput = {
 // Восемь состояний шапки: что в блоке состояния и какая кнопка главная.
 const table: [string, Partial<StatusInput>, { kind: string; version: string; audience: string; saved: string; primary: string | null; secondary?: string }][] = [
   ['1 не сохранено', { changes: 2 }, { kind: 'unsaved', version: 'Личная версия от v12', audience: 'видят вы и Мария', saved: 'не сохранено · 2 изменения', primary: 'Сохранить' }],
-  ['2 сохранено', {}, { kind: 'saved', version: 'Личная версия от v12', audience: 'видят вы и Мария', saved: 'сохранено 4 мин назад', primary: 'На согласование' }],
+  ['2 сохранено', {}, { kind: 'saved', version: 'Личная версия от v12', audience: 'видят вы и Мария', saved: 'сохранено 4 мин назад', primary: 'Опубликовать' }],
   ['3 на согласовании', { review: review({}), invited: ['Мария', 'Иван'] }, { kind: 'reviewing', version: 'Кандидат от v12', audience: 'видят вы, Мария, Иван', saved: 'Дизайн: одобрено · Разработка: ждёт', primary: null, secondary: 'Отозвать' }],
   ['4 отказ', { review: review({ domains: [{ domain_id: 'Разработка', node_ids: ['doc'], approvers: ['ivan'], decisions: [{ approver_id: 'ivan', approved: false, comment: 'сроки не бьются со спринтом' } as PublicationReview['domains'][number]['decisions'][number]] }] }) }, { kind: 'rejected', version: 'Кандидат от v12', audience: 'видят вы и Мария', saved: 'Разработка: отказ — «сроки не бьются со спринтом»', primary: 'Доработать' }],
   ['5 конфликт', { conflict: true }, { kind: 'conflict', version: 'Личная версия от v12', audience: 'видят вы и Мария', saved: 'опубликована v12 · есть конфликт', primary: 'Разрешить конфликт' }],
@@ -176,10 +178,53 @@ it('(д) ревизия 7 при загрузке, затем 9: статус с
   try {
     await view.settled()
     expect(view.status().textContent).toContain('сохранено 4 мин назад')
-    expect(view.primary()?.textContent).toBe('На согласование')
+    expect(view.primary()?.textContent).toBe('Опубликовать')
     revision.current = 9
     // Опрос идёт по таймеру вне act: обновления из него доходят до DOM только после отдельного сброса act.
     await vi.waitFor(async () => { await act(async () => {}); expect(view.status().textContent).toContain('не сохранено · 2 изменения') }, { timeout: 2_000 })
     expect(view.primary()?.textContent).toBe('Сохранить')
   } finally { await view.unmount() }
+})
+
+// Автосохранение: правка уходит в документ сама от версии, с которой работает редактор; если документ
+// успел изменить другой человек, сохранение отклоняется явно — чужая правка не затирается.
+it.each([['сохранено', false], ['изменил другой участник', true]] as const)('автосохранение: %s', async (_name, changed) => {
+  const saves: string[][] = []
+  class Writer extends RpcTarget {
+    async head() { return 'c'.repeat(64) }
+    async issue() { return { upload_id: 'upload-1', url: 'https://objects.example/u', method: 'PUT', headers: {}, expires_at: '' } }
+    async save(base: string, upload: string) { saves.push([base, upload]); if (changed) throw new Error('DOCUMENT_CHANGED'); return 'f'.repeat(64) }
+  }
+  class Selector extends RpcTarget {
+    async publicationState() { return { personal_head: head, shared_head: 'b'.repeat(64), personal_exists: true } }
+    async select() { return new RpcStub(new Writer()) }
+    async selectConflict() { throw new Error('No conflict') }
+    async participants() { return { head, nextCursor: '', participants: [] } }
+    async reviewerIdentity() { return 'owner' }
+  }
+  class Downloads extends RpcTarget { async publications() { return { resourceUrl: '', nextCursor: '', publications: [] } } }
+  class Empty extends RpcTarget {}
+  api.getGatekeeperApp.mockImplementation(async () => ({ iframeHtml: '', ui: new RpcStub(new Empty()),
+    nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Selector()) },
+    nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Downloads()) } }))
+  class Gadget extends RpcTarget { async getId() { return 'native-doc' } }
+  const gadget = new RpcStub(new Gadget())
+  const key = 'mnemos-native-binding:/:native-doc:cloudflareos.document'
+  sessionStorage.setItem(key, JSON.stringify({ accountId: null, scope: 'project', resource: 'doc', savedRevision: 7, savedHead: head }))
+  const snapshotSource = { current: async () => ({ format: 'cloudflareos.document' as const, formatVersion: 1 as const, document: { revision: 9, title: 'План', blocks: [] } }) }
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={0} autosaveMs={5} />))
+    await vi.waitFor(async () => { await act(async () => {}); expect(saves).toHaveLength(1) }, { timeout: 2_000 })
+    // База сохранения — версия, от которой правит редактор, а не текущая голова.
+    expect(saves[0]).toEqual([head, 'upload-1'])
+    if (changed) {
+      await vi.waitFor(async () => { await act(async () => {}); expect(container.querySelector('[data-document-status]')!.textContent).toContain('документ изменил другой участник') }, { timeout: 2_000 })
+      expect(container.querySelector('button[data-primary-action]')?.textContent).toBe('Открыть новую версию')
+      expect(JSON.parse(sessionStorage.getItem(key)!).savedHead).toBe(head)
+    } else {
+      await vi.waitFor(() => expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ savedHead: 'f'.repeat(64), savedRevision: 9 }), { timeout: 2_000 })
+    }
+  } finally { await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]() }
 })

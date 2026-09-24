@@ -122,6 +122,8 @@ import { CodeChangesCard } from "./components/chat/CodeChangesCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
 import { CodeModeSwitch } from "./components/chat/CodeModeSwitch";
 import { StepLimitNotice } from "./components/chat/StepLimitNotice";
+import { ActionConfirmCard } from "./components/chat/ActionConfirmCard";
+import { useActionOpen } from "./components/chat/useActionOpen";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
 import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, displayName, looksLikeId, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
@@ -5412,6 +5414,7 @@ function ChatInterface({
   }, [overseer]);
 
   // Patch cached chat messages on action upserts.
+  const openActionScreen = useActionOpen();
   useActionEntries(overseer, (record) => {
     if (applyActionLogUpdateToCachedMessages(record)) scheduleUpdate();
   });
@@ -6482,6 +6485,25 @@ function ChatInterface({
         )}
       </div>
     ) : null;
+
+    // Действие с описанием карточки рисуется карточкой в стиле созданного документа — и до
+    // решения, и после него, с итогом.
+    if (log.description.card) {
+      return (
+        <ActionConfirmCard
+          icon={log.description.card.icon}
+          title={log.description.title}
+          details={log.description.card.details}
+          state={state}
+          outcome={log.outcome}
+          busy={isProc}
+          onApprove={() => void resolveAction(msg.actionId, "approve")}
+          onReject={() => void resolveAction(msg.actionId, "deny")}
+          onAlwaysApprove={canAlwaysApprove ? () => setAutoApproveConfirm(autoApproveTarget!) : undefined}
+          open={log.description.card.open ? { label: log.description.card.open.label, onOpen: openActionScreen(log.description.card.open, log.resourceTitle) } : undefined}
+        />
+      );
+    }
 
     // A blocking (awaitDecision) action suspends the agent turn, so present it as a prominent
     // callout laid out like the connection-request card: a permissions icon, title + resource +

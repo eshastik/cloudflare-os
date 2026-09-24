@@ -143,3 +143,37 @@ test("«Входящие»: просьбы агентов — письмо со�
     assert.deepEqual(decisions.find(d => d[0] === "budget"), ["budget", "one", "p-1", "approved", 2]);
   } finally { app.dispose(); }
 });
+
+const SHARED = { project_id: "one", project_name: "Общий проект", node_id: "HEN4HKQ24UIOKVLJYW7SAQWKTP", owner_id: "user-FGTK3l4q5INoE4X1", owner_name: "Николай Деревцов", granted_by_name: "Николай Деревцов",
+  name: "Дорожная карта перевода команды", content_type: "application/vnd.cloudflareos.document+json", head: "c".repeat(64), mode: "write", granted_at: "2026-09-23T10:00:00Z", seen: false };
+
+test("«Входящие»: «поделился с вами документом» с кнопкой «Открыть»; открытие снимает отметку, прочитанное из списка уходит", async () => {
+  let seen = false;
+  const app = await mountMemoryApp({ ...mixed(), async listSharedDocuments() { return [{ ...SHARED, seen }]; }, async markSharedDocumentSeen() { seen = true; } }, { nativeOpen: true });
+  try {
+    await app.until(() => rowsOf(app).some(r => r.dataset.inbox === "document"), "запись о документе");
+    const row = rowsOf(app).find(r => r.dataset.inbox === "document");
+    assert.ok(row.textContent.includes("Николай Деревцов поделился с вами документом «Дорожная карта перевода команды» — можно править"), row.textContent);
+    assert.ok(row.textContent.includes("Общий проект"), "проект по имени");
+    for (const id of [SHARED.node_id, SHARED.owner_id, "c".repeat(64)]) assert.ok(!app.text().includes(id), "без технических опознавателей");
+    [...row.querySelectorAll("button")].find(b => b.textContent === "Открыть").click();
+    await app.until(() => app.calls.some(([m]) => m === "openNativeDocument"), "документ открыт");
+    assert.deepEqual(app.calls.find(([m]) => m === "openNativeDocument"), ["openNativeDocument", "one", SHARED.node_id]);
+    await app.until(() => !rowsOf(app).some(r => r.dataset.inbox === "document"), "прочитанное ушло из «Входящих»");
+  } finally { app.dispose(); }
+});
+
+test("«Входящие»: право чтения подписано «можно читать»; ссылка из письма открывает документ сама", async () => {
+  const app = await mountMemoryApp({ async listSharedDocuments() { return [{ ...SHARED, mode: "read" }]; } }, { nativeOpen: true, document: SHARED.node_id, project: "one" });
+  try {
+    await app.until(() => app.calls.some(([m]) => m === "openNativeDocument"), "документ из ссылки открыт");
+    assert.deepEqual(app.calls.find(([m]) => m === "openNativeDocument"), ["openNativeDocument", "one", SHARED.node_id]);
+    await app.until(() => app.calls.some(([m, p, o, n]) => m === "markSharedDocumentSeen" && p === "one" && o === SHARED.owner_id && n === SHARED.node_id), "открытие отмечено");
+  } finally { app.dispose(); }
+});
+
+test("счётчик «Входящих» считает неоткрытые документы, которыми поделились", () => {
+  const extra = { documents: [SHARED, { ...SHARED, node_id: "other", seen: true }] };
+  assert.equal(inboxDecisions([], [], "alice", extra), 1);
+  assert.equal(inboxDecisions([], [], "alice", { documents: [] }), 0);
+});

@@ -24,6 +24,7 @@ import { homePromptFromSearch, homeProjectFromSearch, projectContextFromProjects
 import { ProjectChips } from "../components/chat/ProjectChips";
 import { CodeModeSwitch } from "../components/chat/CodeModeSwitch";
 import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import SharedWithYou from "../components/AppShell/SharedWithYou";
 
 type HomeSearch = { prompt?: string; projectContext?: import('@gadgets/workshop-shared/api').ChatProjectContext };
 
@@ -240,6 +241,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
             }}
           />
         </div>
+
+        {/* Недавние документы, которыми с вами поделились: щелчок открывает документ в редакторе. */}
+        <SharedWithYou />
       </div>
     </div>
   );

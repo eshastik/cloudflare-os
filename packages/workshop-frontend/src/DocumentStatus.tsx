@@ -12,10 +12,11 @@ import { WorkshopButton } from './components/WorkshopControls'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { listAccounts, storesDocuments, openNativeWritesFrame } from './accountCapabilities'
 import DocumentVersionPanel, { type PanelSection } from './DocumentVersionPanel'
+import DocumentSharePanel from './DocumentSharePanel'
 import { nativeOpenKey, readPendingNativeOpen } from './NativeDocumentOpen'
 import { loadPublication, publishCandidate, reviewKey, submitReview, type PublicationState } from './NativeDocumentPublication'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
-import { NATIVE_BINDING_EVENT, createMnemosDocument, mnemosDocumentName, type NativeBindingEventDetail } from './nativeMnemosDocument'
+import { NATIVE_BINDING_EVENT, createMnemosDocument, isDocumentChanged, mnemosDocumentName, saveToMnemosDocument, type NativeBindingEventDetail } from './nativeMnemosDocument'
 
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
 type Downloads = RpcStub<GatekeeperNativeDocumentSelector>
@@ -24,9 +25,11 @@ type Decision = PublicationReview['domains'][number]['decisions'][number] & { co
 /** Какой документ Mnemos открыт в редакторе и с какой ревизией редактора он последний раз совпадал. */
 export type DocumentBinding = NativeMnemosBinding
 export type Participant = Awaited<ReturnType<Selector['participants']>>['participants'][number]
-export type HistoryEntry = { id: string; label: string; recordedAt: string; actor: string; onBehalfOf?: string; personal: boolean }
-/** conflict null — черновик не прочитан; participants null — приглашённые не прочитаны. */
-export type StatusData = { state: PublicationState | null; review: PublicationReview | null; conflict: boolean | null; participants: Participant[] | null; history: HistoryEntry[]; sharedVersion: string; me: string }
+export type HistoryEntry = { id: string; label: string; recordedAt: string; actor: string; author?: string; onBehalfOf?: string; personal: boolean }
+/** Право на документ: свой, правка по приглашению или только чтение. */
+export type DocumentAccess = 'owner' | 'write' | 'read'
+/** conflict null — черновик не прочитан; participants null — приглашённые не прочитаны; head — текущая версия документа. */
+export type StatusData = { state: PublicationState | null; review: PublicationReview | null; conflict: boolean | null; participants: Participant[] | null; history: HistoryEntry[]; sharedVersion: string; me: string; access: DocumentAccess; head: string; name: string | null }
 
 /** Несохранённые правки редактора: число; 'no-baseline' — ревизия сохранения неизвестна; 'unread' — снимок редактора не прочитан. */
 export type Changes = number | 'no-baseline' | 'unread'
@@ -40,10 +43,14 @@ export type StatusInput = {
   sharedVersion: string
   savedAt: string | null
   changes: Changes
+  /** Чужой документ, открытый по приглашению: правка или только чтение. Не задано — свой. */
+  access?: DocumentAccess
+  /** Сохранение отклонено: документ изменил другой человек после версии, от которой правит редактор. */
+  changedByOther?: boolean
   now?: number
 }
-export type DocumentStatusKind = 'unread' | 'unverified' | 'unsaved' | 'saved' | 'reviewing' | 'rejected' | 'stale' | 'conflict' | 'ready' | 'published'
-export type PrimaryKind = 'save' | 'submit' | 'rework' | 'resubmit' | 'resolve' | 'publish' | 'start'
+export type DocumentStatusKind = 'unread' | 'unverified' | 'unsaved' | 'saved' | 'reviewing' | 'rejected' | 'stale' | 'conflict' | 'ready' | 'published' | 'changed' | 'readonly'
+export type PrimaryKind = 'save' | 'submit' | 'rework' | 'resubmit' | 'resolve' | 'publish' | 'start' | 'reopen'
 export type DocumentStatusModel = {
   kind: DocumentStatusKind
   version: string
@@ -75,11 +82,23 @@ const domainApproved = (domain: PublicationReview['domains'][number]) => domain.
 
 /** Три факта шапки и одно главное действие по состоянию; порядок проверок — от блокирующего к обычному. Непрочитанный факт не подменяется значением по умолчанию: без него главного действия нет. */
 export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
-  const { personalExists, conflict, invited, review, sharedVersion, savedAt, changes, now = Date.now() } = input
+  const { personalExists, conflict, invited, review, sharedVersion, savedAt, changes, access = 'owner', changedByOther, now = Date.now() } = input
+  const changed = (version: string, audience: string): DocumentStatusModel => ({ kind: 'changed', version, audience, saved: 'документ изменил другой участник · ваши правки не сохранены', tone: 'danger', primary: { kind: 'reopen', label: 'Открыть новую версию', hint: 'Ваши правки остаются в редакторе, пока вы не откроете новую версию: скопируйте нужное перед этим.' }, secondary: null })
+  if (access !== 'owner') {
+    // Чужой документ: публикует и согласует владелец, здесь только правка общего документа.
+    const version = access === 'write' ? 'Общий документ' : 'Общий документ · только чтение'
+    const audience = 'владелец открыл вам доступ'
+    if (access === 'read') return { kind: 'readonly', version, audience, saved: 'правки здесь не сохраняются', tone: 'neutral', primary: null, secondary: null }
+    if (changedByOther) return changed(version, audience)
+    if (changes === 'unread') return { kind: 'unread', version, audience, saved: 'изменения редактора не прочитаны', tone: 'warning', primary: null, secondary: null }
+    if (changes === 'no-baseline' || changes > 0) return { kind: 'unsaved', version, audience, saved: changes === 'no-baseline' ? 'сохраняю…' : `не сохранено · ${pluralChanges(changes)}`, tone: 'warning', primary: { kind: 'save', label: 'Сохранить', hint: 'Правки сохраняются сами; кнопка сохраняет сразу.' }, secondary: null }
+    return { kind: 'saved', version, audience, saved: savedAt ? `сохранено ${formatAgo(savedAt, now)}` : 'сохранено', tone: 'neutral', primary: null, secondary: null }
+  }
   const audience = !personalExists ? 'видят все участники проекта' : invited === null ? 'кто видит — не прочитано' : invited.length === 0 ? 'только вы' : invited.length === 1 ? `видят вы и ${invited[0]}` : `видят вы, ${invited.join(', ')}`
   const personal = `Личная версия от ${sharedVersion}`, candidate = `Кандидат от ${sharedVersion}`
   if (!personalExists) return { kind: 'published', version: `Опубликована ${sharedVersion}`, audience, saved: 'без изменений', tone: 'neutral', primary: { kind: 'start', label: 'Начать личную версию', hint: 'Правка опубликованного начинается с личной версии; общая версия не меняется до публикации.' }, secondary: null }
   if (conflict === null) return { kind: 'unread', version: personal, audience, saved: 'черновик не прочитан · перечитайте состояние', tone: 'warning', primary: null, secondary: null }
+  if (changedByOther) return changed(personal, audience)
   if (conflict) return { kind: 'conflict', version: personal, audience, saved: `опубликована ${sharedVersion} · есть конфликт`, tone: 'info', primary: { kind: 'resolve', label: 'Разрешить конфликт', hint: 'Молчаливого слияния нет: либо разрешённый документ, либо явный конфликт.' }, secondary: null }
   if (changes === 'unread') return { kind: 'unread', version: personal, audience, saved: 'изменения редактора не прочитаны', tone: 'warning', primary: null, secondary: null }
   if (changes === 'no-baseline') return { kind: 'unverified', version: personal, audience, saved: 'сверить не с чем · ревизия сохранения неизвестна', tone: 'warning', primary: { kind: 'save', label: 'Сохранить', hint: 'Ревизия последнего сохранения неизвестна. После сохранения шапка снова сверяет редактор с личной версией.' }, secondary: null }
@@ -91,7 +110,7 @@ export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
     if (review.ready) return { kind: 'ready', version: candidate, audience, saved: `одобрено: ${review.domains.map(d => d.domain_id).join(', ')}`, tone: 'success', primary: { kind: 'publish', label: 'Опубликовать', hint: 'Публикует человек: общая версия, история и аудит появляются одним действием.' }, secondary: null }
     return { kind: 'reviewing', version: candidate, audience, saved: review.domains.map(d => `${d.domain_id}: ${domainApproved(d) ? 'одобрено' : 'ждёт'}`).join(' · '), tone: 'warning', primary: null, secondary: { kind: 'withdraw', label: 'Отозвать' } }
   }
-  return { kind: 'saved', version: personal, audience, saved: savedAt ? `сохранено ${formatAgo(savedAt, now)}` : 'сохранено', tone: 'neutral', primary: { kind: 'submit', label: 'На согласование', hint: 'На согласование уйдут имя, папка и текст личной версии; направления и согласующих задаёт политика проекта.' }, secondary: null }
+  return { kind: 'saved', version: personal, audience, saved: savedAt ? `сохранено ${formatAgo(savedAt, now)}` : 'сохранено', tone: 'neutral', primary: { kind: 'submit', label: 'Опубликовать', hint: 'Если в проекте есть согласование, на него уйдут имя, папка и текст версии, а направления и согласующих задаёт политика проекта; иначе версия сразу станет общей.' }, secondary: null }
 }
 
 const dotTone = { neutral: 'bg-kumo-inactive', warning: 'bg-kumo-warning', danger: 'bg-kumo-danger', success: 'bg-kumo-success', info: 'bg-kumo-info' } as const
@@ -125,6 +144,11 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
   </div>
 }
 
+/** Событие окна: кнопка «Поделиться» гаджета документа просит открыть доступ к документу. */
+export const DOCUMENT_SHARE_EVENT = 'mnemos-document-share'
+/** Событие окна: меню «…» просит сменить документ Mnemos, к которому привязан редактор (редкое действие). */
+export const DOCUMENT_BIND_EVENT = 'mnemos-document-bind'
+
 const bindingKeyFor = (gadgetId: string | number, format: NativeDocumentFormat) => `mnemos-native-binding:${location.pathname}:${gadgetId}:${format}`
 
 function readBinding(key: string): DocumentBinding | null {
@@ -143,26 +167,43 @@ function describeHistory(page: Awaited<ReturnType<Downloads['publications']>>, f
   const label = (id: string, index: number) => complete ? `v${published.length - index}` : `v${id.slice(0, 7)}`
   const history: HistoryEntry[] = items.map(p => {
     const personal = p.id.startsWith('private:')
-    return { id: p.id, recordedAt: p.recordedAt, actor: p.actor, onBehalfOf: p.onBehalfOf, personal, label: personal ? (p.actor ? 'Версия участника' : 'Личная версия') : label(p.id, published.indexOf(p)) }
+    return { id: p.id, recordedAt: p.recordedAt, actor: p.actor, ...(p.author ? { author: p.author } : {}), onBehalfOf: p.onBehalfOf, personal, label: personal ? (p.actor ? 'Версия участника' : 'Личная версия') : label(p.id, published.indexOf(p)) }
   })
   return { history, sharedVersion: published.length ? label(published[0].id, 0) : '—' }
 }
 
 async function loadStatus(selector: Selector, downloads: Downloads | null, binding: DocumentBinding, format: NativeDocumentFormat, signal: AbortSignal): Promise<Omit<StatusData, 'me'>> {
+  let conflict: boolean | null = false, head = '', participants: Participant[] | null = [], access: DocumentAccess = 'owner'
+  // Выбор документа открывает личный черновик человека, поэтому идёт до чтения состояния публикации.
+  let selected = false
+  if (binding.resource) {
+    try {
+      using writer = await selector.select(binding.scope, binding.resource, format); signal.throwIfAborted()
+      head = await writer.head(); selected = true
+      access = (await Promise.resolve(writer.access()).catch(() => undefined)) ?? 'owner'
+    } catch { signal.throwIfAborted() }
+  }
+  // Имя документа — для заголовков панелей «Версии» и «Поделиться»; не прочитано — null.
+  let name: string | null = null
+  if (binding.resource && selected) {
+    try {
+      name = access === 'owner'
+        ? (await selector.documentLocation(binding.scope, binding.resource, format)).name
+        : (await selector.sharedDocuments()).documents.find(d => d.scope === binding.scope && d.resource === binding.resource)?.name ?? null
+    } catch { signal.throwIfAborted() }
+    if (name) name = name.replace(/\.(docx|xlsx|pptx)$/i, '')
+  }
   const { state, review } = await loadPublication(selector, signal, binding.scope)
-  let conflict: boolean | null = false, head = '', participants: Participant[] | null = []
   if (state.personal_exists && binding.resource) {
-    try { using writer = await selector.select(binding.scope, binding.resource, format); signal.throwIfAborted(); head = await writer.head() }
-    catch {
-      signal.throwIfAborted()
+    if (!selected) {
       // Черновик не открывается ровно тогда, когда документ в конфликте или недоступен для записи; конфликт различаем вторым запросом.
       // Ни черновика, ни конфликта (чужой или удалённый документ) — факт не прочитан, а не «сохранено».
-      try { using selected = await selector.selectConflict(binding.scope, binding.resource, format); conflict = !!selected } catch { conflict = null }
+      try { using conflicted = await selector.selectConflict(binding.scope, binding.resource, format); conflict = !!conflicted } catch { conflict = null }
     }
     signal.throwIfAborted()
     // Приглашённые читаются от головы черновика; без неё (конфликт, отказ) и при отказе самого запроса список не прочитан.
     participants = null
-    if (head) { try { participants = (await selector.participants(binding.scope, binding.resource, head, '')).participants } catch { signal.throwIfAborted() } }
+    if (head && access === 'owner') { try { participants = (await selector.participants(binding.scope, binding.resource, head, '')).participants } catch { signal.throwIfAborted() } }
     signal.throwIfAborted()
   }
   let history: HistoryEntry[] = [], sharedVersion = '—'
@@ -170,7 +211,7 @@ async function loadStatus(selector: Selector, downloads: Downloads | null, bindi
     try { const page = await downloads.publications(binding.scope, binding.resource, ''); ({ history, sharedVersion } = describeHistory(page, format)) } catch { /* без истории статус остаётся, только версия не подписана */ }
     signal.throwIfAborted()
   }
-  return { state, review, conflict, participants, history, sharedVersion }
+  return { state, review, conflict, participants, history, sharedVersion, access, head, name }
 }
 
 /** Текущая ревизия редактора из снимка; undefined — редактора нет или ревизии в снимке нет. */
@@ -194,14 +235,18 @@ const sameDocument = (a: DocumentBinding | null, b: DocumentBinding) => !!a && a
 
 /** Опрос ревизии редактора: снимок — запрос к редактору, подписки на ревизию нет. */
 export const CHANGES_POLL_MS = 10_000
+/** Правки сохраняются сами через столько после того, как их заметил опрос. */
+export const AUTOSAVE_MS = 5_000
 
 export type DocumentStatusHandle = ReturnType<typeof useDocumentStatus>
 
 /** Один хук на все факты шапки: черновик, конфликт, приглашённые, заявка, история — теми же RPC, что и секции панели. */
-export function useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs = CHANGES_POLL_MS }: {
+export function useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs = CHANGES_POLL_MS, autosaveMs = AUTOSAVE_MS }: {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number
   /** Открытая беседа: её проект — место автосохранения, если беседа создания редактора неизвестна. */
   projectChatId?: number; changesPollMs?: number
+  /** Через сколько после замеченной правки несохранённое уходит в Mnemos само; 0 — не сохранять само. */
+  autosaveMs?: number
 }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [gadgetId, setGadgetId] = useState<string | number | null>(null)
@@ -214,7 +259,9 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   /** Что знает рабочее место о документе Mnemos: привязка на сервере, начатое создание, проект беседы. null — не прочитано. */
   const [mnemos, setMnemos] = useState<NativeMnemosState | null>(null)
   const [saving, setSaving] = useState<string | undefined>()
-  const source = useRef<{ selector: Selector; downloads: Downloads | null; origin: string } | null>(null)
+  /** Сохранение отклонено: документ изменил другой человек. Сбрасывается открытием новой версии. */
+  const [changedByOther, setChangedByOther] = useState(false)
+  const source = useRef<{ selector: Selector; downloads: Downloads | null; origin: string; writesOrigin: string } | null>(null)
   const lifetime = useRef(new AbortController())
   const working = useRef(false)
   const bindingKey = gadgetId === null ? '' : bindingKeyFor(gadgetId, format)
@@ -248,9 +295,9 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
         if (!frame?.nativeWrites) throw new Error()
         const selector = frame.nativeWrites.selector as Selector
         const downloads = frame.nativeDownloads ? frame.nativeDownloads.selector as Downloads : null
-        source.current = { selector, downloads, origin: frame.nativeDownloads?.storageOrigin ?? '' }
+        source.current = { selector, downloads, origin: frame.nativeDownloads?.storageOrigin ?? '', writesOrigin: frame.nativeWrites.storageOrigin }
         const me = await selector.reviewerIdentity().catch(() => ''); abort.signal.throwIfAborted()
-        if (!binding) { setData({ state: null, review: null, conflict: false, participants: [], history: [], sharedVersion: '—', me }); return }
+        if (!binding) { setData({ state: null, review: null, conflict: false, participants: [], history: [], sharedVersion: '—', me, access: 'owner', head: '', name: null }); return }
         const loaded = await loadStatus(selector, downloads, binding, format, abort.signal)
         setData({ ...loaded, me })
         setChanges(await countChanges(snapshotSource, format, binding, abort.signal))
@@ -290,8 +337,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     if (!binding || !data || !data.state) return null
     const invited = data.participants === null ? null : data.participants.filter(p => p.mode !== '').map(p => p.name || 'Участник')
     const savedAt = data.history.find(h => h.personal && !h.actor)?.recordedAt ?? null
-    return deriveDocumentStatus({ personalExists: data.state.personal_exists && !!binding.resource, conflict: data.conflict, invited, review: data.review, sharedVersion: data.sharedVersion, savedAt, changes })
-  }, [binding, data, changes])
+    return deriveDocumentStatus({ personalExists: data.state.personal_exists && !!binding.resource, conflict: data.conflict, invited, review: data.review, sharedVersion: data.sharedVersion, savedAt, changes, access: data.access, changedByOther })
+  }, [binding, data, changes, changedByOther])
 
   function bind(next: DocumentBinding | null) {
     if (!bindingKey) return
@@ -300,9 +347,11 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     // Вкладка хранит копию; источник истины — сервер рабочего места.
     if (mnemos) void Promise.resolve(gadget.setMnemosDocument(next)).catch(() => {})
   }
-  /** Привязка, объявляющая текущую ревизию редактора сохранённой: сначала пишется сама привязка (за ней может идти перезагрузка), потом дочитывается ревизия. */
-  async function bindAtEditorRevision(next: DocumentBinding) {
+  /** Привязка, объявляющая текущую ревизию редактора сохранённой: сначала пишется сама привязка (за ней может идти перезагрузка), потом дочитывается ревизия.
+   *  unsaved — содержимое редактора ещё не в Mnemos (возврат старой версии): ревизия не объявляется, и автосохранение запишет его новой версией. */
+  async function bindAtEditorRevision(next: DocumentBinding, unsaved = false) {
     bind(next)
+    if (unsaved) return
     const key = bindingKey
     let revision: number | undefined
     try { revision = await readEditorRevision(snapshotSource, format, lifetime.current.signal) } catch { /* без ревизии привязка остаётся: шапка скажет «сверить не с чем» */ }
@@ -372,6 +421,16 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     return () => { abort.abort(); clearTimeout(timer) }
   }, [autoKey])
 
+  // Автосохранение: заметив несохранённые правки, через autosaveMs отправляем их в документ сами.
+  // Только чтение и отклонённое из-за чужой правки не сохраняются: второе ждёт решения человека.
+  const autosave = !!binding?.resource && !!data?.state && data.access !== 'read' && !changedByOther && data.conflict === false &&
+    (changes === 'no-baseline' || (typeof changes === 'number' && changes > 0))
+  useEffect(() => {
+    if (!autosave || !(autosaveMs > 0)) return
+    const timer = setTimeout(() => { if (document.visibilityState !== 'hidden') void saveNow() }, autosaveMs)
+    return () => clearTimeout(timer)
+  }, [autosave, changes, autosaveMs])
+
   // Выгрузка в Word сохраняет редактор сама — шапка принимает новую привязку.
   useEffect(() => {
     if (!bindingKey) return
@@ -408,11 +467,31 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   }, [titled, mnemos, gadgetId, autoKey, format, chatId, changesPollMs])
 
   const refresh = () => setTick(t => t + 1)
+  /** Сохранить правки редактора в документ сейчас: свой или общий. Изменённый другим документ — явный конфликт. */
+  const saveNow = () => run(async (selector, signal) => {
+    if (!binding?.resource || !source.current) return
+    try {
+      const saved = await saveToMnemosDocument({ writes: { selector, storageOrigin: source.current.writesOrigin }, format, snapshotSource, binding, signal })
+      bind({ ...binding, savedHead: saved.head, ...(saved.revision !== undefined ? { savedRevision: saved.revision } : {}) })
+      setChangedByOther(false)
+      refresh()
+    } catch (error) {
+      if (isDocumentChanged(error)) { setChangedByOther(true); return }
+      throw error
+    }
+  })
+  // «Опубликовать»: без согласования в проекте версия сразу становится общей, иначе уходит согласующим.
   const submit = () => run(async (selector, signal) => {
     if (!binding || !data?.state) return
     const loaded = await submitReview(selector, signal, binding.scope, data.state)
     setData(old => old && { ...old, state: loaded.state, review: loaded.review })
-    setNotice('Сохранённые изменения проекта отправлены на согласование.')
+    if (loaded.review?.ready && !loaded.review.stale) {
+      setData(old => old && { ...old, review: null })
+      setNotice(await publishCandidate(selector, signal, binding.scope, loaded.review.candidate_id))
+      refresh()
+      return
+    }
+    setNotice('Версия отправлена на согласование.')
   })
   const withdraw = () => run(async (selector, signal) => {
     if (!binding || !data?.review) return
@@ -432,11 +511,15 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const listScopes = async () => (await source.current?.selector.scopes())?.scopes ?? []
   const listDocuments = async (scope: string) => (await source.current?.selector.documents(scope, ''))?.documents ?? []
   const comparison = () => source.current ? { selector: source.current.selector, downloads: source.current.downloads, origin: source.current.origin } : null
+  const selector = () => source.current?.selector ?? null
+  const writesOrigin = () => source.current?.writesOrigin ?? ''
+  /** Открыта новая версия документа: чужая правка принята, можно снова сохранять. */
+  const reopened = () => setChangedByOther(false)
 
-  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, saving, suggestedProject: mnemos?.project ?? null, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, listScopes, listDocuments, comparison, lifetime }
+  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, saving, changedByOther, suggestedProject: mnemos?.project ?? null, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
 }
 
-export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs }: {
+export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs }: {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
   /** Открытая беседа рабочего места: её проект — место автосохранения. */
   projectChatId?: number
@@ -444,8 +527,10 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   panelHost?: Element | null; onCollapseChat?(): void
   /** Период опроса ревизии редактора, мс. */
   changesPollMs?: number
+  /** Задержка автосохранения, мс; 0 — без автосохранения. */
+  autosaveMs?: number
 }) {
-  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs })
+  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs, autosaveMs })
   const [panel, setPanel] = useState<{ open: boolean; section: PanelSection | null }>({ open: false, section: null })
   const [launch, setLaunch] = useState<NativeDocumentLaunch | null>(null)
 
@@ -457,14 +542,27 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
     if (requested || readPendingNativeOpen(nativeOpenKey(status.gadgetId), format)) setPanel({ open: true, section: 'open' })
   }, [status.gadgetId, chatId, format])
 
+  // «Поделиться» в шапке гаджета документа открывает доступ к самому документу Mnemos.
+  // Шапка показывает один документ за раз, поэтому событие адресовано смонтированной шапке.
+  useEffect(() => {
+    const share = () => setPanel({ open: true, section: 'share' })
+    const bind = () => setPanel({ open: true, section: 'bind' })
+    window.addEventListener(DOCUMENT_SHARE_EVENT, share)
+    window.addEventListener(DOCUMENT_BIND_EVENT, bind)
+    return () => { window.removeEventListener(DOCUMENT_SHARE_EVENT, share); window.removeEventListener(DOCUMENT_BIND_EVENT, bind) }
+  }, [])
+
   const onPrimary = (kind: PrimaryKind) => {
-    if (kind === 'save' || kind === 'start') setPanel({ open: true, section: 'save' })
+    if (kind === 'save' && status.binding?.resource) void status.saveNow()
+    else if (kind === 'save' || kind === 'start') setPanel({ open: true, section: 'save' })
+    else if (kind === 'reopen') setPanel({ open: true, section: 'reopen' })
     else if (kind === 'resolve') setPanel({ open: true, section: 'conflict' })
     else if (kind === 'submit' || kind === 'resubmit') void status.submit()
     else if (kind === 'rework') status.withdraw()
     else if (kind === 'publish') void status.publish()
   }
-  const panelNode = panel.open ? <DocumentVersionPanel
+  const panelNode = panel.open && panel.section === 'share' ? <DocumentSharePanel selector={status.selector()} binding={status.binding} format={format}
+    documentName={status.data?.name ?? null} onClose={() => setPanel({ open: false, section: null })} /> : panel.open ? <DocumentVersionPanel
     key={`${chatId ?? 'workspace'}:${format}`} gadget={gadget} format={format} snapshotSource={snapshotSource} chatId={chatId} disabled={disabled}
     launch={launch ?? undefined} onLaunchConsumed={() => { clearNativeDocumentLaunch(); setLaunch(null) }}
     status={status} section={panel.section} onSection={section => setPanel({ open: true, section })}

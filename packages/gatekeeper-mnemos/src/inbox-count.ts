@@ -1,4 +1,4 @@
-import type { CollaborationProgress, CollaborationRequest, PublicationReview } from "./mnemos-api.ts";
+import type { CollaborationProgress, CollaborationRequest, PublicationReview, SharedDocument } from "./mnemos-api.ts";
 import type { TemplatePromotionReview, TemplateScope } from "./work-templates.ts";
 import type { IntakeAlert } from "./intake.ts";
 import type { ShareRequest } from "./project-sharing.ts";
@@ -10,10 +10,10 @@ export interface InboxTemplate { scope: TemplateScope; review: TemplatePromotion
 /** Вопрос приёмной вместе с проектом, в приёмную которого загружен файл. */
 export interface InboxAlert { project: string; alert: IntakeAlert }
 
-export type InboxKind = "approval" | "publish" | "template" | "acceptance" | "intake" | "share";
+export type InboxKind = "approval" | "publish" | "template" | "acceptance" | "intake" | "share" | "document";
 export type InboxFilter = "approvals" | "agents" | "intake" | "access";
 /** Фильтр «Входящих», к которому относится каждый вид решения. */
-export const INBOX_FILTER: Record<InboxKind, InboxFilter> = { approval: "approvals", publish: "approvals", template: "approvals", acceptance: "agents", intake: "intake", share: "access" };
+export const INBOX_FILTER: Record<InboxKind, InboxFilter> = { approval: "approvals", publish: "approvals", template: "approvals", acceptance: "agents", intake: "intake", share: "access", document: "access" };
 
 export interface InboxEntry {
   key: string;
@@ -26,6 +26,7 @@ export interface InboxEntry {
   template?: InboxTemplate;
   alert?: InboxAlert;
   share?: ShareRequest;
+  document?: SharedDocument;
 }
 
 export interface InboxSources {
@@ -35,6 +36,8 @@ export interface InboxSources {
   alerts?: InboxAlert[];
   /** Запросы открыть проект отделу или организации, которые ждут решения этого человека. */
   shares?: ShareRequest[];
+  /** Документы, которыми поделились с человеком; во «Входящих» — ещё не открытые. */
+  documents?: SharedDocument[];
 }
 
 /** Всё, что ждёт решения человека. Один список для экрана и для счётчика в навигации,
@@ -70,6 +73,10 @@ export function inboxEntries(sources: InboxSources, userId: string): InboxEntry[
     shared.add(share.request_id);
     out.push({ key: `share/${share.request_id}`, kind: "share", at: share.created_at ?? "", share });
   }
+  for (const document of sources.documents ?? []) {
+    if (document.seen) continue;
+    out.push({ key: `document/${document.project_id}/${document.owner_id}/${document.node_id}`, kind: "document", at: document.granted_at ?? "", document });
+  }
   const time = (entry: InboxEntry) => { const t = Date.parse(entry.at); return Number.isFinite(t) ? t : Infinity; };
   return out.map((entry, index) => ({ entry, index })).sort((a, b) => time(b.entry) - time(a.entry) || a.index - b.index).map(x => x.entry);
 }
@@ -78,12 +85,12 @@ export function inboxEntries(sources: InboxSources, userId: string): InboxEntry[
 const APPROVAL_KINDS = new Set<InboxKind>(["approval", "template", "share"]);
 
 /** Два счётчика меню из одного списка: всё во «Входящих» и решения по чужой работе. */
-export function inboxCounts(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[] } = {}): { inbox: number; approvals: number } {
+export function inboxCounts(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[]; documents?: SharedDocument[] } = {}): { inbox: number; approvals: number } {
   const entries = inboxEntries({ reviews, collaborations, ...extra }, userId);
   return { inbox: entries.length, approvals: entries.filter(entry => APPROVAL_KINDS.has(entry.kind)).length };
 }
 
 /** Число решений, которые ждут человека во «Входящих». */
-export function inboxDecisions(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[] } = {}): number {
+export function inboxDecisions(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[]; documents?: SharedDocument[] } = {}): number {
   return inboxEntries({ reviews, collaborations, ...extra }, userId).length;
 }

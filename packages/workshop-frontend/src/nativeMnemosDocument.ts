@@ -57,25 +57,38 @@ export async function createMnemosDocument({ gadget, writes, format, snapshotSou
   signal.throwIfAborted()
   const receipt = await writer.checkpoint(head, upload)
   await gadget.recordMnemosDocumentReceipt(claim.claim, receipt)
-  await writer.save(head, upload)
-  const binding: NativeMnemosBinding = { accountId, scope, resource: await writer.document(), ...(revision !== undefined ? { savedRevision: revision } : {}) }
+  const saved = await writer.save(head, upload)
+  const binding: NativeMnemosBinding = { accountId, scope, resource: await writer.document(), ...(revision !== undefined ? { savedRevision: revision } : {}), ...(/^[a-f0-9]{64}$/.test(saved) ? { savedHead: saved } : {}) }
   await gadget.setMnemosDocument(binding)
   return binding
 }
 
-/** Сохранить текущий снимок редактора в привязанный документ (личный черновик). Возвращает ревизию редактора. */
+/** Документ изменил другой человек после версии, от которой правит редактор. Правка не записана и остаётся в редакторе. */
+export class MnemosDocumentChanged extends Error {
+  constructor() { super('Документ изменили после того, как вы его открыли') }
+}
+export const isDocumentChanged = (error: unknown) => error instanceof MnemosDocumentChanged || String((error as { message?: unknown } | null)?.message ?? '').includes('DOCUMENT_CHANGED')
+
+/**
+ * Сохранить текущий снимок редактора в привязанный документ — свой или тот, куда пригласили с правом правки.
+ * Базой служит версия, от которой правит редактор (binding.savedHead): если сам документ с тех пор изменили,
+ * сервер отказывает, и функция бросает MnemosDocumentChanged — молча чужая правка не затирается.
+ * Возвращает ревизию редактора и новую версию документа.
+ */
 export async function saveToMnemosDocument({ writes, format, snapshotSource, binding, signal }: {
   writes: WritesSource; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; binding: NativeMnemosBinding; signal: AbortSignal
-}): Promise<number | undefined> {
+}): Promise<{ revision: number | undefined; head: string }> {
   using writer = await writes.selector.select(binding.scope, binding.resource, format)
-  const head = await writer.head(); signal.throwIfAborted()
+  const base = binding.savedHead ?? await writer.head(); signal.throwIfAborted()
   const read = snapshotSource.current
   if (!read) throw new Error('Editor is not ready')
   const snapshot = await read(format, signal); signal.throwIfAborted()
-  const upload = await uploadGatekeeperNativeDocument(snapshot, format, writes.storageOrigin, (size, checksum) => writer.issue(head, size, checksum), signal)
+  const upload = await uploadGatekeeperNativeDocument(snapshot, format, writes.storageOrigin, (size, checksum) => writer.issue(base, size, checksum), signal)
   signal.throwIfAborted()
-  await writer.save(head, upload)
-  return snapshotRevision(snapshot.document)
+  let head: string
+  try { head = await writer.save(base, upload) }
+  catch (error) { if (isDocumentChanged(error)) throw new MnemosDocumentChanged(); throw error }
+  return { revision: snapshotRevision(snapshot.document), head }
 }
 
 /** Событие окна: привязку изменили вне шапки (выгрузка сохранила редактор); шапка обновляется без перезагрузки. */

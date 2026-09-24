@@ -117,6 +117,21 @@ test("Материал проекта открывается непосредс�
 });
 
 
+test("Документ, которым поделились, виден в файлах своего проекта и открывается в редакторе", async () => {
+  const shared = { project_id: "one", project_name: "Общий проект", node_id: "HEN4HKQ24UIOKVLJYW7SAQWKTP", owner_id: "user-FGTK3l4q5INoE4X1", owner_name: "Николай Деревцов", granted_by_name: "Николай Деревцов",
+    name: "Дорожная карта", content_type: "application/vnd.cloudflareos.document+json", head: "c".repeat(64), mode: "write", granted_at: "2026-09-23T10:00:00Z", seen: true };
+  const app = await mountMemoryApp({ async listSharedDocuments() { return [shared, { ...shared, project_id: "two", node_id: "elsewhere", name: "Чужой проект" }]; } }, {section: "projects", project: "one", nativeOpen: true});
+  try {
+    await app.until(() => app.button("Дорожная карта"), "общий документ в файлах проекта");
+    assert.ok(app.text().includes("поделился Николай Деревцов"), "кто поделился");
+    assert.ok(app.text().includes("можно править"), "право");
+    assert.equal(app.button("Чужой проект"), undefined, "документ другого проекта здесь не показан");
+    app.button("Дорожная карта").click();
+    await app.until(() => app.calls.some(c => c[0] === "openNativeDocument"), "переход в редактор");
+    assert.deepEqual(app.calls.find(c => c[0] === "openNativeDocument"), ["openNativeDocument", "one", shared.node_id]);
+  } finally { app.dispose(); }
+});
+
 test("Материалы проекта: подтверждение области и обновление после размещения", async()=>{
  let confirmed=false;
  const decisions=[];

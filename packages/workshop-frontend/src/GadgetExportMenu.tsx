@@ -81,7 +81,7 @@ export default function GadgetExportMenu({ gadget, gadgetTitle, chatId, disabled
       const revision = snapshotRevision(snapshot.document)
       if (revision === undefined || revision !== binding.savedRevision) {
         const saved = await saveToMnemosDocument({ writes, format, snapshotSource, binding, signal })
-        binding = { ...binding, ...(saved !== undefined ? { savedRevision: saved } : {}) }
+        binding = { ...binding, savedHead: saved.head, ...(saved.revision !== undefined ? { savedRevision: saved.revision } : {}) }
         await gadget.setMnemosDocument(binding)
         window.dispatchEvent(new CustomEvent(NATIVE_BINDING_EVENT, { detail: { gadgetId: await gadget.getId(), format, binding } }))
       }

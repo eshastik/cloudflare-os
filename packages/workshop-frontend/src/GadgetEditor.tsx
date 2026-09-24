@@ -54,7 +54,7 @@ import WorkspaceOpenErrorPage from './components/WorkspaceOpenErrorPage'
 import { useWorkspaceOpen } from './useWorkspaceOpen'
 import { reportIssue } from './errorReporting'
 import GadgetExportMenu from './GadgetExportMenu'
-import DocumentStatus from './DocumentStatus'
+import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT } from './DocumentStatus'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
@@ -1466,6 +1466,9 @@ export default function GadgetEditor() {
                   <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
                 )}
                 <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
+                {selectedNativeFormat && (
+                  <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_BIND_EVENT))} className={MENU_ITEM}>Другой документ Mnemos…</DropdownMenu.Item>
+                )}
                 <DropdownMenu.Item onClick={() => openActivity('history')} className={MENU_ITEM}>Журнал действий</DropdownMenu.Item>
                 {metadata.totalCost != null && (
                   <div className="px-2.5 py-1.5 text-[12px] leading-4 text-kumo-subtle">Расходы: {formatHeaderCost(metadata.totalCost)}</div>
@@ -1664,7 +1667,11 @@ export default function GadgetEditor() {
             )}
 
             {!paneShowsActivity && (
-              <button type="button" className={PILL_PRIMARY} onClick={() => setShareModalOpen(true)}>
+              <button type="button" className={PILL_PRIMARY} onClick={() => {
+                // Документ, таблица, презентация: «Поделиться» открывает доступ к самому документу Mnemos.
+                if (selectedNativeFormat) window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))
+                else setShareModalOpen(true)
+              }}>
                 Поделиться
               </button>
             )}

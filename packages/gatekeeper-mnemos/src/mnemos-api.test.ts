@@ -2,6 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MnemosAPI, MnemosAPIError } from "./mnemos-api.ts";
 
+test("общий документ: правка уходит в ветку владельца от версии редактора, конфликт — 409 без повтора", async () => {
+  const requests: { path: string; method?: string; body: unknown }[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
+    requests.push({ path: new URL(String(url)).pathname, method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : null });
+    return new Response("changed", { status: 409 });
+  });
+  const base = "a".repeat(64);
+  await assert.rejects(api.saveSharedDocument("project", "doc", "user-owner", base, "upload"), (e: unknown) => e instanceof MnemosAPIError && e.status === 409);
+  await assert.rejects(api.markSharedDocumentSeen("project", "user-owner", "doc"), MnemosAPIError);
+  assert.throws(() => api.saveSharedDocument("project", "doc", "user-owner", "not-a-head", "upload"));
+  assert.deepEqual(requests, [
+    { path: "/v1/projects/project/draft/nodes/doc/shared-save", method: "POST", body: { owner_id: "user-owner", base_head: base, upload_id: "upload" } },
+    { path: "/v1/me/shared-documents/seen", method: "POST", body: { project_id: "project", owner_id: "user-owner", node_id: "doc" } },
+  ]);
+});
+
 test("credentials stay on the configured server and are refreshed per request", async () => {
   const calls: { url: string; init?: RequestInit }[] = []; let tokens = 0;
   const api = new MnemosAPI("https://memory.example", async () => `token-${++tokens}`, async (url, init) => { calls.push({ url: String(url), init }); return Response.json({ connections: [] }); });

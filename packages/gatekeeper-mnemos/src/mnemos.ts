@@ -60,6 +60,8 @@ import { NativeWriteSelector, listNativeDocuments } from "./native-writer.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 
 import { LoginFlow, type LoginConfig } from "./login-flow.ts";
+import type { ExtraActionSession } from "./agent-actions-extra.ts";
+import { agentActionError, checkedAgentAction, checkedAgentRead, executeAgentAction, prepareAgentAction, readForAgent, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction } from "./agent-actions.ts";
 
 import { BrowserLoginBinding, handleBrowserLogin } from "./browser-login.ts";
 
@@ -797,10 +799,11 @@ export class UserAccount extends DurableObject<Env> {
       })().catch(() => []);
       // Запросы видимости: сервер без этой возможности или отказ — пусто, как у шаблонов.
       const shares = session.listShareRequests(false).then(page => page.requests, () => []);
+      const documents = session.listSharedDocuments().catch(() => []);
       const [reviews, requests] = await Promise.all([session.listPublicationReviews(""), session.listCollaborations("")]);
       const mine = requests.requests.filter(request => request.requester_user_id === userId).slice(0, INBOX_PROGRESS_LIMIT);
       const collaborations = await Promise.all(mine.map(async request => ({ request, progress: await session.readCollaborationProgress(request.request_id).catch(() => null) })));
-      return inboxCounts(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts, shares: await shares });
+      return inboxCounts(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts, shares: await shares, documents: await documents });
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -975,6 +978,49 @@ export class UserAccount extends DurableObject<Env> {
       .map(bot => this.#telegramBot(bot).revokeAccount(this.ctx.id.toString())));
     if (results.some(result => result.status === 'rejected')) throw Error('Account disconnected; retry to confirm Telegram cleanup.');
   }
+  /** Ящики, календари, диск и Telegram хранятся в самом аккаунте, а не на сервере: действиям они
+   * нужны рядом с методами сессии. Методы сессии привязываются к ней из-за приватных полей. */
+  #withSources(session: MnemosAccountSession) {
+    const own: Record<string, (...args: never[]) => unknown> = {
+      listImapAccounts: () => this.listImapAccounts(), removeImapAccount: (id: string) => this.removeImapAccount(id),
+      listCalDAVAccounts: () => this.listCalDAVAccounts(), removeCalDAVAccount: (id: string) => this.removeCalDAVAccount(id),
+      listWebDAVAccounts: () => this.listWebDAVAccounts(), removeWebDAVAccount: (id: string) => this.removeWebDAVAccount(id),
+      listTelegram: () => this.listTelegram(), disconnectTelegram: (bot: string) => this.disconnectTelegram(bot),
+    };
+    return new Proxy(session, { get: (target, key, receiver) => {
+      if (typeof key === "string" && Object.hasOwn(own, key)) return own[key];
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) as unknown as ExtraActionSession;
+  }
+  /** Действие агента беседы (agent-actions.ts): подготовка сессией человека; область агента — проекты его связи.
+   * Вызывает только MnemosLibrary; во фрейм управления и в сессию агента метод не передаётся. */
+  async prepareAgentAction(input: AgentActionRequest) {
+    const request = checkedAgentAction(input);
+    let agent: { bindingId: string };
+    try { agent = await this.#account().ensureWorkshopAgent(this.ctx.id.toString(), WORKSHOP_AGENT_NAME); }
+    catch (error) { throw agentActionError(error); }
+    const session = this.#account().session();
+    try {
+      const scope = await session.readWorkshopAgentScope(agent.bindingId);
+      if (scope.revoked) throw new MnemosAPIError(401);
+      return await prepareAgentAction(this.#withSources(session), new Set(scope.project_ids), request);
+    } catch (error) { throw agentActionError(error); }
+    finally { session.dispose(); }
+  }
+  /** Выполнение после подтверждения человеком карточкой: вызывается только из applyAction очереди подтверждений. */
+  async executeAgentAction(kind: AgentActionKind, resolved: PreparedAgentAction["resolved"]) {
+    const session = this.#account().session();
+    try { return await executeAgentAction(this.#withSources(session), kind, resolved); }
+    catch (error) { throw agentActionError(error); }
+    finally { session.dispose(); }
+  }
+  async readForAgent(input: AgentReadRequest) {
+    const session = this.#account().session();
+    try { return await readForAgent(this.#withSources(session), checkedAgentRead(input)); }
+    catch (error) { throw agentActionError(error); }
+    finally { session.dispose(); }
+  }
 }
 
 /** One immutable publication imported by a human; it never lends their account to an agent. */
@@ -1057,12 +1103,12 @@ class MnemosNativeDocumentSelector extends RpcTarget {
   async publications(project: string, node: string, cursor: string) {
     const resourceUrl = documentResourceUrl(this.#origin, { projectId: project, nodeId: node });
     const formatOf = (mime: string) => mime === "application/vnd.cloudflareos.document+json" ? "cloudflareos.document" as const : mime === "application/vnd.cloudflareos.spreadsheet+json" ? "cloudflareos.spreadsheet" as const : mime === "application/vnd.cloudflareos.presentation+json" ? "cloudflareos.presentation" as const : null;
-    const privateVersions: {id: string; recordedAt: string; actor: string; recordedBy?: {actor: string; onBehalfOf: string}; format: "cloudflareos.document" | "cloudflareos.spreadsheet" | "cloudflareos.presentation"}[] = [];
+    const privateVersions: {id: string; recordedAt: string; actor: string; author?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: "cloudflareos.document" | "cloudflareos.spreadsheet" | "cloudflareos.presentation"}[] = [];
     let privateNext='';let historyLimited=false;
     if(!cursor||cursor.startsWith('private-history:')){
       const history=await this.#session.listPrivateVersions(project,node,cursor.startsWith('private-history:')?cursor.slice(16):'');
       historyLimited=history.limited??false;
-      for(const version of history.versions){const format=formatOf(version.content_type);if(format)privateVersions.push({id:`private:${version.head}`,recordedAt:version.recorded_at,actor:'',format});}
+      for(const version of history.versions){const format=formatOf(version.content_type);if(format)privateVersions.push({id:`private:${version.head}`,recordedAt:version.recorded_at,actor:'',...(typeof version.author_name==='string'&&version.author_name.length<=255?{author:version.author_name}:{}),format});}
       privateNext=history.next_cursor?'private-history:'+history.next_cursor:'';
     }
     if (!cursor) {
@@ -1404,6 +1450,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async listProjects() { return this.#session.listProjects(); }
   async setProjectVisibility(...args: Parameters<MnemosAccountSession["setProjectVisibility"]>) { return this.#session.setProjectVisibility(...args); }
   async listShareRequests(...args: Parameters<MnemosAccountSession["listShareRequests"]>) { return this.#session.listShareRequests(...args); }
+  async listSharedDocuments() { return this.#session.listSharedDocuments(); }
+  async markSharedDocumentSeen(...args: Parameters<MnemosAccountSession["markSharedDocumentSeen"]>) { return this.#session.markSharedDocumentSeen(...args); }
   async decideShareRequest(...args: Parameters<MnemosAccountSession["decideShareRequest"]>) { return this.#session.decideShareRequest(...args); }
   async readProjectSharingSettings() { return this.#session.readProjectSharingSettings(); }
   async listOrgUnits() { return this.#session.listOrgUnits(); }

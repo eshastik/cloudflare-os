@@ -61,7 +61,7 @@ it('создание: квитанция записывается до отпр�
   const writes: WritesSource = { selector: new RpcStub(fakeMnemos(log)) as unknown as WritesSource['selector'], storageOrigin: 'https://objects.example' }
   const binding = await createMnemosDocument({ gadget: gadget as never, writes, format: 'cloudflareos.document', snapshotSource: { current: async () => snapshot },
     accountId: 1, scope: 'project', name: 'Статус проекта', signal: new AbortController().signal })
-  expect(binding).toEqual({ accountId: 1, scope: 'project', resource: 'created-doc', savedRevision: 5 })
+  expect(binding).toEqual({ accountId: 1, scope: 'project', resource: 'created-doc', savedRevision: 5, savedHead: 'b'.repeat(64) })
   expect(log).toEqual(['claim', 'create:project:Статус проекта:cloudflareos.document', 'issue', 'checkpoint', 'receipt:c1:receipt-1', 'save', 'bind'])
   expect(gadget.setMnemosDocument).toHaveBeenCalledWith(binding)
 })

@@ -23,4 +23,18 @@ describe("подсказка агенту беседы о Mnemos", () => {
     expect(text).not.toContain("пока нельзя");
     expect(text).not.toContain("не пиши, что документ уже опубликован");
   });
+
+  it("чувствительные действия: только предложение карточкой, карточку не пересказывать, без подтверждения — никак", () => {
+    const text = formatMnemosWorkPrompt("MNEMOS");
+    for (const method of ["shareDocument", "requestReview", "decideReview", "decideAccessRequest", "actionStatus", "documentAccess", "listReviews"]) {
+      expect(text).toContain(method);
+    }
+    expect(text).toContain("awaiting_confirmation");
+    expect(text).toContain("Не пересказывай карточку");
+    expect(text).toContain("Без подтверждения чувствительное не выполняется");
+    for (const method of ["updateOrgRules", "setReviewDomain", "decideIntake", "setAgentSourceAccess", "disableConnection", "linkRepository", "openScreen"]) {
+      expect(text).toContain(method);
+    }
+    expect(text).toContain("Не проси у человека пароли");
+  });
 });

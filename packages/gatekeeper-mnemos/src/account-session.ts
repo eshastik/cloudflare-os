@@ -337,6 +337,28 @@ export class MnemosAccountSession {
       typeof d.name !== "string" || !d.name || d.name.length > 255 || typeof d.content_type !== "string" || d.content_type.length > 255)) throw new MnemosAPIError(502);
     return page;
   }
+  async listSharedDocuments() {
+    this.#check();
+    const page = await this.#client.listSharedDocuments(this.#lifetime.signal);
+    this.#check();
+    const text = (v: unknown, max = 255) => typeof v === "string" && v.length <= max;
+    if (!page || !Array.isArray(page.documents) || page.documents.length > 100 || page.documents.some(d => !d ||
+      !text(d.project_id) || !d.project_id || !text(d.node_id) || !d.node_id || !text(d.owner_id) || !d.owner_id || !text(d.name) || !d.name ||
+      !text(d.project_name) || !text(d.owner_name) || !text(d.granted_by_name) || !text(d.content_type) || typeof d.head !== "string" || !/^[a-f0-9]{64}$/.test(d.head) ||
+      (d.mode !== "read" && d.mode !== "write") || typeof d.granted_at !== "string" || typeof d.seen !== "boolean")) throw new MnemosAPIError(502);
+    return page.documents;
+  }
+  async markSharedDocumentSeen(project: string, owner: string, node: string) {
+    this.#check();
+    await this.#client.markSharedDocumentSeen(project, owner, node, this.#lifetime.signal);
+  }
+  async saveSharedDocument(project: string, node: string, owner: string, base: string, uploadId: string) {
+    this.#check();
+    const result = await this.#client.saveSharedDocument(project, node, owner, base, uploadId, this.#lifetime.signal);
+    this.#check();
+    if (typeof result.head !== "string" || !/^[a-f0-9]{64}$/.test(result.head)) throw new MnemosAPIError(502);
+    return result;
+  }
   async adoptPrivateVersion(project: string, node: string, expected: string, source: string) {
     this.#check();
     const result = await this.#client.adoptPrivateVersion(project, node, expected, source, this.#lifetime.signal);

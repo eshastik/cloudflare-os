@@ -34,6 +34,9 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  createCodeProject:MnemosAccountSession["createCodeProject"];
  setProjectVisibility:MnemosAccountSession["setProjectVisibility"];
  listShareRequests:MnemosAccountSession["listShareRequests"];
+ /** «Поделились с вами»: документы других людей, открытые этому человеку. */
+ listSharedDocuments:MnemosAccountSession["listSharedDocuments"];
+ markSharedDocumentSeen:MnemosAccountSession["markSharedDocumentSeen"];
  decideShareRequest:MnemosAccountSession["decideShareRequest"];
  readProjectSharingSettings:MnemosAccountSession["readProjectSharingSettings"];
  updateProjectSharingSettings:MnemosAccountSession["updateProjectSharingSettings"];
@@ -303,6 +306,8 @@ export interface Host extends RpcTarget {
   getSelectedProject(): Promise<string>;
   /** Вкладка раздела из адреса хоста; пусто — вкладка по умолчанию. */
   getSelectedView(): Promise<string>;
+  /** Документ из адреса хоста (ссылка из письма «поделились с вами»); пусто — не задан. Прав не даёт. */
+  getSelectedDocument(): Promise<string>;
   /** Записывает вкладку в адрес без перезагрузки фрейма. */
   selectView(view: string): void;
   saveMailAttachment(bytes:Uint8Array,filename:string):Promise<void>;

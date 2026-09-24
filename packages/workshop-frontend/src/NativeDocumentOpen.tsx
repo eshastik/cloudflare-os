@@ -14,11 +14,13 @@ import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 type Pending = { accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
 /** Что открыто в редакторе: адрес документа в Mnemos для привязки состояния. */
-export type NativeOpenResult = { accountId: number; scope: string; resource: string }
+export type NativeOpenResult = { accountId: number; scope: string; resource: string; publication?: string }
 type Props = {
   gadget: Pick<RpcStub<GadgetClient>, 'getId' | 'prepareNativeDocumentRead' | 'readNativeDocument' | 'connectToGadget' | 'onRpcBroken'>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; disabled?: boolean; reconnect(): void
   /** Секция видна по запросу; незавершённое открытие показывается независимо от этого флага. */
   open?: boolean; initialAccountId?: number; initialScope?: string; initialResource?: string; initialPublication?: string; onOpened?(result: NativeOpenResult): void | Promise<void>; onClose?(): void
+  /** Открыть заданную версию сразу, без кнопки: «Открыть» из «Входящих», новая версия после чужой правки, возврат версии. */
+  autoApply?: boolean
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
 type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: NativeDocumentFormat }
@@ -55,7 +57,7 @@ export default function NativeDocumentOpen({ open = true, onClose, ...props }: P
   return <OpenSection {...props} storageKey={key} resume={pending} close={close} />
 }
 
-function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
+function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<{ id: number; name: string; valid: boolean }[]>([])
   const [accountId, setAccountId] = useState<number | null>(initialAccountId ?? null)
@@ -243,12 +245,20 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
         } finally { editor[Symbol.dispose]() }
       } finally { read[Symbol.dispose]() }
       signal.throwIfAborted()
-      if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource })
+      if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication })
       close(); reconnect()
     } catch {
       if (!signal.aborted) setError('Открытие не подтверждено. Документ мог измениться или доступ недоступен. Закройте диалог и выберите публикацию заново; после переподключения можно продолжить сохранённый выбор.')
     } finally { if (!signal.aborted) setBusy(false) }
   }
+  // Открытие без кнопки: один раз, когда заданная версия выбрана и адрес документа прочитан.
+  const autoTried = useRef(false)
+  useEffect(() => {
+    if (!autoApply || autoTried.current || busy || loading) return
+    if (!resume && (accountId === null || !resourceUrl || !publication || publication !== initialPublication)) return
+    autoTried.current = true
+    void apply()
+  }, [autoApply, resume, accountId, resourceUrl, publication, busy, loading])
   const selectClass = 'block w-full border border-kumo-line rounded-lg p-2 bg-kumo-base'
   return <section className="flex flex-col gap-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">
       <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Опубликованная версия заменит содержимое этого редактора. При первом подключении пространство переподключится для проверки доступа. Участникам нужно завершить ввод и дождаться сохранения правок.</p>

@@ -75,7 +75,7 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
     } else {
       expect(calls).toEqual(['flush', 'prepare', 'read', 'issue', 'validate', 'connect', 'validate', 'restore'])
       expect(restored).toHaveBeenCalledWith(expect.objectContaining({ format: 'cloudflareos.spreadsheet' }), 4)
-      expect(onOpened).toHaveBeenCalledWith({ accountId: 3, scope: 'project', resource: 'document' })
+      expect(onOpened).toHaveBeenCalledWith(expect.objectContaining({ accountId: 3, scope: 'project', resource: 'document' }))
       expect(reconnect).not.toHaveBeenCalled()
       await act(async () => { finishBinding() })
       expect(reconnect).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBeNull()

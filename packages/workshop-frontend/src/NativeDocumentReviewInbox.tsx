@@ -29,10 +29,10 @@ export async function loadReviewComparison(source: Selector, transport: Download
   return { review: checked, preview: { node, metadata, before: sides[0], after: sides[1] } }
 }
 
-export function ReviewComparisonView({ preview }: { preview: ReviewComparison }) {
+export function ReviewComparisonView({ preview, labels = ['До изменений', 'Предложенная версия'] }: { preview: ReviewComparison; labels?: [string, string] }) {
   return <div className="flex flex-col gap-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">
-    <h3 className="m-0 text-[12px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">До изменений</h3>{preview.metadata[0] && <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Имя: {preview.metadata[0].name} · Папка: {preview.metadata[0].parent_id || "Корень проекта"}</p>}{preview.before ? <NativeReviewSnapshot snapshot={preview.before} /> : <p className="m-0">Документа не было.</p>}
-    <h3 className="m-0 mt-2 text-[12px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">Предложенная версия</h3>{preview.metadata[1] && <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Имя: {preview.metadata[1].name} · Папка: {preview.metadata[1].parent_id || "Корень проекта"}</p>}{preview.after ? <NativeReviewSnapshot snapshot={preview.after} /> : <p className="m-0">Предложено удаление документа.</p>}
+    <h3 className="m-0 text-[12px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">{labels[0]}</h3>{preview.metadata[0] && <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Имя: {preview.metadata[0].name} · Папка: {preview.metadata[0].parent_id || "Корень проекта"}</p>}{preview.before ? <NativeReviewSnapshot snapshot={preview.before} /> : <p className="m-0">Документа не было.</p>}
+    <h3 className="m-0 mt-2 text-[12px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">{labels[1]}</h3>{preview.metadata[1] && <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Имя: {preview.metadata[1].name} · Папка: {preview.metadata[1].parent_id || "Корень проекта"}</p>}{preview.after ? <NativeReviewSnapshot snapshot={preview.after} /> : <p className="m-0">Предложено удаление документа.</p>}
   </div>
 }
 

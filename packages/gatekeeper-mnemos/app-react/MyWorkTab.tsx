@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { Code, LockOpen, PaperPlaneTilt, SquaresFour, Stamp, Tray } from "@phosphor-icons/react";
-import type { PublicationReview } from "../src/mnemos-api.ts";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Code, FileText, LockOpen, PaperPlaneTilt, SquaresFour, Stamp, Tray } from "@phosphor-icons/react";
+import type { PublicationReview, SharedDocument } from "../src/mnemos-api.ts";
 import type { ShareRequest } from "../src/project-sharing.ts";
 import { inboxEntries, type InboxAlert, type InboxEntry, type InboxKind } from "../src/inbox-count.ts";
 import { useHost, useUi } from "./host.ts";
@@ -26,7 +26,13 @@ const KIND: Record<InboxKind, { icon: ReactNode; tone: "neutral" | "warning" | "
   acceptance: { icon: <Code size={20} />, tone: "brand" },
   intake: { icon: <Tray size={20} />, tone: "neutral" },
   share: { icon: <LockOpen size={20} />, tone: "neutral" },
+  document: { icon: <FileText size={20} />, tone: "brand" },
 };
+
+/** «Николай Деревцов поделился с вами документом «План» — можно править». */
+export function sharedDocumentTitle(d: Pick<SharedDocument, "granted_by_name" | "owner_name" | "name" | "mode">): string {
+  return `${d.granted_by_name || d.owner_name || "Коллега"} поделился с вами документом «${d.name}» — ${d.mode === "write" ? "можно править" : "можно читать"}`;
+}
 
 /** Кому откроется проект: отдел по имени, если сервер его назвал. */
 export function shareAudience(share: Pick<ShareRequest, "level" | "org_unit_name">): string {
@@ -79,9 +85,10 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
   }, "Вопросы приёмной не прочитаны.", [ui, projectIds.join(",")]);
   // Установка без видимости проектов или отказ — запросов просто нет: это не ошибка человека.
   const shares = useLoad(async () => (await ui.listShareRequests(false).catch(() => ({ requests: [] as ShareRequest[] }))).requests, "", [ui]);
+  const sharedDocuments = useLoad(async () => await ui.listSharedDocuments().catch(() => [] as SharedDocument[]), "", [ui]);
   const myShares = useLoad(async () => (await ui.listShareRequests(true).catch(() => ({ requests: [] as ShareRequest[] }))).requests.filter(r => r.status === "pending"), "", [ui]);
 
-  const entries = inboxEntries({ reviews: data.reviews, collaborations: data.collaborations, templates: templates.value ?? [], alerts: alerts.value ?? [], shares: shares.value ?? [] }, userId);
+  const entries = inboxEntries({ reviews: data.reviews, collaborations: data.collaborations, templates: templates.value ?? [], alerts: alerts.value ?? [], shares: shares.value ?? [], documents: sharedDocuments.value ?? [] }, userId);
   const selected = entries.find(entry => entry.key === selectedKey) ?? null;
 
   const assigned = data.collaborations.filter(item => item.request.target_user_id === userId && !item.request.target_agent_id && item.request.requester_user_id !== userId);
@@ -121,6 +128,28 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       setNotice({ tone: "danger", text: "Решение не записано: запрос мог быть уже решён или у вас нет права решать его. Обновите список." });
     } finally { setSharing(""); }
   }
+  /** Открыть документ, которым поделились, в его редакторе; запись во «Входящих» становится прочитанной. */
+  async function openShared(document: SharedDocument) {
+    setNotice(null);
+    try {
+      const opened = await host.openNativeDocument(document.project_id, document.node_id);
+      await ui.markSharedDocumentSeen(document.project_id, document.owner_id, document.node_id).catch(() => {});
+      await sharedDocuments.reload();
+      if (!opened) setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся: доступ мог быть отозван.` });
+    } catch {
+      setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся. Повторите попытку.` });
+    }
+  }
+  // Ссылка из письма открывает документ один раз, когда список общих документов прочитан.
+  const linked = useRef(false);
+  useEffect(() => {
+    if (linked.current || !sharedDocuments.value) return;
+    linked.current = true;
+    void Promise.all([host.getSelectedProject().catch(() => ""), host.getSelectedDocument().catch(() => "")]).then(([project, node]) => {
+      const document = node ? sharedDocuments.value?.find(d => d.node_id === node && (!project || d.project_id === project)) : undefined;
+      if (document) void openShared(document);
+    });
+  }, [sharedDocuments.value]);
   function chat(prompt: string, project?: string) {
     const title = project ? projectName(data.projects, project) : "";
     void host.openPrompt(prompt, project ? { projectId: project, title } : undefined).catch(() => setNotice({ tone: "danger", text: "Беседа не открылась. Повторите попытку." }));
@@ -152,6 +181,10 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
         return { title: `Куда положить «${file}»?`, from: "", project: projectName(data.projects, entry.alert!.project), extra: a.suggested_domain ? `предложена область «${a.suggested_domain}»` : "",
           chat: `Помоги решить, куда положить файл «${file}».`, chatProject: entry.alert!.project };
       }
+      case "document": {
+        const d = entry.document!;
+        return { title: sharedDocumentTitle(d), from: "", project: d.project_name, extra: "" };
+      }
       case "share": {
         const s = entry.share!;
         return { title: `${s.requested_by_name || personName(s.requested_by)} хочет открыть проект «${s.project_name}» ${shareAudience(s)}`, from: "", project: "",
@@ -169,6 +202,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       case "acceptance": return <Button onClick={() => setSelectedKey(entry.key)}>Проверить результат</Button>;
       case "template": return <Button onClick={() => setSelectedKey(entry.key)}>Рассмотреть</Button>;
       case "intake": return <Button onClick={() => setSelectedKey(entry.key)}>Решить</Button>;
+      case "document": return <Button onClick={() => void openShared(entry.document!)}>Открыть</Button>;
       case "share": return <>
         <Button disabled={!!sharing} onClick={() => void decideShare(entry.share!, true)}>Разрешить</Button>
         <Button variant="secondary" disabled={!!sharing} onClick={() => void decideShare(entry.share!, false)}>Отклонить</Button>
@@ -177,7 +211,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
   }
 
   const errors = [data.reviewsError, data.collaborationsError, templates.error, alerts.error].filter(Boolean);
-  const loading = data.reviewsLoading || templates.loading || alerts.loading || shares.loading;
+  const loading = data.reviewsLoading || templates.loading || alerts.loading || shares.loading || sharedDocuments.loading;
   const total = entries.length + agentRequests;
   const subtitle = total > 0
     ? `${total} ${plural(total, "вещь", "вещи", "вещей")} ${plural(total, "ждёт", "ждут", "ждут")} вашего решения.`
@@ -286,6 +320,10 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
         {entry.alert!.alert.detail && <p className="m-0 text-kumo-subtle">{entry.alert!.alert.detail}</p>}
         <ProjectIntake projectId={entry.alert!.project} onPlaced={reloadAlerts} />
       </div>;
+    case "document": {
+      const d = entry.document!;
+      return <p className="m-0 text-[14px] text-kumo-subtle">{d.mode === "write" ? "Вы правите тот же документ, что и автор: правки сохраняются в его документ, и оба видят их после обновления." : "Документ открыт только для чтения."} Проект «{d.project_name}».</p>;
+    }
     case "share": {
       const s = entry.share!;
       return <div className="space-y-3 text-[14px]">

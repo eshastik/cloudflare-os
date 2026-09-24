@@ -17,7 +17,7 @@ import { nativeFormatForOutput, type NativeMnemosBinding } from "@gadgets/worksh
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
-import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind } from "@gadgets/workshop-shared/gatekeeper";
+import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, ActionOutcome, ActionCardIcon } from "@gadgets/workshop-shared/gatekeeper";
 import {
   DurableObject, WorkerEntrypoint, RpcStub as NativeRpcStub,
   RpcTarget as NativeRpcTarget, restore,
@@ -472,6 +472,7 @@ export type ActionRecord = {
   description: ActionDescription;
   resolvedBy?: AiChatAuthorInfo;  // set when resolved (approved/rejected); absent while pending (or legacy)
   autoApproved?: boolean;         // set when applied by an auto-approval rule rather than a human
+  outcome?: ActionOutcome;        // итог, который вернул ресурс после выполнения
 } | {
   type: "observation";
   description: ObservationDescription;
@@ -653,6 +654,38 @@ async function computeSessionAffinity(gadgetId: string, chatId: number): Promise
   return new Uint8Array(hash).toHex();
 }
 
+/** Итог от ресурса попадает в ленту и в подсказку агенту: только короткий текст и https-ссылка. */
+export function checkedActionOutcome(value: unknown): ActionOutcome | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  let {summary, url} = value as {summary?: unknown; url?: unknown};
+  if (typeof summary !== "string" || !summary.trim()) return undefined;
+  let result: ActionOutcome = {summary: summary.trim().slice(0, 500)};
+  if (typeof url === "string" && url.length <= 2048) {
+    try { if (new URL(url).protocol === "https:") result.url = url; } catch { /* ссылка отбрасывается */ }
+  }
+  return result;
+}
+
+const ACTION_CARD_ICONS = new Set<ActionCardIcon>(["share", "review", "publish", "person", "department", "invitation", "access",
+  "visibility", "budget", "mail", "calendar", "code", "connection", "delete", "other"]);
+
+/** Карточка — только отображение: неизвестный значок становится общим, строк не больше трёх. */
+export function withCheckedActionCard(description: ActionDescription): ActionDescription {
+  if (description.card === undefined) return description;
+  let {card, ...rest} = description;
+  if (!card || typeof card !== "object" || !Array.isArray(card.details)) return rest;
+  let details = card.details.filter((line): line is string => typeof line === "string" && !!line.trim())
+    .slice(0, 3).map(line => line.trim().slice(0, 300));
+  let checked: ActionDescription["card"] = {icon: ACTION_CARD_ICONS.has(card.icon) ? card.icon : "other", details};
+  let open = card.open;
+  if (open && typeof open === "object" && typeof open.section === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(open.section) &&
+      typeof open.label === "string" && open.label.trim() &&
+      (open.project === undefined || (typeof open.project === "string" && /^[A-Za-z0-9_.:-]{1,255}$/.test(open.project)))) {
+    checked.open = {section: open.section, label: open.label.trim().slice(0, 60), ...(open.project ? {project: open.project} : {})};
+  }
+  return {...rest, card: checked};
+}
+
 function actionRecordToLog(record: ActionRecord): ActionLogEntry {
   // TODO: ActionRecord and ActionLogEntry are almost identical. The main differences are:
   // - ActionRecord includes `appliedAt` only when type == "action". ActionLogEntry could match.
@@ -688,6 +721,7 @@ function actionRecordToLog(record: ActionRecord): ActionLogEntry {
         description: record.description,
         resolvedBy: record.resolvedBy,
         autoApproved: record.autoApproved,
+        ...(record.outcome ? {outcome: record.outcome} : {}),
       };
     case "bindHook":
       return {
@@ -2558,7 +2592,8 @@ class OverseerImpl implements AgentHooks {
       throw new Error("Это действие должен подтвердить владелец разговора.");
     }
     let gatekeeper = this.getGatekeeperFacet(record.gatekeeperId);
-    await gatekeeper.applyAction(record.action);
+    let outcome = checkedActionOutcome(await gatekeeper.applyAction(record.action));
+    if (outcome) record.outcome = outcome;
     record.state = "approved";
     record.appliedAt = new Date();
     record.resolvedBy = resolvedBy;
@@ -2961,6 +2996,7 @@ class OverseerImpl implements AgentHooks {
     if (description.ownerApprovalRequired && this.storage.gatekeepers.get(gatekeeperId)?.creationSpec?.type !== "ambient") {
       throw new Error("Подтверждение владельца доступно только для его подключённого аккаунта.");
     }
+    description = withCheckedActionCard(description);
     const willAutoApprove = !!(!description.ownerApprovalRequired && description.autoApprovable && description.actionKind &&
         this.storage.autoApproveTags.get(`${gatekeeperId}:${description.actionKind.tag}`) !== undefined);
     const previous = findSubmittedAction(this.storage.actions.list(), gatekeeperId, action, description);
@@ -8141,9 +8177,11 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     // approvals could both pass the gate above and append duplicate notes (the DO input gate is
     // open across these awaits), but that's cosmetic — #resumeSuspendedAgent still starts one turn.
     let titleList = awaited.map(r => `"${r.description.title}"`).join(", ");
+    let outcomes = awaited.filter(r => r.outcome).map(r => `"${r.description.title}": ${r.outcome!.summary}`);
     let summary =
         `The changes you submitted have been approved and applied: ${titleList}. ` +
-        `Reads now reflect them.`;
+        `Reads now reflect them.` +
+        (outcomes.length ? ` Results: ${outcomes.join("; ")}.` : "");
     let author = await this.#getClientProfile();
     this.impl.addChatMessages(chatId, author, [{type: "message", message: summary}]);
 

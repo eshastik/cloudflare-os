@@ -295,9 +295,12 @@ test("describe ресурса и типы для агента", async () => {
   assert.ok(types.length > 0);
   assert.match(types, /interface MnemosLibrary\b/);
   assert.match(types, /saveDraft\(project: string, document: string, content: string\)/);
-  // Решение владельца 23.09: без согласования агент публикует сам; согласовывать и делиться — решения людей.
+  // Решение владельца 24.09: агенту — все действия человека; чувствительные — только через карточку подтверждения.
   assert.match(types, /publishDraft\(project: string, message\?: string\)/);
-  assert.doesNotMatch(types, /\b(?:review\w*|approve\w*|share\w*)\s*\(/i);
+  for (const method of ["shareDocument", "requestReview", "decideReview", "decideAccessRequest", "invitePerson", "setProjectVisibility"]) {
+    assert.match(types, new RegExp(`${method}\\([^)]*\\): Promise<MnemosActionProposal>`), method);
+  }
+  assert.match(types, /awaiting_confirmation/);
 });
 
 test("каталог: authorizeObservation до возврата, записи ограничены boundAgentCatalog", async () => {
@@ -400,9 +403,9 @@ test("отозванный аккаунт: методы сессии броса�
   assert.ok(!state.calls.includes("listProjects"));
 });
 
-test("действий нет: getAutoApprovableActions пуст, applyAction/rejectAction неизвестного id отказывают", async () => {
+test("разрешить насовсем можно только публикацию, отправку на согласование, «Обновить сейчас» и переходы; неизвестный id отказывает", async () => {
   const { library } = fixture();
-  assert.deepEqual(await library.getAutoApprovableActions(), []);
+  assert.deepEqual((await library.getAutoApprovableActions()).map(kind => kind.tag), ["mnemos.publish", "mnemos.request_review", "mnemos.refresh_sync_link", "mnemos.open_screen"]);
   await assert.rejects(library.applyAction(1), /не найдено/);
   await assert.rejects(library.rejectAction(1), /не найдено/);
 });
@@ -586,36 +589,60 @@ test("browseProject: корень и папка по пути, пути доку
   await assert.rejects(session.browseProject("p1", "нет/такой"), /Папка не найдена/);
 });
 
-test("publishDraft: запись под агентским credential; без политики — сразу, с политикой — запрос ответственным", async () => {
+/** Публикация: предложение карточкой, затем подтверждение — как нажатие «Подтвердить» в беседе. */
+async function publishConfirmed(library: any, state: Fixture, message?: string) {
+  const auth = authorizer(state);
+  const proposal = await (await library.startSession(auth as any)).publishDraft("p1", message);
+  if (proposal.status !== "awaiting_confirmation") return { proposal, outcome: undefined, auth };
+  assert.ok(!state.calls.some(c => c.startsWith("agent:publish:") || c.startsWith("agent:review:")), "до подтверждения ничего не публикуется");
+  const outcome = await library.applyAction(proposal.action);
+  return { proposal, outcome, auth };
+}
+
+test("publishDraft: только после подтверждения; запись под агентским credential; без политики — сразу, с политикой — запрос ответственным", async () => {
   const humanPublish = (state: Fixture) => state.calls.filter(c => /^(publish|review|draftState):/.test(c));
   const plain = fixture({ policy: null });
-  const session = await plain.library.startSession(authorizer(plain.state) as any);
-  const published = await session.publishDraft("p1", "Отчёт за март");
-  assert.equal(published.status, "published");
+  const { proposal, outcome, auth } = await publishConfirmed(plain.library, plain.state, "Отчёт за март");
+  assert.equal(proposal.status, "awaiting_confirmation");
+  const card = auth.submitted[0].description as any;
+  assert.equal(card.title, "Опубликовать изменения проекта «Продажи»");
+  assert.equal(card.actionKind.tag, "mnemos.publish");
+  assert.equal(card.autoApprovable, true); assert.equal(card.awaitDecision, true); assert.equal(card.ownerApprovalRequired, undefined);
+  assert.equal(card.card.icon, "publish");
+  assert.match(outcome.summary, /опубликованы/);
   assert.ok(plain.state.calls.includes(`agent:publish:p1:${HEAD_A}:${HEAD_S}:Отчёт за март`));
   assert.deepEqual(humanPublish(plain.state), [], "публикация не идёт под bearer человека");
   assert.ok(!plain.state.calls.some(c => c.startsWith("agent:review:")));
   assert.ok(plain.state.calls.indexOf("authorize") < plain.state.calls.indexOf("agent:draftState:p1"));
 
   const guarded = fixture({ policy: { domains: [{ domain_id: "finance" }] } });
-  const reviewed = await (await guarded.library.startSession(authorizer(guarded.state) as any)).publishDraft("p1");
-  assert.equal(reviewed.status, "awaiting_approval");
+  const reviewed = await publishConfirmed(guarded.library, guarded.state);
+  assert.deepEqual((reviewed.auth.submitted[0].description as any).card.details, ["В проекте включено согласование: изменения уйдут ответственным"]);
+  assert.match(reviewed.outcome.summary, /отправлены ответственным/);
   assert.ok(guarded.state.calls.includes(`agent:review:p1:${HEAD_A}:${HEAD_S}`));
   assert.ok(!guarded.state.calls.some(c => c.startsWith("agent:publish:")), "согласование не обходится");
   assert.deepEqual(humanPublish(guarded.state), []);
 
   // Изменения не задели направлений политики: согласовывать нечего, публикуется сразу.
   const untouched = fixture({ policy: { domains: [{ domain_id: "finance" }] }, reviewReady: true });
-  assert.equal((await (await untouched.library.startSession(authorizer(untouched.state) as any)).publishDraft("p1")).status, "published");
+  assert.match((await publishConfirmed(untouched.library, untouched.state)).outcome.summary, /опубликованы/);
 
   const empty = fixture({ personalExists: false });
-  assert.equal((await (await empty.library.startSession(authorizer(empty.state) as any)).publishDraft("p1")).status, "nothing_to_publish");
-  assert.ok(!empty.state.calls.some(c => c.startsWith("agent:publish:")));
+  const nothing = await publishConfirmed(empty.library, empty.state);
+  assert.equal(nothing.proposal.status, "nothing_to_publish");
+  assert.equal(nothing.auth.submitted.length, 0, "публиковать нечего — карточки нет");
 
-  // Сервер отказал агенту: честный отказ, без повтора под сессией человека.
+  // Сервер отказал агенту: честный отказ, без повтора под сессией человека; действие можно повторить.
   const denied = fixture({ policy: null, denyPublish: true });
-  await assert.rejects((await denied.library.startSession(authorizer(denied.state) as any)).publishDraft("p1"), /не разрешил агенту публикацию/);
+  await assert.rejects(publishConfirmed(denied.library, denied.state), /не разрешил агенту публикацию/);
   assert.deepEqual(humanPublish(denied.state), []);
+
+  // Отказ человека: публикация не выполняется ни сразу, ни повторным применением.
+  const refused = fixture({ policy: null });
+  const pending = await (await refused.library.startSession(authorizer(refused.state) as any)).publishDraft("p1");
+  await refused.library.rejectAction(pending.action!);
+  await assert.rejects(refused.library.applyAction(pending.action!), /отклонено/);
+  assert.ok(!refused.state.calls.some(c => c.startsWith("agent:publish:")));
 });
 
 test("трекер: чтение, изменение задачи с проверкой правил и версии под агентским credential", async () => {
@@ -637,4 +664,162 @@ test("трекер: чтение, изменение задачи с прове�
   assert.equal(saved.tasks[0].assignee_id, "bob");
   assert.equal(saved.transitions.length, 0, "прочие поля трекера сохраняются");
   await assert.rejects(session.readTracker("p1", "n1"), /не трекер/);
+});
+
+// ---- Действия человека от агента: предложение → карточка → подтверждение → выполнение ----
+
+const { prepareAgentAction, executeAgentAction, readForAgent } = await import("./agent-actions.ts");
+const DOC_HEAD = "e".repeat(64);
+
+/** Поддельная сессия человека: те же ответы, что даёт сервер экранам «Поделиться» и «Согласования». */
+function humanActions(calls: string[], options: { policy?: boolean; scope?: string[] } = {}) {
+  const modes = new Map<string, "" | "read" | "write">([["u-nik", ""], ["u-olga", "read"]]);
+  const session = {
+    async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Орг" }; },
+    async listProjects() { return { projects: PROJECTS }; },
+    async draftState() { return { personal_exists: true, personal_head: HEAD_A, shared_head: HEAD_S }; },
+    async listPrivateDocuments(project: string) { calls.push(`human:list-docs:${project}`); return { head: DOC_HEAD, next_cursor: "", documents: [{ node_id: "doc-plan", name: "План продаж.docx", content_type: "application/vnd.cloudflareos.document+json", conflicted: false }] }; },
+    async listPrivateDraftParticipants(_p: string, _n: string, head: string) {
+      assert.equal(head, DOC_HEAD);
+      return { head, next_cursor: "", participants: [
+        { principal_id: "u-nik", display_name: "Николай Деревцов", mode: modes.get("u-nik")!, can_read: false, can_write: false },
+        { principal_id: "u-olga", display_name: "Ольга Деревцова", mode: modes.get("u-olga")!, can_read: true, can_write: false },
+      ] };
+    },
+    async setPrivateDraftParticipant(project: string, node: string, head: string, who: string, expected: string, mode: "" | "read" | "write") {
+      calls.push(`human:share:${project}:${node}:${head}:${who}:${expected}:${mode}`);
+      if (modes.get(who) !== expected) throw new MnemosAPIError(409);
+      modes.set(who, mode); return { participant_id: who, mode };
+    },
+    async readPublicationPolicy(project: string) { if (!options.policy) throw new MnemosAPIError(404); return { project_id: project, revision: 1, domains: [{ domain_id: "finance", node_ids: [], approver_ids: ["boss"] }] }; },
+    async requestPublicationReview(project: string, personal: string, shared: string) { calls.push(`human:review:${project}:${personal}:${shared}`); return { candidate_id: "cand-1" }; },
+  };
+  const scope = new Set(options.scope ?? ["p1", "p2"]);
+  return {
+    session,
+    account: {
+      async prepareAgentAction(request: any) { calls.push(`prepare:${request.kind}`); return prepareAgentAction(session as any, scope, request); },
+      async executeAgentAction(kind: any, resolved: any) { calls.push(`execute:${kind}`); return executeAgentAction(session as any, kind, resolved); },
+      async readForAgent(request: any) { return readForAgent(session as any, request); },
+    },
+  };
+}
+
+test("сценарий «поделись документом с Николаем, пусть правит»: карточка → подтверждение → доступ выдан, агент получает итог", async () => {
+  const { library, state, account } = fixture();
+  Object.assign(account, humanActions(state.calls).account);
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  const proposal = await session.shareDocument("Продажи", "План продаж", "Николаю Деревцову", "write");
+  assert.equal(proposal.status, "awaiting_confirmation");
+  assert.ok(!state.calls.some(c => c.startsWith("human:share:")), "до подтверждения доступ не меняется");
+  const submitted = auth.submitted[0].description as any;
+  assert.equal(submitted.title, "Поделиться документом «План продаж.docx»: Николай Деревцов — может править");
+  assert.deepEqual(submitted.card, { icon: "share", details: ["Проект «Продажи»", "Сейчас доступа к документу нет"] });
+  assert.equal(submitted.ownerApprovalRequired, true, "доступ людей решает только владелец, без «Разрешать всегда»");
+  assert.equal(submitted.autoApprovable, undefined);
+  assert.equal(submitted.awaitDecision, true);
+  assert.equal(submitted.actionKind.tag, "mnemos.share_document");
+  assert.ok(!/u-nik|doc-plan|p1\b/.test(submitted.title + submitted.card.details.join()), "в карточке нет идентификаторов");
+  assert.ok(auth.seen.some(o => (o as any).ownerOnly && o.title === "Подготовка действия Mnemos"));
+
+  const outcome = await library.applyAction(proposal.action);
+  assert.deepEqual(outcome, { summary: "Николай Деревцов может править «План продаж.docx»" });
+  assert.ok(state.calls.includes(`human:share:p1:doc-plan:${DOC_HEAD}:u-nik::write`));
+  const status = await session.actionStatus(proposal.action);
+  assert.deepEqual(status, { action: proposal.action, title: submitted.title, status: "done", result: (outcome as any).summary });
+  // Повтор применения после потерянного ответа не выдаёт доступ второй раз.
+  assert.deepEqual(await library.applyAction(proposal.action), outcome);
+  assert.equal(state.calls.filter(c => c.startsWith("human:share:")).length, 1);
+});
+
+test("сценарий: отказ человека — доступ не выдаётся, агент видит «отклонено»", async () => {
+  const { library, state, account } = fixture();
+  Object.assign(account, humanActions(state.calls).account);
+  const session = await library.startSession(authorizer(state) as any);
+  const proposal = await session.shareDocument("p1", "doc-plan", "u-nik", "read");
+  await library.rejectAction(proposal.action);
+  await assert.rejects(library.applyAction(proposal.action), /отклонено/);
+  assert.ok(!state.calls.some(c => c.startsWith("human:share:") || c.startsWith("execute:")));
+  assert.equal((await session.actionStatus(proposal.action)).status, "rejected");
+});
+
+test("сценарий «отправь документ на согласование»: карточка, «Разрешать всегда» доступно, после подтверждения — запрос ответственным", async () => {
+  const { library, state, account } = fixture();
+  Object.assign(account, humanActions(state.calls, { policy: true }).account);
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  const proposal = await session.requestReview("Продажи");
+  const submitted = auth.submitted[0].description as any;
+  assert.equal(submitted.title, "Отправить на согласование изменения проекта «Продажи»");
+  assert.equal(submitted.card.icon, "review");
+  assert.equal(submitted.autoApprovable, true);
+  assert.equal(submitted.ownerApprovalRequired, undefined);
+  assert.ok(!state.calls.some(c => c.startsWith("human:review:")));
+  const outcome = await library.applyAction(proposal.action);
+  assert.deepEqual(outcome, { summary: "Изменения проекта «Продажи» отправлены ответственным" });
+  assert.ok(state.calls.includes(`human:review:p1:${HEAD_A}:${HEAD_S}`));
+});
+
+test("права человека ∩ область агента: проект вне области, неоднозначный сотрудник и лишние аргументы — отказ до карточки", async () => {
+  const narrow = fixture();
+  Object.assign(narrow.account, humanActions(narrow.state.calls, { scope: ["p2"] }).account);
+  const auth = authorizer(narrow.state);
+  const session = await narrow.library.startSession(auth as any);
+  await assert.rejects(session.shareDocument("Продажи", "План продаж", "Николай Деревцов", "write"), /не подключён к агенту[\s\S]*proposeConnectProject/);
+  assert.equal(auth.submitted.length, 0);
+  const wide = fixture();
+  Object.assign(wide.account, humanActions(wide.state.calls).account);
+  const wideAuth = authorizer(wide.state);
+  const other = await wide.library.startSession(wideAuth as any);
+  await assert.rejects(other.shareDocument("p1", "План продаж", "Деревцов", "write"), /несколько[\s\S]*Николай Деревцов, Ольга Деревцова/);
+  await assert.rejects(other.shareDocument("p1", "План продаж", "Ольга Деревцова", "read"), /Доступ уже такой/);
+  await assert.rejects(other.shareDocument("p1", "План продаж", "Николай", "admin" as any), /mode/);
+  await assert.rejects(other.requestReview("p1"), /согласование не включено/);
+  assert.equal(wideAuth.submitted.length, 0);
+});
+
+test("сведения для агента: кому открыт документ — после наблюдения владельцу", async () => {
+  const { library, state, account } = fixture();
+  Object.assign(account, humanActions(state.calls).account);
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  const access = await session.documentAccess("Продажи", "План продаж");
+  assert.deepEqual(access, { project: "Продажи", document: "План продаж.docx", people: [
+    { id: "u-nik", name: "Николай Деревцов", access: "none" }, { id: "u-olga", name: "Ольга Деревцова", access: "read" },
+  ] });
+  assert.ok(auth.seen.some(o => (o as any).ownerOnly && o.title === "Сведения Mnemos"));
+  const denied = await library.startSession(authorizer(state, true) as any);
+  await assert.rejects(denied.documentAccess("p1", "План продаж"), /отклонено/);
+});
+
+test("карточка-переход: ход агента не останавливается, кнопка ведёт в раздел; отключение по виду уходит в нужное действие", async () => {
+  const { library, state, account } = fixture();
+  const requests: any[] = [];
+  Object.assign(account, {
+    async prepareAgentAction(request: any) {
+      requests.push(request);
+      if (request.kind === "open_screen") return { kind: "open_screen", title: "Подключить GitHub", details: ["Вход на GitHub делает человек"], icon: "connection", ownerOnly: false, resolved: { target: "github", project: "" }, open: { section: "connections", label: "Открыть «Подключения»" } };
+      return { kind: request.kind, title: "Отключить подключение аккаунта GitHub «acme»", details: ["Синхронизации остановятся"], icon: "code", ownerOnly: true, resolved: { type: "github", connection: "in-1", name: "acme", revision: 0, project: "" } };
+    },
+    async executeAgentAction(kind: string) { state.calls.push(`execute:${kind}`); return { summary: kind === "open_screen" ? "Экран открыт" : "Подключение «acme» отключено" }; },
+  });
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  const opened = await session.openScreen("github");
+  const card = auth.submitted[0].description as any;
+  assert.equal(card.awaitDecision, false);
+  assert.equal(card.autoApprovable, true);
+  assert.equal(card.ownerApprovalRequired, undefined);
+  assert.deepEqual(card.card.open, { section: "connections", label: "Открыть «Подключения»" });
+  assert.deepEqual(await library.applyAction(opened.action), { summary: "Экран открыт" });
+
+  await session.disableConnection("github", "acme");
+  await session.disableConnection("mail", "Почта продаж");
+  assert.deepEqual(requests.slice(1), [{ kind: "disconnect_source", type: "github", connection: "acme" }, { kind: "disable_connection", type: "mail", connection: "Почта продаж" }]);
+  const disconnect = auth.submitted[1].description as any;
+  assert.equal(disconnect.awaitDecision, true);
+  assert.equal(disconnect.ownerApprovalRequired, true);
+  assert.equal(disconnect.card.open, undefined);
+  assert.ok(!state.calls.includes("execute:disconnect_source"), "до подтверждения не отключается");
 });
