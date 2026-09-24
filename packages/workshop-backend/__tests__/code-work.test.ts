@@ -369,6 +369,52 @@ describe("переключатель «Код» и маршрутизация с
   });
 });
 
+describe("Jev подключает проекты к беседе", () => {
+  const CHOICES = [
+    {accountId: 1, projectId: "p", title: "Продажи", hasCode: true},
+    {accountId: 1, projectId: "m", title: "Mnemos", hasCode: true},
+    {accountId: 1, projectId: "d", title: "Документы", hasCode: false},
+  ];
+  // Решения по кандидатам: подключённые идут первыми, затем остальные в порядке списка человека.
+  const withProjects = (route: "code" | "chat", projects: {index: number; include: boolean; confidence: number}[], confidence = 0.9) =>
+    async () => ({ok: true as const, decision: {route, confidence, projects}});
+
+  it("беседа без проекта: Jev подключает «Mnemos», и вопрос о коммите уходит агенту кода в этот проект", async () => {
+    let seen: unknown;
+    const {route, projects} = await routeChatMessage({mode: "auto", meta: baseMeta(), message: "какой коммит был последним в мнемосе?",
+      projectChoices: async () => CHOICES,
+      ask: async ctx => { seen = ctx; return withProjects("code", [{index: 1, include: true, confidence: 0.95}, {index: 0, include: false, confidence: 0.9}])(); }});
+    expect((seen as {projectCandidates: {title: string}[]}).projectCandidates.map(p => p.title)).toEqual(["Продажи", "Mnemos", "Документы"]);
+    expect(projects!.added.map(p => p.projectId)).toEqual(["m"]);
+    expect(projects!.added[0]).toMatchObject({pinnedBy: "agent", hasCode: true});
+    expect(route).toEqual({target: "code", projectId: "m", continuing: false, reason: "router"});
+  });
+
+  it("проект, подключённый человеком, Jev не убирает; подключённый агентом — убирает только уверенно", async () => {
+    const meta = baseMeta({projectContext: {...PROJECTS, projects: [
+      {accountId: 1, projectId: "p", title: "Продажи", pinnedBy: "user" as const, hasCode: true},
+      {accountId: 1, projectId: "d", title: "Документы", pinnedBy: "agent" as const},
+    ]}});
+    const unsure = await routeChatMessage({mode: "off", meta, message: "спасибо", projectChoices: async () => CHOICES,
+      ask: withProjects("chat", [{index: 0, include: false, confidence: 0.99}, {index: 1, include: false, confidence: 0.7}])});
+    expect(unsure.projects).toEqual({added: [], removed: []});
+    expect(unsure.route).toEqual({target: "chat", reason: "off"});
+    const sure = await routeChatMessage({mode: "off", meta, message: "спасибо", projectChoices: async () => CHOICES,
+      ask: withProjects("chat", [{index: 1, include: false, confidence: 0.9}])});
+    expect(sure.projects!.removed.map(p => p.projectId)).toEqual(["d"]);
+  });
+
+  it("проект живой работы с кодом не убирается; без ключа Jev проекты не меняются", async () => {
+    const meta = baseMeta({projectContext: {...PROJECTS, projects: [{accountId: 1, projectId: "p", title: "Продажи", pinnedBy: "agent" as const, hasCode: true}]}, codeWork: liveWork()});
+    const {projects} = await routeChatMessage({mode: "auto", meta, message: "а теперь документы", projectChoices: async () => CHOICES,
+      ask: withProjects("chat", [{index: 0, include: false, confidence: 0.99}])});
+    expect(projects!.removed).toEqual([]);
+    const noKey = await routeChatMessage({mode: "auto", meta: baseMeta(), message: "мнемос", projectChoices: async () => CHOICES});
+    expect(noKey.projects).toBeUndefined();
+    expect(noKey.route).toEqual({target: "chat", reason: "no_code_project"});
+  });
+});
+
 const msg = (sequence: number, author: "user" | "agent", message: string, extra: Partial<AiChatMessage> = {}): AiChatMessage =>
   ({chatId: 1, sequence, timestamp: new Date(0), author: {type: author, id: author, name: author === "user" ? "Анна" : "Агент"}, type: "message", message, ...extra} as AiChatMessage);
 

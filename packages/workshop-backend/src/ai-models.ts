@@ -570,6 +570,27 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
         sessionAffinity,
       });
     case "openai":
+      if (config.openRouter) {
+        return makeHandle({
+          model: {
+            id: config.model,
+            name: config.model,
+            api: "openai-completions",
+            provider: "openrouter",
+            baseUrl: config.apiUrl ?? "https://openrouter.ai/api/v1",
+            // С reasoning: true и без уровня рассуждения запрос несёт reasoning.effort = "none":
+            // иначе DeepSeek рассуждает и отвечает в разы дольше (замер на SophAI 24.09: 6,6 с
+            // против 0,9 с).
+            reasoning: true,
+            input: ["text"],
+            cost: ZERO_COST,
+            ...window,
+            compat: {thinkingFormat: "openrouter", openRouterRouting: {order: config.openRouter.order, allow_fallbacks: config.openRouter.allowFallbacks}},
+          },
+          apiKey: config.apiToken,
+          sessionAffinity,
+        });
+      }
       return makeHandle({
         model: {
           id: config.model,

@@ -1061,6 +1061,10 @@ export type AiModelConfig = {
   // useful in order to use AI proxy products like Cloudflare's AI gateway, or even to use an
   // alternative provider that provides a compatible API.
   apiUrl?: string;
+
+  // Только для OpenRouter (провайдер "openai" с apiUrl на openrouter.ai): запрос идёт в чат
+  // OpenRouter, а не в Responses API, и несёт выбор провайдеров. Рассуждение выключено.
+  openRouter?: {order: string[]; allowFallbacks: boolean};
 };
 
 // Workers AI adds the response cap to the prompt and rejects a request whose total exceeds the

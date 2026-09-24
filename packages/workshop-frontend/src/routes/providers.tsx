@@ -258,8 +258,8 @@ function ProvidersPage() {
                   <strong className="font-medium text-kumo-default">Быстрая модель:</strong>{' '}
                   {quickModel
                     ? `${models.find((m) => m.id === quickModel)?.name ?? quickModel}.`
-                    : 'не выбрана.'}{' '}
-                  Нужна для простых задач, например для названий бесед. Нажмите на модель, чтобы выбрать её.
+                    : 'DeepSeek (по умолчанию).'}{' '}
+                  Названия бесед и перевод размышлений. Чтобы поставить другую, нажмите на модель.
                 </span>
               </Notice>
             )}

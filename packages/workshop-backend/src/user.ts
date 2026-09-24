@@ -20,6 +20,7 @@ import type { AdminSettings } from "./admin-settings.js";
 import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
 import { filterEnabledResources, isResourceDisabled, readAdminConfig } from "./admin-config.js";
 import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
+import { installationQuickModel, type OpenRouterInstallConfig } from "./code-router.js";
 
 const logger = createWorkshopLogger("workshop.user");
 
@@ -761,11 +762,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       result.quickModel = gwConfig.getQuickModelConfig();
     } else {
       let quickModelId = this.storage.quickModel.get();
-      if (quickModelId) {
-        let quickModel = this.storage.aiModels.get(quickModelId);
-        if (quickModel) {
-          result.quickModel = quickModel.config;
-        }
+      let quickModel = quickModelId ? this.storage.aiModels.get(quickModelId) : undefined;
+      // Быструю модель не выбирают заранее: без выбора названия бесед и перевод размышлений
+      // делает DeepSeek установки (через её ключ OpenRouter), иначе первая модель человека.
+      let fallback = installationQuickModel(this.env as unknown as OpenRouterInstallConfig)
+        ?? [...this.storage.aiModels.list()][0]?.config;
+      let config = quickModel?.config ?? fallback;
+      if (config) {
+        result.quickModel = config;
       }
     }
     return result;

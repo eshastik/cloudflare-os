@@ -48,6 +48,26 @@ describe("маршрутизатор Jev", () => {
     expect(Object.keys(body.questions.route.criteria)).toEqual(["code", "chat"]);
   });
 
+  it("проекты-кандидаты: вопрос да/нет на каждый, ответы разбираются по индексу", async () => {
+    const ctx = {...context, projectCandidates: [{title: "Сайт", pinned: true, hasCode: true}, {title: "Mnemos", pinned: false, hasCode: true}]};
+    expect(codeRouteState(ctx)).toContain("Сейчас к беседе подключены проекты: «Сайт»");
+    expect(codeRouteState(ctx)).toContain("«Mnemos» (есть код)");
+    let body: {questions: Record<string, {criteria: Record<string, string>; instructions: string}>} | undefined;
+    const result = await askJev({apiKey: "k", context: ctx, fetcher: async (_url, init) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({answers: {
+        route: {choice: "code", confidence: 0.9},
+        p0: {choice: "no", confidence: 0.85},
+        p1: {choice: "yes", probabilities: {yes: 0.97, no: 0.03}},
+      }}));
+    }});
+    expect(Object.keys(body!.questions)).toEqual(["route", "p0", "p1"]);
+    expect(Object.keys(body!.questions.p1.criteria)).toEqual(["yes", "no"]);
+    expect(body!.questions.p1.instructions).toContain("«Mnemos»");
+    expect(result).toEqual({ok: true, decision: {route: "code", confidence: 0.9, projects: [
+      {index: 0, include: false, confidence: 0.85}, {index: 1, include: true, confidence: 0.97}]}});
+  });
+
   it("срок, ошибка сети, плохой ответ — не бросает, а возвращает код ошибки без ключа", async () => {
     const hang = (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init.signal!.addEventListener("abort", () => reject(new Error("aborted")));

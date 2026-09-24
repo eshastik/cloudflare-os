@@ -1,10 +1,10 @@
 // Работа с кодом в беседе: набор проектов, переключатель «Код», выбор, кому отвечать на сообщение
 // человека, ход агента кода, «Что изменилось» и «Принять». Хранится в метаданных беседы.
 import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
-import {chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+import {MAX_CHAT_PROJECTS, chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend, type CodeWorkFiles} from "./code-work.js";
-import {JEV_CONFIDENCE_THRESHOLD, type CodeRouteContext, type JevResult} from "./code-router.js";
+import {JEV_CONFIDENCE_THRESHOLD, MAX_PROJECT_CANDIDATES, type CodeRouteContext, type JevProjectDecision, type JevResult} from "./code-router.js";
 import {
   ATTACHMENT_MAX_BYTES, ATTACHMENTS_DIR, CONTEXT_FILE, CONTEXT_FILE_MAX_BYTES, buildCodeContextPack, bytesToBase64, codeWorkBrief,
   planAttachments, textBytes, withContextFile, withContextPack, type PlannedAttachment,
@@ -150,32 +150,112 @@ export type ChatRouteInput = {
   lastAgentReply?: string;
   /** Вопрос к Jev; нет — маршрутизатор недоступен (например, нет ключа). */
   ask?: (context: CodeRouteContext) => Promise<JevResult>;
+  /** Проекты человека: Jev решает, какие из них подключить к беседе и какие убрать. */
+  projectChoices?: () => Promise<ChatProjectChoice[]>;
 };
 
-/** Кому отвечать на сообщение человека: агенту кода или агенту беседы. */
-export async function routeChatMessage(input: ChatRouteInput): Promise<{route: ChatRoute; jev?: JevResult}> {
-  if (input.mode === "off") return {route: {target: "chat", reason: "off"}};
-  const target = chatCodeTarget(input.meta);
-  if (!target) return {route: {target: "chat", reason: "no_code_project"}};
-  let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
-  if (input.mode === "on") return {route: toCode("on")};
+/** Что Jev поменял в наборе проектов беседы. */
+export type ChatProjectChanges = {added: ChatProject[]; removed: ChatProject[]};
 
+/** Убрать проект из беседы Jev может только увереннее, чем подключить: ошибочно убранный проект
+ *  лишает агента материалов, ошибочно подключённый — лишь добавляет их. */
+export const JEV_REMOVE_CONFIDENCE = 0.8;
+
+type ProjectCandidate = ChatProject & {pinned: boolean};
+
+const projectKey = (p: {accountId: number; projectId: string}) => `${p.accountId}:${p.projectId}`;
+
+/** Подключённые проекты первыми, затем остальные проекты человека. */
+function projectCandidates(pinned: ChatProject[], choices: ChatProjectChoice[]): ProjectCandidate[] {
+  let byKey = new Map(choices.map(c => [projectKey(c), c]));
+  let out: ProjectCandidate[] = pinned.map(p => {
+    let choice = byKey.get(projectKey(p));
+    return {...p, pinned: true, ...(p.hasCode || choice?.hasCode ? {hasCode: true} : {})};
+  });
+  let seen = new Set(out.map(projectKey));
+  for (let c of choices) {
+    if (seen.has(projectKey(c))) continue;
+    seen.add(projectKey(c));
+    out.push({accountId: c.accountId, projectId: c.projectId, title: c.title, pinnedBy: "agent", pinned: false, ...(c.hasCode ? {hasCode: true} : {})});
+  }
+  return out.slice(0, MAX_PROJECT_CANDIDATES);
+}
+
+/** Правила применения решений Jev. Проект, подключённый человеком, и проект живой работы с кодом
+ *  Jev не убирает; больше MAX_CHAT_PROJECTS проектов не подключает. */
+export function chatProjectChanges(candidates: ProjectCandidate[], decisions: JevProjectDecision[], meta: AiChatMetadata): ChatProjectChanges {
+  let added: ChatProject[] = [], removed: ChatProject[] = [];
+  let work = meta.codeWork && codeWorkAlive(meta.codeWork.state) ? meta.codeWork : undefined;
+  let count = candidates.filter(c => c.pinned).length;
+  for (let d of decisions) {
+    let c = candidates[d.index];
+    if (!c) continue;
+    let {pinned: _pinned, ...project} = c;
+    if (d.include && !c.pinned && d.confidence >= JEV_CONFIDENCE_THRESHOLD && count < MAX_CHAT_PROJECTS) {
+      added.push({...project, pinnedBy: "agent"});
+      count++;
+    } else if (!d.include && c.pinned && d.confidence >= JEV_REMOVE_CONFIDENCE && c.pinnedBy !== "user" &&
+        !(work && work.projectId === c.projectId)) {
+      removed.push(project);
+      count--;
+    }
+  }
+  return {added, removed};
+}
+
+function withProjectChanges(meta: AiChatMetadata, changes: ChatProjectChanges, userId?: string, profileId?: string): AiChatMetadata {
+  let gone = new Set(changes.removed.map(projectKey));
+  let projects = [...chatProjects(meta.projectContext).filter(p => !gone.has(projectKey(p))), ...changes.added];
+  if (!projects.length) return meta.projectContext ? {...meta, projectContext: {...meta.projectContext, projects: []}} : meta;
+  let first = projects[0];
+  return {...meta, projectContext: {accountId: first.accountId, projectId: first.projectId, title: first.title, projects,
+    // Без userId набор нужен только для выбора маршрута и не записывается.
+    creatorId: meta.projectContext?.creatorId ?? userId ?? "", creatorProfileId: meta.projectContext?.creatorProfileId ?? profileId ?? ""}};
+}
+
+/** Записать решение Jev о проектах в беседу. */
+export function applyChatProjectChanges(host: ChatCodeWorkHost, chatId: number, changes: ChatProjectChanges, userId: string, profileId: string): void {
+  if (!changes.added.length && !changes.removed.length) return;
+  host.putChatMeta(withProjectChanges(metaOrThrow(host, chatId), changes, userId, profileId));
+}
+
+/** Кому отвечать на сообщение человека: агенту кода или агенту беседы. Тем же вопросом Jev
+ *  решает, какие проекты человека нужны беседе; маршрут выбирается уже по новому набору. */
+export async function routeChatMessage(input: ChatRouteInput): Promise<{route: ChatRoute; jev?: JevResult; projects?: ChatProjectChanges}> {
+  let pinned = chatProjects(input.meta.projectContext);
+  let choices = input.ask && input.projectChoices ? await input.projectChoices().catch(() => []) : [];
+  let candidates = choices.length ? projectCandidates(pinned, choices) : [];
   let work = input.meta.codeWork;
   let alive = !!work && codeWorkAlive(work.state);
-  let context: CodeRouteContext = {
-    message: input.message,
-    ...(alive ? {work: {projectTitle: work!.projectTitle, topic: codeWorkBrief(work!, 300)}} : {}),
-    lastReplyByCode: codeWorkForeground(input.meta),
-    ...(input.lastAgentReply ? {lastAgentReply: input.lastAgentReply} : {}),
-    codeProjects: chatProjects(input.meta.projectContext).filter(p => p.hasCode).map(p => p.title),
-  };
-  let jev: JevResult = input.ask ? await input.ask(context) : {ok: false, error: "no_key"};
-  if (!jev.ok) {
-    // Разговор с агентом кода не обрывается из-за сбоя диспетчера; остальное — агенту беседы.
-    return {route: codeWorkForeground(input.meta) ? toCode("router_failed") : {target: "chat", reason: "router_failed"}, jev};
+  let before = chatCodeTarget(input.meta);
+  let jev: JevResult | undefined;
+  if (input.ask && (candidates.length || (input.mode === "auto" && before))) {
+    jev = await input.ask({
+      message: input.message,
+      ...(alive ? {work: {projectTitle: work!.projectTitle, topic: codeWorkBrief(work!, 300)}} : {}),
+      lastReplyByCode: codeWorkForeground(input.meta),
+      ...(input.lastAgentReply ? {lastAgentReply: input.lastAgentReply} : {}),
+      codeProjects: pinned.filter(p => p.hasCode).map(p => p.title),
+      ...(candidates.length ? {projectCandidates: candidates.map(c => ({title: c.title, pinned: c.pinned, hasCode: !!c.hasCode}))} : {}),
+    });
   }
-  if (jev.decision.confidence < JEV_CONFIDENCE_THRESHOLD) return {route: {target: "chat", reason: "router_unsure"}, jev};
-  return {route: jev.decision.route === "code" ? toCode("router") : {target: "chat", reason: "router"}, jev};
+  let projects = jev?.ok && candidates.length ? chatProjectChanges(candidates, jev.decision.projects ?? [], input.meta) : undefined;
+  let meta = projects ? withProjectChanges(input.meta, projects) : input.meta;
+  let done = (route: ChatRoute) => ({route, ...(jev ? {jev} : {}), ...(projects ? {projects} : {})});
+
+  if (input.mode === "off") return done({target: "chat", reason: "off"});
+  const target = chatCodeTarget(meta);
+  if (!target) return done({target: "chat", reason: "no_code_project"});
+  let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
+  if (input.mode === "on") return done(toCode("on"));
+
+  let answer: JevResult = jev ?? {ok: false, error: "no_key"};
+  if (!answer.ok) {
+    // Разговор с агентом кода не обрывается из-за сбоя диспетчера; остальное — агенту беседы.
+    return {...done(codeWorkForeground(meta) ? toCode("router_failed") : {target: "chat", reason: "router_failed"}), jev: answer};
+  }
+  if (answer.decision.confidence < JEV_CONFIDENCE_THRESHOLD) return done({target: "chat", reason: "router_unsure"});
+  return done(answer.decision.route === "code" ? toCode("router") : {target: "chat", reason: "router"});
 }
 
 function pinProject(meta: AiChatMetadata, project: ChatProject, userId: string, profileId: string): void {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AiChatAuthorInfo, AiModelConfig } from "@gadgets/workshop-shared/api";
 import { getModel, type ModelHandle } from "../src/ai-models.js";
+import { installationQuickModel } from "../src/code-router.js";
 
 // These tests exercise the real pi-ai stack: no module mocks. Routing decisions are asserted on
 // the returned handle's model descriptor (baseUrl/id/api) and log route, and request-level
@@ -281,6 +282,20 @@ describe("getModel direct routing (no gateway)", () => {
     expect(request.url).toBe("https://api.anthropic.com/v1/messages");
     expect(request.headers.get("x-api-key")).toBe("direct-api-token");
     expect(request.headers.get("cf-aig-metadata")).toBeNull();
+  }, 15000);
+
+  it("быстрая модель установки: чат OpenRouter, провайдеры владельца без запасных, без рассуждения", async () => {
+    const quick = installationQuickModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter"})!;
+    expect(installationQuickModel({MNEMOS_STT_API_KEY: "sk-other", MNEMOS_STT_URL: "https://api.openai.com/v1"})).toBeUndefined();
+    const handle = getModel(env({ CF_AI_GATEWAY: undefined }), quick, INITIATOR);
+    expect(handle.model.api).toBe("openai-completions");
+    const request = await captureRequest(handle);
+    expect(request.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(request.headers.get("authorization")).toBe("Bearer sk-or");
+    const body = JSON.parse(request.body);
+    expect(body.model).toBe("deepseek/deepseek-v4-flash-0731");
+    expect(body.provider).toEqual({order: ["baseten/fp8", "wafer/fast", "coreweave/fp8", "parasail/fp8"], allow_fallbacks: false});
+    expect(body.reasoning).toEqual({effort: "none"});
   }, 15000);
 
   it("uses the config's own account and token for direct Workers AI", async () => {

@@ -1,6 +1,6 @@
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
-import {acceptChatCodeChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
+import {acceptChatCodeChanges, applyChatProjectChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
 import {askJev, installationOpenRouterKey, type OpenRouterInstallConfig} from "./code-router.js";
 import {CONTEXT_PACK_LOOKBACK, codeWorkBrief} from "./code-context.js";
@@ -6095,10 +6095,18 @@ class OverseerImpl implements AgentHooks {
     let mode = chatCodeMode(meta);
     let apiKey = installationOpenRouterKey(this.env as unknown as OpenRouterInstallConfig);
     let startedAt = Date.now();
-    let {route, jev} = await routeChatMessage({
+    let {route, jev, projects} = await routeChatMessage({
       mode, meta, message: last.message, lastAgentReply: lastAgentReply(recent.slice(1)),
       ...(apiKey ? {ask: context => askJev({apiKey, context, signal})} : {}),
+      projectChoices: async () => {
+        let userId = this.#codeWorkUserId(chatId, initiator);
+        return userId ? await this.users.get(this.users.idFromString(userId)).listChatProjects() : [];
+      },
     });
+    if (projects && (projects.added.length || projects.removed.length)) {
+      let userId = this.#codeWorkUserId(chatId, initiator);
+      if (userId) applyChatProjectChanges(this.codeWorkHost(), chatId, projects, userId, initiator.id);
+    }
     let cost = jev?.ok ? jev.decision.cost : undefined;
     if (cost) this.#addChatCost(chatId, cost);
     // Текст сообщения и ключ в журнал не пишутся.
@@ -6107,6 +6115,7 @@ class OverseerImpl implements AgentHooks {
       ...(jev ? jev.ok
         ? {codeRouterChoice: jev.decision.route, codeRouterConfidence: jev.decision.confidence, ...(cost !== undefined ? {costUsd: cost} : {})}
         : {codeRouterError: jev.error} : {}),
+      ...(projects ? {projectsAdded: projects.added.length, projectsRemoved: projects.removed.length} : {}),
       durationMs: Date.now() - startedAt,
     });
     signal.throwIfAborted();

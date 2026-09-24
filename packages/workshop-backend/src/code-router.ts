@@ -2,6 +2,8 @@
 // решает, кому отвечать на сообщение человека — агенту кода (OpenCode) или агенту беседы.
 // Одно решение стоит порядка $0.00002 и занимает меньше секунды; при сбое беседа не ждёт.
 
+import type {AiModelConfig} from "@gadgets/workshop-shared/api";
+
 export const JEV_URL = "https://openrouter.ai/api/v1/systemone";
 export const JEV_MODEL = "jev-1.13";
 /** Ниже этой уверенности сообщение идёт агенту беседы: он сам решит, звать ли агента кода. */
@@ -24,9 +26,13 @@ export type CodeRouteContext = {
   lastAgentReply?: string;
   /** Проекты беседы с подключённым кодом. */
   codeProjects: string[];
+  /** Проекты человека, которые Jev может подключить к беседе или убрать из неё. */
+  projectCandidates?: {title: string; pinned: boolean; hasCode: boolean}[];
 };
 
-export type JevDecision = {route: CodeRoute; confidence: number; cost?: number};
+/** projects — решение по каждому кандидату projectCandidates (по индексу): нужен ли он беседе. */
+export type JevProjectDecision = {index: number; include: boolean; confidence: number};
+export type JevDecision = {route: CodeRoute; confidence: number; cost?: number; projects?: JevProjectDecision[]};
 export type JevResult = {ok: true; decision: JevDecision} | {ok: false; error: string};
 
 function clip(text: string, max: number): string {
@@ -46,6 +52,11 @@ export function codeRouteState(ctx: CodeRouteContext): string {
   lines.push(ctx.codeProjects.length
     ? `Проекты беседы с кодом: ${ctx.codeProjects.map(p => `«${p}»`).join(", ")}.`
     : "В беседе нет проекта с кодом.");
+  if (ctx.projectCandidates?.length) {
+    let pinned = ctx.projectCandidates.filter(p => p.pinned);
+    lines.push(pinned.length ? `Сейчас к беседе подключены проекты: ${pinned.map(p => `«${p.title}»`).join(", ")}.` : "Сейчас к беседе не подключён ни один проект.");
+    lines.push(`Все проекты человека: ${ctx.projectCandidates.map(p => `«${p.title}»${p.hasCode ? " (есть код)" : ""}`).join(", ")}.`);
+  }
   if (ctx.lastAgentReply?.trim()) {
     lines.push(`Предыдущий ответ дал ${ctx.lastReplyByCode ? "агент кода" : "агент беседы"}: «${clip(ctx.lastAgentReply, MAX_REPLY)}»`);
   }
@@ -65,12 +76,42 @@ const CRITERIA: Record<CodeRoute, string> = {
   chat: "Разговор без работы в репозитории: благодарность, приветствие, просьба объяснить или пересказать уже сделанное простыми словами, общий вопрос, вопрос не про код, работа с документами, почтой, календарём или памятью организации.",
 };
 
+/** Сколько проектов человека спрашивается у Jev за одно сообщение: подключённые идут первыми. */
+export const MAX_PROJECT_CANDIDATES = 24;
+
+function projectQuestion(title: string, pinned: boolean) {
+  return {
+    type: "choice",
+    instructions: `Нужен ли беседе проект «${title}», чтобы ответить на новое сообщение и продолжить разговор? ` +
+      `Сейчас он ${pinned ? "подключён" : "не подключён"}. Учитывай названия по-русски и по-английски, сокращения и склонения, ` +
+      "тему всей беседы, а не только последнего сообщения. Подключённый проект, о котором говорили раньше, не убирай из-за короткой реплики.",
+    criteria: {
+      yes: "Сообщение или тема беседы касается этого проекта: его документов, кода, людей или дел.",
+      no: "Беседа не касается этого проекта.",
+    },
+  };
+}
+
 export function jevRequestBody(ctx: CodeRouteContext): string {
-  return JSON.stringify({
-    model: JEV_MODEL,
-    state: codeRouteState(ctx),
-    questions: {route: {type: "choice", instructions: INSTRUCTIONS, criteria: CRITERIA}},
-  });
+  let questions: Record<string, unknown> = {route: {type: "choice", instructions: INSTRUCTIONS, criteria: CRITERIA}};
+  (ctx.projectCandidates ?? []).slice(0, MAX_PROJECT_CANDIDATES)
+    .forEach((p, i) => { questions[`p${i}`] = projectQuestion(p.title, p.pinned); });
+  return JSON.stringify({model: JEV_MODEL, state: codeRouteState(ctx), questions});
+}
+
+/** Решения Jev по проектам-кандидатам; вопрос без разборчивого ответа пропускается. */
+export function parseJevProjects(value: unknown, count: number): JevProjectDecision[] {
+  let answers = (value as {answers?: Record<string, {choice?: unknown; confidence?: unknown; probabilities?: Record<string, unknown>}>})?.answers ?? {};
+  let out: JevProjectDecision[] = [];
+  for (let index = 0; index < Math.min(count, MAX_PROJECT_CANDIDATES); index++) {
+    let answer = answers[`p${index}`];
+    let choice = answer?.choice;
+    if (choice !== "yes" && choice !== "no") continue;
+    let confidence = typeof answer!.confidence === "number" ? answer!.confidence : answer!.probabilities?.[choice];
+    if (typeof confidence !== "number" || !Number.isFinite(confidence)) continue;
+    out.push({index, include: choice === "yes", confidence: Math.min(1, Math.max(0, confidence))});
+  }
+  return out;
 }
 
 /** Разбор ответа System One. null — ответ не того вида. */
@@ -109,14 +150,29 @@ export async function askJev(request: JevRequest): Promise<JevResult> {
       signal: controller.signal,
     });
     if (!response.ok) return {ok: false, error: `http_${response.status}`};
-    let decision = parseJevAnswer(await response.json());
-    return decision ? {ok: true, decision} : {ok: false, error: "bad_answer"};
+    let body = await response.json();
+    let decision = parseJevAnswer(body);
+    if (!decision) return {ok: false, error: "bad_answer"};
+    let count = request.context.projectCandidates?.length ?? 0;
+    return {ok: true, decision: count ? {...decision, projects: parseJevProjects(body, count)} : decision};
   } catch {
     return {ok: false, error: controller.signal.aborted ? "timeout" : "network"};
   } finally {
     clearTimeout(timer);
     request.signal?.removeEventListener("abort", onOuterAbort);
   }
+}
+
+/** Быстрая модель установки для служебных задач (названия бесед, перевод размышлений), если
+ *  человек не выбрал свою: та же модель и те же провайдеры OpenRouter, что у агента кода
+ *  (решение владельца 2026-09-23, mnemos services/internal/workspace/config.go). */
+export const QUICK_MODEL = "deepseek/deepseek-v4-flash-0731";
+export const QUICK_MODEL_PROVIDERS = ["baseten/fp8", "wafer/fast", "coreweave/fp8", "parasail/fp8"];
+
+export function installationQuickModel(env: OpenRouterInstallConfig): AiModelConfig | undefined {
+  let apiToken = installationOpenRouterKey(env);
+  return apiToken ? {provider: "openai", model: QUICK_MODEL, apiToken, apiUrl: "https://openrouter.ai/api/v1",
+    openRouter: {order: QUICK_MODEL_PROVIDERS, allowFallbacks: false}} : undefined;
 }
 
 /** Настройки установки, из которых берётся ключ OpenRouter. */

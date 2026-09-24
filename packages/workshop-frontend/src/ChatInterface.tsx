@@ -690,22 +690,9 @@ function rawToolCallSummary(
       const output = outputOf?.(tc);
       return { verb: output ? `Создал: ${localizedNoun(output.noun)}` : "Создал приложение", target: tc.input.title };
     }
-    case "executeCode": {
-      // Prefer the first non-empty line as a preview. `code` may be absent while the tool call's
-      // input is still streaming in, so guard against undefined.
-      const firstLine = tc.input.code
-        ?.split("\n")
-        .map((line) => line.trim())
-        .find((line) => line.length > 0);
-      return {
-        verb: "Выполнил действие",
-        target: firstLine
-          ? firstLine.length > 60
-            ? `${firstLine.slice(0, 57)}…`
-            : firstLine
-          : undefined,
-      };
-    }
+    // Код действия человеку ничего не говорит: он виден только в раскрытых подробностях шага.
+    case "executeCode":
+      return { verb: "Выполнил действие" };
     case "giveUp":
       return { verb: "Остановился" };
     case "webFetch": {
