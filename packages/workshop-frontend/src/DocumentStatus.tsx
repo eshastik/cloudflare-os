@@ -47,6 +47,8 @@ export type StatusInput = {
   access?: DocumentAccess
   /** Сохранение отклонено: документ изменил другой человек после версии, от которой правит редактор. */
   changedByOther?: boolean
+  /** Последнее сохранение не прошло (отказ Mnemos, обрыв связи): правки остаются в редакторе. */
+  saveFailed?: boolean
   now?: number
 }
 export type DocumentStatusKind = 'unread' | 'unverified' | 'unsaved' | 'saved' | 'reviewing' | 'rejected' | 'stale' | 'conflict' | 'ready' | 'published' | 'changed' | 'readonly'
@@ -82,8 +84,11 @@ const domainApproved = (domain: PublicationReview['domains'][number]) => domain.
 
 /** Три факта шапки и одно главное действие по состоянию; порядок проверок — от блокирующего к обычному. Непрочитанный факт не подменяется значением по умолчанию: без него главного действия нет. */
 export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
-  const { personalExists, conflict, invited, review, sharedVersion, savedAt, changes, access = 'owner', changedByOther, now = Date.now() } = input
+  const { personalExists, conflict, invited, review, sharedVersion, savedAt, changes, access = 'owner', changedByOther, saveFailed, now = Date.now() } = input
   const changed = (version: string, audience: string): DocumentStatusModel => ({ kind: 'changed', version, audience, saved: 'документ изменил другой участник · ваши правки не сохранены', tone: 'danger', primary: { kind: 'reopen', label: 'Открыть новую версию', hint: 'Ваши правки остаются в редакторе, пока вы не откроете новую версию: скопируйте нужное перед этим.' }, secondary: null })
+  // Упавшее сохранение не повторяется само: иначе строка навсегда остаётся «сохраняю…», а отказ не виден.
+  const failed = (version: string, audience: string): DocumentStatusModel => ({ kind: 'unsaved', version, audience, saved: 'не сохранено · Mnemos не принял сохранение', tone: 'danger', primary: { kind: 'save', label: 'Сохранить', hint: 'Сохранение не прошло: правки остаются в редакторе. Кнопка повторяет сохранение.' }, secondary: null })
+  const pending = changes === 'no-baseline' || (typeof changes === 'number' && changes > 0)
   if (access !== 'owner') {
     // Чужой документ: публикует и согласует владелец, здесь только правка общего документа.
     const version = access === 'write' ? 'Общий документ' : 'Общий документ · только чтение'
@@ -91,6 +96,7 @@ export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
     if (access === 'read') return { kind: 'readonly', version, audience, saved: 'правки здесь не сохраняются', tone: 'neutral', primary: null, secondary: null }
     if (changedByOther) return changed(version, audience)
     if (changes === 'unread') return { kind: 'unread', version, audience, saved: 'изменения редактора не прочитаны', tone: 'warning', primary: null, secondary: null }
+    if (saveFailed && pending) return failed(version, audience)
     if (changes === 'no-baseline' || changes > 0) return { kind: 'unsaved', version, audience, saved: changes === 'no-baseline' ? 'сохраняю…' : `не сохранено · ${pluralChanges(changes)}`, tone: 'warning', primary: { kind: 'save', label: 'Сохранить', hint: 'Правки сохраняются сами; кнопка сохраняет сразу.' }, secondary: null }
     return { kind: 'saved', version, audience, saved: savedAt ? `сохранено ${formatAgo(savedAt, now)}` : 'сохранено', tone: 'neutral', primary: null, secondary: null }
   }
@@ -101,6 +107,7 @@ export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
   if (changedByOther) return changed(personal, audience)
   if (conflict) return { kind: 'conflict', version: personal, audience, saved: `опубликована ${sharedVersion} · есть конфликт`, tone: 'info', primary: { kind: 'resolve', label: 'Разрешить конфликт', hint: 'Молчаливого слияния нет: либо разрешённый документ, либо явный конфликт.' }, secondary: null }
   if (changes === 'unread') return { kind: 'unread', version: personal, audience, saved: 'изменения редактора не прочитаны', tone: 'warning', primary: null, secondary: null }
+  if (saveFailed && pending) return failed(personal, audience)
   if (changes === 'no-baseline') return { kind: 'unverified', version: personal, audience, saved: 'сверить не с чем · ревизия сохранения неизвестна', tone: 'warning', primary: { kind: 'save', label: 'Сохранить', hint: 'Ревизия последнего сохранения неизвестна. После сохранения шапка снова сверяет редактор с личной версией.' }, secondary: null }
   if (changes > 0) return { kind: 'unsaved', version: personal, audience, saved: `не сохранено · ${pluralChanges(changes)}`, tone: 'warning', primary: { kind: 'save', label: 'Сохранить', hint: 'Снимок редактора уйдёт в личную версию. Пока не сохранено, отправить на согласование нельзя.' }, secondary: null }
   if (review) {
@@ -223,10 +230,12 @@ async function readEditorRevision(snapshotSource: NativeSnapshotSourceRef, forma
   return typeof revision === 'number' && Number.isSafeInteger(revision) ? revision : undefined
 }
 
-async function countChanges(snapshotSource: NativeSnapshotSourceRef, format: NativeDocumentFormat, binding: DocumentBinding, signal: AbortSignal): Promise<Changes> {
+/** binding может быть функцией: тогда ревизия сохранения берётся после чтения снимка, а не до него. */
+async function countChanges(snapshotSource: NativeSnapshotSourceRef, format: NativeDocumentFormat, current: DocumentBinding | (() => DocumentBinding), signal: AbortSignal): Promise<Changes> {
   try {
     const revision = await readEditorRevision(snapshotSource, format, signal)
     if (revision === undefined) return 'unread'
+    const binding = typeof current === 'function' ? current() : current
     return binding.savedRevision === undefined ? 'no-baseline' : Math.max(0, revision - binding.savedRevision)
   } catch { signal.throwIfAborted(); return 'unread' }
 }
@@ -261,10 +270,21 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const [saving, setSaving] = useState<string | undefined>()
   /** Сохранение отклонено: документ изменил другой человек. Сбрасывается открытием новой версии. */
   const [changedByOther, setChangedByOther] = useState(false)
+  /** Последнее сохранение не прошло; сбрасывается удачным сохранением или другим документом. */
+  const [saveFailed, setSaveFailed] = useState(false)
   const source = useRef<{ selector: Selector; downloads: Downloads | null; origin: string; writesOrigin: string } | null>(null)
   const lifetime = useRef(new AbortController())
+  /** Живёт, пока смонтирована шапка: перечитывание состояния его не обрывает. */
+  const mounted = useRef(new AbortController())
+  useEffect(() => { const own = new AbortController(); mounted.current = own; return () => own.abort() }, [])
   const working = useRef(false)
   const bindingKey = gadgetId === null ? '' : bindingKeyFor(gadgetId, format)
+  // Состояние перечитывается при смене документа, а не при каждой новой записи привязки: отметка
+  // сохранённой ревизии не должна обрывать идущие запросы и закрывать связь с Mnemos посреди сохранения.
+  const identity = binding ? JSON.stringify([binding.accountId, binding.scope, binding.resource]) : ''
+  const bindingRef = useRef(binding)
+  bindingRef.current = binding
+  useEffect(() => { setSaveFailed(false) }, [identity])
 
   useEffect(() => {
     let cancelled = false
@@ -285,6 +305,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
 
   useEffect(() => {
     if (!bindingKey) return
+    const binding = bindingRef.current
     const abort = new AbortController(); lifetime.current = abort
     let frame: GatekeeperUiFrame | null = null
     setBusy(true); setError(''); setProjectLink(null)
@@ -300,7 +321,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
         if (!binding) { setData({ state: null, review: null, conflict: false, participants: [], history: [], sharedVersion: '—', me, access: 'owner', head: '', name: null }); return }
         const loaded = await loadStatus(selector, downloads, binding, format, abort.signal)
         setData({ ...loaded, me })
-        setChanges(await countChanges(snapshotSource, format, binding, abort.signal))
+        // Ревизия сохранения берётся из привязки на момент подсчёта: её могли дописать, пока читались состояние и снимок.
+        setChanges(await countChanges(snapshotSource, format, () => bindingRef.current ?? binding, abort.signal))
         try {
         const [scopes, accounts] = await Promise.all([selector.scopes(), listAccounts(authenticatedApi)])
         abort.signal.throwIfAborted()
@@ -314,10 +336,20 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
       finally { if (!abort.signal.aborted) setBusy(false) }
     })()
     return () => { abort.abort(); source.current = null; disposeGatekeeperFrame(frame) }
-  }, [authenticatedApi, bindingKey, binding, format, snapshotSource, tick])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- привязка читается через bindingRef, перечитывание — по identity
+  }, [authenticatedApi, bindingKey, identity, format, snapshotSource, tick])
 
   // Правки после загрузки: ревизия редактора перечитывается по таймеру, пока документ привязан и состояние прочитано.
   const statusLoaded = !!data?.state
+  // Привязка того же документа получила ревизию сохранения: число правок пересчитывается без перечитывания состояния.
+  const savedRevision = binding?.savedRevision
+  useEffect(() => {
+    const current = bindingRef.current
+    if (!current || !statusLoaded) return
+    const abort = new AbortController()
+    void countChanges(snapshotSource, format, () => bindingRef.current ?? current, abort.signal).then(next => { if (!abort.signal.aborted) setChanges(next) }, () => {})
+    return () => abort.abort()
+  }, [savedRevision, statusLoaded, format, snapshotSource])
   useEffect(() => {
     if (!binding || !statusLoaded || !(changesPollMs > 0)) return
     const abort = new AbortController()
@@ -337,26 +369,30 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     if (!binding || !data || !data.state) return null
     const invited = data.participants === null ? null : data.participants.filter(p => p.mode !== '').map(p => p.name || 'Участник')
     const savedAt = data.history.find(h => h.personal && !h.actor)?.recordedAt ?? null
-    return deriveDocumentStatus({ personalExists: data.state.personal_exists && !!binding.resource, conflict: data.conflict, invited, review: data.review, sharedVersion: data.sharedVersion, savedAt, changes, access: data.access, changedByOther })
-  }, [binding, data, changes, changedByOther])
+    return deriveDocumentStatus({ personalExists: data.state.personal_exists && !!binding.resource, conflict: data.conflict, invited, review: data.review, sharedVersion: data.sharedVersion, savedAt, changes, access: data.access, changedByOther, saveFailed })
+  }, [binding, data, changes, changedByOther, saveFailed])
 
-  function bind(next: DocumentBinding | null) {
-    if (!bindingKey) return
+  /** Записать привязку во вкладку и на сервер рабочего места; обещание завершается, когда сервер ответил. */
+  function bind(next: DocumentBinding | null): Promise<void> {
+    if (!bindingKey) return Promise.resolve()
     if (next) sessionStorage.setItem(bindingKey, JSON.stringify(next)); else sessionStorage.removeItem(bindingKey)
     setBindingState(next)
     // Вкладка хранит копию; источник истины — сервер рабочего места.
-    if (mnemos) void Promise.resolve(gadget.setMnemosDocument(next)).catch(() => {})
+    return mnemos ? Promise.resolve(gadget.setMnemosDocument(next)).then(() => {}, () => {}) : Promise.resolve()
   }
-  /** Привязка, объявляющая текущую ревизию редактора сохранённой: сначала пишется сама привязка (за ней может идти перезагрузка), потом дочитывается ревизия.
+  /** Привязка, объявляющая текущую ревизию редактора сохранённой: сначала пишется сама привязка, потом дочитывается ревизия.
+   *  Обе записи дожидаются сервера рабочего места: за открытием документа сразу идёт перезагрузка страницы,
+   *  и привязка без ревизии после неё показывала бы несохранённые правки у нетронутого документа.
    *  unsaved — содержимое редактора ещё не в Mnemos (возврат старой версии): ревизия не объявляется, и автосохранение запишет его новой версией. */
   async function bindAtEditorRevision(next: DocumentBinding, unsaved = false) {
-    bind(next)
+    await bind(next)
     if (unsaved) return
     const key = bindingKey
     let revision: number | undefined
-    try { revision = await readEditorRevision(snapshotSource, format, lifetime.current.signal) } catch { /* без ревизии привязка остаётся: шапка скажет «сверить не с чем» */ }
+    // Не сигнал перечитывания состояния: новая привязка сама перезапускает перечитывание и оборвала бы этот запрос.
+    try { revision = await readEditorRevision(snapshotSource, format, mounted.current.signal) } catch { /* без ревизии привязка остаётся: шапка скажет «сверить не с чем» */ }
     if (revision === undefined || !key || !sameDocument(readBinding(key), next)) return
-    bind({ ...next, savedRevision: revision })
+    await bind({ ...next, savedRevision: revision })
   }
   async function run(action: (selector: Selector, signal: AbortSignal) => Promise<void>) {
     if (working.current || !source.current) return
@@ -423,13 +459,15 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
 
   // Автосохранение: заметив несохранённые правки, через autosaveMs отправляем их в документ сами.
   // Только чтение и отклонённое из-за чужой правки не сохраняются: второе ждёт решения человека.
-  const autosave = !!binding?.resource && !!data?.state && data.access !== 'read' && !changedByOther && data.conflict === false &&
+  // Упавшее сохранение само не повторяется: шапка показывает отказ, повтор — кнопкой «Сохранить».
+  // Прерванное перечитыванием состояния (связь закрыта) повторяется после него: data тогда новая.
+  const autosave = !!binding?.resource && !!data?.state && data.access !== 'read' && !changedByOther && !saveFailed && data.conflict === false &&
     (changes === 'no-baseline' || (typeof changes === 'number' && changes > 0))
   useEffect(() => {
     if (!autosave || !(autosaveMs > 0)) return
     const timer = setTimeout(() => { if (document.visibilityState !== 'hidden') void saveNow() }, autosaveMs)
     return () => clearTimeout(timer)
-  }, [autosave, changes, autosaveMs])
+  }, [autosave, changes, autosaveMs, data])
 
   // Выгрузка в Word сохраняет редактор сама — шапка принимает новую привязку.
   useEffect(() => {
@@ -437,7 +475,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     const listener = (event: Event) => {
       const detail = (event as CustomEvent<NativeBindingEventDetail>).detail
       if (detail?.gadgetId !== gadgetId || detail.format !== format) return
-      sessionStorage.setItem(bindingKey, JSON.stringify(detail.binding)); setBindingState(detail.binding)
+      // Выгрузка записала новую версию: история и отметка «сохранено» перечитываются и для того же документа.
+      sessionStorage.setItem(bindingKey, JSON.stringify(detail.binding)); setBindingState(detail.binding); setTick(t => t + 1)
     }
     window.addEventListener(NATIVE_BINDING_EVENT, listener)
     return () => window.removeEventListener(NATIVE_BINDING_EVENT, listener)
@@ -469,14 +508,16 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const refresh = () => setTick(t => t + 1)
   /** Сохранить правки редактора в документ сейчас: свой или общий. Изменённый другим документ — явный конфликт. */
   const saveNow = () => run(async (selector, signal) => {
+    const binding = bindingRef.current
     if (!binding?.resource || !source.current) return
     try {
       const saved = await saveToMnemosDocument({ writes: { selector, storageOrigin: source.current.writesOrigin }, format, snapshotSource, binding, signal })
-      bind({ ...binding, savedHead: saved.head, ...(saved.revision !== undefined ? { savedRevision: saved.revision } : {}) })
-      setChangedByOther(false)
+      void bind({ ...binding, savedHead: saved.head, ...(saved.revision !== undefined ? { savedRevision: saved.revision } : {}) })
+      setChangedByOther(false); setSaveFailed(false)
       refresh()
     } catch (error) {
       if (isDocumentChanged(error)) { setChangedByOther(true); return }
+      if (!signal.aborted) setSaveFailed(true)
       throw error
     }
   })

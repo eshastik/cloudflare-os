@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber, GadgetClient } from '@gadgets/workshop-shared/api'
 import type { PublicationReview } from '@gadgets/workshop-shared/publication-review'
-import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, type StatusInput } from './DocumentStatus'
+import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, useDocumentStatus, type StatusInput } from './DocumentStatus'
 
 const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
@@ -227,4 +227,107 @@ it.each([['сохранено', false], ['изменил другой участ
       await vi.waitFor(() => expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ savedHead: 'f'.repeat(64), savedRevision: 9 }), { timeout: 2_000 })
     }
   } finally { await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]() }
+})
+
+// Общий документ по приглашению (mode=write). Снимок редактора, как настоящий, приходит не сразу и
+// обрывается сигналом: так видна гонка, при которой ревизия после открытия не записывалась в привязку.
+function sharedHarness({ saveFails = false, binding }: { saveFails?: boolean; binding?: Record<string, unknown> } = {}) {
+  const saves: string[][] = [], serverBindings: unknown[] = []
+  const revision = { current: 7 }
+  class Writer extends RpcTarget {
+    async head() { return 'c'.repeat(64) }
+    async access() { return 'write' as const }
+    async issue() { return { upload_id: 'upload-1', url: 'https://objects.example/u', method: 'PUT', headers: {}, expires_at: '' } }
+    async save(base: string, upload: string) { saves.push([base, upload]); if (saveFails) throw new Error('Forbidden'); return 'f'.repeat(64) }
+  }
+  class Selector extends RpcTarget {
+    async publicationState() { return { personal_head: head, shared_head: 'b'.repeat(64), personal_exists: true } }
+    async select() { return new RpcStub(new Writer()) }
+    async selectConflict() { throw new Error('No conflict') }
+    async participants() { throw new Error('Приглашённому список участников не нужен') }
+    async sharedDocuments() { return { documents: [{ scope: 'project', resource: 'doc', name: 'Дорожная карта.docx' }] } }
+    async reviewerIdentity() { return 'admin' }
+  }
+  class Downloads extends RpcTarget {
+    async publications() { return { resourceUrl: '', nextCursor: '', publications: [{ id: 'private:' + 'd'.repeat(64), recordedAt: new Date(Date.now() - 60_000).toISOString(), actor: '', format: 'cloudflareos.document' }] } }
+  }
+  class Empty extends RpcTarget {}
+  api.getGatekeeperApp.mockImplementation(async () => ({ iframeHtml: '', ui: new RpcStub(new Empty()),
+    nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Selector()) },
+    nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Downloads()) } }))
+  class Gadget extends RpcTarget {
+    async getId() { return 'native-doc' }
+    async getMnemosDocument() { return { binding: binding ?? null, creation: null, project: null } }
+    async setMnemosDocument(next: unknown) { serverBindings.push(next) }
+    async ensureNativeDocumentTitle() { return 'План' }
+  }
+  const snapshotSource = { current: (_format: string, signal: AbortSignal) => new Promise<{ format: 'cloudflareos.document'; formatVersion: 1; document: { revision: number; title: string; blocks: never[] } }>((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ format: 'cloudflareos.document', formatVersion: 1, document: { revision: revision.current, title: 'План', blocks: [] } }), 20)
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('Редактор не отдал документ.')) }, { once: true })
+  }) }
+  return { saves, serverBindings, revision, snapshotSource, gadget: new RpcStub(new Gadget()) }
+}
+
+async function mountShared(harness: ReturnType<typeof sharedHarness>) {
+  let handle: ReturnType<typeof useDocumentStatus> | null = null
+  function Harness() {
+    const status = useDocumentStatus({ gadget: harness.gadget as unknown as RpcStub<GadgetClient>, format: 'cloudflareos.document', snapshotSource: harness.snapshotSource as never, changesPollMs: 20, autosaveMs: 5 })
+    handle = status
+    return <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} versionOpen={false} onPrimary={kind => { if (kind === 'save') void status.saveNow() }} onSecondary={() => {}} onOpenVersion={() => {}} />
+  }
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => root.render(<Harness />))
+  await act(async () => { await vi.waitFor(() => expect(handle?.gadgetId).toBe('native-doc')) })
+  const text = () => container.querySelector('[data-document-status]')!.textContent ?? ''
+  const until = async (check: () => void) => { await vi.waitFor(async () => { await act(async () => {}); check() }, { timeout: 2_000 }) }
+  const unmount = async () => { await act(async () => root.unmount()); container.remove(); harness.gadget[Symbol.dispose]() }
+  return { handle: () => handle!, text, until, container, unmount }
+}
+
+it('общий документ открыт без правок: строка «сохранено», ревизия записана на сервер до перезагрузки, сохранений нет', async () => {
+  const harness = sharedHarness()
+  const view = await mountShared(harness)
+  try {
+    // Открытие из «Поделились с вами»: редактор получил документ, шапка привязывается к нему; следом страница перезагружается.
+    // Как в браузере: React отрисовывает новую привязку, пока редактор ещё готовит снимок.
+    let opened: Promise<void> = Promise.resolve()
+    await act(async () => { opened = view.handle().bindAtEditorRevision({ accountId: null, scope: 'project', resource: 'doc', savedHead: 'd'.repeat(64) }) })
+    await act(async () => { await opened })
+    // Перезагрузка берёт привязку с сервера: к её концу ревизия уже должна быть там.
+    expect(harness.serverBindings.at(-1)).toMatchObject({ scope: 'project', resource: 'doc', savedRevision: 7, savedHead: 'd'.repeat(64) })
+    await view.until(() => expect(view.text()).toContain('сохранено'))
+    expect(view.text()).toContain('Общий документ')
+    expect(view.text()).not.toContain('сохраняю')
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await act(async () => {})
+    expect(harness.saves).toEqual([])
+    expect(view.text()).not.toContain('сохраняю')
+  } finally { await view.unmount() }
+})
+
+it('правка общего документа при mode=write уходит сохранением от версии владельца, строка доходит до «сохранено»', async () => {
+  const harness = sharedHarness({ binding: { accountId: null, scope: 'project', resource: 'doc', savedRevision: 7, savedHead: 'd'.repeat(64) } })
+  const view = await mountShared(harness)
+  try {
+    await view.until(() => expect(view.text()).toContain('сохранено'))
+    harness.revision.current = 9
+    await view.until(() => expect(harness.saves).toEqual([['d'.repeat(64), 'upload-1']]))
+    await view.until(() => { expect(view.text()).toContain('сохранено'); expect(view.text()).not.toContain('не сохранено') })
+    expect(harness.serverBindings.at(-1)).toMatchObject({ savedRevision: 9, savedHead: 'f'.repeat(64) })
+  } finally { await view.unmount() }
+})
+
+it('отказ сохранения общего документа: понятная строка ошибки вместо вечного «сохраняю…», без повторов по кругу', async () => {
+  const harness = sharedHarness({ saveFails: true, binding: { accountId: null, scope: 'project', resource: 'doc', savedHead: 'd'.repeat(64) } })
+  const view = await mountShared(harness)
+  try {
+    await view.until(() => expect(harness.saves).toHaveLength(1))
+    await view.until(() => expect(view.text()).toContain('не сохранено · Mnemos не принял сохранение'))
+    expect(view.text()).not.toContain('сохраняю')
+    expect(view.container.querySelector('button[data-primary-action]')?.textContent).toBe('Сохранить')
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await act(async () => {})
+    expect(harness.saves).toHaveLength(1)
+  } finally { await view.unmount() }
 })
