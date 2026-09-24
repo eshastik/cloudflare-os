@@ -31,6 +31,7 @@ import {
   getAiGatewayLogCost,
   type AiGatewayLogRoute,
 } from "./ai-gateway";
+import { CONTINUE_AFTER_STEP_LIMIT_TEXT, canContinueAfterStepLimit } from "./agent-limits";
 import { AgentGadgetInfo, AgentHooks, AiChatAgentContext, ChatBindingEntry, SeedBindingInfo, runAgent, makeStorableArgs, summarizeArgs, type AiChatMessageBodyWithModelData, type CompactionCheckpoint, type StoredAssistantMessage } from "./agent";
 import { deploymentOutputForBlueprint, FormatOffer, listFormatOffers, readAdminConfig } from "./admin-config";
 import { foldProposedChanges, isCompactionTurn, type ChangeBatch } from "./agent-compaction";
@@ -3344,6 +3345,13 @@ class OverseerImpl implements AgentHooks {
     return result;
   }
 
+  // Последнее сообщение беседы (или undefined для пустой беседы).
+  lastChatMessage(chatId: number): AiChatMessage | undefined {
+    let next = this.storage.nextChatSequences.get(chatId)?.nextSequence || 0;
+    if (next === 0) return undefined;
+    return this.storage.chats.get(`${keyString(chatId)}.${keyString(next - 1)}`) ?? undefined;
+  }
+
   getChatMetaOrThrow(chatId: number): AiChatMetadata {
     let meta = this.storage.chatMeta.get(chatId);
     if (!meta) {
@@ -3682,10 +3690,11 @@ class OverseerImpl implements AgentHooks {
     let messagesInSameTurn = nextUserMessageIndex === -1
       ? messagesAfterPrompt
       : messagesAfterPrompt.slice(0, nextUserMessageIndex);
-    // Prefer the final agent message or terminal agent error in this turn.
+    // Prefer the final agent message or terminal agent error in this turn. Отметка о пределе
+    // шагов — не ответ: внешнему получателю уходит итог, который агент написал перед ней.
     for (let message of messagesInSameTurn.toReversed()) {
       if (
-        (message.type === "error" ||
+        ((message.type === "error" && !canContinueAfterStepLimit(message)) ||
           (message.type === "message" && message.author.type === "agent")) &&
         message.message.trim()
       ) {
@@ -8807,6 +8816,36 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
                          this.clientUser.id.toString());
   }
 
+  async continueAgent(chatId: number, modelId: string): Promise<void> {
+    let userMeta = await this.clientUser.getChatContext(modelId);
+
+    let meta = this.impl.assertChatNotActive(chatId);
+    if (!userMeta.aiModel) {
+      throw new Error("No AI model available.");
+    }
+
+    let result = this.impl.materializeChatDraft(chatId, meta);
+    if (result) meta = result.meta;
+
+    if (!canContinueAfterStepLimit(this.impl.lastChatMessage(chatId))) {
+      throw new Error("Продолжать нечего: ход не останавливался на пределе шагов.");
+    }
+
+    // Указание продолжить идёт модели как служебное сообщение; человек его не видит.
+    this.impl.addChatMessages(chatId, userMeta.profile, [{
+      type: "agentNudge",
+      text: CONTINUE_AFTER_STEP_LIMIT_TEXT,
+    }]);
+
+    meta = this.impl.getChatMetaOrThrow(chatId);
+    meta.activeAgent = userMeta.aiModel.profile;
+    meta.lastActive = this.impl.getChatTimestamp();
+    this.impl.storage.chatMeta.put(meta);
+
+    this.impl.startAgent(chatId, userMeta.aiModel, userMeta.profile,
+                         this.clientUser.id.toString());
+  }
+
   async finalizeChatDraft(chatId: number): Promise<void> {
     let meta = this.impl.assertChatNotActive(chatId);
     this.impl.materializeChatDraft(chatId, meta);
@@ -9275,6 +9314,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async deleteChat(_chatId: number): Promise<void> { this.#deny(); }
   async stopAgent(_chatId: number): Promise<void> { this.#deny(); }
   async retryAgent(_chatId: number, _modelId: string): Promise<void> { this.#deny(); }
+  async continueAgent(_chatId: number, _modelId: string): Promise<void> { this.#deny(); }
   async subscribeToConsoleLogs(_subscriber: RpcStub<ConsoleLogSubscriber>): Promise<RpcStub<{}>> {
     // Inert: "use" sessions never receive console logs. The inbound subscriber stub is left
     // undup'd, so the RPC system disposes it when this call returns.

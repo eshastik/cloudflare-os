@@ -10,7 +10,7 @@ const testState = vi.hoisted(() => {
   const newGadget = vi.fn<() => never>();
   return {
     addToast: vi.fn<(toast: unknown) => void>(),
-    authenticatedApi: { listModels, newGadget },
+    authenticatedApi: { listModels, newGadget, listChatProjects: async () => [] },
     listModels,
     navigate: vi.fn<(options: unknown) => void>(),
     newGadget,
@@ -43,7 +43,11 @@ vi.mock("./ChatInterface", () => ({
 }));
 
 vi.mock("./components/MeshBackground", () => ({ default: () => null }));
-vi.mock("./components/AppShell/HomeTaskSuggestions", () => ({ default: () => null }));
+vi.mock("./components/AppShell/HomeTaskSuggestions", () => ({
+  default: ({ onPick }: { onPick: (example: unknown) => void }) => (
+    <button type="button" onClick={() => onPick({ label: "Сводка по «Склад»", prompt: "Собери сводку по проекту «Склад».", project: { accountId: 1, projectId: "sklad", title: "Склад", hasCode: false } })}>пример</button>
+  ),
+}));
 vi.mock("./useDocumentTitle", () => ({ useDocumentTitle: () => {} }));
 
 import { HomePageContent } from "./routes/index";
@@ -87,6 +91,18 @@ describe("Home prompt route flow", () => {
     await act(async()=>testState.send!('Подготовь документ',null));
     expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,{...context,projects:[{...context,pinnedBy:'user'}]});
     expect(testState.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});
+  });
+
+  it("пример задачи кладёт текст в поле и подключает проект чипом", async () => {
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<HomePageContent />));
+    const pick = [...container.querySelectorAll("button")].find(b => b.textContent === "пример")!;
+    await act(async () => pick.click());
+    expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Prompt"]')?.value).toBe("Собери сводку по проекту «Склад».");
+    expect(container.querySelector('[aria-label="Убрать проект «Склад»"]')).not.toBeNull();
+    // Повторный щелчок не добавляет проект второй раз.
+    await act(async () => pick.click());
+    expect(container.querySelectorAll('[aria-label="Убрать проект «Склад»"]')).toHaveLength(1);
   });
 
 });

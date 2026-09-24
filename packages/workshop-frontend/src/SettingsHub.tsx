@@ -7,12 +7,13 @@ import { useDocumentTitle } from './useDocumentTitle'
 
 // Sections that live in the rail; everything else an app offers is a service section and is
 // reachable from here instead of crowding the navigation.
-const PRIMARY = new Set(['my-work', 'projects', 'documents', 'agents'])
+const PRIMARY = new Set(['my-work', 'projects', 'documents'])
 // Rarely used sections go under "Дополнительно" rather than next to organisation settings.
 const EXTRA = new Set(['templates', 'analytics'])
 
 const NOTES: Record<string, string> = {
   approvals: 'Решения по изменениям в вашей предметной области.',
+  agents: 'Помощники команды, их задачи и разрешения.',
   sources: 'Почта, CRM, диски и другие рабочие системы.',
   people: 'Сотрудники и их права по проектам и областям знаний.',
   intake: 'Загрузка материалов организации и проверка их распределения.',

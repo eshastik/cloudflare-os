@@ -85,6 +85,8 @@ import {
   BlueprintOutput,
   MessageFormatRef,
   OutputFormatOffer,
+  AGENT_STEP_LIMIT_CODE,
+  type ChatProjectChoice,
 } from "@gadgets/workshop-shared/api";
 import { ActionKind, ResourceDescription } from "@gadgets/workshop-shared/gatekeeper";
 import {
@@ -119,7 +121,10 @@ import { chatListState, upsertAgentStep } from "./codeWorkSteps";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
-import { chatProjects, displayName, looksLikeId, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { StepLimitNotice } from "./components/chat/StepLimitNotice";
+import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
+import { droppedFolderEntry } from "./folderProject";
+import { MAX_CHAT_PROJECTS, chatProjects, displayName, looksLikeId, type ChatProject } from "@gadgets/workshop-shared/code-work";
 import { reasoningForDisplay } from "@gadgets/workshop-shared/reasoning";
 import { useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
@@ -1917,6 +1922,7 @@ export const ChatInput = ({
   onStop,
   showThinkingTraces = true,
   onToggleThinkingTraces,
+  onFolderProjectCreated,
 }: {
   createCapsuleGatekeeper: (
     accountId: number,
@@ -1968,6 +1974,9 @@ export const ChatInput = ({
   /** Open the pre-approval dialog (owned by the parent). */
   /** Called after a gatekeeper is connected via the attach flow, so the parent can refresh the
    * pre-approval catalog and proactively offer to pre-approve its actions. */
+  /** Папку, перетащенную в поле ввода, можно превратить в проект; созданный проект родитель
+   * подключает к беседе. Без обработчика папка тоже создаёт проект, но чип не появляется. */
+  onFolderProjectCreated?: (project: ChatProjectChoice) => void;
 }) => {
   const toasts = useKumoToastManager();
   const [inputValue, setInputValue] = useState("");
@@ -1993,6 +2002,7 @@ export const ChatInput = ({
   const lastUrlScanRef = useRef({position: -1, text: ""});
   const { authenticatedApi } = useAuthenticatedApi();
   const vendorBranding = useVendorBranding(authenticatedApi);
+  const folderProject = useFolderProject(authenticatedApi, onFolderProjectCreated);
   const selectedSlashCommandRef = useRef(selectedSlashCommand);
   selectedSlashCommandRef.current = selectedSlashCommand;
   const sendInFlightRef = useRef(false);
@@ -2295,6 +2305,12 @@ export const ChatInput = ({
     event.preventDefault();
     attachmentDragDepthRef.current = 0;
     setIsAttachmentDragActive(false);
+    // Одна папка — предложение создать из неё проект; файлы — вложения сообщения.
+    const folder = droppedFolderEntry(event.dataTransfer);
+    if (folder) {
+      folderProject.offer(folder);
+      return;
+    }
     void addFiles(event.dataTransfer.files);
   };
 
@@ -3151,6 +3167,10 @@ export const ChatInput = ({
         </div>
       )}
 
+      {folderProject.state && (
+        <FolderProjectCard state={folderProject.state} onCreate={folderProject.create} onDismiss={folderProject.dismiss} />
+      )}
+
       {/* Prompt card. Brighter than the page surface (kumo-control vs kumo-base) and gently lifted
           with a soft neutral shadow so the composer reads as a distinct surface instead of blending
           into the canvas; the lift intensifies a touch on focus. */}
@@ -3168,7 +3188,7 @@ export const ChatInput = ({
               <span className={`grid h-7 w-7 place-items-center rounded-full ${canAttachMore ? "bg-kumo-brand/12 text-kumo-brand" : "bg-kumo-warning/15 text-kumo-warning"}`}>
                 <FileIcon size={16} weight="duotone" />
               </span>
-              {canAttachMore ? "Перетащите файлы для прикрепления" : "К сообщению можно прикрепить до 5 файлов"}
+              {canAttachMore ? "Файлы — прикрепить, папку — создать проект" : "К сообщению можно прикрепить до 5 файлов"}
             </div>
           </div>
         )}
@@ -4877,6 +4897,13 @@ function ChatInterface({
       toasts.add({ title: err instanceof Error && err.message ? err.message : "Не удалось изменить проекты беседы", variant: "error" });
     }
   }, [overseer, selectedChatId, toasts]);
+  // Проект, созданный из перетащенной папки, сразу подключается к беседе чипом.
+  const addCreatedProject = useCallback((project: ChatProjectChoice) => {
+    if (chatProjectList.some(p => p.accountId === project.accountId && p.projectId === project.projectId)) return;
+    void changeChatProjects([...chatProjectList, {
+      accountId: project.accountId, projectId: project.projectId, title: project.title, pinnedBy: "user" as const,
+    }].slice(-MAX_CHAT_PROJECTS));
+  }, [chatProjectList, changeChatProjects]);
   const loadCodeChanges = useCallback(
     () => selectedChatId === null ? Promise.resolve(null) : overseer.readChatCodeChanges(selectedChatId),
     [overseer, selectedChatId],
@@ -5973,6 +6000,17 @@ function ChatInterface({
     } catch (err) {
       console.error("Не удалось повторить выполнение:", err);
       toasts.add({ title: "Не удалось повторить выполнение", variant: "error" });
+    }
+  };
+
+  // «Продолжить» после остановки на пределе шагов: тот же ход без нового сообщения человека.
+  const handleContinue = async () => {
+    if (selectedChatId === null || selectedModel === null) return;
+    try {
+      await overseer.continueAgent(selectedChatId, selectedModel);
+    } catch (err) {
+      console.error("Не удалось продолжить работу агента:", err);
+      toasts.add({ title: "Не удалось продолжить работу", variant: "error" });
     }
   };
 
@@ -7363,7 +7401,15 @@ function ChatInterface({
                           </div>
                         )}
 
-                        {msg.type === "error" &&
+                        {msg.type === "error" && msg.code === AGENT_STEP_LIMIT_CODE && (
+                          <StepLimitNotice
+                            message={msg.message}
+                            canContinue={msg.sequence === lastMessageSequence && !isAgentActive && selectedModel !== null}
+                            onContinue={handleContinue}
+                          />
+                        )}
+
+                        {msg.type === "error" && msg.code !== AGENT_STEP_LIMIT_CODE &&
                           (() => {
                             const key = `${msg.chatId}-${msg.sequence}`;
                             const isLast =
@@ -7723,6 +7769,7 @@ function ChatInterface({
                     onStop={handleStop}
                     showThinkingTraces={showThinkingTraces}
                     onToggleThinkingTraces={toggleShowThinkingTraces}
+                    onFolderProjectCreated={addCreatedProject}
                     blockedReason={
                       hasPendingConnectionRequest
                         ? "Подключите или отклоните запрошенный ресурс для продолжения."

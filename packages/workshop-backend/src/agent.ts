@@ -1,4 +1,4 @@
-import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName } from '@gadgets/workshop-shared/api';
+import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
 import { formatCodeWorkResult, type AgentStep, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
@@ -18,7 +18,12 @@ import { AgentCatalogSnapshot, formatAlwaysAvailableResourcesPrompt } from "./ag
 import { formatInstanceInstructions } from "./admin-config";
 import type { AiGatewayLogRoute } from "./ai-gateway";
 import { AgentTurnError, completeText, httpStatusFromError, zeroUsage } from "./ai-invoke";
+import { findMnemosBinding, formatMnemosWorkPrompt } from "./mnemos-agent-guide";
 import { guardToolRepeats, RepeatedFailureGuard, REPEATED_FAILURE_LIMIT } from "./tool-failure-guard";
+import {
+  AGENT_STEP_LIMIT, StepBudget, limitCodeOutput, pageFileText, pageWebBody, stepLimitNotice,
+  stepLimitPrepareNextTurn,
+} from "./agent-limits";
 import type { ModelHandle } from "./ai-models";
 import {
   buildCompactionState, buildSummaryPrompt, COMPACTION_SYSTEM_PROMPT, estimateProjectionTokens,
@@ -561,6 +566,8 @@ Typically (but not always), you will need to use the \`executeCode\` tool to com
 
 let READ_FILE_TOOL_DESCRIPTION = `
 Read the content of a file owned by one of the workspace's gadgets. Note that you will be informed any time a file changes, so it is not necessary to read a file again after you have already read it once. This cannot read chat attachments; attachments are provided directly in the conversation.
+
+A large file is returned in parts (up to 2000 lines per call). A part ends with a note in square brackets saying which lines are shown and the \`offset\` to pass for the next part; the note is not part of the file. Read further parts only when you need them.
 `.trim();
 
 let CREATE_GADGET_TOOL_DESCRIPTION = `
@@ -1642,7 +1649,9 @@ export async function runAgent(
                       throw new Error("File does not exist.");
                     }
 
-                    toolOutput = {text: value};
+                    toolOutput = {
+                      text: pageFileText(value, toolCall.input.offset, toolCall.input.limit),
+                    };
                     filesRead.add(fileKey(workpieceId, toolCall.input.filename));
                   }
                   break;
@@ -1722,7 +1731,7 @@ export async function runAgent(
                   break;
                 }
                 case "executeCode":
-                  toolOutput = {text: toolCall.output!};
+                  toolOutput = {text: limitCodeOutput(toolCall.output!)};
                   break;
                 case "giveUp":
                   toolOutput = {text: jsonToolResultText({rejected: true})};
@@ -2273,6 +2282,10 @@ export async function runAgent(
       : null;
   if (codeWorkInfo) systemPromptSlots[1] += `\n\n${formatCodeWorkPrompt(codeWorkInfo)}`;
 
+  // Порядок работы с памятью Mnemos — агенту беседы, если биндинг Mnemos у беседы есть.
+  let mnemosBinding = agentContext.spawnerConfig ? undefined : findMnemosBinding(alwaysAvailable);
+  if (mnemosBinding) systemPromptSlots[1] += `\n\n${formatMnemosWorkPrompt(mnemosBinding)}`;
+
   let systemPrompt = `${systemPromptSlots[0]}\n\n${systemPromptSlots[1]}`;
 
   // Some models charge their response to the same window as the prompt, so the reservation is both
@@ -2386,11 +2399,16 @@ export async function runAgent(
       parameters: Type.Object({
         workpiece: workpieceParam,
         filename: Type.String({description: "Name of the file to read."}),
-        // TODO: line range?
+        offset: Type.Optional(Type.Integer({
+          description: "Line number to start reading from (1-based). Use it to read the next part of a large file.",
+        })),
+        limit: Type.Optional(Type.Integer({
+          description: "How many lines to read (at most 2000).",
+        })),
         // TODO: Claude Code apparently presents the code to the agent with line number
         //   prefixes on each line. Is this worth doing?
       }),
-      execute: async (toolCallId, {workpiece, filename}) => {
+      execute: async (toolCallId, {workpiece, filename, offset, limit}) => {
         try {
           let resolved =
               hooks.resolveWorkpieceRoot(resolveToolWorkpieceId(workpiece), true, chatId);
@@ -2399,7 +2417,7 @@ export async function runAgent(
             throw new Error("File does not exist.");
           }
           filesRead.add(fileKey(resolved.workpieceId, filename));
-          return toolResult(text.toString(), {
+          return toolResult(pageFileText(text.toString(), offset, limit), {
             observedCodeVersion: versionLock!
           });
         } catch (error) {
@@ -2503,8 +2521,13 @@ export async function runAgent(
               "without any conversion. Default: false, which converts supported document " +
               "formats (HTML, PDF, DOCX, ...) to Markdown.",
         })),
+        offset: Type.Optional(Type.Integer({
+          description:
+              "Character offset in the body to start from. A long body is returned in parts; " +
+              "the note at the end of a part gives the offset of the next one.",
+        })),
       }),
-      execute: async (toolCallId, {url, raw}) => {
+      execute: async (toolCallId, {url, raw, offset}) => {
         try {
           let result = await webFetchImpl(hooks.getWebFetchEnv(), {url, raw});
 
@@ -2523,7 +2546,9 @@ export async function runAgent(
                     (result.truncated ? ", truncated" : ""),
               });
 
-          let formatted = formatWebFetchResult(result);
+          let page = pageWebBody(result.body, offset);
+          let formatted = formatWebFetchResult({...result, body: page.body}) +
+              (page.note ? `\n\n${page.note}` : "");
           return toolResult(formatted, {output: formatted} as Partial<AiToolCall>);
         } catch (error) {
           // Record the error on the tool call so chat-history replay can render it as an
@@ -2793,7 +2818,8 @@ export async function runAgent(
                 toolCallId,
                 delta,
               }));
-          return toolResult(`${output}`, {output: `${output}`} as Partial<AiToolCall>);
+          // Модель видит ограниченную часть вывода; в журнал беседы (и человеку) идёт весь вывод.
+          return toolResult(limitCodeOutput(`${output}`), {output: `${output}`} as Partial<AiToolCall>);
         } catch (error) {
           toolCallNotes.set(toolCallId, {
             error: toolErrorText(error)
@@ -2961,8 +2987,10 @@ export async function runAgent(
   // failed turn is persisted.
   let turnFailure: {message: string} | undefined;
 
-  // Turn cap, replacing the old stepCountIs(30).
-  let turnCount = 0;
+  // Предел шагов хода (см. agent-limits.ts). Саб-агентам и ходам по колбэкам итог и
+  // «Продолжить» не нужны: их никто не продолжает руками, для них предел — просто остановка.
+  let stepBudget = new StepBudget(AGENT_STEP_LIMIT);
+  let summarizeAtLimit = !callbackInitiated && !agentContext.spawnerConfig;
 
   // The awaited event sink driving both the client stream fan-out and the persistence barrier.
   let emit = async (event: AgentEvent): Promise<void> => {
@@ -3152,12 +3180,14 @@ export async function runAgent(
       convertToLlm: (messages) => messages as Message[],
       toolExecution: "sequential",
       maxTokens: maxOutputTokens,
+      // Шаг завершён: если следующий — последний разрешённый, просим модель подвести итог.
+      prepareNextTurn: stepLimitPrepareNextTurn(stepBudget, summarizeAtLimit),
       shouldStopAfterTurn: () =>
           // Cancelled during tool execution: the completed turn was persisted by the turn_end
           // barrier just above; don't start another (doomed) model request.
           abortSignal.aborted ||
-          // Hard cap on turns, as before.
-          ++turnCount >= 30 ||
+          // Предел шагов хода (счёт ведёт prepareNextTurn, он вызывается раньше).
+          stepBudget.exhausted ||
           // Модель дважды пыталась повторить вызов, уже отклонённый как повтор одинаковой ошибки:
           // дальше ход ничего не даст.
           failureGuard.refusals >= REPEATED_FAILURE_LIMIT ||
@@ -3187,6 +3217,16 @@ export async function runAgent(
     // it can be determined) for the overseer's triage.
     throw new AgentTurnError(
         turnFailure.message, httpStatusFromError(turnFailure.message, handle));
+  }
+
+  // Ход упёрся в предел шагов: отметка в беседе с кнопкой «Продолжить». Модели она не
+  // передаётся (как и остальные сообщения типа "error").
+  if (stepBudget.exhausted && summarizeAtLimit) {
+    hooks.addChatMessages(chatId, author, [{
+      type: "error",
+      message: stepLimitNotice(stepBudget.limit),
+      code: AGENT_STEP_LIMIT_CODE,
+    }]);
   }
 
   // The turn ran, so there is no checkpoint to report.

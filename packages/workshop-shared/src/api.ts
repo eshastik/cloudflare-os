@@ -1708,6 +1708,10 @@ export interface Overseer extends RpcTarget {
   // If an agent is already running, this does nothing.
   retryAgent(chatId: number, modelId: string): Promise<void>;
 
+  // Продолжить ход, остановленный на пределе шагов (отметка с кодом AGENT_STEP_LIMIT_CODE):
+  // агент получает указание продолжить с места остановки, человеку не нужно писать заново.
+  continueAgent(chatId: number, modelId: string): Promise<void>;
+
   // Subscribe to the gadget worker's console logs. This allows the user to observe console logs
   // being produced by the gadget.
   //
@@ -1935,6 +1939,10 @@ export type AiChatMessage = {
   author: AiChatAuthorInfo;
 } & AiChatMessageBody;
 
+// Код отметки «ход остановлен на пределе шагов» в сообщении типа "error": оболочка показывает её
+// не как ошибку, а с кнопкой «Продолжить» (Overseer.continueAgent).
+export const AGENT_STEP_LIMIT_CODE = "step_limit";
+
 export type AiChatMessageBody = {
   // A regular chat message.
   type: "message";
@@ -2051,7 +2059,8 @@ export type AiChatMessageBody = {
   type: "error";
   message: string;
   // Optional machine-readable code so the client can react specially (e.g. "usage_limit" opens
-  // the "connect Cloudflare / add credits" modal instead of a generic error + retry).
+  // the "connect Cloudflare / add credits" modal instead of a generic error + retry;
+  // AGENT_STEP_LIMIT_CODE shows «Продолжить» instead of an error).
   code?: string;
 } | {
   // Indicates that a callback was received on the agent's `self` object. When the agent uses
@@ -2187,7 +2196,8 @@ export type AiToolCall = {
   // as files, but other workpieces may export other filesystems. Hence, a file is identified by
   // the pair of a workpiece reference (the `workpiece` chat binding name) and `filename`.
   toolName: "readFile";
-  input: {workpiece?: string, filename: string};
+  // offset — номер первой строки (с 1), limit — сколько строк: большой файл читается частями.
+  input: {workpiece?: string, filename: string, offset?: number, limit?: number};
 } | {
   toolName: "writeFile";
   input: {
@@ -2290,6 +2300,8 @@ export type AiToolCall = {
     url: string;
     // If true, return the raw response body without Markdown conversion.
     raw?: boolean;
+    // С какого символа тела отдавать часть: длинный ответ читается частями.
+    offset?: number;
   };
 
   // Output, if the fetch actually completed. (Otherwise, `error` should be present.) This is

@@ -13,6 +13,7 @@ import {
   ChatAttachmentHandle,
   MessageFormatRef,
   SlashCommandRequest,
+  type ChatProjectChoice,
 } from "@gadgets/workshop-shared/api";
 import {
   getStoredSelectedModel,
@@ -21,7 +22,7 @@ import {
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch, homeProjectFromSearch, projectContextFromProjects } from "../homePrompt";
 import { ProjectChips } from "../components/chat/ProjectChips";
-import { chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { MAX_CHAT_PROJECTS, chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
 
 type HomeSearch = { prompt?: string; projectContext?: import('@gadgets/workshop-shared/api').ChatProjectContext };
 
@@ -50,6 +51,25 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
   const [projects, setProjects] = useState<ChatProject[]>(() => chatProjects(project));
   useEffect(() => { if (project) setProjects(chatProjects(project)); }, [project]);
   const loadProjectChoices = useCallback(() => authenticatedApi.listChatProjects(), [authenticatedApi]);
+  // Проект подключается к беседе чипом (пример задачи по проекту или проект из папки).
+  const addProject = useCallback((project: ChatProjectChoice) => {
+    setProjects((current) => current.some((p) => p.accountId === project.accountId && p.projectId === project.projectId)
+      ? current
+      : [...current, {
+          accountId: project.accountId, projectId: project.projectId, title: project.title,
+          pinnedBy: "user" as const, ...(project.hasCode ? { hasCode: true } : {}),
+        }].slice(-MAX_CHAT_PROJECTS));
+  }, []);
+  // Проекты человека — для примеров задач по его проектам под полем ввода.
+  const [projectChoices, setProjectChoices] = useState<ChatProjectChoice[] | null | "failed">(null);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => authenticatedApi.listChatProjects())
+      .then((list) => { if (!cancelled) setProjectChoices(list); })
+      .catch(() => { if (!cancelled) setProjectChoices("failed"); });
+    return () => { cancelled = true; };
+  }, [authenticatedApi]);
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -186,14 +206,18 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           minRows={3}
           seedText={seed.text}
           seedNonce={seed.nonce}
+          onFolderProjectCreated={addProject}
         />
         </div>
 
         {/* A few example work tasks to spark ideas. Picking one seeds the composer above. */}
         <HomeTaskSuggestions
-          onPick={(suggestion) =>
-            setSeed((prev) => ({ text: suggestion, nonce: prev.nonce + 1 }))
-          }
+          choices={projectChoices}
+          onPick={(example) => {
+            setSeed((prev) => ({ text: example.prompt, nonce: prev.nonce + 1 }));
+            // Пример по проекту подключает этот проект к беседе (если его ещё нет в наборе).
+            if (example.project) addProject(example.project);
+          }}
         />
       </div>
     </div>

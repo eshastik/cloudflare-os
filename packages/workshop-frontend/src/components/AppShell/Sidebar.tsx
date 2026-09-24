@@ -1,17 +1,16 @@
 import { Link } from '@tanstack/react-router'
 import {
-  BookOpen,
-  FolderOpen,
   Hexagon,
   House,
   MagnifyingGlass,
-  Robot,
   SidebarSimple,
-  Tray,
 } from '@phosphor-icons/react'
 import { useSiteName } from '../../ServerConfigContext'
 import SiteLogo from '../SiteLogo'
 import { useGatekeeperApps } from '../../useGatekeeperApps'
+import { useOptionalAuthenticatedApi } from '../../AuthContext'
+import { buildRoleNavigation } from '../../roleNavigation'
+import { NavLinkItem, SidebarManagement } from './SidebarRoleNav'
 import { openCommandPalette } from './commandPaletteBus'
 import SidebarItem from './SidebarItem'
 import {
@@ -20,16 +19,7 @@ import {
   SidebarWorkspacesLists,
 } from './SidebarWorkspaces'
 import SidebarUtilityStrip from './SidebarUtilityStrip'
-import { SectionCount } from './SectionCount'
 
-// Daily work sections of a gatekeeper app, in rail order. Labels are fixed here so the rail reads
-// the same whatever an app calls its sections internally.
-const PRIMARY_SECTIONS = [
-  { id: 'my-work', label: 'Входящие', icon: <Tray size={14} /> },
-  { id: 'projects', label: 'Проекты', icon: <FolderOpen size={14} /> },
-  { id: 'documents', label: 'Материалы', icon: <BookOpen size={14} /> },
-  { id: 'agents', label: 'Агенты', icon: <Robot size={14} /> },
-] as const
 
 // The persistent left rail. Three pinned regions sandwich a single scrolling region of lists, so
 // the user can always reach Search, primary nav, and the bottom utility strip no matter how many
@@ -53,6 +43,9 @@ export default function Sidebar({
   // and is connected / enabled for everyone). Disabled or not-yet-connected ones aren't returned, so
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
   const gatekeeperApps = useGatekeeperApps()
+  // Пункты меню по роли: сотрудник, руководитель, администратор (см. roleNavigation.ts).
+  const isPlatformAdmin = useOptionalAuthenticatedApi()?.isAdmin ?? false
+  const navigation = buildRoleNavigation(gatekeeperApps, isPlatformAdmin)
 
   return (
     <aside
@@ -130,29 +123,14 @@ export default function Sidebar({
               icon={<House size={14} weight="regular" />}
               collapsed={collapsed}
             />
-            {gatekeeperApps.flatMap(app => {
-              const multiple = gatekeeperApps.filter(other => other.id === app.id).length > 1
-              return PRIMARY_SECTIONS.flatMap(({ id, label, icon }) => {
-                const section = (app.sections ?? []).find(item => item.id === id)
-                if (!section) return []
-                return [
-                  <SidebarItem
-                    key={`${app.id}:${app.accountId}:${id}`}
-                    to="/gatekeepers/$appId"
-                    params={{ appId: app.id }}
-                    search={{ section: id, account: app.accountId }}
-                    section={id}
-                    account={app.accountId}
-                    matchDefaultAccount={!multiple}
-                    label={multiple ? `${label} — ${app.accountName || app.title}` : label}
-                    icon={icon}
-                    trailing={<SectionCount count={section.count} />}
-                    collapsed={collapsed}
-                  />,
-                ]
-              })
-            })}
+            {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
           </nav>
+
+          {navigation.manager.length > 0 && (
+            <nav aria-label="Руководителю" className="flex flex-col gap-0.5 px-2">
+              {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
+            </nav>
+          )}
 
           {/* Workspace tools: search. Pinned so it's always reachable. */}
           <SidebarWorkspacesTools collapsed={collapsed} />
@@ -164,6 +142,10 @@ export default function Sidebar({
           <SidebarWorkspacesLists collapsed={collapsed} />
         </div>
       </SidebarWorkspacesProvider>
+
+      {navigation.management.length > 0 && (
+        <SidebarManagement management={navigation.management} fine={navigation.fine} collapsed={collapsed} />
+      )}
 
       <SidebarUtilityStrip collapsed={collapsed} />
     </aside>
