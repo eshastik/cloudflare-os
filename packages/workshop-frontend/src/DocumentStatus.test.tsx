@@ -11,9 +11,16 @@ const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unk
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 // Выгрузка тела в хранилище проверяется в своих тестах; здесь важна версия, от которой сохраняют.
 vi.mock('./gatekeeperAppUpload', () => ({ uploadGatekeeperNativeDocument: async () => 'upload-1' }))
+// Скачивание версии: билет несёт идентификатор версии, содержимое задаёт тест.
+const { contents } = vi.hoisted(() => ({ contents: new Map<string, string>() }))
+vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperNativeDocument: async (_origin: string, ticket: { id: string }) => {
+  const text = contents.get(ticket.id)
+  if (text === undefined) throw new Error('Версия не найдена')
+  return { format: 'cloudflareos.document', formatVersion: 1, document: { title: 'План', blocks: [{ type: 'paragraph', text }] } }
+} }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks() })
+afterEach(() => { sessionStorage.clear(); contents.clear(); vi.restoreAllMocks() })
 
 const now = Date.parse('2026-09-13T12:00:00Z')
 const review = (over: Partial<PublicationReview> & { domains?: PublicationReview['domains'] }): PublicationReview => ({
@@ -83,7 +90,9 @@ it('«только вы» показывается лишь без пригла�
 })
 
 // Живой хук с заглушками RPC: отказ каждого запроса и ревизия редактора задаются на вход.
-type Faults = { select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[] }
+type Faults = { select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[]
+  /** История документа вместо стандартной; функция — перечитывается при каждом запросе. */
+  history?: () => { id: string; recordedAt: string; actor: string; format: 'cloudflareos.document' }[] }
 const head = 'a'.repeat(64)
 
 function frame(faults: Faults) {
@@ -108,9 +117,16 @@ function frame(faults: Faults) {
     async documentLocation() { return { head, name: 'Последние коммиты', parent: 'folder-1' } }
     async folders() { return { folders: [{ id: 'folder-1', name: 'Презентации', parent: '' }], nextCursor: '' } }
   }
+  class Download extends RpcTarget {
+    constructor(readonly id: string) { super() }
+    async issue() { return { id: this.id } }
+    async validate() {}
+  }
   class Downloads extends RpcTarget {
+    async select(_scope: string, _resource: string, id: string) { return new RpcStub(new Download(id)) }
     async publications() {
       if (faults.publications) throw new Error('Not found')
+      if (faults.history) return { resourceUrl: 'https://objects.example/doc', nextCursor: '', publications: faults.history() }
       return { resourceUrl: 'https://objects.example/doc', nextCursor: '', publications: [
         { id: 'private:' + 'd'.repeat(64), recordedAt: new Date(Date.now() - 4 * 60_000).toISOString(), actor: '', format: 'cloudflareos.document' },
         { id: 'event-1', recordedAt: '2026-09-02T10:00:00Z', actor: 'Анна', format: 'cloudflareos.document' },
@@ -123,7 +139,7 @@ function frame(faults: Faults) {
     nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Downloads()) } }
 }
 
-async function mountStatus({ faults = {}, savedRevision, revision, pollMs }: { faults?: Faults; savedRevision?: number; revision: { current: number }; pollMs?: number }) {
+async function mountStatus({ faults = {}, savedRevision, revision, pollMs, flashMs }: { faults?: Faults; savedRevision?: number; revision: { current: number }; pollMs?: number; flashMs?: number }) {
   api.getGatekeeperApp.mockImplementation(async () => frame(faults))
   class Gadget extends RpcTarget { async getId() { return 'native-doc' } }
   const gadget = new RpcStub(new Gadget())
@@ -134,7 +150,7 @@ async function mountStatus({ faults = {}, savedRevision, revision, pollMs }: { f
   } }
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={pollMs} />))
+  await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={pollMs} flashMs={flashMs} />))
   const status = () => container.querySelector('[data-document-status]')!
   const primary = () => container.querySelector('button[data-primary-action]')
   const settled = async () => { await act(async () => { await vi.waitFor(() => expect(status().textContent).not.toContain('Читаю состояние')) }) }
@@ -165,6 +181,66 @@ it('«Опубликовать» в проекте без согласовани
     await act(async () => { await vi.waitFor(() => expect(published).toHaveLength(1)) })
     await view.settled()
     expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  } finally { await view.unmount() }
+})
+
+// Дефект 2026-09-24 (выпуск d0d63ed0): публикация проходила, но шапка и после перезагрузки писала
+// «Черновик · Личная версия от v1» с активной «Опубликовать» — личная ветка после публикации остаётся.
+const privateId = 'private:' + 'd'.repeat(64)
+const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString()
+
+it('после «Опубликовать» шапка подтверждает публикацию в проект и показывает «Опубликовано», кнопка неактивна', async () => {
+  const published: string[] = []
+  contents.set(privateId, 'Последние коммиты').set('event-2', 'Последние коммиты')
+  const history = () => [
+    { id: privateId, recordedAt: minutesAgo(60), actor: '', format: 'cloudflareos.document' as const },
+    // Опубликованная версия появляется в истории только после публикации.
+    ...published.length ? [{ id: 'event-2', recordedAt: minutesAgo(0), actor: 'Владелец', format: 'cloudflareos.document' as const }] : [],
+  ]
+  const view = await mountStatus({ faults: { publish: 'published', published, history }, savedRevision: 7, revision: { current: 7 }, flashMs: 200 })
+  try {
+    await view.settled()
+    expect(view.status().textContent).toContain('Личная версия')
+    expect((view.primary() as HTMLButtonElement).disabled).toBe(false)
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[data-document-status] [role="status"]')?.textContent).toBe('Опубликовано в проект «Mnemos»')) })
+    await vi.waitFor(async () => { await act(async () => {}); expect(view.status().textContent).toContain('Опубликовано · совпадает с опубликованной версией') }, { timeout: 2_000 })
+    expect(view.status().textContent).not.toContain('Личная версия')
+    expect(view.primary()?.textContent).toBe('Опубликовать')
+    expect((view.primary() as HTMLButtonElement).disabled).toBe(true)
+  } finally { await view.unmount() }
+})
+
+it('повторное открытие опубликованного документа без новых правок: «Опубликовано», не черновик', async () => {
+  contents.set(privateId, 'Последние коммиты').set('event-2', 'Последние коммиты')
+  const history = () => [
+    { id: privateId, recordedAt: minutesAgo(60), actor: '', format: 'cloudflareos.document' as const },
+    { id: 'event-2', recordedAt: minutesAgo(30), actor: 'Владелец', format: 'cloudflareos.document' as const },
+  ]
+  const view = await mountStatus({ faults: { history }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await vi.waitFor(async () => { await act(async () => {}); expect(view.status().textContent).toContain('Опубликовано · совпадает с опубликованной версией') }, { timeout: 2_000 })
+    expect(view.status().textContent).toContain('Опубликована v1')
+    expect((view.primary() as HTMLButtonElement).disabled).toBe(true)
+  } finally { await view.unmount() }
+})
+
+it.each([
+  ['сохранение после публикации', 'Последние коммиты', 10, 30],
+  ['более поздняя публикация коллеги с другим текстом', 'Текст коллеги', 30, 5],
+] as const)('личная версия не совпадает с опубликованной (%s): черновик и активная «Опубликовать»', async (_name, sharedText, ownAgo, sharedAgo) => {
+  contents.set(privateId, 'Последние коммиты').set('event-2', sharedText)
+  const history = () => [
+    { id: privateId, recordedAt: minutesAgo(ownAgo), actor: '', format: 'cloudflareos.document' as const },
+    { id: 'event-2', recordedAt: minutesAgo(sharedAgo), actor: 'Коллега', format: 'cloudflareos.document' as const },
+  ]
+  const view = await mountStatus({ faults: { history }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await vi.waitFor(async () => { await act(async () => {}); expect(view.status().textContent).toContain('Личная версия от v1') }, { timeout: 2_000 })
+    expect(view.status().textContent).not.toContain('Опубликовано')
+    expect((view.primary() as HTMLButtonElement).disabled).toBe(false)
   } finally { await view.unmount() }
 })
 

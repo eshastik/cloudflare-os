@@ -33,12 +33,15 @@ export async function submitReview(selector: Selector, signal: AbortSignal, scop
   return loadPublication(selector, signal, scope, created.candidate_id)
 }
 
+/** Итог удачной публикации заявки: по нему шапка документа узнаёт, что версия стала общей. */
+export const CANDIDATE_PUBLISHED_NOTICE = 'Согласованные изменения проекта опубликованы. Откройте опубликованную версию через «Открыть из Mnemos».'
+
 /** Публикует готовую заявку; возвращает текст для человека, ответ сервера не перепроверяется повтором. */
 export async function publishCandidate(selector: Selector, signal: AbortSignal, scope: string, candidateId: string): Promise<string> {
   const result = await selector.publishReview(scope, candidateId); signal.throwIfAborted()
   if (result.published) {
     sessionStorage.removeItem(reviewKey(scope))
-    return 'Согласованные изменения проекта опубликованы. Откройте опубликованную версию через «Открыть из Mnemos».'
+    return CANDIDATE_PUBLISHED_NOTICE
   }
   return result.conflicted ? 'Обнаружен конфликт. Разрешите его перед новым согласованием.' : 'Публикация не выполнена. Перечитайте состояние проекта.'
 }
