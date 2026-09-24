@@ -1,9 +1,11 @@
-// Работа с кодом в беседе: набор проектов, переход агента беседы в рабочее место, сообщения
-// человека прямо в работу с кодом, «Что изменилось» и «Принять». Хранится в метаданных беседы.
-import type {AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
-import {chatProjects, displayName, validateChatProjects, type AgentStep, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+// Работа с кодом в беседе: набор проектов, переключатель «Код», выбор, кому отвечать на сообщение
+// человека, ход агента кода, «Что изменилось» и «Принять». Хранится в метаданных беседы.
+import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
+import {chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend} from "./code-work.js";
+import {JEV_CONFIDENCE_THRESHOLD, type CodeRouteContext, type JevResult} from "./code-router.js";
+import {buildCodeContextPack, codeWorkBrief, withContextPack} from "./code-context.js";
 
 /** Подключение человека, через которое идёт работа с кодом (методы пользовательского DO). */
 export interface CodeWorkUser {
@@ -25,9 +27,13 @@ export interface ChatCodeWorkHost {
   /** Подключения человека, создавшего беседу (набор проектов принадлежит ему). */
   user(userId: string): CodeWorkUser;
   emit(chatId: number, event: AiChatStreamEvent): void;
+  /** Сообщения беседы с номером больше afterSequence, по возрастанию (не больше последних
+   *  CONTEXT_PACK_LOOKBACK). */
+  chatMessages(chatId: number, afterSequence: number): AiChatMessage[];
 }
 
 const MAX_SUMMARY = 4000;
+const MAX_STORED_FILES = 50;
 
 function backendFor(user: CodeWorkUser, accountId: number): CodeWorkBackend {
   return {
@@ -62,15 +68,88 @@ export function setChatProjects(host: ChatCodeWorkHost, chatId: number, userId: 
   host.putChatMeta(meta);
 }
 
-/** Вернуть сообщения человека агенту беседы. */
-export function leaveCodeWork(host: ChatCodeWorkHost, chatId: number): void {
+/** Переключатель «Код» беседы: меняет тот, кто начал беседу (работа с кодом идёт его правами). */
+export function setChatCodeMode(host: ChatCodeWorkHost, chatId: number, userId: string, value: unknown): void {
+  let mode = validateChatCodeMode(value);
   let meta = metaOrThrow(host, chatId);
-  if (meta.codeWork?.foreground) { meta.codeWork = {...meta.codeWork, foreground: false}; host.putChatMeta(meta); }
+  let creator = meta.projectContext?.creatorId;
+  if (creator && creator !== userId) throw new Error("Режим работы с кодом меняет тот, кто начал беседу.");
+  meta.codeMode = mode;
+  host.putChatMeta(meta);
 }
 
-/** Сообщение человека идёт прямо в работу с кодом, если она на переднем плане и жива. */
+/** Последний ответ дал агент кода, и его работа ещё жива. */
 export function codeWorkForeground(meta: AiChatMetadata | undefined): boolean {
   return !!meta?.codeWork?.foreground && codeWorkAlive(meta.codeWork.state);
+}
+
+/** Следующий ответ даёт агент беседы: отметка «последний ответ дал агент кода» снимается. */
+export function markChatAnswering(host: ChatCodeWorkHost, chatId: number): void {
+  let meta = host.chatMeta(chatId);
+  if (meta?.codeWork?.foreground) { meta.codeWork = {...meta.codeWork, foreground: false}; host.putChatMeta(meta); }
+}
+
+/** Куда агент кода пойдёт с сообщением: продолжит живую работу или начнёт новую в проекте беседы
+ *  с кодом. null — в беседе нет проекта с кодом. */
+export function chatCodeTarget(meta: AiChatMetadata): {projectId: string; projectTitle: string; continuing: boolean} | null {
+  let work = meta.codeWork;
+  if (work && codeWorkAlive(work.state)) return {projectId: work.projectId, projectTitle: work.projectTitle, continuing: true};
+  let project = chatProjects(meta.projectContext).find(p => p.hasCode);
+  return project ? {projectId: project.projectId, projectTitle: project.title, continuing: false} : null;
+}
+
+export type ChatRouteReason =
+  /** «Код: Выкл». */
+  | "off"
+  /** «Код: Вкл». */
+  | "on"
+  /** Агенту кода некуда идти: в беседе нет проекта с кодом. */
+  | "no_code_project"
+  /** Решение Jev с уверенностью не ниже порога. */
+  | "router"
+  /** Jev не уверен: отвечает агент беседы, он сам решит, звать ли агента кода. */
+  | "router_unsure"
+  /** Jev недоступен (нет ключа, ошибка, срок): продолжает тот, кто отвечал последним. */
+  | "router_failed";
+
+export type ChatRoute =
+  | {target: "code"; projectId: string; continuing: boolean; reason: ChatRouteReason}
+  | {target: "chat"; reason: ChatRouteReason};
+
+export type ChatRouteInput = {
+  mode: ChatCodeMode;
+  meta: AiChatMetadata;
+  message: string;
+  /** Последняя реплика агента перед сообщением человека. */
+  lastAgentReply?: string;
+  /** Вопрос к Jev; нет — маршрутизатор недоступен (например, нет ключа). */
+  ask?: (context: CodeRouteContext) => Promise<JevResult>;
+};
+
+/** Кому отвечать на сообщение человека: агенту кода или агенту беседы. */
+export async function routeChatMessage(input: ChatRouteInput): Promise<{route: ChatRoute; jev?: JevResult}> {
+  if (input.mode === "off") return {route: {target: "chat", reason: "off"}};
+  const target = chatCodeTarget(input.meta);
+  if (!target) return {route: {target: "chat", reason: "no_code_project"}};
+  let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
+  if (input.mode === "on") return {route: toCode("on")};
+
+  let work = input.meta.codeWork;
+  let alive = !!work && codeWorkAlive(work.state);
+  let context: CodeRouteContext = {
+    message: input.message,
+    ...(alive ? {work: {projectTitle: work!.projectTitle, topic: codeWorkBrief(work!, 300)}} : {}),
+    lastReplyByCode: codeWorkForeground(input.meta),
+    ...(input.lastAgentReply ? {lastAgentReply: input.lastAgentReply} : {}),
+    codeProjects: chatProjects(input.meta.projectContext).filter(p => p.hasCode).map(p => p.title),
+  };
+  let jev: JevResult = input.ask ? await input.ask(context) : {ok: false, error: "no_key"};
+  if (!jev.ok) {
+    // Разговор с агентом кода не обрывается из-за сбоя диспетчера; остальное — агенту беседы.
+    return {route: codeWorkForeground(input.meta) ? toCode("router_failed") : {target: "chat", reason: "router_failed"}, jev};
+  }
+  if (jev.decision.confidence < JEV_CONFIDENCE_THRESHOLD) return {route: {target: "chat", reason: "router_unsure"}, jev};
+  return {route: jev.decision.route === "code" ? toCode("router") : {target: "chat", reason: "router"}, jev};
 }
 
 function pinProject(meta: AiChatMetadata, project: ChatProject, userId: string, profileId: string): void {
@@ -91,6 +170,8 @@ export type CodeWorkRequest = {
   projectId?: string;
   /** Только продолжить живую сессию (вопрос агента беседы или сообщение человека). */
   continueOnly?: boolean;
+  /** Номер сообщения человека, текст которого и есть prompt: в пакет контекста не повторяется. */
+  promptSequence?: number;
   /** Кто ведёт беседу сейчас: чьи подключения использовать, если у беседы ещё нет создателя. */
   userId: string;
   profileId: string;
@@ -142,16 +223,27 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
     target = found.code;
   }
 
+  // Пакет «Контекст беседы»: при продолжении — только новое с прошлого хода, для новой работы —
+  // последние сообщения беседы.
+  let after = continuing ? work!.contextSeq ?? -1 : -1;
+  let seen = host.chatMessages(request.chatId, after);
+  let contextSeq = Math.max(after, request.promptSequence ?? -1, ...seen.map(m => m.sequence));
+  let pack = buildCodeContextPack({
+    messages: seen.filter(m => m.sequence !== request.promptSequence),
+    projects: chatProjects(metaOrThrow(host, request.chatId).projectContext),
+  });
+
   let cursor = continuing ? work!.cursor : 0;
   let {output, cursor: next} = await runCodeWorkTurn({
     backend: backendFor(user, accountId), projectId, projectTitle, target,
-    taskId: continuing ? work!.taskId : undefined, cursor, prompt: request.prompt, signal: request.signal,
+    taskId: continuing ? work!.taskId : undefined, cursor, prompt: withContextPack(pack, request.prompt), signal: request.signal,
     onStep: emitStep,
     onText: delta => host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta}),
     onStarted: taskId => {
       let current = metaOrThrow(host, request.chatId);
-      current.codeWork = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor,
-        ...(continuing && current.codeWork?.taskId === taskId ? {summary: current.codeWork.summary, review: current.codeWork.review} : {})};
+      let same = continuing && current.codeWork?.taskId === taskId;
+      current.codeWork = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor, contextSeq,
+        ...(same ? {summary: current.codeWork!.summary, review: current.codeWork!.review, changedFiles: current.codeWork!.changedFiles} : {})};
       host.putChatMeta(current);
     },
   });
@@ -162,6 +254,8 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   current.codeWork = {accountId, projectId, projectTitle, taskId: output.taskId, state: output.state,
     foreground: codeWorkAlive(output.state), cursor: next,
     summary: (output.answer || current.codeWork?.summary || "").slice(0, MAX_SUMMARY),
+    contextSeq,
+    changedFiles: output.changedFiles.slice(0, MAX_STORED_FILES).map(f => ({path: f.path, status: f.status})),
     ...(review ? {review} : {})};
   host.putChatMeta(current);
   return output;

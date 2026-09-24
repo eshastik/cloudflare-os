@@ -5,7 +5,7 @@ import type { GitProjectRepository } from "../src/git-connections.ts";
 import type { WorkspaceState, WorkspaceTaskDetails, WorkspaceTaskView } from "../src/workspace-tasks.ts";
 import type { WorkspaceStep } from "../src/workspace-steps.ts";
 import { useUi } from "./host.ts";
-import { AdminDetails, Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { ActionForm, AdminDetails, Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
 
 /** Опрос хода задачи, пока агент работает. */
 export const TASK_POLL_MS = 2000;
@@ -79,7 +79,7 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
       <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto bg-kumo-base p-6">
         <Dialog.Title className="text-lg font-semibold">Поручить агенту</Dialog.Title>
         <Dialog.Description className="mt-2 text-sm text-kumo-subtle">Агент работает в отдельной копии кода проекта. Основная версия меняется только после вашего решения.</Dialog.Description>
-        <form aria-label="Задача агенту" className="mt-5 grid gap-3 text-sm" onSubmit={e => { e.preventDefault(); void submit(); }}>
+        <ActionForm aria-label="Задача агенту" className="mt-5 grid gap-3 text-sm" onAction={() => void submit()}>
           {repositories.length > 1 && (
             <label className="grid gap-1.5">Код проекта
               <Select aria-label="Репозиторий задачи" value={selected ? repoKey(selected) : ""} onChange={e => setRepo(e.target.value)} disabled={busy}>
@@ -95,9 +95,9 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>Отмена</Button>
-            <Button type="submit" disabled={busy || !prompt.trim() || !selected}>{busy ? "Поручаем…" : "Поручить"}</Button>
+            <Button type="button" disabled={busy || !prompt.trim() || !selected} onClick={() => void submit()}>{busy ? "Поручаем…" : "Поручить"}</Button>
           </div>
-        </form>
+        </ActionForm>
       </Dialog>
     </Dialog.Root>
   );
@@ -182,6 +182,10 @@ function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: 
     catch (e) { setError(errorText(e, failure)); }
     finally { setBusy(false); }
   }
+  function send() {
+    const text = message.trim();
+    if (text) void act(async () => { await ui.messageWorkspaceTask(projectId, task.task_id, text); setMessage(""); }, "Сообщение не отправлено. Повторите.");
+  }
   const finished = task.state === "stopped" || task.state === "failed";
   return (
     <section aria-label="Ход задачи" className="mb-6">
@@ -206,11 +210,11 @@ function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: 
         {!finished && <Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(() => ui.abortWorkspaceTask(projectId, task.task_id), "Задача не остановлена. Повторите.")}>Остановить</Button>}
       </div>
       {!finished && (
-        <form aria-label="Сообщение агенту" className="mt-3 flex max-w-[650px] gap-2" onSubmit={e => { e.preventDefault(); const text = message.trim(); if (text) void act(async () => { await ui.messageWorkspaceTask(projectId, task.task_id, text); setMessage(""); }, "Сообщение не отправлено. Повторите."); }}>
+        <ActionForm aria-label="Сообщение агенту" className="mt-3 flex max-w-[650px] gap-2" onAction={send}>
           <input aria-label="Сообщение агенту" value={message} disabled={busy} onChange={e => setMessage(e.target.value)} placeholder="Уточните задачу или попросите доделать"
             className="h-8 min-w-0 flex-1 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring" />
-          <Button type="submit" variant="secondary" size="sm" disabled={busy || !message.trim()}>Написать агенту</Button>
-        </form>
+          <Button type="button" variant="secondary" size="sm" disabled={busy || !message.trim()} onClick={send}>Написать агенту</Button>
+        </ActionForm>
       )}
     </section>
   );

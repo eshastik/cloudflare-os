@@ -48,7 +48,7 @@ test("Задачи агентов: пустое состояние и поруч
   const calls = [];
   const app = await mountMemoryApp(methods(calls), { section: "projects", project: "one" });
   try {
-    await app.until(() => app.tab("Задачи агентов"), "вкладка задач"); app.tab("Задачи агентов").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "блок кода с задачами");
     await app.until(() => app.text().includes("Здесь появятся задачи"), "пустое состояние");
     await app.until(() => app.button("Поручить агенту") && !app.button("Поручить агенту").disabled, "кнопка доступна");
     app.button("Поручить агенту").click();
@@ -71,7 +71,7 @@ test("Задачу можно остановить, а её изменения �
   const calls = [];
   const app = await mountMemoryApp(methods(calls, { tasks: [taskView("running")] }), { section: "projects", project: "one" });
   try {
-    await app.until(() => app.tab("Задачи агентов"), "вкладка задач"); app.tab("Задачи агентов").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "блок кода с задачами");
     await app.until(() => app.button("Остановить"), "задача в работе");
     app.button("Остановить").click();
     await app.until(() => app.text().includes("Остановлена"), "задача остановлена");
@@ -80,7 +80,6 @@ test("Задачу можно остановить, а её изменения �
     app.button("Показать изменения").click();
     await app.until(() => app.document.querySelector('section[aria-label="Изменения по строкам"] pre'), "сравнение ветки задачи");
     assert.deepEqual(calls.find(c => c[0] === "compareGitRefs"), ["compareGitRefs", "main", BRANCH]);
-    assert.equal(app.tab("Код").getAttribute("aria-selected"), "true");
   } finally { app.dispose(); }
 });
 
@@ -88,35 +87,22 @@ test("Без настройки рабочих мест кнопка поруч�
   const calls = [];
   const app = await mountMemoryApp(methods(calls, { available: false }), { section: "projects", project: "one" });
   try {
-    await app.until(() => app.tab("Задачи агентов"), "вкладка задач"); app.tab("Задачи агентов").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "блок кода с задачами");
     const reason = () => app.button("Поручить агенту")?.closest("[data-reason]")?.getAttribute("title");
     await app.until(reason, "подсказка на кнопке");
     assert.equal(app.button("Поручить агенту").disabled, true);
     assert.match(reason(), /не настроены/);
-    app.tab("Код").click();
-    await app.until(() => app.tab("Код").getAttribute("aria-selected") === "true" && app.document.querySelector('select[aria-label="Версия кода"]') && reason(), "кнопка во вкладке кода");
-    assert.equal(app.button("Поручить агенту").disabled, true);
   } finally { app.dispose(); }
 });
 
-test("Вкладка проекта адресуема: view из адреса открывает её, переключение записывает view", async () => {
-  const calls = [];
-  const code = await mountMemoryApp(methods(calls), { section: "projects", project: "one", view: "code" });
-  try {
-    await code.until(() => code.tab("Код")?.getAttribute("aria-selected") === "true", "вкладка кода по ссылке");
-    code.tab("Задачи агентов").click();
-    await code.until(() => code.calls.some(c => c[0] === "selectView" && c[1] === "tasks"), "адрес обновлён");
-    code.tab("Участники").click();
-    await code.until(() => code.calls.some(c => c[0] === "selectView" && c[1] === "members"), "участники в адресе как members");
-  } finally { code.dispose(); }
-  const members = await mountMemoryApp(methods([]), { section: "projects", project: "one", view: "members" });
-  try {
-    await members.until(() => members.tab("Участники")?.getAttribute("aria-selected") === "true", "участники по ссылке");
-  } finally { members.dispose(); }
-  const unknown = await mountMemoryApp(methods([]), { section: "projects", project: "one", view: "nonsense" });
-  try {
-    await unknown.until(() => unknown.tab("Обзор")?.getAttribute("aria-selected") === "true", "неизвестная вкладка — обзор");
-  } finally { unknown.dispose(); }
+test("Страница проекта одна: ссылка на блок открывает ту же страницу без вкладок", async () => {
+  for (const view of ["code", "members", "nonsense"]) {
+    const app = await mountMemoryApp(methods([]), { section: "projects", project: "one", view });
+    try {
+      await app.until(() => app.document.querySelector('#root section[aria-label="Код"]') && app.document.querySelector('#root section[aria-label="Участники"]'), `страница по ссылке ${view}`);
+      assert.equal(app.tabs().length, 0, "без вкладок");
+    } finally { app.dispose(); }
+  }
 });
 
 test("Перетаскивание файлов во фрейм сообщает оболочке, прочее перетаскивание — нет", async () => {

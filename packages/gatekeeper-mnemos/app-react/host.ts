@@ -11,16 +11,14 @@ export interface HostContextValue {
   host: HostStub;
   /** Взят у стаба один раз: каждое обращение к host.ui даёт новый объект, а хуки React сравнивают зависимости по ссылке. */
   ui: Ui;
-  /** Контейнер прежних разделов: вкладки переносят его внутрь себя, когда открывают перенесённый раздел. */
-  legacy: HTMLElement;
 }
 
 const HostContext = createContext<HostContextValue | null>(null);
 
 export const HostProvider = HostContext.Provider;
 
-export function makeHostContext(host: HostStub, legacy: HTMLElement): HostContextValue {
-  return { host, ui: host.ui, legacy };
+export function makeHostContext(host: HostStub): HostContextValue {
+  return { host, ui: host.ui };
 }
 
 function useHostContext(): HostContextValue {
@@ -35,8 +33,4 @@ export function useHost(): HostStub {
 
 export function useUi(): Ui {
   return useHostContext().ui;
-}
-
-export function useLegacyContainer(): HTMLElement {
-  return useHostContext().legacy;
 }

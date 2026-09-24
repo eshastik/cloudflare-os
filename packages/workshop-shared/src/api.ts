@@ -28,7 +28,7 @@ import type { UIReadinessSample } from "./ui-readiness.js";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
-import type { AgentStep, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
+import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
 
 export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
@@ -1641,8 +1641,8 @@ export interface Overseer extends RpcTarget {
   // Набор проектов беседы (чипы над полем ввода). Проверяется владение подключениями.
   setChatProjects(chatId: number, projects: ChatProject[]): Promise<void>;
 
-  // Вернуть сообщения человека агенту беседы, когда на переднем плане работа с кодом.
-  leaveCodeWork(chatId: number): Promise<void>;
+  // Переключатель «Код: Выкл · Авто · Вкл» у поля ввода; хранится в метаданных беседы.
+  setChatCodeMode(chatId: number, mode: ChatCodeMode): Promise<void>;
 
   // «Что изменилось» в работе с кодом беседы.
   readChatCodeChanges(chatId: number): Promise<ChatCodeChanges | null>;
@@ -1865,6 +1865,8 @@ export type AiChatMetadata = {
   projectContext?: ChatProjectContext & {creatorId: string;creatorProfileId:string};
   /** Работа с кодом этой беседы, если агент к ней переходил. */
   codeWork?: ChatCodeWork;
+  /** Переключатель «Код»; не задан — «Авто». */
+  codeMode?: ChatCodeMode;
   id: number,
   title: string,
   started: Date,

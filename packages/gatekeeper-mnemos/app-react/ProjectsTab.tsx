@@ -6,17 +6,16 @@ import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
 import { actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
 import { SharePanel, VisibilityBadge } from "./ProjectSharing.tsx";
-import { LegacySwitch, useLegacySection } from "./legacy.tsx";
-import { Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
+import ProjectApproval from "./ProjectApproval.tsx";
+import { ActionForm, Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
-import ProjectTasks, { AssignTask } from "./ProjectTasks.tsx";
+import ProjectTasks from "./ProjectTasks.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 
 export default function ProjectsTab({ data, initialProject = "", initialView = "", onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
-  const legacy = useLegacySection();
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
   // Вкладка каждого проекта переживает возврат из прежних разделов, которые на время заменяют страницу.
@@ -37,7 +36,7 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
   const viewOf = (id: string) => views[id] ?? (linked && (id === initialProject || !initialProject && id === data.projects[0]?.id) ? linked : "overview");
 
   return (
-    <LegacySwitch state={legacy}>
+    <>
       <div className="grid grid-cols-[208px_minmax(0,1fr)] gap-6 max-md:grid-cols-1">
         <nav aria-label="Список проектов" className="flex flex-col gap-0.5">
           <div className="px-2.5 pt-1 pb-2"><Eyebrow>Мои проекты</Eyebrow></div>
@@ -56,11 +55,11 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
         </nav>
         <div className="min-w-0">
           {selected
-            ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} openLegacy={legacy.open} />
+            ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} />
             : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
         </div>
       </div>
-    </LegacySwitch>
+    </>
   );
 }
 
@@ -71,16 +70,10 @@ function viewFromAddress(value: string): ProjectView | null {
   const found = (Object.entries(ADDRESS) as [ProjectView, string][]).find(([, name]) => name === value);
   return found ? found[0] : null;
 }
-const VIEWS: { id: ProjectView; title: string }[] = [
-  { id: "overview", title: "Обзор" },
-  { id: "materials", title: "Материалы" },
-  { id: "code", title: "Код" },
-  { id: "tasks", title: "Задачи агентов" },
-  { id: "people", title: "Участники" },
-];
-const RECENT_LIMIT = 5;
 
-function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSources, openLegacy }: { project: ProjectData; data: MemoryData; view: ProjectView; onView(view: ProjectView): void; onOpenDocuments(): void; onOpenSources(): void; openLegacy: ReturnType<typeof useLegacySection>["open"] }) {
+/** Страница проекта — один экран блоками: обзор, материалы, участники и согласование, код (если подключён).
+ * Вкладка из адреса страницы только прокручивает к своему блоку. */
+function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { project: ProjectData; data: MemoryData; view: ProjectView; onView(view: ProjectView): void; onOpenDocuments(): void; onOpenSources(): void }) {
   const ui = useUi();
   const host = useHost();
   const [actionError, setActionError] = useState("");
@@ -89,8 +82,11 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
   const repositories = useLoad(async () => (await ui.listProjectGitRepositories(project.id, "")).repositories.filter(r => r.enabled), "", [ui, project.id]);
   const hasCode = (repositories.value?.length ?? 0) > 0;
   const [compareTo, setCompareTo] = useState<CompareTarget | null>(null);
-  const views = VIEWS.filter(v => v.id !== "code" || hasCode);
-  const current = views.some(v => v.id === view) ? view : "overview";
+  useEffect(() => {
+    if (view === "overview") return;
+    const id = view === "tasks" ? "code" : view;
+    document.getElementById(`project-${id}`)?.scrollIntoView?.({ block: "start" });
+  }, [view, hasCode]);
 
   return (
     <div>
@@ -105,21 +101,15 @@ function ProjectPage({ project, data, view, onView, onOpenDocuments, onOpenSourc
       </div>
       {actionError && <Notice tone="danger">{actionError}</Notice>}
       {sharing && <SharePanel project={project} onClose={() => setSharing(false)} onChanged={data.reloadProjects} />}
-      <div role="tablist" aria-label="Разделы проекта" className="mb-5 flex flex-wrap gap-1 border-b border-kumo-line pb-2">
-        {views.map(v => (
-          <button key={v.id} type="button" role="tab" aria-selected={current === v.id} onClick={() => onView(v.id)}
-            className={`h-8 rounded-lg px-2.5 text-[13px] tracking-[-0.25px] ${current === v.id ? "bg-kumo-fill font-medium text-kumo-strong" : "text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"}`}>{v.title}</button>
-        ))}
-      </div>
-      <div role="tabpanel" aria-label={views.find(v => v.id === current)?.title}>
-        {current === "overview" && <ProjectOverview project={project} data={data} l1={overview.value?.l1 ?? ""} pending={overview.value?.pending ?? false} onOpenMaterials={() => onView("materials")} />}
-        {current === "materials" && <ProjectMaterials project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} />}
-        {current === "code" && repositories.value && <ProjectCode admin={isAdministrator(data.identity)} key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo}
-          actions={<AssignTask projectId={project.id} repositories={repositories.value} onStarted={() => { setCompareTo(null); onView("tasks"); }} />} />}
-        {current === "tasks" && <ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={repositories.value ?? (repositories.error ? [] : undefined)}
-          onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); onView("code"); }} />}
-        {current === "people" && <ProjectPeople project={project} data={data} onOpenSources={onOpenSources} openLegacy={openLegacy} />}
-      </div>
+      <section id="project-overview" aria-label="Обзор"><ProjectOverview project={project} data={data} l1={overview.value?.l1 ?? ""} pending={overview.value?.pending ?? false} /></section>
+      <section id="project-materials" aria-label="Материалы проекта"><ProjectMaterials project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} /></section>
+      <section id="project-members" aria-label="Участники"><ProjectPeople project={project} data={data} onOpenSources={onOpenSources} /></section>
+      {hasCode && repositories.value && <section id="project-code" aria-label="Код" className="mb-6">
+        <h2 className="m-0 mb-2 text-[15px] font-semibold text-kumo-strong">Код</h2>
+        <ProjectCode admin={isAdministrator(data.identity)} key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo} />
+        <div className="mt-4"><ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={repositories.value}
+          onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); document.getElementById("project-code")?.scrollIntoView?.({ block: "start" }); }} /></div>
+      </section>}
     </div>
   );
 }
@@ -149,8 +139,7 @@ function MaterialRows({ project, rows, descriptions }: { project: ProjectData; r
   );
 }
 
-function ProjectOverview({ project, data, l1, pending, onOpenMaterials }: { project: ProjectData; data: MemoryData; l1: string; pending: boolean; onOpenMaterials(): void }) {
-  const materials = useMemo(() => documentRows(project, data.reviews), [project, data.reviews]);
+function ProjectOverview({ project, data, l1, pending }: { project: ProjectData; data: MemoryData; l1: string; pending: boolean }) {
   const userId = data.identity?.subject.user_id ?? "";
   const approvals = myApprovals(data.reviews, userId).filter(item => item.review.project_id === project.id && item.mine === null && !item.review.stale && !item.review.withdrawn);
   const work = data.collaborations.filter(item => item.request.project_id === project.id);
@@ -182,10 +171,6 @@ function ProjectOverview({ project, data, l1, pending, onOpenMaterials }: { proj
             </Row>
           ))}
         </RowList>
-      </Block>
-      <Block title="Последние материалы" count={materials.length} empty={project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Материалов пока нет. Загрузите файлы во вкладке «Материалы»."}
-        actions={<Button variant="ghost" size="sm" onClick={onOpenMaterials}>Все материалы</Button>}>
-        <MaterialRows project={project} rows={materials.slice(0, RECENT_LIMIT)} />
       </Block>
     </div>
   );
@@ -253,7 +238,7 @@ function ProjectMaterials({ project, data, descriptions, onOpenDocuments }: { pr
   );
 }
 
-function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: ProjectData; data: MemoryData; onOpenSources(): void; openLegacy: ReturnType<typeof useLegacySection>["open"] }) {
+function ProjectPeople({ project, data, onOpenSources }: { project: ProjectData; data: MemoryData; onOpenSources(): void }) {
   const ui = useUi();
   const policy = useLoad(() => ui.readPublicationPolicy(project.id), "Политика согласования не прочитана: нет права или сервер отказал.", [ui, project.id]);
   const approvers = useLoad(() => ui.listPolicyApprovers(project.id, ""), "Список согласующих не прочитан.", [ui, project.id]);
@@ -267,9 +252,9 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
   const absence = data.absences.get(project.id);
   const agents = data.connections.filter(c => !c.revoked && c.document_grants?.some(g => g.project_id === project.id));
   const sources = [
-    ...(mail.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `mail/${c.connection_id}`, kind: "Почта", title: c.provider, note: c.enabled ? "чтение агентом · отправка письма только после согласования" : "отключено" })),
-    ...(calendars.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `cal/${c.connection_id}`, kind: "Календарь", title: looksLikeId(c.calendar_id) ? c.provider : `${c.provider} · ${c.calendar_id}`, note: c.enabled ? "чтение окна · встреча только после согласования черновика" : "отключено" })),
-    ...(databases.value?.databases ?? []).filter(d => d.project_id === project.id).map(d => ({ key: `db/${d.db_id}`, kind: "База", title: `${d.name} · ${d.driver}`, note: d.unreachable_since ? `ошибка доступа с ${new Date(d.unreachable_since).toLocaleString("ru-RU")}` : "запросы агента только на чтение" })),
+    ...(mail.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `mail/${c.connection_id}`, kind: "Почта", title: "Письма проекта", note: c.enabled ? "чтение агентом · отправка письма только после согласования" : "отключено" })),
+    ...(calendars.value?.connections ?? []).filter(c => c.project_id === project.id).map(c => ({ key: `cal/${c.connection_id}`, kind: "Календарь", title: looksLikeId(c.calendar_id) ? "Календарь проекта" : `Календарь «${c.calendar_id}»`, note: c.enabled ? "чтение окна · встреча только после согласования черновика" : "отключено" })),
+    ...(databases.value?.databases ?? []).filter(d => d.project_id === project.id).map(d => ({ key: `db/${d.db_id}`, kind: "База", title: d.name, note: d.unreachable_since ? `ошибка доступа с ${new Date(d.unreachable_since).toLocaleString("ru-RU")}` : "запросы агента только на чтение" })),
   ];
   const sourceErrors = [mail.error, calendars.error, databases.error].filter(Boolean);
   return (
@@ -277,9 +262,8 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
       <Block title="Участники и направления" count={members.length} empty={policy.error || approvers.error || "Участники не назначены."}>
         <RowList>{members.map(member => <Row key={member.id}><RowText title={member.name} note={member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"} /></Row>)}</RowList>
       </Block>
-      <Block title="Агенты проекта" count={agents.length} empty={data.connectionsError || "Ваших агентов нет."}
-        actions={<Button variant="ghost" size="sm" onClick={() => openLegacy({ kind: "absence", project: project.id }, "Замещение на время отсутствия")}>Замещение</Button>}>
-        <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Показаны ваши подключения; доступ каждого агента к проекту сервер проверяет при обращении, не шире ваших прав.</p>
+      <Block title="Агенты проекта" count={agents.length} empty={data.connectionsError || "Ваших агентов в проекте нет."}>
+        <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Ваши агенты с доступом к проекту; каждый видит не больше вас.</p>
         <RowList>
           {agents.map(agent => {
             const role = absence?.enabled && absence.local_binding_id === agent.binding_id ? "замещается" : absence?.enabled && absence.managed_binding_id === agent.binding_id ? `замещает до ${new Date(absence.ends_at).toLocaleString("ru-RU")}` : "";
@@ -291,20 +275,10 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
           })}
         </RowList>
       </Block>
-      <Block title="Правила согласования" count={policy.value?.domains.length ?? 0} empty={policy.error || "Правил согласования нет: публикация в этом проекте не требует согласующих."}
-        actions={<Button variant="ghost" size="sm" onClick={() => openLegacy({ kind: "policy", project: project.id }, "Настройка согласований")}>Настроить согласования</Button>}>
-        <RowList>
-          {(policy.value?.domains ?? []).map(domain => (
-            <Row key={domain.domain_id}>
-              <RowText title={domain.all_documents ? "Все документы проекта, включая новые" : domain.node_ids.map(nodeName).join(", ")} note={`согласуют: ${domain.approver_ids.map(id => personName(id, names)).join(", ") || "никто не назначен"}`} />
-              <StatusBadge tone="info">{domain.domain_id}</StatusBadge>
-            </Row>
-          ))}
-        </RowList>
-      </Block>
-      <Block title="Источники проекта" count={sources.length} empty={sourceErrors.length ? `Источники не прочитаны: ${sourceErrors.join("; ")}.` : "К проекту не привязано ни одного источника."}
-        actions={<Button variant="ghost" size="sm" onClick={onOpenSources}>Все источники</Button>}>
-        {sourceErrors.length > 0 && <div className="mb-2"><Notice tone="danger">Часть источников не прочитана: {sourceErrors.join("; ")}.</Notice></div>}
+      <ProjectApproval project={project} />
+      <Block title="Откуда приходят материалы" count={sources.length} empty={sourceErrors.length ? `Подключения не прочитаны: ${sourceErrors.join("; ")}.` : "К проекту не подключены почта, календарь или базы."}
+        actions={isAdministrator(data.identity) ? <Button variant="ghost" size="sm" onClick={onOpenSources}>Все подключения</Button> : undefined}>
+        {sourceErrors.length > 0 && <div className="mb-2"><Notice tone="danger">Часть подключений не прочитана: {sourceErrors.join("; ")}.</Notice></div>}
         <RowList>
           {sources.map(source => (
             <Row key={source.key}>
@@ -314,9 +288,6 @@ function ProjectPeople({ project, data, onOpenSources, openLegacy }: { project: 
           ))}
         </RowList>
       </Block>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="secondary" size="sm" onClick={() => openLegacy({ kind: "tracker", project: project.id }, "Трекер проекта")}>Трекер</Button>
-      </div>
     </div>
   );
 }
@@ -352,11 +323,10 @@ function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise
       setError("Проект не создан или ответ не получен. Проверьте список проектов, имя и ваши полномочия перед повтором.");
     } finally { setBusy(false); }
   }
-  // The management frame intentionally disallows native form submissions.
-  return <form aria-label="Новый проект" onSubmit={e => e.preventDefault()} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void submit(); } }}>
+  return <ActionForm aria-label="Новый проект" onAction={() => void submit()}>
     <label>Название проекта<TextInput required maxLength={255} value={name} onChange={e => setName(e.target.value)} disabled={busy} /></label>
     {error && <Notice tone="danger">{error}</Notice>}
     <Button type="button" onClick={() => void submit()} disabled={busy || !name.trim()}>Создать</Button>
     <Button type="button" disabled={busy} onClick={onCancel}>Отмена</Button>
-  </form>;
+  </ActionForm>;
 }

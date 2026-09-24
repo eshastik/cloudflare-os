@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@cloudflare/kumo";
-import { ArrowLeft, FileText } from "@phosphor-icons/react";
+import { FileText } from "@phosphor-icons/react";
 import type { AdminPerson } from "../src/admin-people.ts";
 import type { PrivateDocumentPage } from "../src/mnemos-api.ts";
 import type { MemoryData } from "./data.ts";
@@ -10,7 +10,8 @@ import { Notice, Row, RowList, StatusBadge } from "./ui.tsx";
 type Document = PrivateDocumentPage["documents"][number];
 const selectClass = "h-9 rounded-lg border border-kumo-line bg-kumo-base px-3 text-sm text-kumo-default";
 
-export default function AdministrativeDocuments({data, initialProject, onClose}: {data:MemoryData;initialProject:string;onClose():void}) {
+/** Личные версии сотрудников — для администратора, раскрытием на странице «Материалы». */
+export default function AdministrativeDocuments({data, initialProject}: {data:MemoryData;initialProject:string}) {
  const ui=useUi(), host=useHost();
  const [people,setPeople]=useState<AdminPerson[]>([]);
  const [peopleError,setPeopleError]=useState("");
@@ -25,7 +26,7 @@ export default function AdministrativeDocuments({data, initialProject, onClose}:
  const generation=useRef(0);
  const alive=useRef(true);
  useEffect(()=>()=>{alive.current=false;generation.current++;},[]);
- useEffect(()=>{let current=true;void ui.listPeople().then(result=>{if(current)setPeople(result.users);},()=>{if(current)setPeopleError("Не удалось загрузить сотрудников. Вернитесь к материалам и повторите попытку.");});return()=>{current=false;};},[ui]);
+ useEffect(()=>{let current=true;void ui.listPeople().then(result=>{if(current)setPeople(result.users);},()=>{if(current)setPeopleError("Не удалось загрузить сотрудников. Обновите страницу.");});return()=>{current=false;};},[ui]);
  useEffect(()=>{void load("");},[project,owner,ui]);
  async function load(cursor:string) {
   const current=++generation.current;
@@ -57,8 +58,7 @@ export default function AdministrativeDocuments({data, initialProject, onClose}:
  }
  const name=people.find(person=>person.userName===owner)?.displayName || owner;
  return <section aria-label="Личные версии сотрудников" className="space-y-4">
-  <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={onClose}>К материалам</Button>
-  <div><h2 className="m-0 text-lg font-semibold text-kumo-strong">Личные версии сотрудников</h2><p className="mt-1 text-sm text-kumo-subtle">Выберите автора и проект. Просмотр сохраняет исходную версию документа.</p></div>
+  <p className="m-0 text-sm text-kumo-subtle">Выберите автора и проект. Просмотр не меняет документ.</p>
   <div className="flex flex-wrap items-end gap-3">
    <label className="flex min-w-48 flex-col gap-1 text-sm text-kumo-default">Автор<select aria-label="Автор личных версий" className={selectClass} value={owner} onChange={event=>setOwner(event.target.value)}><option value="">Выберите сотрудника</option>{people.map(person=><option key={person.userName} value={person.userName}>{person.displayName || person.userName}{person.active===false?" · неактивен":""}</option>)}</select></label>
    <label className="flex min-w-48 flex-col gap-1 text-sm text-kumo-default">Проект<select aria-label="Проект личных версий" className={selectClass} value={project} onChange={event=>setProject(event.target.value)}>{!project&&<option value="">Выберите проект</option>}{data.projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
@@ -67,13 +67,14 @@ export default function AdministrativeDocuments({data, initialProject, onClose}:
   {peopleError&&<Notice tone="danger">{peopleError}</Notice>}
   {error&&<Notice tone="danger">{error}</Notice>}
   {loading&&<Notice>Загрузка личных версий…</Notice>}
-  {opened?<section aria-label="Просмотр личной версии" className="rounded-xl border border-kumo-line p-4">
-   <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={()=>{generation.current++;setOpened(null);}}>К списку автора</Button>
+  {opened&&<section aria-label="Просмотр личной версии" className="rounded-xl border border-kumo-line p-4">
+   <Button variant="ghost" size="sm" onClick={()=>{generation.current++;setOpened(null);}}>Свернуть</Button>
    <h3 className="mb-1 text-base font-semibold text-kumo-strong">{opened.document.name}</h3><p className="mt-0 text-sm text-kumo-subtle">Автор: {name} · {data.projects.find(item=>item.id===project)?.name}</p>
    <Button variant="secondary" disabled={downloading||opened.document.conflicted} onClick={()=>void download(opened.document)}>{downloading?"Скачивание…":"Скачать файл"}</Button>
    {downloadError&&<Notice tone="danger">{downloadError}</Notice>}
    {opened.error?<><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" onClick={()=>void open(opened.document)}>Повторить загрузку</Button></>:opened.text===null?<Notice>Загрузка документа…</Notice>:<pre className="whitespace-pre-wrap break-words font-sans text-sm text-kumo-default">{opened.text||"(Пустой файл)"}</pre>}
-  </section>:page&&<>
+  </section>}
+  {page&&<>
    {page.documents.length===0&&<Notice>На этой странице нет доступных личных документов{page.next_cursor?". Продолжите просмотр следующей страницы.":"."}</Notice>}
    <RowList>{page.documents.map(document=><Row key={document.node_id}><FileText size={20} className="shrink-0 text-kumo-subtle"/><div className="min-w-0 flex-1"><button type="button" className="text-left text-sm font-medium text-kumo-default" onClick={()=>void open(document)}>{document.name}</button><p className="m-0 text-xs text-kumo-subtle">{name}</p></div><StatusBadge tone={document.conflicted?"danger":"neutral"}>{document.conflicted?"Конфликт":"Личная версия"}</StatusBadge></Row>)}</RowList>
    {page.next_cursor&&<Button variant="secondary" onClick={()=>void load(page.next_cursor)}>Следующая страница</Button>}

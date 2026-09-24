@@ -23,7 +23,8 @@ const inside = (el, name) => [...el.querySelectorAll("button")].find(b => b.text
 function submit(app, text) {
   const input = app.document.querySelector('#root input[aria-label="Поиск по материалам"]');
   app.type(input, text);
-  input.form.dispatchEvent(new app.dom.window.Event("submit", { bubbles: true, cancelable: true }));
+  // Формы во фрейме-песочнице не отправляются: поиск запускает Enter в поле.
+  input.dispatchEvent(new app.dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
 }
 
 test("«Материалы»: одна строка ищет по всем проектам, результаты — карточки с проектом, фрагментом и временем", async () => {

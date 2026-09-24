@@ -42,7 +42,7 @@ function ThemeModeButton() {
   )
 }
 
-// Settings is a labelled row, not a bare icon: it is where every service section now lives.
+// «Настройки» — подписанная строка, а не голая иконка. Внутри только личное: профиль и оформление.
 function SettingsLink({ collapsed }: { collapsed: boolean }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const active = pathname === '/settings' || pathname.startsWith('/settings/')

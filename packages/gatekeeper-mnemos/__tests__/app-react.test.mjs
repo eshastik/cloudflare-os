@@ -13,7 +13,7 @@ async function until(predicate, what) {
 
 const REVIEW = "e".repeat(64);
 
-test("прямые разделы Mnemos: документы, согласования и тема", async () => {
+test("прямые разделы Mnemos: материалы, согласования во «Входящих» и тема", async () => {
   const searches = [], decisions = [], histories = [];
   class UI extends RpcTarget {
     async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример команды" }; }
@@ -76,7 +76,7 @@ test("прямые разделы Mnemos: документы, согласова
     // React сверяет значение со своим слепком, поэтому ввод ставится нативным сеттером, как это делает браузер.
     Object.getOwnPropertyDescriptor(app.dom.window.HTMLInputElement.prototype, "value").set.call(search, "знание");
     search.dispatchEvent(new app.dom.window.Event("input", { bubbles: true }));
-    search.form.dispatchEvent(new app.dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    search.dispatchEvent(new app.dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await until(() => text().includes("Найденная заметка"), "результат поиска");
     assert.deepEqual(searches.filter(([, q]) => q === "знание").map(([p]) => p).toSorted(), ["one", "two"]);
     assert.ok(text().includes("Фрагмент <b>текста</b>"), "текст результата показан как текст, не как HTML");
@@ -85,7 +85,7 @@ test("прямые разделы Mnemos: документы, согласова
     button("Найденная заметка").click();
     await until(() => app.document.querySelector('#root aside[aria-label="Просмотр документа"]')?.textContent.includes("Текст документа"), "просмотр документа");
 
-    await app.open("Согласования");
+    await app.open("Входящие");
     await until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");
     app.document.querySelector('#root [data-inbox="approval"] button').click();
     await until(() => button("Одобрить") && button("Отклонить"), "кнопки решения");

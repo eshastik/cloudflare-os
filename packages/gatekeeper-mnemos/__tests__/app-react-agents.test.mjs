@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mountMemoryApp } from "./app-react-harness.mjs";
 
-test("«Агенты»: карточки по среде, выдача агента с устойчивой заявкой, отзыв доступа, путь «Подключить своего»", async () => {
+test("«Агенты и расходы»: агенты по именам, без полей для идентификаторов; отзыв доступа; путь «Подключить своего»", async () => {
   let revoked = false;
   const app = await mountMemoryApp({
     async listAgentConnections() {
@@ -13,28 +13,20 @@ test("«Агенты»: карточки по среде, выдача аген�
     },
     async revokeAgentConnection(id) { app.calls.push(["revokeAgentConnection", id]); revoked = true; },
     async listTelegram() { return { connections: [{ bot: "bot-1", username: "acme_bot", binding: "b-managed", ready: true, disconnected: false, cleanup_pending: false, channel_registered: true }], unavailable: 0 }; },
-    async readPersonalMemory() { return { revision: 2, project_id: "one", node_id: "doc", head: "b".repeat(64) }; },
-    async readDraftDocument(project, node) { return { head: "b".repeat(64), node_id: node, exists: true, conflicted: false, terms: [{ present: true, negative: false, metadata: { name: "Инструкция агента", parent_id: "", content_type: "text/plain" } }] }; },
-    async readAgentAbsence(project) { return { project_id: project, local_binding_id: "b-external", managed_binding_id: "b-managed", starts_at: "2026-09-15T00:00:00Z", ends_at: "2026-09-29T00:00:00Z", revision: 1, enabled: project === "one" }; },
   });
   try {
-    await app.open("Агенты");
+    await app.open("Агенты и расходы");
     const card = id => app.document.querySelector(`#root [data-agent="${id}"]`);
     await app.until(() => card("b-managed") && card("b-external"), "две карточки");
     const managed = card("b-managed"), external = card("b-external");
-    assert.ok(managed.textContent.includes("AgenticOS") && managed.textContent.includes("Владелец — вы"), "среда и владелец");
-    assert.ok(managed.textContent.includes("ограничены текущими правами владельца"), "права — собственные, в пределах прав владельца");
-    await app.until(() => managed.querySelector("dd").textContent.includes("документ «Заметка команды»"), "документ назван по имени, а не по идентификатору");
-    assert.ok(!managed.querySelector("dd").textContent.includes("Второй проект"), "показана выданная область, а не все проекты владельца");
-    await app.until(() => managed.textContent.includes("Инструкция агента"), "память агента");
+    assert.ok(managed.textContent.includes("Агент AgenticOS") && external.textContent.includes("Свой агент"), "агенты названы словами");
+    await app.until(() => managed.querySelector("dd").textContent.includes("документ «Заметка команды»"), "документ назван по имени");
     await app.until(() => managed.textContent.includes("@acme_bot"), "канал Telegram");
-    assert.ok(managed.textContent.includes("Текущих задач нет"), "задачи");
-    await app.until(() => managed.textContent.includes("Замещение") && managed.textContent.includes("замещает"), "замещение");
-    const names = el => [...el.querySelectorAll("button")].map(b => b.textContent);
-    for (const action of ["Поставить задачу", "Внести корректировку", "Остановить выполнение", "Отозвать доступ"]) assert.ok(names(managed).includes(action), `действие управляемого: ${action}`);
-    assert.ok(!names(external).includes("Поставить задачу") && !names(external).includes("Остановить выполнение"), "у внешнего клиента нет запуска и остановки");
-    for (const action of ["Отозвать доступ", "Журнал обращений", "Выданные права"]) assert.ok(names(external).includes(action), `возможность подключения: ${action}`);
-    assert.ok(external.textContent.includes("не останавливает внешний процесс"), "честный текст об отзыве");
+    // Ни одного поля для ввода идентификатора: выдача агента по ID шаблона и «Кто может привлекать» убраны.
+    assert.equal(app.document.querySelector('#root input[aria-label*="ID"]'), null);
+    assert.ok(!app.buttons().some(b => ["Выдать агента", "Кто может привлекать", "Журнал обращений", "Поставить задачу"].includes(b.textContent)), "технические действия убраны");
+    const visible = el => el.textContent.replace([...el.querySelectorAll("[data-admin-details]")].map(d => d.textContent).join(""), "");
+    assert.doesNotMatch(visible(managed), /b-managed|agent-alice|ra-1/, "идентификаторы только под «Подробнее»");
 
     [...external.querySelectorAll("button")].find(b => b.textContent === "Отозвать доступ").click();
     await app.until(() => [...card("b-external").querySelectorAll("button")].some(b => b.textContent === "Подтвердить отзыв"), "подтверждение отзыва");
@@ -42,52 +34,75 @@ test("«Агенты»: карточки по среде, выдача аген�
     await app.until(() => card("b-external")?.textContent.includes("Доступ отозван"), "отзыв отражён");
     assert.deepEqual(app.calls.filter(([m]) => m === "revokeAgentConnection"), [["revokeAgentConnection", "b-external"]]);
 
-    app.button("Выдать агента").click();
-    await app.until(() => app.document.querySelector('#root input[aria-label="ID разрешённого шаблона AgenticOS"]')?.disabled === false, "форма выдачи");
-    app.type(app.document.querySelector('#root input[aria-label="ID разрешённого шаблона AgenticOS"]'), "analyst");
-    app.button("Подготовить заявку").click();
-    await app.until(() => app.button("Выполнить выдачу"), "заявка сохранена");
-    app.button("Выполнить выдачу").click();
-    await app.until(() => app.text().includes("Агент подготовлен"), "агент выдан");
-    assert.deepEqual(app.calls.filter(([m]) => m === "prepareManagedAgent"), [["prepareManagedAgent", "analyst"]]);
-    assert.deepEqual(app.calls.filter(([m]) => m === "submitManagedAgent"), [["submitManagedAgent", "req-1"]], "повтор идёт по той же заявке");
-
-    app.button("Подключить Codex / Claude Code").click();
+    app.button("Подключить Codex или Claude Code").click();
     await app.until(() => app.document.querySelector('textarea[aria-label="Команды подключения"]')?.value.includes("codex mcp add"), "команды внешнего клиента");
-    const commands=()=>app.document.querySelector('textarea[aria-label="Команды подключения"]').value;
-    assert.match(commands(), /https:\/\/memory.example\/mcp/);
+    const commands = () => app.document.querySelector('textarea[aria-label="Команды подключения"]').value;
     assert.match(commands(), /--oauth-client-id 'mnemos-cli'/);
-    [...app.document.querySelectorAll('button')].find(b=>b.textContent==='Claude Code').click();
-    await app.until(()=>commands().includes('claude mcp add'), 'выбор Claude Code');
-    assert.match(commands(), /--callback-port 19450/);
+    [...app.document.querySelectorAll('button')].find(b => b.textContent === 'Claude Code').click();
+    await app.until(() => commands().includes('claude mcp add'), 'выбор Claude Code');
   } finally { app.dispose(); }
 });
 
-test("«Агенты»: пустой список и отказ RPC показаны честно", async () => {
-  const app = await mountMemoryApp({ async listAgentConnections() { return { connections: [], next_cursor: "" }; }, async managedAgentRequest() { throw new Error("forbidden"); } });
+test("«Агенты и расходы»: пустой список и отказ RPC показаны честно; загрузка не даёт пустой страницы", async () => {
+  const waiting = [];
+  const release = () => waiting.splice(0).forEach(r => r());
+  const app = await mountMemoryApp({ async listAgentConnections() { await new Promise(r => waiting.push(r)); return { connections: [], next_cursor: "" }; } }, { section: "agents" });
   try {
-    await app.open("Агенты");
+    await app.until(() => app.text().includes("Загрузка агентов"), "пока список читается, видно, что идёт загрузка");
+    assert.ok(app.text().includes("Бюджеты проектов") && app.text().includes("Расходы по проектам"), "остальная страница видна сразу");
+    release();
     await app.until(() => app.text().includes("Агентов пока нет"), "пустой список");
-    app.button("Выдать агента").click();
-    await app.until(() => app.text().includes("Сохранённая заявка не прочитана"), "отказ при чтении заявки показан");
+  } finally { app.dispose(); }
+  const failed = await mountMemoryApp({ async listAgentConnections() { throw new Error("forbidden"); } }, { section: "agents" });
+  try {
+    await failed.until(() => failed.text().includes("Не удалось загрузить подключения агентов"), "отказ показан");
+  } finally { failed.dispose(); }
+});
+
+test("«Агенты и расходы»: задача без текста не роняет страницу", async () => {
+  const app = await mountMemoryApp({ async managedTaskRequest() { return { request_id: "t-1", binding_id: "b-managed", submitted: true }; } }, { section: "agents" });
+  try {
+    await app.until(() => app.document.querySelector('#root [data-agent="b-managed"]')?.textContent.includes("в работе"), "карточка с задачей");
+    assert.ok(!app.text().includes("Раздел не открылся"));
   } finally { app.dispose(); }
 });
 
+test("«Агенты и расходы»: выдача и снятие права относятся к выбранному агенту и проекту", async () => {
+  const actions = [];
+  const app = await mountMemoryApp({ async setAgentProjectRight(...args) { actions.push(args); return {}; } }, { section: "agents" });
+  try {
+    await app.until(() => app.document.querySelector('[data-agent="b-external"]'), 'агент');
+    const card = app.document.querySelector('[data-agent="b-external"]');
+    [...card.querySelectorAll('button')].find(b => b.textContent === 'Настроить доступ к проекту').click();
+    await app.until(() => card.querySelector('[aria-label="Проект доступа агента"]'), 'права');
+    [...card.querySelectorAll('button')].find(b => b.textContent === 'Выдать право').click();
+    await app.until(() => app.text().includes('Право выдано.'), 'выдача');
+    assert.deepEqual(actions, [['claude-code-alice', 'one', 'read', true]]);
+  } finally { app.dispose(); }
+});
 
-test('«Агенты»: выдача и снятие права относятся к выбранному агенту и проекту', async () => {
- const actions=[];
- const app=await mountMemoryApp({async setAgentProjectRight(...args){actions.push(args);return {};}});
- try {
-  await app.open('Агенты');
-  await app.until(()=>app.document.querySelector('[data-agent="b-external"]'), 'агент');
-  const card=app.document.querySelector('[data-agent="b-external"]');
-  [...card.querySelectorAll('button')].find(b=>b.textContent==='Настроить доступ к проекту').click();
-  await app.until(()=>card.querySelector('[aria-label="Проект доступа агента"]'), 'права');
-  [...card.querySelectorAll('button')].find(b=>b.textContent==='Выдать право').click();
-  await app.until(()=>app.text().includes('Право выдано.'),'выдача');
-  assert.deepEqual(actions,[['claude-code-alice','one','read',true]]);
-  [...card.querySelectorAll('button')].find(b=>b.textContent==='Снять это право').click();
-  await app.until(()=>app.text().includes('Выбранное право снято.'),'снятие');
-  assert.deepEqual(actions.at(-1),['claude-code-alice','one','read',false]);
- } finally {app.dispose();}
+test("«Агенты и расходы»: бюджет проекта — владелец выбирается по имени; расходы по проектам словами", async () => {
+  const saved = [];
+  const app = await mountMemoryApp({
+    async listPeople() { return { users: [{ userName: "alice", displayName: "Алиса", active: true }, { userName: "u-7f3a", displayName: "Борис Петров", active: true }] }; },
+    async readProjectBudget(project) { return { project_id: project, revision: 3, owner_id: "alice", limit_usd_micros: "10000000", automatic_usd_micros: "2000000", automatic_team_size: 2 }; },
+    async setProjectBudget(project, policy) { saved.push([project, policy]); return { project_id: project, ...policy, revision: policy.revision + 1 }; },
+    async listTeamBudgets(project) { return project === "one" ? { proposals: [{ id: "p-1", user_id: "alice" }], next_cursor: "" } : { proposals: [], next_cursor: "" }; },
+    async readTeamBudget(project, id) { return { id, project_id: project, proposal: { members: [] } }; },
+    async readTeamBudgetUsage(project, id) { return { project_id: project, proposal_id: id, accounting_basis: "rated_tokens", actual_usd_micros: "1500000", reserved_usd_micros: "500000" }; },
+  }, { section: "agents" });
+  try {
+    await app.until(() => app.text().includes("потрачено 1.5 $"), "расходы проекта");
+    assert.ok(app.text().includes("Общий проект"), "расходы названы проектом");
+    app.type(app.document.querySelector('select[aria-label="Проект бюджета"]'), "one");
+    await app.until(() => app.document.querySelector('select[aria-label="Владелец бюджета"] option[value="u-7f3a"]'), "владелец из списка сотрудников");
+    const owner = app.document.querySelector('select[aria-label="Владелец бюджета"]');
+    assert.ok([...owner.options].some(o => o.textContent === "Борис Петров"), "владелец назван по имени");
+    assert.equal(app.document.querySelector('#root input[aria-label*="Владелец"]'), null, "владелец не вписывается идентификатором");
+    app.type(owner, "u-7f3a");
+    app.type(app.document.querySelector('input[aria-label="Общий бюджет"]'), "20");
+    app.button("Сохранить бюджет").click();
+    await app.until(() => app.text().includes("Бюджет сохранён."), "сохранено");
+    assert.deepEqual(saved, [["one", { revision: 3, owner_id: "u-7f3a", limit_usd_micros: "20000000", automatic_usd_micros: "2000000", automatic_team_size: 2 }]]);
+  } finally { app.dispose(); }
 });

@@ -1,12 +1,11 @@
-import TemplateApprovals from "./TemplateApprovals.tsx";
 import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import { useUi } from "./host.ts";
 import { documentNames, myApprovals, personName, projectName, UNNAMED_DOCUMENT, type MemoryData, type PendingApproval } from "./data.ts";
-import { EmptyTab, Notice, Row, RowList, RowText, StatusBadge } from "./ui.tsx";
+import { Row, RowText, StatusBadge } from "./ui.tsx";
 
-/** Запись решения по направлению; общая для «Согласований» и «Моей работы». */
+/** Запись решения по направлению во «Входящих». */
 export function useReviewDecision(data: MemoryData) {
   const ui = useUi();
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
@@ -55,30 +54,5 @@ export function ApprovalRow({ item, data, busy, decide }: { item: PendingApprova
         </div>
       )}
     </Row>{expanded && <div className="border-b border-kumo-line p-4"><ReviewDetails key={`${item.review.candidate_id}/${item.review.decision_version}`} review={item.review} names={names} /></div>}</div>
-  );
-}
-
-export default function ApprovalsTab({ data }: { data: MemoryData }) {
-  const { notice, busy, decide } = useReviewDecision(data);
-  const userId = data.identity?.subject.user_id ?? "";
-  const items = userId ? myApprovals(data.reviews, userId) : [];
-
-  return (
-    <section aria-label="Согласования">
-      <div className="mb-3 flex items-center gap-3">
-        <p className="m-0 flex-1 text-[12px] text-kumo-subtle">Предложения, где ваше решение требуется по направлению.</p>
-        <Button variant="ghost" size="sm" disabled={data.reviewsLoading} onClick={() => void data.reloadReviews()}>Обновить</Button>
-      </div>
-      {notice && <div className="mb-3"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-      {data.reviewsError && <div className="mb-3"><Notice tone="danger">{data.reviewsError}</Notice></div>}
-      {items.length === 0 && !data.reviewsLoading && !data.reviewsError && <EmptyTab description="Предложений к публикации документов пока нет." />}
-      {items.length > 0 && (
-        <RowList>
-          {items.map(item => <ApprovalRow key={`${item.review.candidate_id}/${item.domain.domain_id}`} item={item} data={data} busy={busy} decide={(i, a) => void decide(i, a)} />)}
-        </RowList>
-      )}
-      {data.reviewsCursor && <div className="mt-3"><Button variant="secondary" size="sm" disabled={data.reviewsLoading} onClick={() => void data.loadMoreReviews()}>Показать ещё</Button></div>}
-      <TemplateApprovals userId={userId}/>
-    </section>
   );
 }

@@ -30,11 +30,29 @@ test("Отказ сервера не превращается в успешно�
 });
 
 import { managementSections } from "./management-sections.ts";
-test("Административные разделы появляются только по соответствующим полномочиям",()=>{
+test("Перечень разделов по ревизии 24.09: три для всех, пять администратору, старых разделов нет",()=>{
  const identity={subject:{tenant_id:"org",user_id:"person"},tenant_name:"Компания"};
- assert.ok(managementSections(identity).every(s=>s.group==="work"));
- assert.deepEqual(managementSections({...identity,capabilities:["project.create"]}).filter(s=>s.group==="manage").map(s=>s.id),["intake"]);
- assert.deepEqual(managementSections({...identity,capabilities:["principal.manage"]}).filter(s=>s.group==="manage").map(s=>s.id),["people","organization"]);
+ assert.deepEqual(managementSections(identity).map(s=>[s.id,s.title,s.group]),[["my-work","Входящие","work"],["projects","Проекты","work"],["documents","Материалы","work"]]);
+ assert.deepEqual(managementSections({...identity,capabilities:["project.create"]}).filter(s=>s.group==="manage").map(s=>s.id),[]);
+ assert.deepEqual(managementSections({...identity,capabilities:["principal.manage"]}).filter(s=>s.group==="manage").map(s=>[s.id,s.title]),
+  [["people","Люди и отделы"],["rules","Правила"],["connections","Подключения"],["agents","Агенты и расходы"],["journal","Журнал и состояние"]]);
+ assert.deepEqual(managementSections({...identity,capabilities:["platform.metrics.read"]}).filter(s=>s.group==="manage").map(s=>s.id),["journal"]);
+ const all=managementSections({...identity,capabilities:["principal.manage","project.create","platform.metrics.read"]}).map(s=>s.id);
+ for(const gone of ["approvals","sources","templates","analytics","intake","organization"])assert.ok(!all.includes(gone),gone);
+});
+
+test("Приглашение: роль «Сотрудник» не передаётся, «Руководитель отдела» требует отдела; удаление отдела возвращает итог",async()=>{
+ const bodies:unknown[]=[];const invitation={invitation_id:"inv",email:"a@b.ru",display_name:"",created_by:"o",created_by_name:"",created_at:"",expires_at:"",status:"open",code:"c".repeat(43)};
+ const api=new MnemosAPI("https://memory.example",async()=>"t",async(url,init)=>{
+  if(init?.method==="DELETE")return Response.json({deleted:true,projects_made_private:2,requests_closed:1,invitations_revoked:0,members_removed:4});
+  bodies.push(JSON.parse(String(init?.body)));return Response.json(invitation);});
+ await api.createInvitation("a@b.ru","","unit");await api.createInvitation("a@b.ru","","unit","head");await api.createInvitation("a@b.ru","","","admin");
+ assert.deepEqual(bodies,[{email:"a@b.ru",display_name:"",org_unit_id:"unit"},{email:"a@b.ru",display_name:"",org_unit_id:"unit",role:"head"},{email:"a@b.ru",display_name:"",org_unit_id:"",role:"admin"}]);
+ await assert.rejects(api.createInvitation("a@b.ru","","","head"),e=>e instanceof MnemosAPIError&&e.status===400);
+ await assert.rejects(api.createInvitation("a@b.ru","","unit","owner" as never),e=>e instanceof MnemosAPIError&&e.status===400);
+ assert.deepEqual(await api.deleteOrgUnit("unit"),{deleted:true,projects_made_private:2,requests_closed:1,invitations_revoked:0,members_removed:4});
+ const broken=new MnemosAPI("https://memory.example",async()=>"t",async()=>Response.json({deleted:true}));
+ await assert.rejects(broken.deleteOrgUnit("unit"),e=>e instanceof MnemosAPIError&&e.status===502);
 });
 
 test("Приёмная использует полномочие создания проекта, а не управления людьми",async()=>{

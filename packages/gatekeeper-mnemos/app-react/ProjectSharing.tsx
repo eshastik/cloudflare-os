@@ -80,7 +80,7 @@ const SETTING_TEXT = {
   share_organization_approval: { none: "сразу", admin: "с подтверждением администратора" },
 } as const;
 
-/** Правила организации о проектах: для администратора, свёрнуты под «Дополнительно». */
+/** Правила организации о проектах: раздел «Правила», только администратору. */
 export function OrganizationSharingSettings() {
   const ui = useUi();
   const current = useLoad(() => ui.readProjectSharingSettings(), "Правила проектов не прочитаны: возможно, сервер ещё не поддерживает их.", [ui]);

@@ -44,18 +44,20 @@ test("Входящие: шаблоны и вопросы приёмной вхо
   assert.equal(INBOX_FILTER.acceptance, "agents");
 });
 
-test("Согласования: счётчик — только решения по чужой работе; «Мой отдел» — руководителю и ответственному", () => {
+test("Согласования входят в счётчик «Входящих»; «Мой отдел» — руководителю и ответственному", () => {
   const reviews = [review({ domains: [domain(["alice"])] }), review({ author_id: "alice", ready: true })];
   const shares = [{ request_id: "r1", status: "pending", requested_by: "bob", created_at: "2026-09-23T00:00:00Z" }, { request_id: "r2", status: "pending", requested_by: "alice" }] as never[];
   const collaborations = [{ request: { request_id: "1", requester_user_id: "alice" }, progress: { state: "awaiting_review" } }] as never[];
   // Решение по чужой публикации и запрос отдела; своя публикация и приёмка своей работы — только во «Входящих».
   assert.deepEqual(inboxCounts(reviews, collaborations, "alice", { shares }), { inbox: 4, approvals: 2 });
   const employee = { subject: { tenant_id: "t", user_id: "alice" }, capabilities: [], roles: { department_head: false, project_responsible: false, can_create_projects: true, responsible_projects: [] } } as never;
-  const sections = managementSections(employee, 4, 2);
-  assert.equal(sections.find(s => s.id === "approvals")?.count, 2);
+  // Отдельного раздела «Согласования» нет: решения — во «Входящих», их число входит в общий счётчик.
+  const sections = managementSections(employee, 4);
+  assert.equal(sections.some(s => s.id === "approvals"), false);
+  assert.equal(sections.find(s => s.id === "my-work")?.count, 4);
   assert.equal(sections.some(s => s.id === "team"), false);
   const head = { subject: { tenant_id: "t", user_id: "alice" }, capabilities: [], roles: { department_head: true, project_responsible: false, can_create_projects: true, responsible_projects: [] } } as never;
-  assert.deepEqual(managementSections(head).find(s => s.id === "team"), { id: "team", title: "Мой отдел", group: "manage" });
+  assert.deepEqual(managementSections(head).find(s => s.id === "team"), { id: "team", title: "Мой отдел", group: "work" });
   const responsible = { subject: { tenant_id: "t", user_id: "alice" }, capabilities: [], roles: { department_head: false, project_responsible: true, can_create_projects: false, responsible_projects: ["p"] } } as never;
   assert.equal(managementSections(responsible).some(s => s.id === "team"), true);
   // Старый сервер без ролей: раздела нет, а не пустой раздел.

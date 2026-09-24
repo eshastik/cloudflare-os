@@ -9,6 +9,14 @@ export type WorkshopObservabilityFields = {
   blueprintId: string;
   callbackInitiated: boolean;
   chatId: number;
+  // Маршрутизация сообщения беседы (переключатель «Код» и Jev); текста сообщения здесь нет.
+  codeMode: "off" | "auto" | "on";
+  codeRouteTarget: "code" | "chat";
+  codeRouteReason: string;
+  codeRouterChoice: "code" | "chat";
+  codeRouterConfidence: number;
+  codeRouterError: string;
+  costUsd: number;
   durationMs: number;
   eventName: string;
   executionId: string;

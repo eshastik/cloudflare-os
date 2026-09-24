@@ -10,9 +10,10 @@ import { ApprovalRow, useReviewDecision } from "./ApprovalsTab.tsx";
 import ReviewDetails from "./ReviewDetails.tsx";
 import ProjectIntake from "./ProjectIntake.tsx";
 import { TemplateProposal, loadTemplateReviews } from "./TemplateApprovals.tsx";
-import { LegacySwitch, useLegacySection } from "./legacy.tsx";
 import { relativeTime } from "./time.ts";
 import { Block, EmptyTab, Notice, Row, RowList, RowText, StatusBadge, type BadgeTone } from "./ui.tsx";
+import AcceptanceReview from "./AcceptanceReview.tsx";
+import AgentRequests from "./AgentRequests.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 /** Сколько проектов опрашивать на вопросы приёмной; столько же берёт счётчик в навигации. */
@@ -61,11 +62,11 @@ function blockedReviews(reviews: PublicationReview[], userId: string): { review:
 
 interface Card { title: string; from: string; project: string; extra: string; chat?: string; chatProject?: string }
 
-/** «Входящие»: всё, что ждёт решения человека, карточками. «Согласования» — тот же список с фильтром. */
+/** «Входящие»: всё, что ждёт решения человека, карточками: одна главная кнопка и «Открыть в беседе».
+ * Согласования живут здесь же под фильтром; отдельного раздела больше нет. */
 export default function MyWorkTab({ data, initialFilter = "all" }: { data: MemoryData; initialFilter?: Filter }) {
   const ui = useUi();
   const host = useHost();
-  const legacy = useLegacySection();
   const decision = useReviewDecision(data);
   const [filter, setFilter] = useState<Filter>(initialFilter);
   const [selectedKey, setSelectedKey] = useState("");
@@ -97,7 +98,6 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
   const budgetBlocked = data.task && data.task.team_budget && !data.task.submitted ? data.task : null;
   const finished = userId ? myApprovals(data.reviews, userId).filter(item => item.mine !== null || item.review.stale || item.review.withdrawn) : [];
   const waitingShares = myShares.value ?? [];
-  const openCollaborations = () => legacy.open({ kind: "collaborations" }, "Обращения и обсуждения");
 
   async function publish(review: PublicationReview) {
     setPublishing(review.candidate_id); setNotice(null);
@@ -173,13 +173,11 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
         return <Button variant="primary" size="sm" disabled={decision.busy === key} onClick={() => void decision.decide({ review: entry.review!, domain: entry.domain!, mine: null }, true)}>Одобрить</Button>;
       }
       case "publish": return <Button variant="primary" size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>;
-      case "acceptance": return <Button variant="primary" size="sm" onClick={openCollaborations}>Проверить результат</Button>;
+      case "acceptance": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Проверить результат</Button>;
       case "template": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Рассмотреть</Button>;
       case "intake": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Решить</Button>;
-      case "share": return <>
-        <Button variant="primary" size="sm" disabled={!!sharing} onClick={() => void decideShare(entry.share!, true)}>Разрешить</Button>
-        <Button variant="secondary" size="sm" disabled={!!sharing} onClick={() => void decideShare(entry.share!, false)}>Отклонить</Button>
-      </>;
+      // Отказ — во «Подробностях»: на карточке одна главная кнопка.
+      case "share": return <Button variant="primary" size="sm" disabled={!!sharing} onClick={() => void decideShare(entry.share!, true)}>Разрешить</Button>;
     }
   }
 
@@ -187,7 +185,7 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
   const loading = data.reviewsLoading || templates.loading || alerts.loading || shares.loading;
 
   return (
-    <LegacySwitch state={legacy}>
+    <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Что показать" className="flex flex-1 flex-wrap gap-1">
           {FILTERS.filter(f => f.id === "all" || (counts.get(f.id) ?? 0) > 0).map(f => (
@@ -197,9 +195,6 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="sm" onClick={() => void host.openApprovals().catch(() => setNotice({ tone: "danger", text: "Разрешения агентов не открылись. Обновите страницу." }))}>Разрешения агентов</Button>
-        <Button variant="ghost" size="sm" onClick={openCollaborations}>Поручить</Button>
-        <Button variant="ghost" size="sm" onClick={() => legacy.open({ kind: "uploadUsage" }, "Мои загрузки")}>Мои загрузки</Button>
       </div>
 
       {decision.notice && <div className="mb-2"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
@@ -231,7 +226,7 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
                 </article>
               );
             })}</div>}
-          {filter === "approvals" && finished.length > 0 && <details className="mt-4">
+          {(filter === "all" || filter === "approvals") && finished.length > 0 && <details className="mt-4">
             <summary className="cursor-pointer py-1 text-[13px] text-kumo-subtle">Уже решённые, устаревшие и отозванные · {finished.length}</summary>
             <div className="mt-2"><RowList>{finished.map(item => <ApprovalRow key={`${item.review.candidate_id}/${item.domain.domain_id}`} item={item} data={data} busy={decision.busy} decide={(i, a) => void decision.decide(i, a)} />)}</RowList></div>
           </details>}
@@ -243,13 +238,14 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
             <Button variant="ghost" size="sm" onClick={() => setSelectedKey("")}>Закрыть</Button>
           </div>
           <EntryDetails entry={selected} names={names} decision={decision} publishing={publishing} publish={publish} sharing={sharing} decideShare={decideShare}
-            onOpenCollaborations={openCollaborations} reloadTemplates={async () => { setSelectedKey(""); await templates.reload(); }} reloadAlerts={alerts.reload} />
+            reloadCollaborations={data.reloadCollaborations} reloadTemplates={async () => { setSelectedKey(""); await templates.reload(); }} reloadAlerts={alerts.reload} />
         </aside>}
       </div>
 
       {filter === "all" && <>
+        <AgentRequests data={data} />
         <Block title="Поручено мне" count={assigned.length} empty={data.collaborationsError || "Поручений вам нет."}>
-          <RowList>{assigned.map(item => <CollaborationRow key={item.request.request_id} item={item} data={data} onOpen={openCollaborations} />)}</RowList>
+          <RowList>{assigned.map(item => <CollaborationRow key={item.request.request_id} item={item} data={data} onChat={() => chat(`Помоги выполнить поручение «${item.request.title}»: что нужно сделать и по каким критериям?`, item.request.project_id)} />)}</RowList>
         </Block>
         <Block title="Жду решения других" count={blocked.length + waitingCollaborations.length + (budgetBlocked ? 1 : 0) + waitingShares.length} empty="Чужих решений вы не ждёте.">
           <RowList>
@@ -266,27 +262,25 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
             ))}
             {waitingCollaborations.map(item => (
               <Row key={item.request.request_id} className="items-start">
-                <RowText title={`Обращение «${item.request.title}» ждёт результата`} note={`проект «${projectName(data.projects, item.request.project_id)}» · результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
-                <Button variant="secondary" size="sm" onClick={openCollaborations}>Открыть</Button>
+                <RowText title={`Поручение «${item.request.title}» ждёт результата`} note={`проект «${projectName(data.projects, item.request.project_id)}» · результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
               </Row>
             ))}
             {budgetBlocked && (
               <Row className="items-start">
                 <RowText title="Задача агента ждёт согласования бюджета" note={`проект «${projectName(data.projects, budgetBlocked.team_budget!.project_id)}» · решение за владельцем бюджета проекта`} />
-                <Button variant="secondary" size="sm" onClick={() => legacy.open({ kind: "agentTask" }, "Задача агенту")}>Открыть</Button>
               </Row>
             )}
           </RowList>
         </Block>
       </>}
-    </LegacySwitch>
+    </div>
   );
 }
 
-function EntryDetails({ entry, names, decision, publishing, publish, sharing, decideShare, onOpenCollaborations, reloadTemplates, reloadAlerts }: {
+function EntryDetails({ entry, names, decision, publishing, publish, sharing, decideShare, reloadCollaborations, reloadTemplates, reloadAlerts }: {
   entry: InboxEntry; names: Map<string, string>; decision: ReturnType<typeof useReviewDecision>; publishing: string;
   publish(review: PublicationReview): Promise<void>; sharing: string; decideShare(share: ShareRequest, approve: boolean): Promise<void>;
-  onOpenCollaborations(): void; reloadTemplates(): Promise<void>; reloadAlerts(): Promise<void>;
+  reloadCollaborations(): Promise<void>; reloadTemplates(): Promise<void>; reloadAlerts(): Promise<void>;
 }) {
   switch (entry.kind) {
     case "approval": {
@@ -305,15 +299,8 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
         <p className="m-0 text-kumo-subtle">Все назначенные согласующие одобрили изменения. Публикация переносит их в общую версию проекта.</p>
         <Button variant="primary" size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>
       </div>;
-    case "acceptance": {
-      const r = entry.collaboration!.request;
-      return <div className="space-y-3 text-[13px]">
-        {r.description && <p className="m-0 whitespace-pre-wrap">{r.description}</p>}
-        {r.criteria && <p className="m-0 text-kumo-subtle">Критерии приёмки: {r.criteria}</p>}
-        <p className="m-0 text-kumo-subtle">Проверьте результат и примите его или верните на доработку в обращении.</p>
-        <Button variant="primary" size="sm" onClick={onOpenCollaborations}>Открыть обращение</Button>
-      </div>;
-    }
+    case "acceptance":
+      return <AcceptanceReview key={entry.key} item={entry.collaboration!} onDone={reloadCollaborations} />;
     case "template":
       return <TemplateProposal key={entry.key} item={entry.template!.review} scope={entry.template!.scope} onDone={() => void reloadTemplates()} />;
     case "intake":
@@ -335,13 +322,13 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
   }
 }
 
-function CollaborationRow({ item, data, onOpen }: { item: CollaborationItem; data: MemoryData; onOpen: () => void }) {
+function CollaborationRow({ item, data, onChat }: { item: CollaborationItem; data: MemoryData; onChat: () => void }) {
   const state = item.progress ? COLLABORATION_STATES[item.progress.state] : "Состояние недоступно";
   return (
     <Row className="items-start" data-collaboration="">
       <RowText title={item.request.title} note={`проект «${projectName(data.projects, item.request.project_id)}» · от: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)} · срок не задан`} />
       <StatusBadge tone={item.progress?.state === "accepted" ? "success" : item.progress?.state === "changes_requested" ? "danger" : "neutral"}>{state}</StatusBadge>
-      <Button variant="secondary" size="sm" onClick={onOpen}>Открыть</Button>
+      <Button variant="ghost" size="sm" onClick={onChat}>Открыть в беседе</Button>
     </Row>
   );
 }

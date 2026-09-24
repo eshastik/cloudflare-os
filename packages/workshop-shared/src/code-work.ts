@@ -21,12 +21,17 @@ export type ChatCodeWork = {
   taskId: string;
   /** Состояние задачи в рабочем месте на последнем опросе. */
   state: "starting" | "running" | "idle" | "stopped" | "failed";
-  /** Сообщения человека сейчас идут прямо в работу с кодом. */
+  /** Последний ответ в беседе дал агент кода. Нужен маршрутизатору, когда нейросеть-диспетчер
+   *  недоступна: тогда продолжение разговора с агентом кода остаётся у него. */
   foreground: boolean;
   /** Последнее прочитанное событие рабочего места: следующий ход читает только новые. */
   cursor: number;
   /** Итог последнего хода агента кода (для «Что изменилось» и описания при «Принять»). */
   summary?: string;
+  /** Контекст беседы передан агенту кода до этого номера сообщения включительно. */
+  contextSeq?: number;
+  /** Изменённые и ещё не принятые файлы на конец последнего хода (для сводки агенту беседы). */
+  changedFiles?: {path: string; status: ChangedFile["status"]}[];
   /** Решение по результату: ещё не принят, ждёт согласования, принят. */
   review?: {outcome: "draft" | "awaiting_approval" | "accepted" | "rejected" | "no_approver" | "reverted"; note?: string; responsible?: string[];
     /** Номер запроса на слияние в Mnemos: нужен для «Вернуть как было». Человеку не показывается. */
@@ -73,6 +78,25 @@ export type CodeWorkOutput = {
 };
 
 export const MAX_CHAT_PROJECTS = 8;
+
+/** Переключатель «Код» у поля ввода.
+ *  off — всё отвечает агент беседы, инструментов кода у него нет;
+ *  on — каждое сообщение человека идёт агенту кода (OpenCode);
+ *  auto — куда идёт сообщение, решает маршрутизатор по смыслу. */
+export type ChatCodeMode = "off" | "auto" | "on";
+
+export const CHAT_CODE_MODES: readonly ChatCodeMode[] = ["off", "auto", "on"];
+
+/** Режим беседы; если не задан — «Авто». */
+export function chatCodeMode(meta: {codeMode?: ChatCodeMode} | undefined): ChatCodeMode {
+  let mode = meta?.codeMode;
+  return mode && CHAT_CODE_MODES.includes(mode) ? mode : "auto";
+}
+
+export function validateChatCodeMode(value: unknown): ChatCodeMode {
+  if (typeof value !== "string" || !CHAT_CODE_MODES.includes(value as ChatCodeMode)) throw new Error("Неверный режим работы с кодом");
+  return value as ChatCodeMode;
+}
 
 /** Похоже на внутренний идентификатор (hex, UUID, «prefix-<hex>»), а не на название для человека. */
 export function looksLikeId(value: string | null | undefined): boolean {

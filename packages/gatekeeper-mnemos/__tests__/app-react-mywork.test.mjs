@@ -68,7 +68,10 @@ test("«Входящие»: число строк совпадает с общи
 });
 
 test("«Входящие»: выбор строки открывает подробности, решение из панели идёт тем же методом", async () => {
-  const app = await mountMemoryApp(mixed());
+  const app = await mountMemoryApp({ ...mixed(),
+    async listCollaborationMessages() { return { messages: [{ sequence: 1, user_id: "carol", agent_id: "", kind: "result", body: "Готовый лендинг", created_at: "2026-09-12T11:00:00Z" }] }; },
+    async reviewCollaborationResult(...args) { app.calls.push(["reviewCollaborationResult", ...args]); },
+  });
   try {
     await app.until(() => rowsOf(app).length === 5, "список");
     const panel = () => app.document.querySelector('#root aside[aria-label="Подробности"]');
@@ -78,8 +81,12 @@ test("«Входящие»: выбор строки открывает подр�
     await app.until(() => app.calls.some(([m]) => m === "recordReviewDecision"), "отказ записан");
     assert.deepEqual(app.calls.find(([m]) => m === "recordReviewDecision"), ["recordReviewDecision", REVIEW_MINE, "Инженерия", 3, false]);
 
-    rowsOf(app).find(r => r.dataset.inbox === "acceptance").querySelector("button").click();
-    await app.until(() => panel()?.textContent.includes("Открыть обращение"), "подробности приёмки");
+    [...rowsOf(app).find(r => r.dataset.inbox === "acceptance").querySelectorAll("button")].find(b => b.textContent === "Проверить результат").click();
+    await app.until(() => panel()?.textContent.includes("Готовый лендинг"), "результат виден прямо во «Входящих», без формы обращения");
+    [...panel().querySelectorAll("button")].find(b => b.textContent === "Принять").click();
+    await app.until(() => app.calls.some(([m]) => m === "reviewCollaborationResult"), "приёмка записана");
+    const [, id, review] = app.calls.find(([m]) => m === "reviewCollaborationResult");
+    assert.equal(id, "r-2"); assert.equal(review.decision, "accepted"); assert.equal(review.result_sequence, 1); assert.equal(review.expected_revision, 0);
     [...panel().querySelectorAll("button")].find(b => b.textContent === "Закрыть").click();
     await app.until(() => !panel(), "панель закрыта");
   } finally { app.dispose(); }
@@ -98,7 +105,8 @@ test("«Входящие»: пустое состояние говорит, чт
     const block = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => block("Поручено мне")?.textContent.includes("Обращения недоступны"), "отказ в поручениях");
     assert.ok(block("Жду решения других").textContent.includes("Чужих решений вы не ждёте"));
-    assert.ok(app.button("Мои загрузки"), "«Мои загрузки» достижимы");
+    for (const gone of ["Мои загрузки", "Поручить", "Разрешения агентов"]) assert.equal(app.button(gone), undefined, `в шапке «Входящих» нет «${gone}»`);
+    assert.ok(!app.text().includes("Аудио"), "карточки «Аудио» нет");
   } finally { app.dispose(); }
 });
 
@@ -111,7 +119,35 @@ test("«Входящие»: поручено мне и ожидание чужи
     assert.ok(!block("Поручено мне").textContent.includes("Согласовать подрядчика"), "своё обращение не в «поручено мне»");
     await app.until(() => block("Жду решения других")?.textContent.includes("Согласовать подрядчика"), "моё обращение ждёт результата");
     assert.ok(block("Жду решения других").textContent.includes("carol"), "кто может разблокировать");
-    app.button("Разрешения агентов").click();
-    await app.until(() => app.calls.some(([name]) => name === "openApprovals"), "очередь разрешений открыта через хост");
+    [...block("Поручено мне").querySelectorAll("button")].find(b => b.textContent === "Открыть в беседе").click();
+    await app.until(() => app.calls.some(([name]) => name === "openPrompt"), "поручение открывается в беседе");
+    assert.equal(app.calls.find(([name]) => name === "openPrompt")[2].projectId, "one");
+    assert.equal(app.document.querySelector('#root input[aria-label*="идентификатор"]'), null, "формы обращения с идентификаторами нет");
+  } finally { app.dispose(); }
+});
+
+test("«Входящие»: просьбы агентов — письмо согласуется и уходит одной кнопкой, расход разрешает владелец бюджета", async () => {
+  const decisions = [];
+  const app = await mountMemoryApp({
+    async listMailConnections() { return { connections: [{ connection_id: "m-1", project_id: "one", provider: "yandex", query_sha256: "", revision: 1, enabled: true }] }; },
+    async listMailDrafts() { return { drafts: [{ id: "d-1", agent_id: "agent-alice", state: "pending", subject: "Счёт за сентябрь" }] }; },
+    async readMailDraft(id) { return { id, connection_id: "m-1", agent_id: "agent-alice", sha256: "s".repeat(64), state: "pending", content: { to: ["client@example.test"], subject: "Счёт за сентябрь", body: "Добрый день! Высылаю счёт." } }; },
+    async decideMailDraft(id, sha, approved) { decisions.push(["mail", id, approved]); return {}; },
+    async readProjectBudget(project) { return { project_id: project, revision: 2, owner_id: project === "one" ? "alice" : "bob", limit_usd_micros: "10000000", automatic_usd_micros: "0", automatic_team_size: 1 }; },
+    async listTeamBudgets(project) { return { proposals: project === "one" ? [{ id: "p-1", state: "awaiting_approval" }] : [] }; },
+    async readTeamBudget(project, id) { return { id, project_id: project, user_id: "bob", agent_id: "agent-alice", automatic: false, created_at: "", state: "awaiting_approval", proposal: { policy_revision: 2, task: "Собрать отчёт по продажам", criteria: "таблица", estimate_usd_micros: "1000000", limit_usd_micros: "3000000", members: [{ binding_id: "b-managed", role: "analyst" }] } }; },
+    async decideTeamBudget(project, id, input) { decisions.push(["budget", project, id, input.decision, input.policy_revision]); return {}; },
+  });
+  try {
+    const card = kind => app.document.querySelector(`#root [data-agent-request="${kind}"]`);
+    await app.until(() => card("mail") && card("budget"), "просьбы агентов");
+    assert.ok(card("mail").textContent.includes("Счёт за сентябрь") && card("mail").textContent.includes("client@example.test"));
+    assert.ok(card("budget").textContent.includes("до 3 $") && card("budget").textContent.includes("Общий проект"));
+    [...card("mail").querySelectorAll("button")].find(b => b.textContent === "Согласовать и отправить").click();
+    await app.until(() => app.calls.some(c => c[0] === "sendMailDraft"), "письмо отправлено через оболочку");
+    assert.deepEqual(decisions[0], ["mail", "d-1", true]);
+    [...card("budget").querySelectorAll("button")].find(b => b.textContent === "Разрешить").click();
+    await app.until(() => decisions.some(d => d[0] === "budget"), "расход разрешён");
+    assert.deepEqual(decisions.find(d => d[0] === "budget"), ["budget", "one", "p-1", "approved", 2]);
   } finally { app.dispose(); }
 });

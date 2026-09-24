@@ -110,6 +110,8 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async openNativeDocument(project, resource) { calls.push(["openNativeDocument", project, resource]); return options.nativeOpen ?? false; }
     async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
     async openApprovals() { calls.push(["openApprovals"]); }
+    async sendMailDraft(id, sha256) { calls.push(["sendMailDraft", id, sha256]); return { state: "accepted" }; }
+    async createCalendarDraft(id, sha256) { calls.push(["createCalendarDraft", id, sha256]); return { state: "created", event_id: "ev" }; }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
     async downloadText(...args) { calls.push(["downloadText",...args]); return typeof options.downloadText === "function" ? options.downloadText(...args) : options.downloadText ?? "текст"; }
     async downloadReviewText(...args) {calls.push(["downloadReviewText",...args]); return args[3]==="before"?"Исходный текст":"Новая версия";}
@@ -159,10 +161,10 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     }
   }
   async function open(name) {
-    const names = {"Моя работа":"my-work","Входящие":"my-work","Проекты":"projects","Документы":"documents","Материалы":"documents","Согласования":"approvals","Источники":"sources","Агенты":"agents","Организация":"organization","Люди и доступ":"people","Приём данных":"intake","Рабочие шаблоны":"templates","Обзор работы":"analytics","Мой отдел":"team"};
+    const names = {"Входящие":"my-work","Проекты":"projects","Материалы":"documents","Мой отдел":"team","Люди и отделы":"people","Правила":"rules","Подключения":"connections","Агенты и расходы":"agents","Журнал и состояние":"journal"};
     assert.ok(names[name], `Неизвестный раздел: ${name}`);
     dispose(); selectedSection=names[name]; selectedProject=""; mount();
-    await until(() => document.querySelector("#root h1") && document.querySelector("#root h1").textContent !== "Входящие" || selectedSection === "my-work" && document.querySelector("#root h1"), `раздел ${name}`);
+    await until(() => document.querySelector("#root h1")?.textContent === name, `раздел ${name}`);
   }
   // React сверяет значение со своим слепком, поэтому ввод ставится нативным сеттером, как это делает браузер.
   function type(input, value) {

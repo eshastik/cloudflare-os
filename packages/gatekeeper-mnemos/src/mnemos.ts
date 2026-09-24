@@ -110,10 +110,10 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
       sourceErrors: await this.#account().sourceErrors(),
       receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: await this.#sections(identity) } };
   }
-  /** Разделы меню со счётчиками; медленный или недоступный счётчик просто не показывается. */
+  /** Разделы меню со счётчиком «Входящих» (в нём и согласования); медленный или недоступный счётчик просто не показывается. */
   async #sections(identity: Parameters<typeof managementSections>[0]) {
     const counts = await this.#account().inboxCounts(identity.subject.user_id).catch(() => undefined);
-    return managementSections(identity, counts?.inbox, counts?.approvals);
+    return managementSections(identity, counts?.inbox);
   }
   /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
   async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
@@ -1391,11 +1391,12 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async listOrgUnits() { return this.#session.listOrgUnits(); }
   async createOrgUnit(name: string) { return this.#session.createOrgUnit(name); }
   async setOrgUnitMember(unit: string, principal: string, member: boolean, head: boolean) { return this.#session.setOrgUnitMember(unit, principal, member, head); }
+  async deleteOrgUnit(unit: string) { return this.#session.deleteOrgUnit(unit); }
   async listInvitations() { return this.#session.listInvitations(); }
   /** Ссылка собирается здесь: адрес входа знает только подключение, а не фрейм. */
-  async createInvitation(email: string, displayName: string, orgUnit: string) {
+  async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee") {
     if (!this.#telegram) throw new Error("Invitation link unavailable");
-    const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit);
+    const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit, role);
     return { invitation, link: await this.#telegram.invitationLink(code) };
   }
   async revokeInvitation(id: string) { return this.#session.revokeInvitation(id); }

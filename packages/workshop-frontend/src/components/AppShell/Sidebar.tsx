@@ -8,7 +8,6 @@ import {
 import { useSiteName } from '../../ServerConfigContext'
 import SiteLogo from '../SiteLogo'
 import { useGatekeeperApps } from '../../useGatekeeperApps'
-import { useOptionalAuthenticatedApi } from '../../AuthContext'
 import { buildRoleNavigation } from '../../roleNavigation'
 import { NavLinkItem, SidebarManagement } from './SidebarRoleNav'
 import { openCommandPalette } from './commandPaletteBus'
@@ -44,8 +43,7 @@ export default function Sidebar({
   // they simply don't appear. The set is fully dynamic — no gatekeeper is hardcoded.
   const gatekeeperApps = useGatekeeperApps()
   // Пункты меню по роли: сотрудник, руководитель, администратор (см. roleNavigation.ts).
-  const isPlatformAdmin = useOptionalAuthenticatedApi()?.isAdmin ?? false
-  const navigation = buildRoleNavigation(gatekeeperApps, isPlatformAdmin)
+  const navigation = buildRoleNavigation(gatekeeperApps)
 
   return (
     <aside
@@ -115,7 +113,7 @@ export default function Sidebar({
       <SidebarWorkspacesProvider>
         {/* Pinned top stack. shrink-0 keeps it from squishing when the lists below grow. */}
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pt-3">
-          {/* Primary nav: the few places people work every day. Service sections live in Settings. */}
+          {/* Основное меню: Новая беседа, Входящие, Проекты, Материалы; ниже — список бесед. */}
           <nav className="flex flex-col gap-0.5 px-2">
             <SidebarItem
               to="/"
@@ -144,7 +142,7 @@ export default function Sidebar({
       </SidebarWorkspacesProvider>
 
       {navigation.management.length > 0 && (
-        <SidebarManagement management={navigation.management} fine={navigation.fine} collapsed={collapsed} />
+        <SidebarManagement management={navigation.management} collapsed={collapsed} />
       )}
 
       <SidebarUtilityStrip collapsed={collapsed} />

@@ -715,7 +715,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     iframeRef.current?.contentWindow?.postMessage({ type: 'gatekeeper-location' }, '*')
   }, [locationKey, embeddedIntake])
 
-  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || new URLSearchParams(window.location.search).get('section')==='intake' || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
+  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
   const drop=async(transfer:DataTransfer)=>{
     setDropState(previous=>({...previous,active:false}))
     if(dropBusy.current)return

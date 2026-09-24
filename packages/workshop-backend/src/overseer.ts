@@ -1,7 +1,9 @@
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
-import {chatProjects, validateChatProjects, type AgentStep, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
-import {acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
+import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+import {acceptChatCodeChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
+import {askJev, installationOpenRouterKey, type OpenRouterInstallConfig} from "./code-router.js";
+import {CONTEXT_PACK_LOOKBACK, codeWorkBrief} from "./code-context.js";
 import {readBlueprintTemplate, discardBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, displayWorkspaceTitle } from "./workspace-title.js";
 import { maintainAccessLease } from './access-lease.js';
@@ -32,7 +34,7 @@ import {
   type AiGatewayLogRoute,
 } from "./ai-gateway";
 import { CONTINUE_AFTER_STEP_LIMIT_TEXT, canContinueAfterStepLimit } from "./agent-limits";
-import { AgentGadgetInfo, AgentHooks, AiChatAgentContext, ChatBindingEntry, SeedBindingInfo, runAgent, makeStorableArgs, summarizeArgs, type AiChatMessageBodyWithModelData, type CompactionCheckpoint, type StoredAssistantMessage } from "./agent";
+import { AgentGadgetInfo, AgentHooks, AiChatAgentContext, ChatBindingEntry, SeedBindingInfo, runAgent, makeStorableArgs, summarizeArgs, type AiChatMessageBodyWithModelData, type CodeWorkInfo, type CompactionCheckpoint, type StoredAssistantMessage } from "./agent";
 import { deploymentOutputForBlueprint, FormatOffer, listFormatOffers, readAdminConfig } from "./admin-config";
 import { foldProposedChanges, isCompactionTurn, type ChangeBatch } from "./agent-compaction";
 import { ambientGatekeeperMode } from "./provisioning-policy";
@@ -605,6 +607,20 @@ const AGENT_RESPONSE_DELIVERED_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 // Safely convert an unknown thrown value to a human-readable string.
 // Plain objects would otherwise render as "[object Object]".
+// Последняя реплика агента перед сообщением человека (сообщения — от нового к старому): текст
+// ответа, а если его нет — ответ агента кода из вызова codeWork.
+function lastAgentReply(messages: AiChatMessage[]): string | undefined {
+  for (let m of messages) {
+    if (m.type !== "message") continue;
+    if (m.author.type === "user") return undefined;
+    if (m.message.trim()) return m.message;
+    for (let call of m.toolCalls ?? []) {
+      if ((call.toolName === "codeWork" || call.toolName === "codeAsk") && call.output?.answer.trim()) return call.output.answer;
+    }
+  }
+  return undefined;
+}
+
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
@@ -6015,6 +6031,9 @@ class OverseerImpl implements AgentHooks {
       putChatMeta: meta => this.storage.chatMeta.put(meta),
       user: userId => this.users.get(this.users.idFromString(userId)) as unknown as CodeWorkUser,
       emit: (chatId, event) => this.emitChatStreamEvent(chatId, event),
+      chatMessages: (chatId, afterSequence) => [...this.storage.chats.list({
+        prefix: `${keyString(chatId)}.`, reverse: true, limit: CONTEXT_PACK_LOOKBACK,
+      })].filter(m => m.sequence > afterSequence).reverse(),
     };
   }
 
@@ -6027,7 +6046,7 @@ class OverseerImpl implements AgentHooks {
   }
 
   async describeCodeWork(chatId: number, initiator: AiChatAuthorInfo)
-      : Promise<{projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}} | null> {
+      : Promise<CodeWorkInfo | null> {
     let userId = this.#codeWorkUserId(chatId, initiator);
     if (!userId) return null;
     let meta = this.storage.chatMeta.get(chatId);
@@ -6037,11 +6056,13 @@ class OverseerImpl implements AgentHooks {
     if (!projects.length && !meta?.codeWork &&
         !await this.users.get(this.users.idFromString(userId)).hasChatProjectSource()) return null;
     let work = meta?.codeWork;
-    return {projects, ...(work ? {active: {projectTitle: work.projectTitle, alive: codeWorkAlive(work.state)}} : {})};
+    let alive = !!work && codeWorkAlive(work.state);
+    return {projects, ...(work ? {active: {projectTitle: work.projectTitle, alive, ...(alive ? {brief: codeWorkBrief(work)} : {})}} : {}),
+      mode: chatCodeMode(meta), hasCodeProject: !!meta && !!chatCodeTarget(meta)};
   }
 
   async runCodeWork(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput> {
     let userId = this.#codeWorkUserId(chatId, initiator);
@@ -6056,25 +6077,50 @@ class OverseerImpl implements AgentHooks {
       else emit(id, event);
     };
     return runChatCodeWork(host, {chatId, toolCallId: request.toolCallId, prompt: request.prompt,
-      projectId: request.projectId, continueOnly: request.continueOnly, userId, profileId: initiator.id,
-      signal: request.signal});
+      projectId: request.projectId, continueOnly: request.continueOnly, promptSequence: request.promptSequence,
+      userId, profileId: initiator.id, signal: request.signal});
   }
 
-  // Сообщение человека, пока работа с кодом на переднем плане, уходит прямо агенту кода; ход
-  // записывается как вызов codeWork агента беседы, и агент беседы продолжает по его итогу.
+  // Кому отвечать на сообщение человека (переключатель «Код» и маршрутизатор Jev). Если агенту
+  // кода — его ход записывается как вызов codeWork агента беседы, и агент беседы пересказывает
+  // итог простыми словами. Если агенту беседы — ход идёт как обычно.
   async #routeToCodeWork(chatId: number, aiModel: UserAiModelRecord, initiator: AiChatAuthorInfo,
                          signal: AbortSignal): Promise<void> {
     let meta = this.storage.chatMeta.get(chatId);
-    if (!codeWorkForeground(meta) || !this.#codeWorkUserId(chatId, initiator)) return;
-    let last = [...this.storage.chats.list({prefix: `${keyString(chatId)}.`, reverse: true, limit: 1})][0];
+    if (!meta || !this.#codeWorkUserId(chatId, initiator)) return;
+    let recent = [...this.storage.chats.list({prefix: `${keyString(chatId)}.`, reverse: true, limit: 20})];
+    let last = recent[0];
     if (!last || last.type !== "message" || last.author.type !== "user" || !last.message.trim()) return;
+    let mode = chatCodeMode(meta);
+    let apiKey = installationOpenRouterKey(this.env as unknown as OpenRouterInstallConfig);
+    let startedAt = Date.now();
+    let {route, jev} = await routeChatMessage({
+      mode, meta, message: last.message, lastAgentReply: lastAgentReply(recent.slice(1)),
+      ...(apiKey ? {ask: context => askJev({apiKey, context, signal})} : {}),
+    });
+    let cost = jev?.ok ? jev.decision.cost : undefined;
+    if (cost) this.#addChatCost(chatId, cost);
+    // Текст сообщения и ключ в журнал не пишутся.
+    this.logger.info("chat message routed", {
+      event: "chat.code_route", chatId, codeMode: mode, codeRouteTarget: route.target, codeRouteReason: route.reason,
+      ...(jev ? jev.ok
+        ? {codeRouterChoice: jev.decision.route, codeRouterConfidence: jev.decision.confidence, ...(cost !== undefined ? {costUsd: cost} : {})}
+        : {codeRouterError: jev.error} : {}),
+      durationMs: Date.now() - startedAt,
+    });
+    signal.throwIfAborted();
+    if (route.target === "chat") {
+      markChatAnswering(this.codeWorkHost(), chatId);
+      return;
+    }
+
     let toolCallId = `codework-${chatId}-${last.sequence}`;
-    let work = meta!.codeWork!;
     let output: CodeWorkOutput | undefined, error: string | undefined;
     this.emitChatStreamEvent(chatId, {type: "toolCallStarted", toolCallId, toolName: "codeWork"});
     try {
       output = await this.runCodeWork(chatId, initiator, {
-        toolCallId, prompt: last.message, projectId: work.projectId, continueOnly: true, signal,
+        toolCallId, prompt: last.message, projectId: route.projectId, continueOnly: route.continuing,
+        promptSequence: last.sequence, signal,
         onStep: step => this.emitChatStreamEvent(chatId, {type: "toolStep", toolCallId, step}),
         onText: delta => this.emitChatStreamEvent(chatId, {type: "toolOutputDelta", toolCallId, delta}),
       });
@@ -6083,7 +6129,7 @@ class OverseerImpl implements AgentHooks {
     }
     this.addChatMessages(chatId, aiModel.profile, [{
       type: "message", message: "",
-      toolCalls: [{toolCallId, toolName: "codeWork", input: {task: last.message, projectId: work.projectId},
+      toolCalls: [{toolCallId, toolName: "codeWork", input: {task: last.message, projectId: route.projectId},
         ...(output ? {output} : {error: error ?? "Работа с кодом прервалась."})}],
     }]);
     signal.throwIfAborted();
@@ -8509,8 +8555,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     setChatProjects(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString(), userMeta.profile.id, valid);
   }
 
-  async leaveCodeWork(chatId: number): Promise<void> {
-    leaveCodeWork(this.impl.codeWorkHost(), chatId);
+  async setChatCodeMode(chatId: number, mode: ChatCodeMode): Promise<void> {
+    setChatCodeMode(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString(), mode);
   }
 
   async readChatCodeChanges(chatId: number): Promise<ChatCodeChanges | null> {
@@ -9302,7 +9348,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async deleteChatAttachment(_id: string): Promise<void> { this.#deny(); }
   async setChatTitle(_chatId: number, _title: string): Promise<void> { this.#deny(); }
   async setChatProjects(_chatId: number, _projects: ChatProject[]): Promise<void> { this.#deny(); }
-  async leaveCodeWork(_chatId: number): Promise<void> { this.#deny(); }
+  async setChatCodeMode(_chatId: number, _mode: ChatCodeMode): Promise<void> { this.#deny(); }
   async readChatCodeChanges(_chatId: number): Promise<ChatCodeChanges | null> { this.#deny(); }
   async acceptChatCodeChanges(_chatId: number): Promise<ChatCodeAcceptResult> { this.#deny(); }
   async revertChatCodeChanges(_chatId: number): Promise<ChatCodeAcceptResult> { this.#deny(); }

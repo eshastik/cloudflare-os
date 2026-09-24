@@ -1,5 +1,4 @@
 import type {MnemosAccountSession} from '../src/account-session.ts';
-import {formatBudgetUSD} from './budget-money.ts';
 type API=Pick<MnemosAccountSession,'listProjects'|'listTeamBudgets'|'readTeamBudget'|'readTeamBudgetUsage'>;
 export type RequesterExpenses={user:string;known:string;reserved:string;proposals:number;unavailable:number};
 export type ProjectAgent={binding:string;roles:string[];proposals:number};
@@ -40,53 +39,4 @@ export async function projectExpenses(api:API,project:string,name:string):Promis
   }
  }catch{out.complete=false;}
  return out;
-}
-/** Read-only expense overview. Opening source proposals rechecks their current permissions. */
-export class BudgetOverview{
- private rows:ProjectExpenses[]=[];private cursor='';private next='';private busy=false;private closed=false;private notice='';private at='';
- constructor(private root:HTMLElement,private api:API,private close:()=>void,private open:(project:string,requester?:string)=>void,private options:{project?:string;answers?:(project:string)=>void}={}){}
- async load(cursor=''){
-  if(this.busy||this.closed)return;this.busy=true;this.rows=[];this.next='';this.at='';this.notice='';this.cursor=cursor;this.render();
-  try{
-   const catalog=await this.api.listProjects();const projects=this.options.project?catalog.projects.filter(p=>p.id===this.options.project):catalog.projects;const start=cursor?Number(cursor):0;const page={projects:projects.slice(start,start+20),next_cursor:start+20<projects.length?String(start+20):''};const rows:ProjectExpenses[]=[];
-   // Limit concurrent project reads, including the per-project ledger sequence.
-   for(let index=0;index<page.projects.length;index+=4){
-    if(this.closed)return;
-    rows.push(...await Promise.all(page.projects.slice(index,index+4).map(p=>projectExpenses(this.api,p.id,p.name))));
-   }
-   if(!this.closed){this.rows=rows;this.next=page.next_cursor??'';this.at=new Date().toLocaleString();}
-  }catch{this.rows=[];this.notice='Сводка недоступна. Проверьте подключение и права.';}
-  finally{this.busy=false;if(!this.closed)this.render();}
- }
- render(){
-  if(this.closed)return;this.root.replaceChildren();
-  const text=(value:string,tag='p')=>{const e=document.createElement(tag);e.textContent=value;this.root.append(e);};
-  const button=(label:string,action:()=>void)=>{const b=document.createElement('button');b.textContent=label;b.disabled=this.busy;b.onclick=action;this.root.append(b);return b;};
-  text('Расходы по проектам','h2');button('Закрыть сводку',()=>{this.closed=true;this.rows=[];this.close();}).disabled=false;
-  button('Обновить расходы',()=>void this.load(this.cursor));
-  text('Расчёт по зарегистрированным вызовам агентов, в USD. Это не счёт поставщика. Здесь только доступные вам проекты и заявки.');
-  if(this.busy)text('Получаем расходы…');if(this.notice)text(this.notice);if(this.at)text('Данные получены: '+this.at);
-  for(const row of this.rows){
-   text(row.name,'h3');
-   text((row.complete?'Учтённые расходы: ':'Известная часть расходов: ')+formatBudgetUSD(row.known)+' USD; зарезервировано: '+formatBudgetUSD(row.reserved)+' USD.');
-   text('Заявок прочитано: '+row.proposals+'.'+(row.complete?'':' Данные неполные; недоступных расходов по заявкам: '+row.unavailable+'.'));
-   text('Агенты в прочитанных заявках: '+row.agents.length+' подключений. Это состав заявок, включая историю, а не число работающих сейчас агентов.');
-   if(row.agentsUnavailable)text('Состав недоступен для '+row.agentsUnavailable+' заявок; список агентов неполон.');
-   for(const [index,agent] of row.agents.entries()){
-    text('Агент '+(index+1)+': '+agent.roles.join(', ')+'; заявок: '+agent.proposals+'.');
-    const detail=document.createElement('details'),summary=document.createElement('summary'),id=document.createElement('p');summary.textContent='Идентификатор подключения';id.textContent=agent.binding;detail.append(summary,id);this.root.append(detail);
-   }
-   if(row.requesters.length){
-    text('По инициаторам заявок. Суммы относятся к заявкам, а не к личному потреблению или зарплате.');
-    for(const requester of row.requesters){
-     text((requester.user||'Инициатор не указан')+': '+formatBudgetUSD(requester.known)+' USD; резерв '+formatBudgetUSD(requester.reserved)+' USD; заявок '+requester.proposals+(requester.unavailable?'; учёт недоступен для '+requester.unavailable+' заявок.':'.'));
-     if(requester.user)button('Заявки инициатора: '+requester.user,()=>{this.closed=true;this.rows=[];this.open(row.project,requester.user);});
-    }
-   }
-   button('Открыть заявки: '+row.name,()=>{this.closed=true;this.rows=[];this.open(row.project);});
-   if(this.options.answers)button('Ответы агентов: '+row.name,()=>{this.closed=true;this.rows=[];this.options.answers!(row.project);});
-  }
-  if(this.at&&!this.rows.length)text('Доступных проектов на этой странице нет.');
-  if(this.next)button('Следующие проекты',()=>void this.load(this.next));
- }
 }

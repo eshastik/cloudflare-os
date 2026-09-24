@@ -117,14 +117,15 @@ import { AlwaysApproveButton, ResolveButton } from "./components/ResolveButton";
 import { WorkshopButton, WorkshopIconButton } from "./components/WorkshopControls";
 import { ChatSubline } from "./ChatSubline";
 import type { AgentStep } from "@gadgets/workshop-shared/code-work";
-import { chatListState, upsertAgentStep } from "./codeWorkSteps";
+import { chatListState, codeAnsweredMessageSeqs, upsertAgentStep } from "./codeWorkSteps";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
+import { CodeModeSwitch } from "./components/chat/CodeModeSwitch";
 import { StepLimitNotice } from "./components/chat/StepLimitNotice";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
-import { MAX_CHAT_PROJECTS, chatProjects, displayName, looksLikeId, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, displayName, looksLikeId, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
 import { reasoningForDisplay } from "@gadgets/workshop-shared/reasoning";
 import { useActionEntries } from "./useActions";
 import { useAlwaysApproveTag } from "./useAlwaysApproveTag";
@@ -4882,8 +4883,7 @@ function ChatInterface({
     [currentChatMetadata?.projectContext],
   );
   const codeWork = currentChatMetadata?.codeWork;
-  const codeWorkForeground = !!codeWork?.foreground &&
-    (codeWork.state === "starting" || codeWork.state === "running" || codeWork.state === "idle");
+  const codeMode = chatCodeMode(currentChatMetadata ?? undefined);
   const loadProjectChoices = useCallback(
     () => authenticatedApi.listChatProjects(),
     [authenticatedApi],
@@ -4916,13 +4916,13 @@ function ChatInterface({
     () => overseer.revertChatCodeChanges(selectedChatId!),
     [overseer, selectedChatId],
   );
-  const leaveCodeWork = useCallback(async () => {
+  const changeCodeMode = useCallback(async (mode: ChatCodeMode) => {
     if (selectedChatId === null) return;
     try {
-      await overseer.leaveCodeWork(selectedChatId);
+      await overseer.setChatCodeMode(selectedChatId, mode);
     } catch (err) {
-      logRpcFailure("Не удалось вернуться к беседе:", err);
-      toasts.add({ title: "Не удалось вернуться к беседе", variant: "error" });
+      logRpcFailure("Не удалось переключить работу с кодом:", err);
+      toasts.add({ title: err instanceof Error && err.message ? err.message : "Не удалось переключить работу с кодом", variant: "error" });
     }
   }, [overseer, selectedChatId, toasts]);
 
@@ -6061,6 +6061,9 @@ function ChatInterface({
 
     return out;
   }, [currentMessages, isAgentActive]);
+
+  // Тихая пометка «агент кода» у ответов, где работал агент кода.
+  const codeAnsweredSeqs = useMemo(() => codeAnsweredMessageSeqs(currentMessages), [currentMessages]);
 
   const latestCompletedAgentTurnMessageSeq = useMemo(() => {
     let latest: number | null = null;
@@ -7253,6 +7256,9 @@ function ChatInterface({
                                   />
                                 </div>
                               )}
+                              {hasMessageText && codeAnsweredSeqs.has(msg.sequence) && (
+                                <div className="text-[11px] leading-4 text-kumo-inactive" data-testid="answered-by-code">агент кода</div>
+                              )}
 
                               {showActions && (
                                 <div className={`mt-0.5 -ml-1 flex items-center gap-1 transition-opacity duration-150 ease-out ${
@@ -7737,20 +7743,8 @@ function ChatInterface({
                     onChange={changeChatProjects}
                     loadChoices={loadProjectChoices}
                     disabled={isAgentActive}
+                    trailing={<CodeModeSwitch mode={codeMode} onChange={changeCodeMode} />}
                   />
-                  {codeWorkForeground && (
-                    <div className="flex items-center gap-1.5 px-4 pt-1.5 text-[12px] leading-4 text-kumo-subtle" role="status">
-                      <span>Сейчас отвечает: работа с кодом</span>
-                      <span aria-hidden>·</span>
-                      <button
-                        type="button"
-                        onClick={leaveCodeWork}
-                        className="cursor-pointer text-kumo-brand hover:underline"
-                      >
-                        Вернуться к беседе
-                      </button>
-                    </div>
-                  )}
                   <ChatInput
                     chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>

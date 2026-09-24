@@ -12,7 +12,7 @@ test("папка проверяется до размещения; частич�
   async inboxAlerts(){return {alerts:files.filter(f=>f.status==="open"),truncated:false};},
   async createProject(name,slug){events.push(["create",name,slug]);const project={id:"new",name,slug};projects.push(project);return {project};},
   async decideInboxAlert(id,input){events.push(["decide",id,input]);if(id==="two"&&!retry)throw Error("temporary");files.find(f=>f.id===id).status="approved";},
- },{section:"intake"});
+ },{section:"intake",presentationMode:"panel"});
  try {
   await app.until(()=>app.button("Папка"),"папка доступна для выбора");app.button("Папка").click();
   await app.until(()=>app.document.querySelector('[aria-label="Проект для выбранных"]'),"общие настройки");
@@ -50,7 +50,7 @@ test("два предложенных новых проекта не объед�
   async inboxAlerts(){return {alerts:alerts.filter(a=>a.status==="open"),truncated:false};},
   async createProject(name,slug){created.push(name);const project={id:slug,name,slug};projects.push(project);return {project};},
   async decideInboxAlert(id,input){decisions.push(input.place);alerts.find(a=>a.id===id).status="approved";},
- },{section:"intake"});
+ },{section:"intake",presentationMode:"panel"});
  try {
   const suggested=()=>app.buttons().filter(b=>b.textContent==="Использовать предложенный проект");
   await app.until(()=>suggested().length===2,"два предложения");suggested()[0].click();

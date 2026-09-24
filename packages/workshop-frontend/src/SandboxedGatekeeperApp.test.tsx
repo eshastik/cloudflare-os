@@ -233,7 +233,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     let replaceFrame:(frame:GatekeeperUiFrame)=>void=()=>{};
     const rootRoute=createRootRoute({component:()=>{const [frame,setFrame]=useState(first);replaceFrame=setFrame;return <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>}});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:rootRoute.addChildren([createRoute({getParentRoute:()=>rootRoute,path:"/"})])});
-    window.history.replaceState(null,"","/?section=intake");
+    window.history.replaceState(null,"","/?section=projects&project=p1");
     container=document.createElement("div");document.body.append(container);root=createRoot(container);
     await act(async()=>root!.render(<RouterProvider router={router}/>));
     const connect=()=>{const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]}));};

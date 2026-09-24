@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import type { AiChatMetadata, AiChatStreamEvent } from "@gadgets/workshop-shared/api";
+import type { AiChatMessage, AiChatMetadata, AiChatStreamEvent } from "@gadgets/workshop-shared/api";
 import type { AgentStep, ChangedFile } from "@gadgets/workshop-shared/code-work";
 import { formatCodeWorkResult, validateChatProjects, chatProjects } from "@gadgets/workshop-shared/code-work";
 import { CodeWorkTimeline, relativePath, shortCommand, type CodeWorkEvent } from "../src/code-work-timeline";
 import { runCodeWorkTurn, type CodeWorkBackend } from "../src/code-work";
 import {
-  acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects,
+  acceptChatCodeChanges, codeWorkForeground, markChatAnswering, routeChatMessage, setChatCodeMode, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects,
   type ChatCodeWorkHost, type CodeWorkUser,
 } from "../src/chat-code-work";
 
@@ -195,7 +195,7 @@ describe("ход работы с кодом", () => {
   });
 });
 
-function fakeHost(meta: AiChatMetadata, user: Partial<CodeWorkUser>) {
+function fakeHost(meta: AiChatMetadata, user: Partial<CodeWorkUser>, messages: AiChatMessage[] = []) {
   const events: AiChatStreamEvent[] = [];
   let current = structuredClone(meta);
   const host: ChatCodeWorkHost = {
@@ -203,8 +203,9 @@ function fakeHost(meta: AiChatMetadata, user: Partial<CodeWorkUser>) {
     putChatMeta: m => { current = structuredClone(m); },
     user: () => user as CodeWorkUser,
     emit: (_id, e) => events.push(e),
+    chatMessages: (_id, after) => messages.filter(m => m.sequence > after),
   };
-  return {host, events, meta: () => current};
+  return {host, events, meta: () => current, messages};
 }
 const baseMeta = (extra: Partial<AiChatMetadata> = {}): AiChatMetadata => ({id: 1, title: "t", started: new Date(0), lastActive: new Date(0), ...extra});
 
@@ -243,8 +244,11 @@ describe("работа с кодом в беседе", () => {
 
     backend.pages = [{events: [role(2, "a2", "assistant")], state: "idle"}];
     await runChatCodeWork(host, {chatId: 1, toolCallId: "call2", prompt: "а почему так?", continueOnly: true, userId: "u1", profileId: "pr", signal});
-    expect(backend.calls.find(c => c[0] === "message")).toEqual(["message", "sales", "t1", "а почему так?"]);
-    leaveCodeWork(host, 1);
+    const sent = backend.calls.find(c => c[0] === "message")!;
+    expect(sent.slice(0, 3)).toEqual(["message", "sales", "t1"]);
+    expect(sent[3]).toMatch(/^Контекст беседы:/);
+    expect(sent[3]).toMatch(/Задача:\nа почему так\?$/);
+    markChatAnswering(host, 1);
     expect(codeWorkForeground(meta())).toBe(false);
   });
 
@@ -296,5 +300,111 @@ describe("работа с кодом в беседе", () => {
     expect(relativePath("/workspace/site/src/a.go")).toBe("site/src/a.go");
     expect(relativePath("/workspace/repository/a.go")).toBe("repository/a.go");
     expect(relativePath("a.go")).toBe("a.go");
+  });
+});
+
+const PROJECTS = {accountId: 1, projectId: "p", title: "Продажи", creatorId: "u1", creatorProfileId: "pr",
+  projects: [{accountId: 1, projectId: "p", title: "Продажи", pinnedBy: "user" as const, hasCode: true}]};
+const liveWork = (extra: Partial<NonNullable<AiChatMetadata["codeWork"]>> = {}) =>
+  ({accountId: 1, projectId: "p", projectTitle: "Продажи", taskId: "t1", state: "idle" as const, foreground: true, cursor: 3, summary: "Поправил заголовок.", ...extra});
+const decided = (route: "code" | "chat", confidence = 0.9) => async () => ({ok: true as const, decision: {route, confidence, cost: 0.00002}});
+
+describe("переключатель «Код» и маршрутизация сообщения", () => {
+  it("режим хранится в метаданных, по умолчанию «Авто»; меняет только создатель беседы", () => {
+    const {host, meta} = fakeHost(baseMeta({projectContext: PROJECTS}), {});
+    expect(meta().codeMode).toBeUndefined();
+    setChatCodeMode(host, 1, "u1", "on");
+    expect(meta().codeMode).toBe("on");
+    expect(() => setChatCodeMode(host, 1, "u2", "off")).toThrow("тот, кто начал беседу");
+    expect(() => setChatCodeMode(host, 1, "u1", "always")).toThrow("Неверный режим");
+  });
+
+  it("«Выкл»: всегда агент беседы, маршрутизатор не спрашивается", async () => {
+    let asked = 0;
+    const {route} = await routeChatMessage({mode: "off", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork()}), message: "запусти тесты",
+      ask: async () => { asked++; return {ok: true, decision: {route: "code", confidence: 1}}; }});
+    expect(route).toEqual({target: "chat", reason: "off"});
+    expect(asked).toBe(0);
+  });
+
+  it("«Вкл»: продолжение живой работы, иначе новая работа в проекте с кодом, без проекта с кодом — агент беседы", async () => {
+    expect((await routeChatMessage({mode: "on", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork()}), message: "спасибо"})).route)
+      .toEqual({target: "code", projectId: "p", continuing: true, reason: "on"});
+    expect((await routeChatMessage({mode: "on", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork({state: "stopped"})}), message: "x"})).route)
+      .toEqual({target: "code", projectId: "p", continuing: false, reason: "on"});
+    const noCode = {...PROJECTS, projects: [{accountId: 1, projectId: "d", title: "Документы", pinnedBy: "user" as const}]};
+    expect((await routeChatMessage({mode: "on", meta: baseMeta({projectContext: noCode}), message: "почини сборку"})).route)
+      .toEqual({target: "chat", reason: "no_code_project"});
+  });
+
+  it("«Авто»: решает Jev; неуверенный ответ — агенту беседы", async () => {
+    const meta = baseMeta({projectContext: PROJECTS, codeWork: liveWork()});
+    expect((await routeChatMessage({mode: "auto", meta, message: "запусти тесты", ask: decided("code")})).route)
+      .toMatchObject({target: "code", continuing: true, reason: "router"});
+    expect((await routeChatMessage({mode: "auto", meta, message: "спасибо", ask: decided("chat")})).route)
+      .toEqual({target: "chat", reason: "router"});
+    expect((await routeChatMessage({mode: "auto", meta, message: "хм", ask: decided("code", 0.55)})).route)
+      .toEqual({target: "chat", reason: "router_unsure"});
+  });
+
+  it("«Авто»: сбой Jev — продолжает агент кода, если последний ответ был его; иначе агент беседы", async () => {
+    const failed = async () => ({ok: false as const, error: "timeout"});
+    expect((await routeChatMessage({mode: "auto", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork()}), message: "и ещё", ask: failed})).route)
+      .toMatchObject({target: "code", reason: "router_failed"});
+    expect((await routeChatMessage({mode: "auto", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork({foreground: false})}), message: "и ещё", ask: failed})).route)
+      .toEqual({target: "chat", reason: "router_failed"});
+    // Нет ключа — то же, что сбой.
+    expect((await routeChatMessage({mode: "auto", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork()}), message: "и ещё"})).route)
+      .toMatchObject({target: "code", reason: "router_failed"});
+  });
+
+  it("«Авто»: контекст беседы и сводка работы попадают в вопрос Jev", async () => {
+    let seen: unknown;
+    await routeChatMessage({mode: "auto", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork({changedFiles: [{path: "src/app.ts", status: "modified"}]})}),
+      message: "объясни проще", lastAgentReply: "Я поправил заголовок страницы.",
+      ask: async ctx => { seen = ctx; return {ok: true, decision: {route: "chat", confidence: 0.9}}; }});
+    expect(seen).toMatchObject({message: "объясни проще", lastReplyByCode: true, lastAgentReply: "Я поправил заголовок страницы.", codeProjects: ["Продажи"]});
+    expect((seen as {work: {topic: string}}).work.topic).toContain("src/app.ts");
+  });
+});
+
+const msg = (sequence: number, author: "user" | "agent", message: string, extra: Partial<AiChatMessage> = {}): AiChatMessage =>
+  ({chatId: 1, sequence, timestamp: new Date(0), author: {type: author, id: author, name: author === "user" ? "Анна" : "Агент"}, type: "message", message, ...extra} as AiChatMessage);
+
+describe("контекст беседы для агента кода", () => {
+  it("каждый ход получает только новое с прошлого хода; отметка сохраняется в работе с кодом", async () => {
+    const backend = new FakeBackend();
+    const user: Partial<CodeWorkUser> = {
+      async codeWorkTarget() { return {title: "Продажи", code: TARGET}; },
+      codeWorkStart: (_a, p, t, prompt) => backend.start(p, t, prompt),
+      codeWorkMessage: (_a, p, t, text) => backend.message(p, t, text),
+      codeWorkEvents: (_a, p, t, after) => backend.events(p, t, after),
+      codeWorkChanges: () => backend.changes(),
+    };
+    const messages = [msg(1, "user", "Старая просьба про отчёт"), msg(2, "agent", "Старый ответ агента"), msg(3, "user", "почини заголовок")];
+    const {host, meta} = fakeHost(baseMeta({projectContext: PROJECTS}), user, messages);
+    const signal = new AbortController().signal;
+    backend.pages = [{events: [role(1, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c1", prompt: "почини заголовок", promptSequence: 3, userId: "u1", profileId: "pr", signal});
+    const first = String(backend.calls.find(c => c[0] === "start")![2]);
+    expect(first).toContain("Старая просьба про отчёт");
+    expect(first).toContain("«Продажи» (projectId: p, есть код)");
+    expect(first).toContain("mnemos_project_journal");
+    expect(first.match(/почини заголовок/g)).toHaveLength(1);
+    expect(meta().codeWork?.contextSeq).toBe(3);
+    expect(meta().codeWork?.changedFiles).toEqual([{path: "a.go", status: "modified"}]);
+
+    messages.push(msg(4, "agent", "Заголовок поправлен."), msg(5, "user", "а теперь цвет кнопки", {attachments: [{id: "x", mimeType: "image/png", name: "макет.png", size: 2048}]} as Partial<AiChatMessage>),
+      msg(6, "agent", "", {toolCalls: [{toolCallId: "e", toolName: "executeCode", input: {code: "await env.MNEMOS.readDocument('sales', 'doc-42')"}, output: "ok"}]} as Partial<AiChatMessage>));
+    backend.pages = [{events: [role(2, "a2", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c2", prompt: "Поменяй цвет кнопки", userId: "u1", profileId: "pr", signal});
+    const second = String(backend.calls.find(c => c[0] === "message")![3]);
+    expect(second).toContain("Заголовок поправлен.");
+    expect(second).toContain("а теперь цвет кнопки");
+    expect(second).toContain("документ doc-42 в проекте sales");
+    expect(second).toContain("макет.png");
+    expect(second).not.toContain("Старая просьба про отчёт");
+    expect(second).not.toContain("почини заголовок");
+    expect(meta().codeWork?.contextSeq).toBe(6);
   });
 });

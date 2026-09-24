@@ -775,6 +775,15 @@ export class MnemosAPI {
     return out;
   }
   /** member=false убирает человека из отдела; head имеет смысл только вместе с member. */
+  /** Удаление отдела: проекты отдела становятся личными, сотрудники остаются в организации без отдела. */
+  async deleteOrgUnit(unit: string, signal?: AbortSignal): Promise<OrgUnitDeletion> {
+    if (typeof unit !== "string" || !unit || unit.length > 255) throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>(`/v1/org-units/${segment(unit)}`, "DELETE", signal);
+    const d = out as OrgUnitDeletion | null;
+    const count = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
+    if (!d || d.deleted !== true || !count(d.projects_made_private) || !count(d.requests_closed) || !count(d.invitations_revoked) || !count(d.members_removed)) throw new MnemosAPIError(502);
+    return { deleted: true, projects_made_private: d.projects_made_private, requests_closed: d.requests_closed, invitations_revoked: d.invitations_revoked, members_removed: d.members_removed };
+  }
   async setOrgUnitMember(unit: string, principal: string, member: boolean, head: boolean, signal?: AbortSignal): Promise<void> {
     segment(unit); segment(principal);
     if (typeof member !== "boolean" || typeof head !== "boolean") throw new MnemosAPIError(400);
@@ -787,10 +796,12 @@ export class MnemosAPI {
     return list;
   }
   /** Код ссылки приходит только в ответе на создание. */
-  async createInvitation(email: string, displayName: string, orgUnit: string, signal?: AbortSignal): Promise<OrganizationInvitation & { code: string }> {
+  /** Роль «Сотрудник» не передаётся: сервер без поля role её и подразумевает, а старый сервер поле не знает. */
+  async createInvitation(email: string, displayName: string, orgUnit: string, role: InvitationRole = "employee", signal?: AbortSignal): Promise<OrganizationInvitation & { code: string }> {
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.length > 320 ||
-        typeof displayName !== "string" || displayName.length > 255 || typeof orgUnit !== "string" || orgUnit.length > 255) throw new MnemosAPIError(400);
-    const out = await this.#request<unknown>("/v1/invitations", "POST", signal, { email: email.trim(), display_name: displayName.trim(), org_unit_id: orgUnit });
+        typeof displayName !== "string" || displayName.length > 255 || typeof orgUnit !== "string" || orgUnit.length > 255 ||
+        !INVITATION_ROLES.includes(role) || (role === "head" && !orgUnit)) throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>("/v1/invitations", "POST", signal, { email: email.trim(), display_name: displayName.trim(), org_unit_id: orgUnit, ...(role === "employee" ? {} : { role }) });
     const code = (out as { code?: unknown } | null)?.code;
     if (!validInvitation(out) || typeof code !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(code)) throw new MnemosAPIError(502);
     return { ...out, code };
@@ -1089,8 +1100,11 @@ export interface PrivateParticipantPage { head: string; next_cursor: string; par
 export interface AgentConsentPreview { client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }
 export interface OrgUnitMember { principal_id: string; display_name: string; is_head: boolean }
 export interface OrgUnit { org_unit_id: string; name: string; members: OrgUnitMember[] }
+export interface OrgUnitDeletion { deleted: true; projects_made_private: number; requests_closed: number; invitations_revoked: number; members_removed: number }
 export type InvitationStatus = "open" | "accepted" | "revoked" | "expired";
-export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string }
+export type InvitationRole = "employee" | "head" | "admin";
+export const INVITATION_ROLES: readonly InvitationRole[] = ["employee", "head", "admin"];
+export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; role?: InvitationRole; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string }
 function shortText(value: unknown, max = 255): value is string { return typeof value === "string" && value.length <= max; }
 function validOrgUnit(value: unknown): value is OrgUnit {
   const unit = value as OrgUnit;
@@ -1104,7 +1118,7 @@ function validInvitation(value: unknown): value is OrganizationInvitation {
     (i.org_unit_id === undefined || shortText(i.org_unit_id)) && (i.org_unit_name === undefined || shortText(i.org_unit_name)) &&
     shortText(i.created_by) && shortText(i.created_by_name) && typeof i.created_at === "string" && typeof i.expires_at === "string" &&
     ["open", "accepted", "revoked", "expired"].includes(i.status) && (i.accepted_by === undefined || shortText(i.accepted_by)) &&
-    (i.accepted_by_name === undefined || shortText(i.accepted_by_name));
+    (i.accepted_by_name === undefined || shortText(i.accepted_by_name)) && (i.role === undefined || INVITATION_ROLES.includes(i.role));
 }
 
 /** Authorized immutable versions explicitly invited by their owners. */

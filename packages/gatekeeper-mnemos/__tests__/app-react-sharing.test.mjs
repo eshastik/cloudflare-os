@@ -51,7 +51,7 @@ test("«Поделиться»: отказ сервера объяснён сл�
   } finally { app.dispose(); }
 });
 
-test("«Входящие»: карточка запроса руководителю — «Анна хочет открыть проект…», «Разрешить» и «Отклонить»", async () => {
+test("«Входящие»: карточка запроса руководителю — «Анна хочет открыть проект…», главная кнопка «Разрешить», отказ — в подробностях", async () => {
   let decided = false;
   const app = await mountMemoryApp({
     async listShareRequests(mine) { return { requests: mine || decided ? [] : [REQUEST] }; },
@@ -66,7 +66,9 @@ test("«Входящие»: карточка запроса руководите
     const filter = [...app.document.querySelectorAll('#root [aria-label="Что показать"] button')].find(b => b.textContent.startsWith("Доступ"));
     assert.equal(filter.textContent, "Доступ1", "запрос — в фильтре «Доступ»");
     const buttons = [...card.querySelectorAll("button")].map(b => b.textContent);
-    assert.ok(buttons.includes("Разрешить") && buttons.includes("Отклонить"));
+    assert.ok(buttons.includes("Разрешить") && !buttons.includes("Отклонить"), "на карточке одна главная кнопка");
+    card.querySelector("button").click();
+    await app.until(() => [...app.document.querySelectorAll('#root aside[aria-label="Подробности"] button')].some(b => b.textContent === "Отклонить"), "отказ — в подробностях");
     [...card.querySelectorAll("button")].find(b => b.textContent === "Разрешить").click();
     await app.until(() => app.text().includes("Проект «Общий проект» открыт отделу «Продажи»."), "решение подтверждено");
     assert.deepEqual(app.calls.find(c => c[0] === "decideShareRequest"), ["decideShareRequest", REQUEST.request_id, true]);
@@ -100,25 +102,24 @@ test("«Входящие»: карточки без таблиц — от ког
   } finally { app.dispose(); }
 });
 
-test("Правила организации — администратору, под «Дополнительно»; сотруднику их нет", async () => {
+test("Правила организации — на странице «Правила» администратору; сотруднику раздел закрыт", async () => {
   const saved = [];
   const admin = await mountMemoryApp({ async updateProjectSharingSettings(settings) { saved.push(settings); return settings; } }, { section: "organization" });
   try {
-    const more = () => admin.document.querySelector('#root details[aria-label="Дополнительно"]');
-    await admin.until(() => more()?.querySelector('[role="switch"]'), "правила прочитаны");
-    assert.equal(more().open, false, "свёрнуто по умолчанию");
-    assert.ok(more().textContent.includes("Личные проекты у сотрудников") && more().textContent.includes("Поделиться с отделом"));
-    more().querySelector('[role="switch"]').click();
-    const save = () => [...more().querySelectorAll("button")].find(b => b.textContent === "Сохранить правила");
+    const rules = () => admin.document.querySelector('#root section[aria-label="Правила проектов"]');
+    await admin.until(() => rules()?.querySelector('[role="switch"]'), "правила прочитаны");
+    assert.ok(rules().textContent.includes("Личные проекты у сотрудников") && rules().textContent.includes("Поделиться с отделом"));
+    rules().querySelector('[role="switch"]').click();
+    const save = () => [...rules().querySelectorAll("button")].find(b => b.textContent === "Сохранить правила");
     await admin.until(() => !save().disabled, "есть изменения");
     save().click();
-    await admin.until(() => more().textContent.includes("Правила сохранены."), "сохранено");
+    await admin.until(() => rules().textContent.includes("Правила сохранены."), "сохранено");
     assert.deepEqual(saved, [{ ...SETTINGS, personal_projects_enabled: false }]);
   } finally { admin.dispose(); }
-  const viewer = await mountMemoryApp({ async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример", capabilities: ["platform.metrics.read"] }; } }, { section: "organization" });
+  const viewer = await mountMemoryApp({ async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример", capabilities: ["platform.metrics.read"] }; } }, { section: "rules" });
   try {
-    await viewer.until(() => viewer.text().includes("Наблюдаемость"), "раздел для наблюдателя");
-    assert.equal(viewer.document.querySelector('#root details[aria-label="Дополнительно"]'), null);
+    await viewer.until(() => viewer.text().includes("Этот раздел доступен администратору"), "наблюдателю правила закрыты");
+    assert.equal(viewer.document.querySelector('#root section[aria-label="Правила проектов"]'), null);
   } finally { viewer.dispose(); }
 });
 
@@ -132,7 +133,7 @@ test("Идентификаторы агентов и задач не видны 
   const app = await mountMemoryApp(person, { section: "agents" });
   try {
     await app.until(() => app.document.querySelectorAll("#root [data-agent]").length === 3, "три агента");
-    const titles = [...app.document.querySelectorAll("#root [data-agent] h2")].map(h => h.textContent);
+    const titles = [...app.document.querySelectorAll("#root [data-agent] h3")].map(h => h.textContent);
     assert.deepEqual(titles, ["Агент беседы", "Свой агент (Claude Code или Codex)", "Свой агент (Claude Code или Codex) № 2"]);
     assert.equal(app.document.querySelector("#root [data-admin-details]"), null, "сотруднику «Подробнее» нет");
     for (const c of connections) for (const id of [c.binding_id, c.agent_principal_id]) assert.ok(!app.text().includes(id), `не показан ${id}`);

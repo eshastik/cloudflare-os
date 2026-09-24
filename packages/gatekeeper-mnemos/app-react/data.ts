@@ -3,6 +3,7 @@ import type { AgentAbsence, AgentConnectionPage, CollaborationProgress, Collabor
 import type { ManagedTaskRequest } from "../src/account-session.ts";
 import type { Ui } from "./host.ts";
 import type { ProjectVisibility } from "../src/project-sharing.ts";
+import { readinessFailed, readinessReady } from "./readiness.ts";
 
 export type ProjectNode = NodePage["nodes"][number];
 export type AgentConnection = AgentConnectionPage["connections"][number];
@@ -281,6 +282,7 @@ export function useMemoryData(ui: Ui): MemoryData {
         setIdentity(person);
         const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null }));
         setProjects(initial);
+        readinessReady();
         await forEachLimited(initial, 4, async project => {
           const [nodes, privateDocs, draft, absence] = await Promise.allSettled([ui.browseProject(project.id, ""), ui.listPrivateDocuments(project.id, ""), ui.draftState(project.id), ui.readAgentAbsence(project.id)]);
           if (!alive.current) return;
@@ -293,6 +295,7 @@ export function useMemoryData(ui: Ui): MemoryData {
           setProjects(prev => prev.map(p => p.id === project.id ? { ...p, ...patch } : p));
         });
       } catch {
+        readinessFailed();
         if (alive.current) setProjectsError("Не удалось загрузить проекты. Проверьте сессию и обновите страницу.");
       } finally {
         if (alive.current) setProjectsLoading(false);

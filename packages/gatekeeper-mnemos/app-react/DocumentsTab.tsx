@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@cloudflare/kumo";
 import { FileArrowUp, MagnifyingGlass, X } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
 import { documentRows, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
-import { LegacyPanel } from "./legacy.tsx";
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { MaterialCard, MaterialChatButtons, materialPrompt, type MaterialAction } from "./MaterialCard.tsx";
 import { relativeTime } from "./time.ts";
-import { Notice, Select, StatusBadge } from "./ui.tsx";
+import { ActionForm, Notice, Select, StatusBadge } from "./ui.tsx";
 
 /** Время документа даёт только история; чтобы не грузить сервер, берём первую страницу истории для ограниченного числа карточек. */
 const HISTORY_ROWS = 40;
@@ -58,7 +57,6 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<Search | null>(null);
   const [times, setTimes] = useState<Map<string, string>>(new Map());
-  const [editing, setEditing] = useState(false);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [notice, setNotice] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -121,8 +119,8 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     if (search) void runSearch(search.query, project ? data.projects.filter(p => p.id === project) : data.projects);
   }
 
-  function submitSearch(event: FormEvent) {
-    event.preventDefault();
+  function submitSearch() {
+    if (search?.busy) return;
     const text = query.trim();
     if (!text) { clearSearch(); return; }
     void runSearch(text, visibleProjects);
@@ -178,9 +176,6 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     return { projectId: hit.project_id, projectName: project?.name ?? "проект, недоступный вам", nodeId: hit.node_id, name: hit.name || UNNAMED_DOCUMENT, status: { tone: "success", label: "Опубликовано" } };
   }
 
-  if (administrative) return <AdministrativeDocuments data={data} initialProject={selected} onClose={()=>setAdministrative(false)} />;
-
-  if (opened && editing) return <LegacyPanel section={{kind: "document", project: opened.row.projectId, node: opened.row.nodeId}} title={opened.row.name} onClose={() => { setEditing(false); void data.reloadProjects(); }} />;
 
   const isOpened = (row: DocumentRow) => opened?.row.projectId === row.projectId && opened.row.nodeId === row.nodeId;
   const nodesFailed = visibleProjects.filter(p => p.nodesError);
@@ -189,20 +184,19 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <form onSubmit={submitSearch} role="search" className="flex min-w-[240px] flex-1 items-center gap-2">
+        <ActionForm onAction={submitSearch} aria-label="Поиск" className="flex min-w-[240px] flex-1 items-center gap-2">
           <label className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-kumo-line bg-kumo-base px-3 text-kumo-inactive focus-within:border-kumo-ring">
             <MagnifyingGlass size={16} aria-hidden="true" />
             <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Найти в материалах: слова, тема или вопрос…" aria-label="Поиск по материалам"
               className="w-full bg-transparent text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive" />
           </label>
-          <Button type="submit" variant="secondary" disabled={search?.busy}>Найти</Button>
+          <Button type="button" variant="secondary" disabled={search?.busy} onClick={submitSearch}>Найти</Button>
           {search && <Button type="button" variant="ghost" onClick={clearSearch}>Очистить</Button>}
-        </form>
+        </ActionForm>
         <Select aria-label="Проект" value={selected} onChange={e => selectProject(e.target.value)} className="h-9 max-w-[260px]">
           <option value="">{`Все проекты · ${total}${anyTruncated ? "+" : ""}`}</option>
           {data.projects.map(p => <option key={p.id} value={p.id}>{`${p.name} · ${rowsByProject.get(p.id)?.length ?? 0}${p.truncated ? "+" : ""}`}</option>)}
         </Select>
-        {isAdministrator && <Button variant="ghost" size="sm" onClick={()=>setAdministrative(true)}>Личные версии сотрудников</Button>}
       </div>
 
       {notice && <div className="mb-2"><Notice tone="danger">{notice}</Notice></div>}
@@ -254,7 +248,6 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <StatusBadge tone={opened.row.status.tone}>{opened.row.status.label}</StatusBadge>
               <MaterialChatButtons onChat={action => chat(opened.row, action)} />
-              <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Открыть личный черновик</Button>
             </div>
             <div className="max-h-[70vh] overflow-auto rounded-lg border border-kumo-line bg-kumo-elevated p-3">
               {opened.error && <div className="space-y-2"><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" size="sm" onClick={() => void open(opened.row)}>Повторить загрузку</Button></div>}
@@ -265,6 +258,10 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
           </aside>
         )}
       </div>
+      {isAdministrator && <details aria-label="Личные версии сотрудников" className="mt-8" onToggle={e => setAdministrative((e.currentTarget as HTMLDetailsElement).open)}>
+        <summary className="cursor-pointer text-[15px] font-semibold text-kumo-strong">Личные версии сотрудников</summary>
+        {administrative && <div className="mt-3"><AdministrativeDocuments data={data} initialProject={selected} /></div>}
+      </details>}
     </div>
   );
 }

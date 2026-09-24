@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
+import type { HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { Empty } from "@cloudflare/kumo";
 import { Tray } from "@phosphor-icons/react";
 
@@ -87,7 +87,22 @@ export function AdminDetails({ show, items }: { show: boolean; items: [string, s
   );
 }
 
-const inputClass = "h-8 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring";
+/**
+ * Замена тегу form. Фрейм приложения — песочница без allow-forms: браузер не отправляет формы и не
+ * вызывает onSubmit (jsdom этого не соблюдает, поэтому тесты с формами зеленели). Действие запускает
+ * кнопка type="button" или Enter в однострочном поле; onAction сам проверяет, можно ли действовать.
+ */
+export function ActionForm({ onAction, children, className, ...rest }: { onAction(): void; children: ReactNode; className?: string } & Omit<HTMLAttributes<HTMLDivElement>, "onKeyDown" | "children" | "className" | "role">) {
+  return <div role="form" className={className} {...rest} onKeyDown={e => {
+    const target = e.target as HTMLElement;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing || target.tagName !== "INPUT") return;
+    if (["checkbox", "radio", "button", "submit", "reset", "file"].includes((target as HTMLInputElement).type)) return;
+    e.preventDefault();
+    onAction();
+  }}>{children}</div>;
+}
+
+const inputClass ="h-8 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring";
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`${inputClass} ${props.className ?? ""}`} />;

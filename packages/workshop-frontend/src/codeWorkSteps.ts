@@ -79,3 +79,31 @@ export function chatListState(chat: {
   if (chat.hasProposedChanges) return "proposed";
   return null;
 }
+
+type FeedMessage = {
+  type: string;
+  sequence: number;
+  author: { type: string };
+  message?: string;
+  toolCalls?: { toolName: string }[];
+};
+
+/** Ответы, в которых работал агент кода: номера сообщений, под которыми стоит тихая пометка
+ *  «агент кода». Ответ — всё от сообщения человека до следующего; пометка ставится у последнего
+ *  текста ответа (строка работы с кодом и так видна в ленте). */
+export function codeAnsweredMessageSeqs(messages: readonly FeedMessage[]): Set<number> {
+  const out = new Set<number>();
+  let usedCode = false, lastText: number | null = null;
+  const close = () => {
+    if (usedCode && lastText !== null) out.add(lastText);
+    usedCode = false; lastText = null;
+  };
+  for (const m of messages) {
+    if (m.type !== "message") continue;
+    if (m.author.type === "user") { close(); continue; }
+    if (m.toolCalls?.some((t) => t.toolName === "codeWork" || t.toolName === "codeAsk")) usedCode = true;
+    if (m.message?.trim()) lastText = m.sequence;
+  }
+  close();
+  return out;
+}

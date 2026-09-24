@@ -1,6 +1,6 @@
 // Набор проектов беседы: тихие чипы над полем ввода («Продажи · Склад · +»). Контекст работы,
 // а не право доступа: пустой набор — проект определится по задаче.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Plus, X, Sparkle } from "@phosphor-icons/react";
 import type { ChatProjectChoice } from "@gadgets/workshop-shared/api";
 import type { ChatProject } from "@gadgets/workshop-shared/code-work";
@@ -11,13 +11,15 @@ export type ProjectChipsProps = {
   onChange(projects: ChatProject[]): void;
   loadChoices(): Promise<ChatProjectChoice[]>;
   disabled?: boolean;
+  /** Справа в той же строке (переключатель «Код»). */
+  trailing?: ReactNode;
 };
 
 function sameProject(a: { accountId: number; projectId: string }, b: { accountId: number; projectId: string }) {
   return a.accountId === b.accountId && a.projectId === b.projectId;
 }
 
-export function ProjectChips({ projects, onChange, loadChoices, disabled = false }: ProjectChipsProps) {
+export function ProjectChips({ projects, onChange, loadChoices, disabled = false, trailing }: ProjectChipsProps) {
   const [open, setOpen] = useState(false);
   const [choices, setChoices] = useState<ChatProjectChoice[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -83,6 +85,7 @@ export function ProjectChips({ projects, onChange, loadChoices, disabled = false
       >
         <Plus size={11} weight="bold" />
       </button>
+      {trailing && <span className="ml-auto">{trailing}</span>}
       {open && (
         <div role="listbox" aria-label="Выбор проекта" className="absolute bottom-full left-4 z-20 mb-1 max-h-64 w-72 overflow-auto rounded-xl border border-kumo-line bg-kumo-base p-1 shadow-lg">
           {failed ? (

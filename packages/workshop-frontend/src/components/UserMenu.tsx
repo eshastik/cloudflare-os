@@ -43,19 +43,20 @@ export default function UserMenu() {
           Профиль
         </DropdownMenu.Item>
         <DropdownMenu.Item onClick={() => setAppearanceOpen(true)} className={MENU_ITEM}>Оформление</DropdownMenu.Item>
-        <DropdownMenu.Item
-          onClick={() => navigate({ to: '/providers' })}
-          className={MENU_ITEM}
-        >
-          Подключения моделей
-        </DropdownMenu.Item>
+        {/* Модели открываются из «Управления → Агенты и расходы»; здесь — только служебное
+            администратора платформы, которого нет в разделах приложения. */}
         {isAdmin && (
-          <DropdownMenu.Item
-            onClick={() => navigate({ to: '/admin' })}
-            className={MENU_ITEM}
-          >
-            Настройки платформы
-          </DropdownMenu.Item>
+          <>
+            <DropdownMenu.Item onClick={() => navigate({ to: '/gatekeepers' })} className={MENU_ITEM}>
+              Подключения сервисов
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              onClick={() => navigate({ to: '/admin' })}
+              className={MENU_ITEM}
+            >
+              Настройки платформы
+            </DropdownMenu.Item>
+          </>
         )}
         <DropdownMenu.Separator />
         <DropdownMenu.Item

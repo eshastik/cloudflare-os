@@ -1,7 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { TooltipProvider } from "@cloudflare/kumo";
 import { RpcTarget, newMessagePortRpcSession } from "capnweb";
-import { mountLegacy, type Host } from "../app/main.ts";
+import type { Host } from "../app/main.ts";
+import { startReadiness } from "./readiness.ts";
 import { HostProvider, makeHostContext } from "./host.ts";
 import MemoryPage from "./MemoryPage.tsx";
 import ErrorBoundary from "./ErrorBoundary.tsx";
@@ -15,8 +16,7 @@ class Frame extends RpcTarget {
 
 function main() {
   const root = document.getElementById("root");
-  const legacy = document.getElementById("legacy");
-  if (!root || !legacy) throw new Error("В разметке нет контейнеров #root и #legacy");
+  if (!root) throw new Error("В разметке нет контейнера #root");
 
   // До ответа хоста тема берётся из системной настройки; в jsdom matchMedia нет.
   applyThemeMode(typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
@@ -38,16 +38,16 @@ function main() {
     window.parent.postMessage({ type: "mnemos-drag-enter" }, "*");
   });
 
-  // Существующие редакторы сохраняют состояние; их контейнер показывается внутри соответствующего раздела.
-  mountLegacy(legacy, host);
+  startReadiness(sample => host.ui.recordUIReadiness(sample));
+  window.addEventListener("pagehide", () => host[Symbol.dispose](), { once: true });
 
   const renderer = createRoot(root);
   window.addEventListener("pagehide", () => renderer.unmount(), { once: true });
   renderer.render(
-    <HostProvider value={makeHostContext(host, legacy)}>
+    <HostProvider value={makeHostContext(host)}>
       <TooltipProvider>
         <ErrorBoundary>
-          <MemoryPage legacy={legacy} />
+          <MemoryPage />
         </ErrorBoundary>
       </TooltipProvider>
     </HostProvider>,

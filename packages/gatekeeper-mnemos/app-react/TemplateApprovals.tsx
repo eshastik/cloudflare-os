@@ -1,41 +1,19 @@
 import {BLUEPRINT_TEMPLATE_MIME} from '@gadgets/workshop-shared/blueprint-template';
-import {useEffect,useState} from "react";
+import {useState} from "react";
 import {Button} from "@cloudflare/kumo";
 import {useHost,useUi} from "./host.ts";
-import {Block,Notice,Row,RowText,TextInput} from "./ui.tsx";
+import {Notice,Row,RowText,TextInput} from "./ui.tsx";
 import {personName} from "./data.ts";
 import {readTemplateProposalText,readTemplateBaselineText} from "../app/template-source.ts";
 import type {TemplatePromotionReview,TemplateScope} from "../src/work-templates.ts";
 import type {SavedTemplateDecision} from "../src/template-review-actions.ts";
 
-type Page={scope:TemplateScope;items:TemplatePromotionReview[];cursor:string};
 /** Первая страница предложений каждой области, где человек согласует шаблоны. */
 export async function loadTemplateReviews(ui:ReturnType<typeof useUi>):Promise<{scope:TemplateScope;review:TemplatePromotionReview}[]>{
  const scopes:TemplateScope[]=[];let cursor="";
  do{const page=await ui.listTemplateReviewScopes(cursor);scopes.push(...page.scopes);cursor=page.next_cursor||"";}while(cursor);
  const pages=await Promise.all(scopes.map(async scope=>(await ui.listTemplateProposals(scope.scope_id,"")).proposals.map(review=>({scope,review}))));
  return pages.flat();
-}
-export default function TemplateApprovals({userId}:{userId:string}){
- const ui=useUi();const [pages,setPages]=useState<Page[]>([]),[error,setError]=useState(""),[revision,setRevision]=useState(0);
- useEffect(()=>{let cancelled=false;void(async()=>{
-  try{
-   const scopes:TemplateScope[]=[];let cursor="";
-   do{const page=await ui.listTemplateReviewScopes(cursor);if(cancelled)return;scopes.push(...page.scopes);cursor=page.next_cursor||"";}while(cursor);
-   const result=await Promise.all(scopes.map(async scope=>{const page=await ui.listTemplateProposals(scope.scope_id,"");return {scope,items:page.proposals,cursor:page.next_cursor||""};}));
-   if(!cancelled){setPages(result);setError("");}
-  }catch{if(!cancelled)setError("Не удалось прочитать согласования шаблонов.");}
- })();return()=>{cancelled=true;};},[ui,revision]);
- async function more(scope:string){try{const current=pages.find(p=>p.scope.scope_id===scope);if(!current?.cursor)return;const next=await ui.listTemplateProposals(scope,current.cursor);setPages(all=>all.map(p=>p.scope.scope_id===scope?{...p,items:[...new Map([...p.items,...next.proposals].map(item=>[item.proposal.proposal_id,item])).values()],cursor:next.next_cursor||""}:p));}catch{setError("Не удалось загрузить следующие предложения.");}}
- const pending=(page:Page)=>page.items.filter(item=>!item.decision&&item.proposal.user_id!==userId);
- const count=pages.reduce((n,p)=>n+pending(p).length,0);
- if(!count&&!error&&!pages.some(p=>p.cursor))return null;
- return <div className="mt-6"><Block title="Шаблоны на согласовании" count={count} actions={<Button size="sm" variant="ghost" onClick={()=>setRevision(v=>v+1)}>Обновить шаблоны</Button>}>
-  {error&&<Notice tone="danger">{error}</Notice>}
-  {pages.map(page=><div key={page.scope.scope_id}>{pending(page).map(item=><TemplateProposal key={item.proposal.proposal_id} item={item} scope={page.scope} onDone={()=>setRevision(v=>v+1)}/>)}
-   {page.cursor&&<Button size="sm" variant="ghost" onClick={()=>void more(page.scope.scope_id)}>Ещё предложения · {page.scope.name}</Button>}
-  </div>)}
- </Block></div>;
 }
 export function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
  const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);

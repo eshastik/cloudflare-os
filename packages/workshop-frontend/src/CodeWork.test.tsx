@@ -7,7 +7,9 @@ import type { AgentStep } from "@gadgets/workshop-shared/code-work";
 import { ProjectChips } from "./components/chat/ProjectChips";
 import { CodeChangesCard, splitDiff } from "./components/chat/CodeChangesCard";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
-import { chatListState, summarizeAgentSteps, upsertAgentStep } from "./codeWorkSteps";
+import { chatListState, codeAnsweredMessageSeqs, summarizeAgentSteps, upsertAgentStep } from "./codeWorkSteps";
+import { CodeModeSwitch } from "./components/chat/CodeModeSwitch";
+import chatInterfaceSource from "./ChatInterface.tsx?raw";
 import { homeProjectFromSearch, projectContextFromProjects } from "./homePrompt";
 
 let root: Root | null = null;
@@ -202,5 +204,51 @@ describe("«Что изменилось»", () => {
     await flush();
     expect(view.querySelector('[role="status"]')?.textContent).toContain("Принято");
     expect(view.textContent).toContain("Новых изменений после принятия пока нет");
+  });
+});
+
+describe("переключатель «Код» у поля ввода", () => {
+  it("три положения, выбранное отмечено, подсказка словами; нажатие меняет режим", () => {
+    const onChange = vi.fn();
+    const view = render(<CodeModeSwitch mode="auto" onChange={onChange} />);
+    const radios = [...view.querySelectorAll('[role="radio"]')] as HTMLButtonElement[];
+    expect(radios.map(r => r.textContent)).toEqual(["Выкл", "Авто", "Вкл"]);
+    expect(radios.map(r => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    expect(radios.every(r => (r.title ?? "").length > 20)).toBe(true);
+    expect(view.textContent).toContain("Код:");
+    act(() => radios[2].click());
+    expect(onChange).toHaveBeenCalledWith("on");
+    act(() => radios[1].click());
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("стоит в строке проектов беседы", () => {
+    const view = render(<ProjectChips projects={[]} onChange={() => {}} loadChoices={async () => []}
+      trailing={<CodeModeSwitch mode="off" onChange={() => {}} />} />);
+    expect(view.querySelector('[aria-label="Проекты беседы"] [role="radiogroup"]')).not.toBeNull();
+  });
+
+  it("в беседе нет строки «Сейчас отвечает» и кнопки «Вернуться к беседе»", () => {
+    expect(chatInterfaceSource).not.toContain("Вернуться к беседе");
+    expect(chatInterfaceSource).not.toContain("Сейчас отвечает");
+    expect(chatInterfaceSource).not.toContain("leaveCodeWork");
+    expect(chatInterfaceSource).toContain("<CodeModeSwitch");
+  });
+});
+
+describe("пометка «агент кода» у ответа", () => {
+  const m = (sequence: number, author: "user" | "agent", message: string, tool?: string) =>
+    ({ type: "message", sequence, author: { type: author }, message, ...(tool ? { toolCalls: [{ toolName: tool }] } : {}) });
+  it("ставится у последнего текста ответа, где работал агент кода; ответы агента беседы без пометки", () => {
+    const seqs = codeAnsweredMessageSeqs([
+      m(1, "user", "почини сборку"),
+      m(2, "agent", "", "codeWork"),
+      m(3, "agent", "Сборка починена."),
+      m(4, "user", "спасибо"),
+      m(5, "agent", "Пожалуйста!"),
+      m(6, "user", "а почему падала?"),
+      m(7, "agent", "Сейчас спрошу.", "codeAsk"),
+    ]);
+    expect([...seqs]).toEqual([3, 7]);
   });
 });

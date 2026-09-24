@@ -1,7 +1,7 @@
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
-import { formatCodeWorkResult, type AgentStep, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
+import { formatCodeWorkResult, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
 import { createWorkshopLogger } from "./observability";
 import * as Y from "yjs";
 import { Type } from "@earendil-works/pi-ai";
@@ -380,11 +380,11 @@ export interface AgentHooks {
   // Работа с кодом проекта. Необязательные: без них агент работает как раньше.
   //
   // Проекты беседы и есть ли у человека память с кодом; null — инструменты кода не даются.
-  describeCodeWork?(chatId: number, initiator: AiChatAuthorInfo)
-      : Promise<{projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}} | null>;
+  // mode — переключатель «Код»: при «off» инструменты кода не даются.
+  describeCodeWork?(chatId: number, initiator: AiChatAuthorInfo): Promise<CodeWorkInfo | null>;
   // Один ход работы с кодом: шаги идут через onStep, текст агента кода — через onText.
   runCodeWork?(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput>;
 }
@@ -600,8 +600,28 @@ let CODE_ASK_TOOL_DESCRIPTION = `
 Спросить агента кода той же живой сессии, что и почему он сделал. Используй, только если ответа нет в сохранённом итоге работы с кодом; если сессия завершена, ответь по сохранённой истории.
 `.trim();
 
-function formatCodeWorkPrompt(info: {projects: ChatProject[]; active?: {projectTitle: string; alive: boolean}}): string {
+export type CodeWorkInfo = {
+  projects: ChatProject[];
+  /** brief — живая сводка работы с кодом (только пока работа жива). */
+  active?: {projectTitle: string; alive: boolean; brief?: string};
+  /** Переключатель «Код»; не задан — «Авто». */
+  mode?: ChatCodeMode;
+  /** В беседе есть проект с кодом или живая работа с кодом. */
+  hasCodeProject?: boolean;
+};
+
+/** Инструменты codeWork/codeAsk агенту беседы: есть работа с кодом и переключатель не «Выкл». */
+export function codeWorkToolsAvailable(info: CodeWorkInfo | null): boolean {
+  return !!info && info.mode !== "off";
+}
+
+export function formatCodeWorkPrompt(info: CodeWorkInfo): string {
   let lines = ["# Проекты беседы и работа с кодом", ""];
+  if (info.mode === "off") {
+    lines.push("Человек выключил работу с кодом переключателем «Код: Выкл» у поля ввода: инструментов кода у тебя сейчас нет.",
+      "Если человек просит что-то сделать в коде проекта, скажи, что для этого нужно переключить «Код» на «Авто» или «Вкл».");
+    return lines.join("\n");
+  }
   if (info.projects.length) {
     lines.push("Человек подключил к беседе проекты:");
     for (let p of info.projects) {
@@ -615,6 +635,16 @@ function formatCodeWorkPrompt(info: {projects: ChatProject[]; active?: {projectT
     lines.push("", info.active.alive
       ? `Работа с кодом проекта «${info.active.projectTitle}» идёт; codeWork продолжит её, codeAsk задаст вопрос агенту кода.`
       : `Работа с кодом проекта «${info.active.projectTitle}» завершена; на вопросы о ней отвечай по сохранённой истории.`);
+    if (info.active.alive && info.active.brief) {
+      lines.push("", "## Сводка работы с кодом (обновляется после каждого хода агента кода)", info.active.brief);
+    }
+  }
+  if (info.mode === "on") {
+    lines.push("", info.hasCodeProject
+      ? "Человек включил «Код: Вкл»: его сообщения сразу уходят агенту кода, а ты видишь итог как вызов codeWork. Перескажи итог простыми словами и не повторяй ту же задачу через codeWork."
+      : "Человек включил «Код: Вкл», но в беседе нет проекта с кодом. Честно скажи об этом и попроси подключить проект с кодом кнопкой «+» над полем ввода; сам работу с кодом не начинай.");
+  } else {
+    lines.push("", "Сообщения человека сначала разбирает диспетчер: просьбы про код уходят агенту кода сразу, и ты видишь итог как вызов codeWork — перескажи его простыми словами, не повторяя задачу.");
   }
   return lines.join("\n");
 }
@@ -2912,7 +2942,7 @@ export async function runAgent(
     }),
   };
 
-  if (codeWorkInfo && hooks.runCodeWork) {
+  if (codeWorkInfo && codeWorkToolsAvailable(codeWorkInfo) && hooks.runCodeWork) {
     let runCodeWork = hooks.runCodeWork.bind(hooks);
     let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean}) => {
       try {

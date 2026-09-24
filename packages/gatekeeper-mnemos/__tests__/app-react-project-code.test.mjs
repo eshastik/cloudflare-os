@@ -37,8 +37,7 @@ test("Код проекта: дерево, папка, файл с номера�
   const calls = [];
   const app = await mountMemoryApp(codeMethods(calls), { section: "projects", project: "one" });
   try {
-    await app.until(() => app.tab("Код"), "вкладка кода у проекта с репозиторием");
-    app.tab("Код").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "блок кода у проекта с репозиторием");
     await app.until(() => app.button("services") && app.button("README.md"), "корень репозитория");
     const names = [...app.document.querySelectorAll('section[aria-label="Файлы репозитория"] [data-document], section[aria-label="Файлы репозитория"] button')].map(b => b.textContent);
     assert.ok(names.indexOf("services") < names.indexOf("README.md"), "папки выше файлов");
@@ -63,7 +62,7 @@ test("Изменения агента сравниваются с основно
   const calls = [];
   const app = await mountMemoryApp(codeMethods(calls), { section: "projects", project: "one" });
   try {
-    await app.until(() => app.tab("Код"), "вкладка кода"); app.tab("Код").click();
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "блок кода");
     const agents = () => app.document.querySelector('#root section[aria-label="Изменения агентов"]');
     await app.until(() => agents()?.textContent.includes("Изменения агента № 1"), "изменения агентов по-человечески");
     const shown = el => { const copy = el.cloneNode(true); copy.querySelectorAll("[data-admin-details]").forEach(d => d.remove()); return copy.textContent; };
@@ -82,14 +81,12 @@ test("Изменения агента сравниваются с основно
   } finally { app.dispose(); }
 });
 
-test("Без привязанного репозитория вкладки «Код» нет; задачи агентов честно пусты", async () => {
+test("Без привязанного репозитория блока «Код» нет: страница проекта — обзор, материалы, участники", async () => {
   const app = await mountMemoryApp(codeMethods([]), { section: "projects", project: "two" });
   try {
-    await app.until(() => app.tab("Участники"), "вкладки проекта");
-    assert.equal(app.tab("Код"), undefined);
-    app.tab("Задачи агентов").click();
-    await app.until(() => app.text().includes("Здесь появятся задачи, которые вы поручите агентам"), "пустое состояние задач");
-    assert.equal(app.button("Поручить агенту").disabled, true);
+    await app.until(() => app.document.querySelector('#root section[aria-label="Участники"]'), "блоки проекта");
+    assert.equal(app.document.querySelector('#root section[aria-label="Код"]'), null);
+    assert.equal(app.tabs().length, 0, "без вкладок");
   } finally { app.dispose(); }
 });
 
@@ -104,7 +101,6 @@ test("Описания L0/L1 проекта, папок и файлов пока
   try {
     await app.until(() => app.text().includes("Материалы команды по запуску продукта."), "L0 под названием проекта");
     assert.ok(app.text().includes("Проект собирает заметки, планы и решения по запуску."), "L1 в обзоре");
-    app.tab("Материалы").click();
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => section("Материалы")?.textContent.includes("Короткая заметка о договорённостях."), "описание файла");
     assert.ok(section("Папки").textContent.includes("Черновики дизайна."), "описание папки");
