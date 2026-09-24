@@ -1436,6 +1436,13 @@ export class MnemosAccountSession {
   async registerGitConnection(input:GitRegistration){this.#check();const value=await this.#client.registerGitConnection(input,this.#lifetime.signal);this.#check();return value;}
   async disableGitConnection(id:string,expected:number){this.#check();const value=await this.#client.disableGitConnection(id,expected,this.#lifetime.signal);this.#check();return value;}
   async listGitRepositories(id:string,page=1){this.#check();const value=await this.#client.listGitRepositories(id,page,this.#lifetime.signal);this.#check();return value;}
+  async listGitSyncLinks(){this.#check();const value=await this.#client.listGitSyncLinks(this.#lifetime.signal);this.#check();return value;}
+  async listProjectGitSync(project:string){this.#check();const value=await this.#client.listProjectGitSync(project,this.#lifetime.signal);this.#check();return value;}
+  async createGitSyncLink(input:import("./mnemos-api.ts").GitSyncLinkCreate){this.#check();const value=await this.#client.createGitSyncLink(input,this.#lifetime.signal);this.#check();return value;}
+  async updateGitSyncLink(link:string,input:import("./mnemos-api.ts").GitSyncLinkUpdate){this.#check();const value=await this.#client.updateGitSyncLink(link,input,this.#lifetime.signal);this.#check();return value;}
+  async deleteGitSyncLink(link:string,expectedRevision:number){this.#check();const value=await this.#client.deleteGitSyncLink(link,expectedRevision,this.#lifetime.signal);this.#check();return value;}
+  async refreshGitSyncLink(link:string){this.#check();const value=await this.#client.refreshGitSyncLink(link,this.#lifetime.signal);this.#check();return value;}
+  async listGitAppRepositories(){this.#check();const value=await this.#client.listGitAppRepositories(this.#lifetime.signal);this.#check();return value;}
   private gitRegistrations(){this.#check();if(!this.requestStorage)throw Error("Git request storage unavailable");return new GitRegistrations(this.requestStorage);}
   async listGitRegistrationIntents(){return this.gitRegistrations().list(this);}
   async saveGitRegistrationIntent(setup:GitSetup){return this.gitRegistrations().save(this,setup);}

@@ -1629,6 +1629,13 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async disableMailConnection(id:string,expected:number){return this.#session.disableMailConnection(id,expected);}
   async disableGitConnection(id:string,expected:number){return this.#session.disableGitConnection(id,expected);}
   async listGitRepositories(id:string,page=1){return this.#session.listGitRepositories(id,page);}
+  async listGitSyncLinks(){return this.#session.listGitSyncLinks();}
+  async listProjectGitSync(project:string){return this.#session.listProjectGitSync(project);}
+  async createGitSyncLink(input:import("./mnemos-api.ts").GitSyncLinkCreate){return this.#session.createGitSyncLink(input);}
+  async updateGitSyncLink(link:string,input:import("./mnemos-api.ts").GitSyncLinkUpdate){return this.#session.updateGitSyncLink(link,input);}
+  async deleteGitSyncLink(link:string,expectedRevision:number){return this.#session.deleteGitSyncLink(link,expectedRevision);}
+  async refreshGitSyncLink(link:string){return this.#session.refreshGitSyncLink(link);}
+  async listGitAppRepositories(){return this.#session.listGitAppRepositories();}
   async listGitRegistrationIntents(){return this.#session.listGitRegistrationIntents();}
   async saveGitRegistrationIntent(setup:GitSetup){return this.#session.saveGitRegistrationIntent(setup);}
   async inspectGitRegistrationIntent(id:string){return this.#session.inspectGitRegistrationIntent(id);}

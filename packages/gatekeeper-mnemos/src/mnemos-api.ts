@@ -949,6 +949,32 @@ export class MnemosAPI {
   registerGitConnection(input:GitRegistration,signal?:AbortSignal):Promise<GitConnection>{return this.#request("/v1/git/connections","POST",signal,input);}
   disableGitConnection(id:string,expected:number,signal?:AbortSignal):Promise<GitDisabled>{return this.#request(`/v1/git/connections/${segment(id)}/disable`,"POST",signal,{expected_revision:expected});}
   listGitRepositories(id:string,page=1,signal?:AbortSignal):Promise<GitRepositoryPage>{return this.#request(`/v1/git/connections/${segment(id)}/repositories?page=${page}`,"GET",signal);}
+  /** Связи синхронизации с GitHub, видимые человеку. */
+  async listGitSyncLinks(signal?:AbortSignal):Promise<GitSyncLinkPage>{return checkedGitSyncPage(await this.#request<unknown>("/v1/git/sync-links","GET",signal));}
+  /** Связи синхронизации одного проекта. */
+  async listProjectGitSync(project:string,signal?:AbortSignal):Promise<GitSyncLinkPage>{return checkedGitSyncPage(await this.#request<unknown>(`/v1/projects/${segment(project)}/git/sync`,"GET",signal));}
+  createGitSyncLink(input:GitSyncLinkCreate,signal?:AbortSignal):Promise<GitSyncLink>{
+    segment(input.project_id);segment(input.repository_id);
+    if(input.source==="app"){segment(input.installation_id??"");if(input.connection_id)throw new MnemosAPIError(400);}
+    else if(input.source==="connection"){segment(input.connection_id??"");if(input.installation_id)throw new MnemosAPIError(400);}
+    else throw new MnemosAPIError(400);
+    if(!input.repository_name||input.repository_name.length>255)throw new MnemosAPIError(400);
+    checkGitSyncSettings(input);
+    return this.#request("/v1/git/sync-links","POST",signal,input);
+  }
+  updateGitSyncLink(link:string,input:GitSyncLinkUpdate,signal?:AbortSignal):Promise<GitSyncLink>{
+    if(!Number.isSafeInteger(input.expected_revision)||input.expected_revision<1)throw new MnemosAPIError(400);
+    checkGitSyncSettings(input);
+    return this.#request(`/v1/git/sync-links/${segment(link)}`,"PUT",signal,input);
+  }
+  /** Отключает связь; файлы, уже попавшие в проект, остаются. */
+  deleteGitSyncLink(link:string,expectedRevision:number,signal?:AbortSignal):Promise<{deleted:boolean}>{
+    if(!Number.isSafeInteger(expectedRevision)||expectedRevision<1)throw new MnemosAPIError(400);
+    return this.#request(`/v1/git/sync-links/${segment(link)}?expected_revision=${expectedRevision}`,"DELETE",signal);
+  }
+  refreshGitSyncLink(link:string,signal?:AbortSignal):Promise<{queued:boolean}>{return this.#request(`/v1/git/sync-links/${segment(link)}/refresh`,"POST",signal,{});}
+  /** Репозитории, к которым установлено GitHub App; available=false — приложение на сервере не настроено. */
+  listGitAppRepositories(signal?:AbortSignal):Promise<GitAppRepositoryPage>{return this.#request("/v1/git/app/repositories","GET",signal);}
   listAgentConnections(cursor = "", signal?: AbortSignal): Promise<AgentConnectionPage> {
     return this.#request(`/v1/agent-connections?limit=50&cursor=${encodeURIComponent(cursor)}`, "GET", signal);
   }
@@ -1311,3 +1337,27 @@ export interface ProjectOverview {project_id:string;node_id:string;l0?:string;l1
 /** Запись журнала работ проекта (services/internal/domain/work_journal.go). */
 export interface WorkJournalEntry {entry_id:number;project_id:string;recorded_at:string;recorded_by:string;actor:string;on_behalf_of?:string;source:"manual"|"merge_request"|"publication"|string;summary:string;purpose?:string;changed:string[];result:{kind?:string;repository?:string;reference?:string;document?:string;version?:string};outcome:"accepted"|"awaiting_approval"|"returned"|string}
 export interface WorkJournalPage {entries:WorkJournalEntry[];next_cursor?:string;truncated:boolean}
+
+/** Синхронизация проекта с GitHub (сервер: services/storage-api/internal/app/git_sync.go). */
+export type GitSyncVisibility = "private" | "department" | "organization";
+export type GitSyncState = "pending" | "syncing" | "ok" | "conflict" | "blocked" | "error" | "disabled";
+export interface GitSyncReport {added:number;updated:number;deleted:number;conflicts:number;skipped_binary:number;skipped_large:number;skipped_ignored:number;skipped_taken:number;conflict_paths:string[]}
+export interface GitSyncLink {link_id:string;project_id:string;source:"app"|"connection";connection_id:string;installation_id:string;repository_id:string;repository_name:string;branch:string;folder:string;include:string[];exclude:string[];visibility:GitSyncVisibility|"";state:GitSyncState;message:string;last_synced_sha:string;last_synced_at:string;report:GitSyncReport;revision:number;can_manage:boolean}
+export interface GitSyncLinkPage {links:GitSyncLink[]}
+export interface GitSyncSettings {branch:string;folder:string;include:string[];exclude:string[];visibility?:GitSyncVisibility}
+export interface GitSyncLinkCreate extends GitSyncSettings {project_id:string;source:"app"|"connection";installation_id?:string;connection_id?:string;repository_id:string;repository_name:string}
+export interface GitSyncLinkUpdate extends GitSyncSettings {expected_revision:number}
+export interface GitAppRepository {installation_id:string;id:string;name:string;default_branch:string;private:boolean}
+export interface GitAppRepositoryPage {available:boolean;repositories:GitAppRepository[]}
+
+function checkGitSyncSettings(s:GitSyncSettings):void{
+  if(typeof s.branch!=="string"||!s.branch.trim()||s.branch.length>255||typeof s.folder!=="string"||s.folder.length>1024||/(^|\/)\.\.(\/|$)|\0/.test(s.folder))throw new MnemosAPIError(400);
+  for(const list of [s.include,s.exclude])if(!Array.isArray(list)||list.length>50||list.some(p=>typeof p!=="string"||!p.trim()||p.length>255))throw new MnemosAPIError(400);
+  if(s.visibility!==undefined&&!["private","department","organization"].includes(s.visibility))throw new MnemosAPIError(400);
+}
+function checkedGitSyncPage(value:unknown):GitSyncLinkPage{
+  const links=(value as {links?:unknown}|null)?.links;
+  if(!Array.isArray(links)||links.some(l=>!l||typeof l!=="object"||typeof (l as GitSyncLink).link_id!=="string"||typeof (l as GitSyncLink).project_id!=="string"||typeof (l as GitSyncLink).state!=="string"))throw new MnemosAPIError(502);
+  const empty:GitSyncReport={added:0,updated:0,deleted:0,conflicts:0,skipped_binary:0,skipped_large:0,skipped_ignored:0,skipped_taken:0,conflict_paths:[]};
+  return {links:links.map(l=>{const link=l as GitSyncLink;return {...link,include:link.include??[],exclude:link.exclude??[],report:{...empty,...(link.report??{}),conflict_paths:link.report?.conflict_paths??[]}};})};
+}

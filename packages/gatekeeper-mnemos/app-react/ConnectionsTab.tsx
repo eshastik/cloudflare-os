@@ -162,8 +162,136 @@ function GitRow({ data }: { data: MemoryData }) {
     disconnect: c.enabled ? () => ui.disableGitConnection(c.connection_id, c.revision) : undefined }));
   const enabled = (connections.value?.connections ?? []).filter(c => c.enabled);
   return <ConnectionRow title="Код" icon="code" connectLabel="Добавить GitHub" what="Внутреннее хранилище кода Mnemos, GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
-    extra={enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
+    extra={<>
+      {enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
+      <GitHubSync data={data} connections={enabled.filter(c => c.provider === "github").map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />
+    </>}
     connect={done => <GitForm done={done} />} />;
+}
+
+const WHO_SEES: Record<string, string> = { private: "видите только вы", department: "видит отдел", organization: "видит вся организация" };
+type SyncLink = Awaited<ReturnType<ReturnType<typeof useUi>["listGitSyncLinks"]>>["links"][number];
+
+function syncState(l: SyncLink): { text: string; problem: boolean } {
+  switch (l.state) {
+    case "ok": return { text: "Работает", problem: false };
+    case "pending": case "syncing": return { text: "Обновляется", problem: false };
+    case "conflict": return { text: "Конфликт: файл изменён и в Mnemos, и в GitHub — разрешите в проекте", problem: true };
+    case "disabled": return { text: "Отключено", problem: false };
+    default: return { text: l.message || "Обновление не прошло", problem: true };
+  }
+}
+
+const patterns = (text: string) => text.split(",").map(p => p.trim()).filter(Boolean);
+
+/** «Синхронизация с GitHub»: репозиторий попадает в папку проекта и обновляется сам. */
+function GitHubSync({ data, connections }: { data: MemoryData; connections: { connection_id: string; name: string }[] }) {
+  const ui = useUi();
+  const links = useLoad(() => ui.listGitSyncLinks(), "Связи с GitHub не прочитаны.", [ui]);
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  async function act(link: SyncLink, kind: "refresh" | "remove") {
+    if (busy) return;
+    setBusy(link.link_id); setNotice(null);
+    try {
+      if (kind === "refresh") { await ui.refreshGitSyncLink(link.link_id); setNotice({ tone: "success", text: `«${link.repository_name}» обновится в ближайшие минуты.` }); }
+      else { await ui.deleteGitSyncLink(link.link_id, link.revision); setConfirm(""); setNotice({ tone: "success", text: `Синхронизация «${link.repository_name}» отключена. Файлы остались в проекте.` }); }
+      await links.reload();
+    } catch { setNotice({ tone: "danger", text: "Не получилось. Обновите страницу и проверьте права на проект." }); }
+    finally { setBusy(""); }
+  }
+  const list = (links.value?.links ?? []).filter(l => l.state !== "disabled");
+  return <section aria-label="Синхронизация с GitHub" className="rounded-2xl border border-kumo-fill p-4 text-[13px]">
+    <h3 className="m-0 text-[14px] font-medium">Синхронизация с GitHub</h3>
+    <p className="mt-1 mb-0 text-kumo-subtle">Файлы из GitHub сразу появляются в проекте опубликованными. Правка в Mnemos поверх такого файла даёт явный конфликт, ничего не теряется.</p>
+    <div className="mt-2 grid gap-1.5">
+      {links.loading && <Notice>Загрузка…</Notice>}
+      {links.error && <Notice tone="danger">{links.error}</Notice>}
+      {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+      {list.map(l => {
+        const state = syncState(l);
+        const where = `проект «${projectName(data.projects, l.project_id)}», ${l.folder ? `папка «${l.folder}»` : "в корне проекта"}`;
+        const when = l.last_synced_at ? `обновлено ${timeOf(l.last_synced_at)}` : "ещё не обновлялось";
+        return <div key={l.link_id} data-sync-link="" className="flex flex-wrap items-center gap-2 rounded-xl bg-kumo-base px-3 py-2.5">
+          <RowTitle title={`${l.repository_name} · ветка ${l.branch}`} note={<>{where} · {WHO_SEES[l.visibility] ?? "видимость как у проекта"} · {when}{state.problem && <span className="text-kumo-danger"> · {state.text}</span>}</>} />
+          <StatusBadge tone={state.problem ? "danger" : "success"}>{state.problem ? "Требует внимания" : state.text}</StatusBadge>
+          {l.can_manage && <Pill tone="ghost" disabled={!!busy} onClick={() => void act(l, "refresh")}>Обновить сейчас</Pill>}
+          {l.can_manage && confirm !== l.link_id && <Pill tone="ghost" disabled={!!busy} onClick={() => setConfirm(l.link_id)}>Отключить</Pill>}
+          {l.can_manage && confirm === l.link_id && <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-kumo-subtle">Отключить? Файлы останутся в проекте.</span>
+            <Pill tone="primary" disabled={!!busy} onClick={() => void act(l, "remove")}>Да, отключить</Pill>
+            <Pill tone="ghost" disabled={!!busy} onClick={() => setConfirm("")}>Отмена</Pill>
+          </span>}
+        </div>;
+      })}
+      {!links.loading && !links.error && list.length === 0 && <p className="m-0 text-kumo-subtle">Репозитории GitHub ещё не связаны с проектами.</p>}
+    </div>
+    <div className="mt-3">
+      {adding ? <GitHubSyncForm data={data} connections={connections} done={() => { setAdding(false); void links.reload(); }} cancel={() => setAdding(false)} />
+        : <Pill onClick={() => setAdding(true)}>Связать репозиторий с проектом</Pill>}
+    </div>
+  </section>;
+}
+
+function GitHubSyncForm({ data, connections, done, cancel }: { data: MemoryData; connections: { connection_id: string; name: string }[]; done(): void; cancel(): void }) {
+  const ui = useUi();
+  const app = useLoad(() => ui.listGitAppRepositories(), "", [ui]);
+  const appAvailable = app.value?.available === true;
+  const [source, setSource] = useState("");
+  const from = source || (appAvailable ? "app" : connections[0]?.connection_id ?? "");
+  const personal = useLoad(async () => from && from !== "app" ? (await ui.listGitRepositories(from, 1)).repositories : [], "Список репозиториев не прочитан.", [ui, from]);
+  const repos: { key: string; id: string; name: string; branch: string; installation: string }[] = from === "app"
+    ? (app.value?.repositories ?? []).map(r => ({ key: `${r.installation_id}/${r.id}`, id: r.id, name: r.name, branch: r.default_branch, installation: r.installation_id }))
+    : (personal.value ?? []).map(r => ({ key: r.id, id: r.id, name: r.name, branch: r.default_branch, installation: "" }));
+  const [repoKey, setRepoKey] = useState("");
+  const repo = repos.find(r => r.key === repoKey);
+  const [branch, setBranch] = useState("");
+  const [project, setProject] = useState("");
+  const [folder, setFolder] = useState("");
+  const [visibility, setVisibility] = useState<"private" | "department" | "organization">("private");
+  const [include, setInclude] = useState("");
+  const [exclude, setExclude] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const branchName = branch.trim() || repo?.branch || "";
+  async function submit() {
+    if (busy || !repo || !project || !branchName) return;
+    setBusy(true); setError("");
+    try {
+      await ui.createGitSyncLink({ project_id: project, source: from === "app" ? "app" : "connection", ...(from === "app" ? { installation_id: repo.installation } : { connection_id: from }),
+        repository_id: repo.id, repository_name: repo.name, branch: branchName, folder: folder.trim().replace(/^\/+|\/+$/g, ""), include: patterns(include), exclude: patterns(exclude), visibility });
+      done();
+    } catch (e) { setError(e instanceof Error && /[а-яё]/i.test(e.message) ? e.message : "Связь не создана. Проверьте, что у вас есть право менять проект, и повторите."); }
+    finally { setBusy(false); }
+  }
+  if (!app.loading && !appAvailable && connections.length === 0) return <Notice>Чтобы связать репозиторий, администратор сервера подключает приложение GitHub, либо вы добавляете ключ доступа GitHub выше.</Notice>;
+  return <ActionForm aria-label="Связать репозиторий GitHub с проектом" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[14px]">
+    {(appAvailable ? 1 : 0) + connections.length > 1 && <Field label="Откуда брать код"><FieldSelect aria-label="Откуда брать код" value={from} disabled={busy} onChange={e => { setSource(e.target.value); setRepoKey(""); setBranch(""); }}>
+      {appAvailable && <option value="app">Приложение GitHub организации</option>}
+      {connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}
+    </FieldSelect></Field>}
+    <Field label="Репозиторий"><FieldSelect aria-label="Репозиторий GitHub" value={repoKey} disabled={busy} onChange={e => { setRepoKey(e.target.value); setBranch(""); }}>
+      <option value="">{app.loading || personal.loading ? "Загрузка…" : "Выберите репозиторий"}</option>
+      {repos.map(r => <option key={r.key} value={r.key}>{r.name}</option>)}
+    </FieldSelect></Field>
+    <Field label="Ветка"><FieldInput aria-label="Ветка" value={branch} disabled={busy} onChange={e => setBranch(e.target.value)} placeholder={repo?.branch || "main"} /></Field>
+    <Field label="Проект"><FieldSelect aria-label="Проект для синхронизации" value={project} disabled={busy} onChange={e => setProject(e.target.value)}><option value="">Выберите проект</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</FieldSelect></Field>
+    <Field label="Папка в проекте (необязательно)"><FieldInput aria-label="Папка в проекте" value={folder} disabled={busy} onChange={e => setFolder(e.target.value)} placeholder="Например, Код/Сайт" /></Field>
+    <Field label="Кто видит"><FieldSelect aria-label="Кто видит" value={visibility} disabled={busy} onChange={e => setVisibility(e.target.value as typeof visibility)}>
+      <option value="private">Только я</option><option value="department">Отдел</option><option value="organization">Вся организация</option>
+    </FieldSelect></Field>
+    <Field label="Какие файлы брать (необязательно)"><FieldInput aria-label="Какие файлы брать" value={include} disabled={busy} onChange={e => setInclude(e.target.value)} placeholder="docs/**, *.md" /></Field>
+    <Field label="Какие файлы пропускать (необязательно)"><FieldInput aria-label="Какие файлы пропускать" value={exclude} disabled={busy} onChange={e => setExclude(e.target.value)} placeholder="tests/**, *.lock" /></Field>
+    <p className="m-0 text-[12px] text-kumo-subtle">«Кто видит» меняет видимость всего проекта. Двоичные файлы и файлы больше 1 МБ не переносятся.</p>
+    {personal.error && <Notice tone="danger">{personal.error}</Notice>}
+    {error && <Notice tone="danger">{error}</Notice>}
+    <div className="flex flex-wrap gap-2">
+      <Pill tone="primary" disabled={busy || !repo || !project || !branchName} onClick={() => void submit()}>{busy ? "Связываем…" : "Связать"}</Pill>
+      <Pill tone="ghost" disabled={busy} onClick={cancel}>Отмена</Pill>
+    </div>
+  </ActionForm>;
 }
 
 /** Строка подключения кода словами. Внутреннее хранилище установки (provider "gitea") работает от
