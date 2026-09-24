@@ -1443,6 +1443,9 @@ export class MnemosAccountSession {
   async deleteGitSyncLink(link:string,expectedRevision:number){this.#check();const value=await this.#client.deleteGitSyncLink(link,expectedRevision,this.#lifetime.signal);this.#check();return value;}
   async refreshGitSyncLink(link:string){this.#check();const value=await this.#client.refreshGitSyncLink(link,this.#lifetime.signal);this.#check();return value;}
   async listGitAppRepositories(){this.#check();const value=await this.#client.listGitAppRepositories(this.#lifetime.signal);this.#check();return value;}
+  async startGitHubConnect(){this.#check();const value=await this.#client.startGitHubConnect(this.#lifetime.signal);this.#check();return value;}
+  async listGitHubAccounts(){this.#check();const value=await this.#client.listGitHubAccounts(this.#lifetime.signal);this.#check();return value;}
+  async disconnectGitHubAccount(installation:string){this.#check();const value=await this.#client.disconnectGitHubAccount(installation,this.#lifetime.signal);this.#check();return value;}
   private gitRegistrations(){this.#check();if(!this.requestStorage)throw Error("Git request storage unavailable");return new GitRegistrations(this.requestStorage);}
   async listGitRegistrationIntents(){return this.gitRegistrations().list(this);}
   async saveGitRegistrationIntent(setup:GitSetup){return this.gitRegistrations().save(this,setup);}

@@ -59,6 +59,70 @@ test("«Подключения»: почта подключается прямо
   } finally { app.dispose(); }
 });
 
+test("«Подключения»: свои аккаунты GitHub — подключить ещё, изменить доступ, отключить один; репозитории по аккаунтам", async () => {
+  const calls = [];
+  const accounts = [
+    { installation_id: "11", github_login: "alice", account_login: "alice", account_type: "User", repository_selection: "all", linked_at: "", repository_count: 1, manage_url: "https://github.com/settings/installations/11" },
+    { installation_id: "12", github_login: "alice-work", account_login: "acme", account_type: "Organization", repository_selection: "selected", linked_at: "", repository_count: 2, manage_url: "https://github.com/apps/mnemos/installations/new" },
+  ];
+  const app = await mountMemoryApp({ ...SOURCES,
+    async listGitSyncLinks() { return { links: [] }; },
+    async listGitHubAccounts() { return { available: true, connectable: true, accounts: accounts.filter(a => !calls.some(([m, id]) => m === "disconnectGitHubAccount" && id === a.installation_id)) }; },
+    async listGitAppRepositories() { return { available: true, repositories: [
+      { installation_id: "12", id: "201", name: "acme/api", default_branch: "main", private: true },
+      { installation_id: "11", id: "101", name: "alice/site", default_branch: "main", private: true },
+      { installation_id: "12", id: "202", name: "acme/web", default_branch: "main", private: true },
+    ] }; },
+    async startGitHubConnect() { calls.push(["startGitHubConnect"]); return { url: "https://github.com/apps/mnemos/installations/new?state=s1" }; },
+    async disconnectGitHubAccount(id) { calls.push(["disconnectGitHubAccount", id]); return { disconnected: true }; },
+  }, { section: "connections", githubReturn: { result: "connected", reason: "" } });
+  try {
+    const row = () => app.document.querySelector('#root section[aria-label="Код"]');
+    const block = () => row()?.querySelector('[aria-label="Ваши аккаунты GitHub"]');
+    await app.until(() => block()?.textContent.includes("acme"), "строка «Код» раскрылась после возврата с GitHub");
+    assert.ok(row().textContent.includes("GitHub подключён"), "итог возврата словами");
+    const lines = [...block().querySelectorAll("[data-github-account]")].map(l => l.textContent);
+    assert.equal(lines.length, 2, "строка на каждый аккаунт");
+    assert.ok(lines[0].includes("alice") && lines[0].includes("все репозитории"));
+    assert.ok(lines[1].includes("организация") && lines[1].includes("2 выбранных репозитория") && lines[1].includes("через alice-work"));
+    assert.doesNotMatch(block().textContent, /https?:\/\/|installation|\b1[12]\b/, "без адресов и номеров установок");
+    assert.ok(block().textContent.includes("выйдите из GitHub"), "подсказка про другой аккаунт");
+
+    const inBlock = name => [...block().querySelectorAll("button")].filter(b => b.textContent === name);
+    inBlock("Подключить ещё аккаунт GitHub")[0].click();
+    await app.until(() => app.calls.some(([m]) => m === "openGitHubAppPage"), "GitHub открыт хостом");
+    assert.deepEqual(app.calls.find(([m]) => m === "openGitHubAppPage"), ["openGitHubAppPage", "https://github.com/apps/mnemos/installations/new?state=s1"]);
+    inBlock("Изменить доступ")[1].click();
+    await app.until(() => app.calls.filter(([m]) => m === "openGitHubAppPage").length === 2, "настройки установки");
+    assert.equal(app.calls.filter(([m]) => m === "openGitHubAppPage")[1][1], "https://github.com/apps/mnemos/installations/new");
+
+    inBlock("Отключить")[1].click();
+    await app.until(() => inBlock("Да, отключить").length === 1, "подтверждение на месте");
+    inBlock("Да, отключить")[0].click();
+    await app.until(() => block()?.querySelectorAll("[data-github-account]").length === 1, "отключён один аккаунт");
+    assert.deepEqual(calls.find(([m]) => m === "disconnectGitHubAccount"), ["disconnectGitHubAccount", "12"]);
+    assert.ok(block().textContent.includes("alice"), "второй аккаунт остался");
+
+    [...row().querySelectorAll("button")].find(b => b.textContent === "Связать репозиторий с проектом").click();
+    await app.until(() => row().querySelectorAll('select[aria-label="Репозиторий GitHub"] optgroup').length === 2, "репозитории по аккаунтам");
+    const groups = [...row().querySelectorAll('select[aria-label="Репозиторий GitHub"] optgroup')].map(g => `${g.label}: ${[...g.querySelectorAll("option")].map(o => o.textContent).join(", ")}`);
+    assert.deepEqual(groups, ["acme: acme/api, acme/web", "alice: alice/site"]);
+  } finally { app.dispose(); }
+});
+
+test("«Подключения»: без секрета клиента кнопки нет, объяснено словами; ошибка возврата понятна", async () => {
+  const app = await mountMemoryApp({ ...SOURCES,
+    async listGitSyncLinks() { return { links: [] }; },
+    async listGitHubAccounts() { return { available: true, connectable: false, accounts: [] }; },
+  }, { section: "connections", githubReturn: { result: "failed", reason: "state" } });
+  try {
+    const row = () => app.document.querySelector('#root section[aria-label="Код"]');
+    await app.until(() => row()?.textContent.includes("не настроено до конца"), "объяснение без кнопки");
+    assert.ok(row().textContent.includes("Ссылка подключения устарела"), "причина отказа словами");
+    assert.equal([...row().querySelectorAll("button")].some(b => /Подключить.*GitHub/.test(b.textContent)), false);
+  } finally { app.dispose(); }
+});
+
 test("«Подключения»: отказ чтения показан честно", async () => {
   const app = await mountMemoryApp({ ...SOURCES, async listImapAccounts() { throw new Error("forbidden"); } }, { section: "connections" });
   try {

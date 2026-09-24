@@ -21,6 +21,7 @@ import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
 import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { useAuthenticatedApi } from './AuthContext'
+import { isGitHubAppPage, readGitHubReturn, type GitHubReturn } from './gitHubAppLink'
 import {
   normalizeGatekeeperAppPrompt,
   parseGatekeeperAppSection,
@@ -63,6 +64,8 @@ const WORKSPACE_TITLES_TTL_MS = 10_000
 
 // Near the max int, so the full-viewport iframe sits above all Workshop chrome.
 const overlayZIndex = 2147483000
+
+let pendingGitHubReturn: GitHubReturn | null = typeof window === 'undefined' ? null : readGitHubReturn(window.location.search)
 
 const baseIframeStyle: CSSProperties = {
   border: 0,
@@ -223,6 +226,24 @@ class GatekeeperAppHostImpl extends RpcTarget {
   openApprovals(): void {
     this.#uploadLifetime.signal.throwIfAborted()
     this.navigateApprovals()
+  }
+
+  /** Открывает страницу установки или настроек приложения GitHub в новой вкладке. false — адрес не из перечня или браузер не открыл вкладку. */
+  openGitHubAppPage(url: string): boolean {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (!isGitHubAppPage(url)) return false
+    // Без noopener в свойствах: с ним window.open всегда отдаёт null, и не узнать, открылась ли вкладка.
+    const opened = window.open(url, '_blank')
+    if (!opened) return false
+    opened.opener = null
+    return true
+  }
+
+  /** Итог возврата с GitHub; отдаётся один раз. */
+  takeGitHubReturn(): GitHubReturn | null {
+    const value = pendingGitHubReturn
+    pendingGitHubReturn = null
+    return value
   }
 
   async createCalendarDraft(id:string,sha256:string){

@@ -276,6 +276,9 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   deleteGitSyncLink: MnemosAccountSession["deleteGitSyncLink"];
   refreshGitSyncLink: MnemosAccountSession["refreshGitSyncLink"];
   listGitAppRepositories: MnemosAccountSession["listGitAppRepositories"];
+  startGitHubConnect: MnemosAccountSession["startGitHubConnect"];
+  listGitHubAccounts: MnemosAccountSession["listGitHubAccounts"];
+  disconnectGitHubAccount: MnemosAccountSession["disconnectGitHubAccount"];
   listGitRegistrationIntents: MnemosAccountSession["listGitRegistrationIntents"];
   saveGitRegistrationIntent: MnemosAccountSession["saveGitRegistrationIntent"];
   inspectGitRegistrationIntent: MnemosAccountSession["inspectGitRegistrationIntent"];
@@ -308,4 +311,8 @@ export interface Host extends RpcTarget {
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
   downloadFile(project:string,node:string,version:string,filename:string):Promise<void>;
   downloadText(project: string, node: string, head: string, side: number): Promise<string>;
-  ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string> }
+  ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string>;
+  /** Открывает страницу установки или настроек приложения GitHub в новой вкладке; false — не открылась. */
+  openGitHubAppPage(url: string): Promise<boolean>;
+  /** Итог возврата с GitHub (?github=…), отдаётся один раз; null — возврата не было. */
+  takeGitHubReturn(): Promise<{ result: "connected" | "updated" | "failed"; reason: string } | null> }

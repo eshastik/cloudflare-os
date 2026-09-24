@@ -975,6 +975,20 @@ export class MnemosAPI {
   refreshGitSyncLink(link:string,signal?:AbortSignal):Promise<{queued:boolean}>{return this.#request(`/v1/git/sync-links/${segment(link)}/refresh`,"POST",signal,{});}
   /** Репозитории, к которым установлено GitHub App; available=false — приложение на сервере не настроено. */
   listGitAppRepositories(signal?:AbortSignal):Promise<GitAppRepositoryPage>{return this.#request("/v1/git/app/repositories","GET",signal);}
+  /** «Подключить GitHub»: адрес страницы установки приложения на GitHub с одноразовым state. */
+  async startGitHubConnect(signal?:AbortSignal):Promise<{url:string}>{
+    const value=await this.#request<unknown>("/v1/git/app/connect","POST",signal,{});
+    const url=value&&typeof value==="object"&&"url" in value?value.url:undefined;
+    if(typeof url!=="string"||!url.startsWith("https://")||url.length>2048)throw new MnemosAPIError(502);
+    return {url};
+  }
+  /** Аккаунты GitHub, которые человек подключил: у каждого свои репозитории. */
+  async listGitHubAccounts(signal?:AbortSignal):Promise<GitHubAccountPage>{return checkedGitHubAccounts(await this.#request<unknown>("/v1/git/app/accounts","GET",signal));}
+  /** «Отключить» один аккаунт GitHub; его связи останавливаются, файлы остаются в проектах. */
+  disconnectGitHubAccount(installation:string,signal?:AbortSignal):Promise<{disconnected:boolean}>{
+    if(!/^[1-9][0-9]{0,18}$/.test(installation))throw new MnemosAPIError(400);
+    return this.#request(`/v1/git/app/accounts/${installation}`,"DELETE",signal);
+  }
   listAgentConnections(cursor = "", signal?: AbortSignal): Promise<AgentConnectionPage> {
     return this.#request(`/v1/agent-connections?limit=50&cursor=${encodeURIComponent(cursor)}`, "GET", signal);
   }
@@ -1360,4 +1374,23 @@ function checkedGitSyncPage(value:unknown):GitSyncLinkPage{
   if(!Array.isArray(links)||links.some(l=>!l||typeof l!=="object"||typeof (l as GitSyncLink).link_id!=="string"||typeof (l as GitSyncLink).project_id!=="string"||typeof (l as GitSyncLink).state!=="string"))throw new MnemosAPIError(502);
   const empty:GitSyncReport={added:0,updated:0,deleted:0,conflicts:0,skipped_binary:0,skipped_large:0,skipped_ignored:0,skipped_taken:0,conflict_paths:[]};
   return {links:links.map(l=>{const link=l as GitSyncLink;return {...link,include:link.include??[],exclude:link.exclude??[],report:{...empty,...(link.report??{}),conflict_paths:link.report?.conflict_paths??[]}};})};
+}
+
+/** Аккаунт GitHub, подключённый человеком кнопкой «Подключить GitHub» (сервер: services/storage-api/internal/app/git_app_owner.go). */
+export interface GitHubAccount {installation_id:string;github_login:string;account_login:string;account_type:string;repository_selection:"all"|"selected";linked_at:string;repository_count:number;manage_url:string}
+/** available=false — приложение GitHub на сервере не подключено; connectable=false — нет секрета клиента, подключить свой GitHub нельзя. */
+export interface GitHubAccountPage {available:boolean;connectable:boolean;accounts:GitHubAccount[]}
+
+function checkedGitHubAccounts(value:unknown):GitHubAccountPage{
+  const page=value as Partial<GitHubAccountPage>|null;
+  if(!page||typeof page!=="object"||typeof page.available!=="boolean"||typeof page.connectable!=="boolean"||!Array.isArray(page.accounts))throw new MnemosAPIError(502);
+  const accounts=page.accounts.map(raw=>{
+    const a=raw as Partial<GitHubAccount>|null;
+    if(!a||typeof a!=="object"||typeof a.installation_id!=="string"||!/^[1-9][0-9]{0,18}$/.test(a.installation_id)||typeof a.account_login!=="string"||typeof a.github_login!=="string")throw new MnemosAPIError(502);
+    const account:GitHubAccount={installation_id:a.installation_id,github_login:a.github_login,account_login:a.account_login,account_type:typeof a.account_type==="string"?a.account_type:"",
+      repository_selection:a.repository_selection==="selected"?"selected":"all",linked_at:typeof a.linked_at==="string"?a.linked_at:"",
+      repository_count:typeof a.repository_count==="number"&&Number.isSafeInteger(a.repository_count)?a.repository_count:-1,manage_url:typeof a.manage_url==="string"?a.manage_url:""};
+    return account;
+  });
+  return {available:page.available,connectable:page.connectable,accounts};
 }

@@ -115,6 +115,8 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
     async downloadText(...args) { calls.push(["downloadText",...args]); return typeof options.downloadText === "function" ? options.downloadText(...args) : options.downloadText ?? "текст"; }
     async downloadReviewText(...args) {calls.push(["downloadReviewText",...args]); return args[3]==="before"?"Исходный текст":"Новая версия";}
+    async openGitHubAppPage(url) { calls.push(["openGitHubAppPage", url]); return options.githubOpened ?? true; }
+    async takeGitHubReturn() { const value = options.githubReturn ?? null; options.githubReturn = null; return value; }
   }
   let frame; const ports = [];
   const html = await readFile(new URL("../src/generated/app.txt", import.meta.url), "utf8");
