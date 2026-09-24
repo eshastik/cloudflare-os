@@ -17,7 +17,10 @@ type Writer = Awaited<ReturnType<RpcStub<GatekeeperNativeDocumentWriteSelector>[
 export type NativeSaveResult = { accountId: number; scope: string; resource: string; revision?: number }
 type Props = {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
-  initialAccountId?: number; initialScope?: string; initialResource?: string; onSaved?(result: NativeSaveResult): void; onClose?(): void
+  initialAccountId?: number; initialScope?: string; initialResource?: string
+  /** Имя нового документа — название из шапки редактора; задано — по умолчанию выбран «Создать новый документ». */
+  initialName?: string
+  onSaved?(result: NativeSaveResult): void; onClose?(): void
 }
 
 const selectClass = 'block w-full border border-kumo-line rounded-lg p-2 bg-kumo-base'
@@ -34,12 +37,12 @@ export default function NativeDocumentSave({ onClose, ...props }: Props) {
   return <SaveSection {...props} storageKey={storageKey} close={() => { setClosed(true); onClose?.() }} />
 }
 
-function SaveSection({ format, snapshotSource, storageKey, initialAccountId, initialScope, initialResource, onSaved, close }: Omit<Props, 'onClose'> & { storageKey: string; close(): void }) {
+function SaveSection({ format, snapshotSource, storageKey, initialAccountId, initialScope, initialResource, initialName, onSaved, close }: Omit<Props, 'onClose'> & { storageKey: string; close(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [scopes, setScopes] = useState<{ id: string; name: string }[]>([])
   const [documents, setDocuments] = useState<{ id: string; name: string }[]>([])
-  const [scope, setScope] = useState(initialScope ?? ''), [resource, setResource] = useState(initialResource ?? '')
-  const [name, setName] = useState('')
+  const [scope, setScope] = useState(initialScope ?? ''), [resource, setResource] = useState(initialResource ?? (initialName !== undefined ? '__new__' : ''))
+  const [name, setName] = useState(initialName ?? '')
   const creation = useRef<{ writer: Creator; head: string; upload?: string; receipt?: string } | null>(null)
   const [resume] = useState(() => { try { return sessionStorage.getItem(storageKey) || '' } catch { return '' } })
   const [resumeAccount] = useState<number | null>(() => {
@@ -114,7 +117,7 @@ function SaveSection({ format, snapshotSource, storageKey, initialAccountId, ini
     let cancelled = false
     setDocuments([]); setCursor(''); setSaved(false); setError(''); setTruncated(false)
     // Предвыбранный документ переживает ожидание селектора и первую загрузку списка; смена проекта руками его сбрасывает.
-    setResource(old => old === initialResource && scope === initialScope ? old : '')
+    setResource(old => old === '__new__' || (old === initialResource && scope === initialScope) ? old : '')
     if (!scope || !source.current) return
     setLoading(true)
     void source.current.selector.documents(scope, '').then(page => {
@@ -200,9 +203,12 @@ function SaveSection({ format, snapshotSource, storageKey, initialAccountId, ini
       }
       await writer.save(head, upload)
       signal.throwIfAborted()
+      // Адрес нового документа нужен для привязки: без него не читаются версии.
+      const created = isNew ? await Promise.resolve(creation.current!.writer.document()).catch(() => '') : resource
+      signal.throwIfAborted()
       if (isNew) { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:account`) }
       setReady(false); setSaved(true)
-      onSaved?.({ accountId, scope, resource: isNew ? '' : resource, revision })
+      onSaved?.({ accountId, scope, resource: created, revision })
     } catch {
       if (!signal.aborted) {
         setReady(false)

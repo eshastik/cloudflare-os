@@ -5,6 +5,7 @@ import { useHost, useUi } from "./host.ts";
 import { documentRows, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { MaterialCard, MaterialChatButtons, materialPrompt, type MaterialAction } from "./MaterialCard.tsx";
+import { isMarkdown, Markdown } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
 import { Button, ActionForm, Notice, Select, StatusBadge } from "./ui.tsx";
 
@@ -251,7 +252,9 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
             <div className="max-h-[70vh] overflow-auto rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">
               {opened.error && <div className="space-y-2"><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" size="sm" onClick={() => void open(opened.row)}>Повторить загрузку</Button></div>}
               {!opened.error && !opened.content && <Notice>Загрузка…</Notice>}
-              {opened.content && <pre className="m-0 whitespace-pre-wrap break-words font-sans text-[14px] leading-5 text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>}
+              {opened.content && (opened.content.text && isMarkdown(opened.content.media_type, opened.row.name)
+                ? <Markdown text={opened.content.text} className="text-[14px] leading-5 text-kumo-default" />
+                : <pre className="m-0 whitespace-pre-wrap break-words font-sans text-[14px] leading-5 text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>)}
               {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа: он длиннее допустимого для просмотра.</p>}
             </div>
           </aside>

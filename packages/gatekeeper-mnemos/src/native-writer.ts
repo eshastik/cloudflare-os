@@ -267,11 +267,19 @@ class NativeCreator extends RpcTarget {
   async save(expectedHead: string, uploadId: string) {
     this.#freeze(expectedHead, uploadId);
     const i = this.#intent;
-    return (await this.#session.createPrivateDocument(i.project, {
+    const created = await this.#session.createPrivateDocument(i.project, {
       ...(i.officePreview ? {office_preview_id:i.officePreview,accept_unsupported:i.acceptUnsupported} : {}),
       request_id: i.request, expected_head: i.head, parent_id: "", name: i.name,
       content_type: `application/vnd.${i.format}+json`, upload_id: i.upload, message: "Create native document",
-    })).head;
+    });
+    this.#created = created.node_id;
+    return created.head;
+  }
+  #created = "";
+  /** Созданный документ: интерфейс привязывает к нему редактор. Повтор той же заявки возвращает тот же документ. */
+  async document() {
+    if (!this.#created) throw new Error("Save the document first");
+    return this.#created;
   }
 }
 

@@ -93,7 +93,7 @@ export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: Or
   const [role, setRole] = useState<InvitationRole>("employee");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [created, setCreated] = useState<{ link: string; who: string } | null>(null);
+  const [created, setCreated] = useState<{ link: string; who: string; email: string; mailed?: "sent" | "failed" | "not_configured" } | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (!allowNoUnit && !unit && units[0]) setUnit(units[0].org_unit_id); }, [allowNoUnit, unit, units]);
 
@@ -104,7 +104,7 @@ export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: Or
     setBusy(true); setError(""); setCreated(null); setCopied(false);
     try {
       const out = await ui.createInvitation(email.trim(), name.trim(), unit, role);
-      setCreated({ link: out.link, who: name.trim() || email.trim() });
+      setCreated({ link: out.link, who: name.trim() || email.trim(), email: email.trim(), mailed: out.invitation.email_status });
       setEmail(""); setName(""); setRole("employee"); onCreated();
     } catch {
       setError("Приглашение не создано. Проверьте почту и что у вас есть право приглашать в этот отдел.");
@@ -128,13 +128,18 @@ export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: Or
           <option value="head">{ROLE_WORDS.head}</option>
           {admin && <option value="admin">{ROLE_WORDS.admin}</option>}
         </FieldSelect></Field>
-        <Pill tone="primary" size="md" className="h-[42px]" disabled={blocked} onClick={() => void submit()}>{busy ? "Создаём…" : "Получить ссылку"}</Pill>
+        <Pill tone="primary" size="md" className="h-[42px]" disabled={blocked} onClick={() => void submit()}>{busy ? "Отправляем…" : "Отправить приглашение"}</Pill>
       </ActionForm>
-      <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Сотрудник войдёт по ссылке и сразу окажется в организации{units.length ? " и в выбранном отделе" : ""}. Ссылка сработает один раз и действует 7 дней.</p>
+      <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Сотрудник получит письмо со ссылкой, войдёт по ней и сразу окажется в организации{units.length ? " и в выбранном отделе" : ""}. Ссылка сработает один раз и действует 7 дней.</p>
       {roleBlocked && <div className="mt-2"><Notice>Чтобы пригласить руководителя, выберите его отдел.</Notice></div>}
       {role === "admin" && <div className="mt-2"><Notice>Администратор видит и меняет материалы всех проектов, управляет людьми и правилами.</Notice></div>}
       {error && <div className="mt-2"><Notice tone="danger">{error}</Notice></div>}
       {created && <div role="region" aria-label="Ссылка-приглашение" className="mt-4 grid gap-2 border-t border-kumo-fill pt-4">
+        {created.mailed === "sent"
+          ? <Notice tone="success">Письмо со ссылкой отправлено на {created.email}. Ссылку ниже можно передать и самим.</Notice>
+          : created.mailed === "failed"
+            ? <Notice tone="danger">Письмо на {created.email} не ушло. Передайте ссылку сами — например, в мессенджере.</Notice>
+            : <Notice>Отправка писем не настроена: передайте ссылку сами.</Notice>}
         <strong className="text-[14px] font-medium">Ссылка для: {created.who}</strong>
         <div className="flex flex-wrap items-center gap-2">
           <FieldInput readOnly aria-label="Ссылка-приглашение" value={created.link} onFocus={e => e.currentTarget.select()} className="min-w-0 flex-1" />

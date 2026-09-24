@@ -95,3 +95,61 @@ test("«Материалы»: пустой раздел приглашает п�
     assert.deepEqual(inProject.calls.find(c => c[0] === "pickInboxFiles"), ["pickInboxFiles", false, "two"]);
   } finally { inProject.dispose(); }
 });
+
+test("«Материалы»: Markdown в просмотре оформлен, в карточке — без разметки; HTML и опасные ссылки не исполняются", async () => {
+  const markdown = [
+    "# Текущий статус проекта",
+    "",
+    "**Дата:** 24 сентября, *черновик*",
+    "",
+    "## 1) Что сделано",
+    "",
+    "- приём файлов",
+    "- поиск по `сегментам`",
+    "",
+    "1. первый шаг",
+    "2. второй шаг",
+    "",
+    "<script>window.__markdownRan = true</script><img src=x onerror=\"window.__markdownRan = true\">",
+    "",
+    "[сайт](https://example.com) и [плохая](javascript:alert(1))",
+  ].join("\n");
+  const app = await mountMemoryApp({
+    async searchProject(project) {
+      if (project !== "one") return { hits: [], index_pending: false, degraded: false };
+      return { hits: [{ project_id: "one", node_id: "status", name: "Статус.md", text: markdown, ordinal: 0 }], index_pending: false, degraded: false };
+    },
+    async readProjectDocument(project, node) { return { node_id: node, text: markdown, media_type: "text/markdown", truncated: false }; },
+  }, { section: "documents" });
+  try {
+    await app.until(() => card(app, "Заметка команды"), "материалы");
+    submit(app, "статус");
+    await app.until(() => card(app, "Статус.md"), "карточка Markdown");
+    const fragment = card(app, "Статус.md").querySelector("p").textContent;
+    assert.ok(fragment.startsWith("Текущий статус проекта Дата: 24 сентября"), fragment);
+    assert.ok(!/[#*`]/.test(fragment), `во фрагменте нет разметки: ${fragment}`);
+
+    inside(card(app, "Статус.md"), "Открыть").click();
+    const view = () => app.document.querySelector('#root aside[aria-label="Просмотр документа"] [data-markdown]');
+    await app.until(() => view(), "оформленный просмотр");
+    const shown = view();
+    assert.equal(shown.querySelector("h1").textContent, "Текущий статус проекта");
+    assert.equal(shown.querySelector("h2").textContent, "1) Что сделано");
+    assert.equal(shown.querySelector("strong").textContent, "Дата:");
+    assert.equal(shown.querySelector("em").textContent, "черновик");
+    assert.deepEqual([...shown.querySelectorAll("ul > li")].map(li => li.textContent), ["приём файлов", "поиск по сегментам"]);
+    assert.deepEqual([...shown.querySelectorAll("ol > li")].map(li => li.textContent), ["первый шаг", "второй шаг"]);
+    assert.equal(shown.querySelector("code").textContent, "сегментам");
+    assert.ok(!/(^|\s)#|\*\*/.test(shown.textContent), "символы разметки не видны");
+
+    assert.equal(shown.querySelector("script"), null, "скрипт не стал элементом");
+    assert.equal(shown.querySelector("img"), null, "HTML не стал элементом");
+    assert.ok(shown.textContent.includes("<script>"), "HTML показан как текст");
+    assert.equal(app.dom.window.__markdownRan, undefined, "скрипт не исполнился");
+    const links = [...shown.querySelectorAll("a")];
+    assert.equal(links.length, 1, "ссылка javascript: осталась текстом");
+    assert.equal(links[0].getAttribute("href"), "https://example.com");
+    assert.equal(links[0].getAttribute("rel"), "noopener noreferrer");
+    assert.ok(shown.textContent.includes("плохая"));
+  } finally { app.dispose(); }
+});

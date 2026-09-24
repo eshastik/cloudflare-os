@@ -1,5 +1,6 @@
 import { ChatCircleText, FileText, ListChecks } from "@phosphor-icons/react";
 import type { DocumentRow } from "./data.ts";
+import { isMarkdown, markdownToPlain } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
 import { Button, StatusBadge } from "./ui.tsx";
 
@@ -37,7 +38,7 @@ export function MaterialCard({ row, at, fragment, selected, onOpen, onChat }: {
           <div className="mt-0.5 text-[13px] text-kumo-subtle">
             {row.projectName}{at && <> · изменён <time dateTime={at}>{relativeTime(at)}</time></>}
           </div>
-          {fragment && <p className="mt-2 mb-0 text-[14px] leading-5 text-kumo-default [overflow-wrap:anywhere]">{snippet(fragment)}</p>}
+          {fragment && <p className="mt-2 mb-0 text-[14px] leading-5 text-kumo-default [overflow-wrap:anywhere]">{snippet(isMarkdown(row.contentType, row.name) ? markdownToPlain(fragment) : fragment)}</p>}
         </div>
         <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
       </div>

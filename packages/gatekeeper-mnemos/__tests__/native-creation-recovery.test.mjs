@@ -66,10 +66,12 @@ for (const format of ['cloudflareos.document', 'cloudflareos.presentation']) tes
         await other.acceptVerifiedCredential('fixture-human-token');
         using otherFrame = await other.startAppUi();
         try { using invalid = await otherFrame.nativeWrites.selector.resumeCreation(receipt, format); } catch { otherAccount = true; }
+        let unsaved = false; try { await writer.document(); } catch { unsaved = true; }
         const head = await writer.save(state.head, state.uploadId);
+        const document = await writer.document();
         await account.revoke();
         let revoked = false; try { await writer.save(state.head, state.uploadId); } catch { revoked = true; }
-        return Response.json({ head, changedUpload, wrongFormat, otherAccount, revoked });
+        return Response.json({ head, document, unsaved, changedUpload, wrongFormat, otherAccount, revoked });
       }};`,
     }],
   };
@@ -83,7 +85,7 @@ for (const format of ['cloudflareos.document', 'cloudflareos.presentation']) tes
     mf = new Miniflare(options); driver = await mf.getWorker('driver');
     stage = "restart-and-resume";
     const replay = await (await driver.fetch('https://driver.example/resume', { method: 'POST', body: JSON.stringify({ receipt: prepared.receipt }) })).json();
-    assert.deepEqual(replay, { head: result, changedUpload: true, wrongFormat: true, otherAccount: true, revoked: true });
+    assert.deepEqual(replay, { head: result, document: 'created-doc', unsaved: true, changedUpload: true, wrongFormat: true, otherAccount: true, revoked: true });
     assert.equal(uploads, 1); assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
     assert.equal(calls[0].expected_head, head); assert.equal(calls[0].upload_id, 'upload');
     assert.match(calls[0].request_id, /^[0-9a-f-]{36}$/);

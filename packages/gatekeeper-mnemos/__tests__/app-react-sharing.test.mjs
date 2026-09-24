@@ -106,12 +106,9 @@ test("Правила организации — на странице «Прав
   try {
     const rules = () => admin.document.querySelector('#root section[aria-label="Правила проектов"]');
     await admin.until(() => rules()?.querySelector('[role="switch"]'), "правила прочитаны");
-    assert.ok(rules().textContent.includes("Личные проекты у сотрудников") && rules().textContent.includes("Поделиться с отделом"));
+    assert.ok(rules().textContent.includes("Личные проекты у сотрудников") && rules().textContent.includes("Открыть проект своему отделу"));
     rules().querySelector('[role="switch"]').click();
-    const save = () => [...rules().querySelectorAll("button")].find(b => b.textContent === "Сохранить правила");
-    await admin.until(() => !save().disabled, "есть изменения");
-    save().click();
-    await admin.until(() => rules().textContent.includes("Правила сохранены."), "сохранено");
+    await admin.until(() => rules().textContent.includes("Сохранено."), "сохранено сразу");
     assert.deepEqual(saved, [{ ...SETTINGS, personal_projects_enabled: false }]);
   } finally { admin.dispose(); }
   const viewer = await mountMemoryApp({ async whoAmI() { return { subject: { tenant_id: "org", user_id: "alice" }, tenant_name: "Пример", capabilities: ["platform.metrics.read"] }; } }, { section: "rules" });

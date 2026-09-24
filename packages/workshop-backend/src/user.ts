@@ -2018,7 +2018,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
    * возможности пропускаются. */
   async listChatProjects(): Promise<ChatProjectChoice[]> {
     const out: ChatProjectChoice[] = [];
-    for (const record of this.storage.connectedAccounts.list()) {
+    // Список снимается целиком до первого await: в хранилище Durable Object одновременно жив
+    // только один перебор kv.list(), и параллельный запрос (маршрутизатор беседы и сам агент
+    // спрашивают проекты в один ход) обрывал этот перебор ошибкой.
+    for (const record of [...this.storage.connectedAccounts.list()]) {
       if (!areCredentialsValid(record) || !record.description?.providesUi) continue;
       const account = record.account as Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser, "listChatProjects">>;
       try {

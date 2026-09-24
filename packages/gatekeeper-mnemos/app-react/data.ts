@@ -26,7 +26,7 @@ export interface ProjectData {
   truncated: boolean;
   nodesError: boolean;
   /** Документы личной версии: только здесь видно конфликт и документы, которых в общей версии ещё нет. */
-  privateDocs: Map<string, { name: string; conflicted: boolean }>;
+  privateDocs: Map<string, { name: string; conflicted: boolean; contentType?: string }>;
   draftState: DraftState | null;
 }
 
@@ -68,6 +68,8 @@ export interface MemoryData {
 
 export interface DocumentRow {
   privateOnly?: boolean;
+  /** Тип содержимого известен только для личных черновиков; у общих документов его даёт чтение. */
+  contentType?: string;
   projectId: string;
   projectName: string;
   nodeId: string;
@@ -86,7 +88,7 @@ export function documentRows(project: ProjectData, reviews: PublicationReview[])
   }
   for (const [nodeId, doc] of project.privateDocs) {
     if (seen.has(nodeId)) continue;
-    rows.push({ projectId: project.id, projectName: project.name, nodeId, privateOnly: true, name: doc.name || UNNAMED_DOCUMENT, status: documentStatus(project, nodeId, true, reviews) });
+    rows.push({ projectId: project.id, projectName: project.name, nodeId, privateOnly: true, contentType: doc.contentType, name: doc.name || UNNAMED_DOCUMENT, status: documentStatus(project, nodeId, true, reviews) });
   }
   return rows;
 }
@@ -289,7 +291,7 @@ export function useMemoryData(ui: Ui): MemoryData {
           const patch: Partial<ProjectData> = {};
           if (nodes.status === "fulfilled") { patch.nodes = nodes.value.nodes; patch.truncated = nodes.value.truncated || !!nodes.value.next_cursor; }
           else patch.nodesError = true;
-          if (privateDocs.status === "fulfilled") patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted }]));
+          if (privateDocs.status === "fulfilled") patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted, contentType: d.content_type }]));
           if (draft.status === "fulfilled") patch.draftState = draft.value;
           if (absence.status === "fulfilled") setAbsences(prev => new Map(prev).set(project.id, absence.value));
           setProjects(prev => prev.map(p => p.id === project.id ? { ...p, ...patch } : p));

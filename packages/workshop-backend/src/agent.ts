@@ -19,6 +19,8 @@ import { formatInstanceInstructions } from "./admin-config";
 import type { AiGatewayLogRoute } from "./ai-gateway";
 import { AgentTurnError, completeText, httpStatusFromError, zeroUsage } from "./ai-invoke";
 import { findMnemosBinding, formatMnemosWorkPrompt } from "./mnemos-agent-guide";
+import { nativeEditorCodeLock } from "./native-editor-guard";
+import { nativeFormatForOutput } from "@gadgets/workshop-shared/native-document";
 import { guardToolRepeats, RepeatedFailureGuard, REPEATED_FAILURE_LIMIT } from "./tool-failure-guard";
 import {
   AGENT_STEP_LIMIT, StepBudget, limitCodeOutput, pageFileText, pageWebBody, stepLimitNotice,
@@ -2245,9 +2247,12 @@ export async function runAgent(
               `in its own storage, not text in its code. To read or change what it contains, call ` +
               `its RPC methods from \`executeCode\`` +
               (envName !== undefined ? ` (\`env.${envName}\`)` : ``) +
-              `; read its README.md or server.js to learn the methods it offers for this. Do NOT ` +
-              `edit its code to change its content. Edit the code only if the user asks to change ` +
-              `how the ${info.output.noun} itself works (its editor, layout, or features).`);
+              `; read its README.md to learn the methods it offers for this. ` +
+              (nativeFormatForOutput(info.output.id)
+                  ? `Its code is locked: the file tools refuse to change it, so never try to rewrite ` +
+                    `it into a generator or anything else.`
+                  : `Do NOT edit its code to change its content. Edit the code only if the user asks ` +
+                    `to change how the ${info.output.noun} itself works (its editor, layout, or features).`));
         }
         if (info.bindings.length == 0) {
           lines.push(`This gadget has no bindings.`);
@@ -2415,6 +2420,14 @@ export async function runAgent(
   // Schema fragment for the file tools' workpiece reference. Note that although historical logs
   // allow these tool calls to omit this param, is is required in all new tool calls, hence we do
   // not describe it as optional here.
+  // Код встроенных редакторов агент не меняет (см. native-editor-guard.ts). Проверка идёт по
+  // живому реестру: гаджет, созданный из формата в этом же ходе, уже в нём.
+  let assertCodeEditable = (workpieceId: WorkpieceId, workpiece: string | undefined) => {
+    let output = hooks.listGadgetInfo(chatId).find(info => info.id === workpieceId)?.output;
+    let lock = nativeEditorCodeLock(output, workpiece ?? chatNameFor(workpieceId) ?? "GADGET");
+    if (lock) throw new Error(lock);
+  };
+
   let workpieceParam = Type.String({
     description:
         "Env binding name of the workpiece (e.g. gadget) that owns the file, as listed in the " +
@@ -2473,6 +2486,7 @@ export async function runAgent(
         try {
           let resolved =
               hooks.resolveWorkpieceRoot(resolveToolWorkpieceId(workpiece), true, chatId);
+          assertCodeEditable(resolved.workpieceId, workpiece);
           applyPendingEditToYdoc(getSessionYDoc(), {
             toolName: "writeFile",
             rootName: resolved.rootName,
@@ -2517,6 +2531,7 @@ export async function runAgent(
         try {
           let resolved =
               hooks.resolveWorkpieceRoot(resolveToolWorkpieceId(workpiece), true, chatId);
+          assertCodeEditable(resolved.workpieceId, workpiece);
           if (!filesRead.has(fileKey(resolved.workpieceId, filename))) {
             throw new Error("You must read a file before you can edit it.");
           }
@@ -2686,7 +2701,9 @@ export async function runAgent(
       parameters: Type.Object({
         title: Type.String({
           description:
-              "Short, descriptive, human-readable title for the new gadget. Shown to the user.",
+              "Short, descriptive, human-readable title for the new gadget, in Russian. Shown to " +
+              "the user. For a document, spreadsheet or presentation use the title of the file itself " +
+              "(e.g. «Статус проекта на сентябрь»), not a description of what you are doing.",
         }),
         bindingName: Type.String({
           description:

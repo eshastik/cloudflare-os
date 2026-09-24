@@ -2,7 +2,9 @@ import {launchTemplateProposal} from './templateProposalLaunch'
 import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
-import {collectIntakeDrop, type IntakeDroppedFile} from "./intakeDrop"
+import {MAX_UPLOAD_FILES, planIntakeDrop, planPickedFiles, type IntakeDroppedFile} from "./intakeDrop"
+import {IntakeUploadPanel, runIntakeUpload, useIntakeUploadPanel, type IntakeUploadUi} from "./intakeUploadPanel"
+import {isPermanentUploadError, uploadInBatches} from "../../gatekeeper-mnemos/src/upload-batches.ts"
 import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
 import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
@@ -104,6 +106,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
   readonly #downloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textDownloads']>['issuer']> } | undefined
   readonly #reviewDownloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['reviewDownloads']>['issuer']> } | undefined
   readonly #nativeDownloads: { storageOrigin: string; selector: RpcStub<NonNullable<GatekeeperUiFrame['nativeDownloads']>['selector']> } | undefined
+  readonly #uploadUi: { ui: IntakeUploadUi; updated(): void } | undefined
   #disposed = false
   #downloadBusy = false
   #uploadBusy = false
@@ -138,8 +141,10 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
     private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
     private readonly navigateView: (view: string) => void = () => {},
+    uploadUi?: { ui: IntakeUploadUi; updated(): void },
   ) {
     super()
+    this.#uploadUi = uploadUi
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
     this.#mailDraftSender=mailDraftSender?(mailDraftSender as RpcStub<typeof mailDraftSender>).dup():undefined
     this.#nativeDownloads = nativeDownloads ? { storageOrigin: nativeDownloads.storageOrigin, selector: (nativeDownloads.selector as RpcStub<typeof nativeDownloads.selector>).dup() } : undefined
@@ -262,8 +267,9 @@ class GatekeeperAppHostImpl extends RpcTarget {
     if (typeof directory !== 'boolean' || !this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
     this.#uploadBusy = true
     const signal = this.#uploadLifetime.signal
+    let files: File[]
     try {
-      const files = await new Promise<File[]>((resolve, reject) => {
+      files = await new Promise<File[]>((resolve, reject) => {
         const input = document.createElement('input')
         input.type = 'file'; input.multiple = true; input.webkitdirectory = directory
         input.style.display = 'none'; document.body.append(input)
@@ -274,8 +280,29 @@ class GatekeeperAppHostImpl extends RpcTarget {
         input.addEventListener('cancel', () => { cleanup(); resolve([]) }, { once: true })
         input.click()
       })
-      return await this.#uploadInboxFiles(files.map(file => ({file,path:file.webkitRelativePath || file.name})), undefined, project)
     } finally { this.#uploadBusy = false }
+    if (!files.length) return []
+    const picked = files.map(file => ({file,path:file.webkitRelativePath || file.name}))
+    const panel = this.#uploadUi
+    if (!panel) return this.#guardedUpload(picked, undefined, project)
+    // Папка отбирается: служебные каталоги и .gitignore; отдельно выбранные файлы — как есть.
+    try {
+      panel.ui.reading()
+      const plan = await planPickedFiles(picked, { filter: directory })
+      signal.throwIfAborted()
+      return await runIntakeUpload(panel.ui, plan, (list, progress) => this.#guardedUpload(list, progress, project),
+        project ? 'Материалы добавлены в проект.' : 'Предложения появятся после разбора.', () => panel.updated())
+    } catch (error) {
+      if (!signal.aborted) panel.ui.error('Загрузка не завершена. Файлы, принятые до сбоя, уже в памяти; проверьте их перед повтором.')
+      throw error
+    }
+  }
+
+  async #guardedUpload(files:IntakeDroppedFile[],onProgress:((done:number,total:number)=>void)|undefined,project?:string):Promise<PickedIntakeFile[]> {
+    if (!this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
+    this.#uploadBusy=true
+    try { return await this.#uploadInboxFiles(files,onProgress,project) }
+    finally {this.#uploadBusy=false}
   }
 
   /** Только доверенный обработчик drop передаёт настоящие File; RPC данные не проходят проверку экземпляра. */
@@ -285,32 +312,32 @@ class GatekeeperAppHostImpl extends RpcTarget {
     try { return await this.#uploadInboxFiles(files,onProgress,this.getSelectedSection() === "projects" ? this.getSelectedProject() : undefined) }
     finally {this.#uploadBusy=false}
   }
+  // Пакетами по несколько файлов параллельно, с повтором временных ошибок: upload-batches.ts
+  // объясняет, почему не больше (предел незавершённых загрузок и запросов в минуту у сервера).
   async #uploadInboxFiles(files:IntakeDroppedFile[],onProgress?:(done:number,total:number)=>void,project?:string):Promise<PickedIntakeFile[]> {
     const signal=this.#uploadLifetime.signal
-    if(!Array.isArray(files)||files.length>10000)throw Error('Слишком много файлов')
-      const result: PickedIntakeFile[] = []
-      const uploads = this.#inboxUploads!
-      for (const {file,path} of files) {
+    if(!Array.isArray(files)||files.length>MAX_UPLOAD_FILES)throw Error('Слишком много файлов')
+    for (const {file,path} of files) if (!(file instanceof File) || typeof path !== "string" || path.length > 1024) throw Error("Некорректный файл")
+    const uploads = this.#inboxUploads!
+    const result: PickedIntakeFile[] = new Array(files.length)
+    const outcome = await uploadInBatches({
+      items: files.map((_, index) => index), signal, onProgress, permanent: isPermanentUploadError,
+      upload: async index => {
+        const {file,path} = files[index]
+        const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
+          const ticket = await (project ? uploads.issuer.issue(size, checksum, project) : uploads.issuer.issue(size, checksum))
+          if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) throw Error('Адрес хранилища не совпадает с настройкой установки')
+          signal.throwIfAborted()
+          return ticket
+        }, (url, options) => fetch(url, { ...options, signal }))
         signal.throwIfAborted()
-        if (!(file instanceof File) || typeof path !== "string" || path.length > 1024) throw Error("Некорректный файл")
-        try {
-          const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
-            const ticket = await (project ? uploads.issuer.issue(size, checksum, project) : uploads.issuer.issue(size, checksum))
-            if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) throw Error('Адрес хранилища не совпадает с настройкой установки')
-            signal.throwIfAborted()
-            return ticket
-          }, (url, options) => fetch(url, { ...options, signal }))
-          signal.throwIfAborted()
-          const receipt = await (project ? uploads.issuer.submit(uploadId, path, file.lastModified, project) : uploads.issuer.submit(uploadId, path, file.lastModified))
-          signal.throwIfAborted()
-          result.push({ path, uploadId, modifiedAt: file.lastModified, receipt })
-        } catch {
-          signal.throwIfAborted()
-          result.push({ path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' })
-        }
-        onProgress?.(result.length, files.length)
-      }
-      return result
+        const receipt = await (project ? uploads.issuer.submit(uploadId, path, file.lastModified, project) : uploads.issuer.submit(uploadId, path, file.lastModified))
+        signal.throwIfAborted()
+        result[index] = { path, uploadId, modifiedAt: file.lastModified, receipt }
+      },
+    })
+    for (const { item } of outcome.failed) result[item] = { path: files[item].path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' }
+    return result
   }
 
   // Revalidate access after S3 returns: a still-valid signed URL must not let an
@@ -521,7 +548,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   const dirtyRef = useUnsavedFrameChanges()
   const connectedRef = useRef(false)
   const invalidatedRef = useRef(false)
-  const [dropState,setDropState]=useState({busy:false,active:false,done:0,total:0,message:""})
+  const uploadPanel=useIntakeUploadPanel()
+  const uploadUi=uploadPanel.ui
   const dropBusy=useRef(false)
   const [dragOver,setDragOver]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
@@ -647,6 +675,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           await launchTemplateProposal(authenticatedApi,frame.textDownloads,scope,resource,proposal,signal,async id=>{await navigate({to:'/workspace/$id',params:{id}})})
         },
         view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view }), replace: true }) },
+        { ui: uploadUi, updated: () => { if (hostRef.current === host) iframeRef.current?.contentWindow?.postMessage({ type: 'mnemos-inbox-updated' }, '*') } },
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -693,7 +722,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       hostRef.current?.dispose()
       hostRef.current = null
       dropBusy.current=false
-      setDropState(previous=>previous.busy||previous.active||previous.total||previous.message?{busy:false,active:false,done:0,total:0,message:""}:previous)
+      uploadUi.reset()
       setOverlayPhase(null)
     }
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
@@ -717,24 +746,21 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
 
   const intakeDrop=!!frame.inboxUploads && (embeddedIntake || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
   const drop=async(transfer:DataTransfer)=>{
-    setDropState(previous=>({...previous,active:false}))
     if(dropBusy.current)return
-    if(!hostRef.current){setDropState(previous=>({...previous,message:"Приёмная ещё загружается. Повторите перетаскивание после загрузки."}));return}
+    if(!hostRef.current){uploadUi.error("Приёмная ещё загружается. Повторите перетаскивание после загрузки.");return}
     const targetHost=hostRef.current
     const targetWindow=iframeRef.current?.contentWindow
+    const updated=()=>{if(hostRef.current===targetHost)targetWindow?.postMessage({type:'mnemos-inbox-updated'},'*')}
     dropBusy.current=true
-    setDropState({busy:true,active:false,done:0,total:0,message:'Читаем выбранную папку…'})
+    uploadUi.reading()
     try {
-      const files=await collectIntakeDrop(transfer)
+      // Папки отбираются до загрузки: служебные каталоги и правила .gitignore (upload-filter.ts).
+      const plan=await planIntakeDrop(transfer)
       if(hostRef.current!==targetHost)return
-      if(!files.length)throw Error('В перетаскивании нет файлов')
-      setDropState({busy:true,active:false,done:0,total:files.length,message:''})
-      const results=await targetHost.uploadDroppedInboxFiles(files,(done,total)=>{if(hostRef.current===targetHost)setDropState({busy:true,active:false,done,total,message:''})})
-      if(hostRef.current!==targetHost)return
-      const failed=results.filter(file=>file.error).length
-      setDropState({busy:false,active:false,done:results.length,total:files.length,message:failed?`Принято ${results.length-failed} из ${files.length}. Не подтверждены: ${results.filter(file=>file.error).map(file=>file.path).join(', ')}`:`Принято файлов: ${results.length}. ${targetHost.getSelectedSection() === "projects" ? "Материалы добавлены в проект." : "Предложения появятся после разбора."}`})
-      if(hostRef.current===targetHost)targetWindow?.postMessage({type:'mnemos-inbox-updated'},'*')
-    }catch {if(hostRef.current===targetHost)setDropState(previous=>({...previous,busy:false,message:'Не удалось завершить загрузку. Проверьте приёмную перед повтором.'}))}
+      const note=targetHost.getSelectedSection() === "projects" ? "Материалы добавлены в проект." : "Предложения появятся после разбора."
+      await runIntakeUpload(uploadUi,plan,(files,progress)=>targetHost.uploadDroppedInboxFiles(files,(done,total)=>{if(hostRef.current===targetHost)progress(done,total)}),note,updated)
+      updated()
+    }catch {if(hostRef.current===targetHost)uploadUi.error('Не удалось завершить загрузку. Проверьте приёмную перед повтором.')}
     finally{if(hostRef.current===targetHost)dropBusy.current=false}
   }
 
@@ -759,16 +785,14 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     return()=>{window.removeEventListener('dragenter',enter);window.removeEventListener('dragleave',leave);window.removeEventListener('drop',end);window.removeEventListener('dragend',end)}
   },[intakeDrop])
 
-  const dropStatus=dropState.busy||!!dropState.message
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-    {intakeDrop&&dropStatus&&<div role="status" className={`${embeddedIntake?"px-4 pt-3":"px-4 pt-3 sm:px-8"} text-[13px] leading-[18px] text-kumo-subtle`}>
-      {dropState.busy&&<div>{dropState.total?`Принято ${dropState.done} из ${dropState.total}`:'Читаем файлы…'}<progress className="mt-1 block h-1 w-full max-w-md" max={dropState.total||1} value={dropState.done}/></div>}
-      {dropState.message&&<p className="m-0 break-words">{dropState.message}</p>}
+    {!!frame.inboxUploads&&uploadPanel.state&&<div role="status" className={`${embeddedIntake?"px-4 pt-3":"px-4 pt-3 sm:px-8"} text-[13px] leading-[18px] text-kumo-subtle`}>
+      <IntakeUploadPanel state={uploadPanel.state} onClose={uploadUi.reset}/>
     </div>}
     {intakeDrop&&dragOver&&<div role="region" aria-label="Перетащите материалы организации" data-testid="intake-drop-layer"
-      onDragOver={event=>{event.preventDefault();event.stopPropagation();if(!dropBusy.current)setDropState(previous=>({...previous,active:true}))}}
-      onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false);setDropState(previous=>({...previous,active:false}))}}
+      onDragOver={event=>{event.preventDefault();event.stopPropagation()}}
+      onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false)}}
       onDrop={event=>{event.preventDefault();event.stopPropagation();setDragOver(false);void drop(event.dataTransfer)}}
       className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border border-dashed border-kumo-brand bg-kumo-base/85 text-center">
       <div><p className="m-0 text-[15px] font-semibold text-kumo-strong">Отпустите, чтобы загрузить</p><p className="mb-0 mt-1 text-[12px] text-kumo-subtle">Файлы и папки попадут в приёмную{new URLSearchParams(window.location.search).get('project')?' проекта':''}.</p></div>

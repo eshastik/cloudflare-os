@@ -19,7 +19,7 @@ const units=[{org_unit_id:'unit-sales',name:'Продажи',members:[{principal
 test('администратор приглашает сразу в отдел и с ролью; приглашённый виден в списке людей без идентификаторов',async()=>{
  const created=[];let invitations=[];
  const ui={listPeople:async()=>({users:[]}),listOrgUnits:async()=>units,listInvitations:async()=>invitations,
-  createInvitation:async(email,name,unit,role)=>{created.push([email,name,unit,role]);const invitation={invitation_id:'inv-1',email,display_name:name,org_unit_id:unit,org_unit_name:'Продажи',role,created_by:'owner',created_by_name:'Анна',created_at:'2026-09-24T10:00:00Z',expires_at:'2026-10-01T10:00:00Z',status:'open'};invitations=[invitation];return {invitation,link:'https://os.example/gatekeeper/mnemos/oauth/invite/'+'c'.repeat(43)};},
+  createInvitation:async(email,name,unit,role)=>{created.push([email,name,unit,role]);const invitation={invitation_id:'inv-1',email,display_name:name,org_unit_id:unit,org_unit_name:'Продажи',role,created_by:'owner',created_by_name:'Анна',created_at:'2026-09-24T10:00:00Z',expires_at:'2026-10-01T10:00:00Z',status:'open',email_status:'sent'};invitations=[invitation];return {invitation,link:'https://os.example/gatekeeper/mnemos/oauth/invite/'+'c'.repeat(43)};},
   revokeInvitation:async id=>{invitations=invitations.map(i=>i.invitation_id===id?{...i,status:'revoked'}:i);return invitations[0];}};
  const view=await render(ui);
  await click(view.el,'Пригласить');
@@ -27,9 +27,10 @@ test('администратор приглашает сразу в отдел �
  const roles=[...view.el.querySelector('[aria-label="Роль приглашённого"]').options].map(o=>o.textContent);
  assert.deepEqual(roles,['Сотрудник','Руководитель отдела','Администратор'],'администратору доступны все три роли');
  await type(view.el,'Роль приглашённого','head');
- await click(view.el,'Получить ссылку');
+ await click(view.el,'Отправить приглашение');
  assert.deepEqual(created,[['new@company.ru','Пётр','unit-sales','head']]);
  assert.match(view.el.textContent,/руководитель отдела/,'роль в списке приглашений словами');
+ assert.match(view.el.textContent,/Письмо со ссылкой отправлено на new@company\.ru/,'статус письма');
  assert.equal(view.el.querySelector('input[aria-label="Ссылка-приглашение"]').value,'https://os.example/gatekeeper/mnemos/oauth/invite/'+'c'.repeat(43));
  assert.match(view.el.textContent,/ждёт входа/);assert.match(view.el.textContent,/отдел «Продажи»/);
  assert.ok(view.el.querySelector('section[aria-label="Люди"] [data-invitation]'),'приглашённый — строкой в списке людей');
@@ -79,7 +80,7 @@ test('руководитель отдела без полномочия приг
  assert.match(head.el.textContent,/Отдел «Продажи»/);
  const select=head.el.querySelector('[aria-label="Отдел приглашения"]');assert.deepEqual([...select.options].map(o=>o.value),['unit-sales'],'без «Без отдела» и чужих отделов');
  assert.deepEqual([...head.el.querySelector('[aria-label="Роль приглашённого"]').options].map(o=>o.value),['employee','head'],'руководитель не приглашает администраторов');
- await type(head.el,'Почта','p@company.ru');await click(head.el,'Получить ссылку');assert.deepEqual(created,['unit-sales']);
+ await type(head.el,'Почта','p@company.ru');await click(head.el,'Отправить приглашение');assert.deepEqual(created,['unit-sales']);
  await head.close();
  const employee=await render(ui,{identity:{subject:{tenant_id:'t',user_id:'ivan'},capabilities:[]},projects:[]});
  assert.match(employee.el.textContent,/недоступно/);assert.equal(employee.el.querySelector('[role="form"]'),null);

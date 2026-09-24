@@ -8,7 +8,7 @@ import {
   FolderProjectNotConnected, createCodeProjectFromFolder, createProjectFromFolder, droppedFolderEntry,
   looksLikeCodeFolder, projectSlug, readDroppedFolder, uploadableFiles, type DroppedFolder,
 } from "./folderProject";
-import { FolderProjectCard, folderQuestion, useFolderProject } from "./components/chat/FolderProjectCard";
+import { FolderProjectCard, folderQuestion, folderSummary, useFolderProject } from "./components/chat/FolderProjectCard";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,6 +33,23 @@ describe("что лежит в папке", () => {
   it("служебное содержимое .git и системный мусор не загружаются", () => {
     const files = uploadableFiles([at("Сайт/.git/HEAD"), at("Сайт/.DS_Store"), at("Сайт/src/app.ts"), at("Сайт/README.md")]);
     expect(files.map(f => f.path)).toEqual(["Сайт/src/app.ts", "Сайт/README.md"]);
+  });
+
+  it("служебные каталоги и .gitignore отбираются при чтении папки; .git всё равно говорит о коде", async () => {
+    const entry = directory("Сервис", [
+      directory(".git", [file(new File(["h"], "HEAD"))]),
+      file(Object.assign(new File(["*.log\n"], ".gitignore"), { text: async () => "*.log\n" })),
+      file(new File(["a"], "main.py")), file(new File(["l"], "run.log")),
+      directory(".venv", [directory("lib", [file(new File(["x"], "six.py"))])]),
+      directory("node_modules", [file(new File(["x"], "i.js")), file(new File(["y"], "j.js"))]),
+    ]);
+    const read = await readDroppedFolder(entry as unknown as FileSystemDirectoryEntry);
+    expect(read.files.map(f => f.path)).toEqual(["Сервис/.gitignore", "Сервис/main.py"]);
+    expect(read.hasCode).toBe(true);
+    expect(read.skipped?.files).toBe(5);
+    expect(folderSummary(read)).toBe("Будет загружено 2 файла (меньше 0,1 МБ). Пропущено 5 служебных файлов: node_modules, .git, .venv, по .gitignore.");
+    // «Загрузить всё» не тащит содержимое .git: историю ведёт хранилище кода.
+    expect((await read.skipped!.all()).map(f => f.path).sort()).toEqual(["Сервис/.gitignore", "Сервис/.venv/lib/six.py", "Сервис/main.py", "Сервис/node_modules/i.js", "Сервис/node_modules/j.js", "Сервис/run.log"]);
   });
 
   it("краткое имя проекта — латиницей, из русского названия", () => {
@@ -96,7 +113,8 @@ describe("создание проекта существующими метод�
     const result = await createProjectFromFolder(api, folder, done => progress.push(done));
     expect(createProject).toHaveBeenCalledWith("Отчёты 2026", "otchety-2026");
     expect(issued.map(i => i[1])).toEqual(["p1", "p1"]);
-    expect(submitted.map(s => [s[1], s[3]])).toEqual([["Отчёты 2026/итог.txt", "p1"], ["Отчёты 2026/смета.txt", "p1"]]);
+    // Файлы идут параллельно: порядок приёма не задан, задан состав.
+    expect(submitted.map(s => [s[1], s[3]]).sort()).toEqual([["Отчёты 2026/итог.txt", "p1"], ["Отчёты 2026/смета.txt", "p1"]]);
     expect(progress).toEqual([1, 2]);
     expect(result).toEqual({ project: { accountId: 7, projectId: "p1", title: "Отчёты 2026", hasCode: false }, uploaded: 2, failed: [] });
     expect(frame.ui[Symbol.dispose]).toHaveBeenCalled();
@@ -215,6 +233,32 @@ describe("карточка «Создать проект из папки»", () 
     await act(async () => button("Создать как обычный проект").click());
     expect(plain).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("Проект «Сайт» создан, загружено 2 файла.");
+  });
+
+  it("сводка с пропущенным, «Загрузить всё» и повтор незагрузившихся в тот же проект", async () => {
+    const plain = vi.fn(async (_api: unknown, folder: DroppedFolder) => ({
+      project: { accountId: 7, projectId: "p5", title: folder.name, hasCode: false }, uploaded: folder.files.length - 1, failed: [folder.files[0].path],
+    }));
+    const retrier = vi.fn(async (_api: unknown, _project: unknown, files: { path: string }[]) => ({ uploaded: files.length, failed: [] as string[] }));
+    let hook!: ReturnType<typeof useFolderProject>;
+    function Harness() {
+      hook = useFolderProject({} as never, undefined, { plain, code: plain } as never, retrier as never);
+      return hook.state ? <FolderProjectCard state={hook.state} onCreate={hook.create} onRetry={hook.retry} onDismiss={hook.dismiss} /> : null;
+    }
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<Harness />));
+    const entry = directory("Архив", [file(new File(["a"], "итог.docx")), file(new File(["b"], "смета.xlsx")), directory("node_modules", [file(new File(["c"], "x.js"))])]);
+    await act(async () => hook.offer(entry as unknown as FileSystemDirectoryEntry));
+    expect(container.textContent).toContain("Пропущено 1 служебный файл: node_modules.");
+    const button = (text: string) => [...container!.querySelectorAll("button")].find(b => b.textContent?.startsWith(text))!;
+    await act(async () => button("Загрузить всё").click());
+    expect((plain.mock.calls[0][1] as DroppedFolder).files.map(f => f.path)).toEqual(["Архив/итог.docx", "Архив/смета.xlsx", "Архив/node_modules/x.js"]);
+    expect(container.textContent).toContain("Не загрузилось 1 файл: Архив/итог.docx");
+    await act(async () => button("Повторить").click());
+    expect(retrier).toHaveBeenCalledTimes(1);
+    expect((retrier.mock.calls[0][2] as { path: string }[]).map(f => f.path)).toEqual(["Архив/итог.docx"]);
+    expect(container.textContent).toContain("загружено 3 файла");
+    expect(container.textContent).not.toContain("Не загрузилось");
   });
 
   it("пустая папка — сообщение без кнопки «Создать»", async () => {

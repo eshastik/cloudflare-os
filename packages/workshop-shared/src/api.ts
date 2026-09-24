@@ -2946,6 +2946,19 @@ export interface GadgetClient extends WorkpieceClient {
   /** Read a retained source after reconnecting; the host must validate the download before restoring it. */
   readNativeDocument(sourceId: WorkpieceId): ReturnType<NativeDocumentSource["openDocument"]>;
 
+  /** Документ Mnemos встроенного редактора для текущего человека: привязка, начатое создание и проект беседы.
+   *  chatId — открытая беседа; её проект берётся, если беседа создания редактора неизвестна. */
+  getMnemosDocument(chatId?: number): Promise<import('./native-document.js').NativeMnemosState>;
+  /** Захватить создание документа в Mnemos. null — документ уже привязан или его создаёт другая вкладка. */
+  claimMnemosDocument(accountId: number, scope: string, name: string): Promise<import('./native-document.js').NativeMnemosCreation | null>;
+  /** Запомнить квитанцию замороженного создания, чтобы повтор после сбоя не создал второй документ. */
+  recordMnemosDocumentReceipt(claim: string, receipt: string): Promise<void>;
+  /** Записать привязку (null — снять); начатое создание при этом завершается. */
+  setMnemosDocument(binding: import('./native-document.js').NativeMnemosBinding | null): Promise<void>;
+  /** Задать встроенному документу осмысленное название, если стоит название по умолчанию, а текст уже есть.
+   *  Возвращает текущее название; null — текста ещё нет. */
+  ensureNativeDocumentTitle(chatId?: number): Promise<string | null>;
+
   /** Prepare a code update for a native editor. Returns null for unsupported formats or use-only access. */
   getNativeEditorUpdate(): Promise<NativeEditorUpdate | null>;
   /** Replace native editor code after explicit confirmation; refuses changed code or pending agent edits. */

@@ -3156,7 +3156,7 @@ export const ChatInput = ({
       )}
 
       {folderProject.state && (
-        <FolderProjectCard state={folderProject.state} onCreate={folderProject.create} onDismiss={folderProject.dismiss} />
+        <FolderProjectCard state={folderProject.state} onCreate={folderProject.create} onRetry={folderProject.retry} onDismiss={folderProject.dismiss} />
       )}
 
       {/* Prompt card. Brighter than the page surface (kumo-control vs kumo-base) and gently lifted

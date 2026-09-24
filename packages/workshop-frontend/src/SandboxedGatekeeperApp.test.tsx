@@ -261,7 +261,8 @@ describe("SandboxedGatekeeperApp navigation", () => {
       issue(size:number,checksum:string){return {upload_id:String(++count),url:"https://storage.example/file",method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
       submit(_id:string,path:string){submitted.push(path);return {outcome:"enqueued",enqueued:true};}
     }
-    const request=vi.fn(async(_url:string,init:RequestInit)=>{expect(init.body).toBeInstanceOf(File);expect(init.credentials).toBe("omit");if(count===1)return new Response(null,{status:200});signal=init.signal as AbortSignal;return new Promise<Response>((_,reject)=>signal!.addEventListener("abort",()=>reject(Error("abort")),{once:true}));});vi.stubGlobal("fetch",request);
+    // Файлы идут параллельно, поэтому «первый принят, второй висит» задаётся по имени, а не по порядку.
+    const request=vi.fn(async(_url:string,init:RequestInit)=>{expect(init.body).toBeInstanceOf(File);expect(init.credentials).toBe("omit");if((init.body as File).name==="первый.txt")return new Response(null,{status:200});signal=init.signal as AbortSignal;return new Promise<Response>((_,reject)=>signal!.addEventListener("abort",()=>reject(Error("abort")),{once:true}));});vi.stubGlobal("fetch",request);
     const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
     const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
@@ -269,9 +270,47 @@ describe("SandboxedGatekeeperApp navigation", () => {
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
     const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{files:[new File(["first"],"первый.txt"),new File(["second"],"второй.txt")],items:[]}});
     await act(async()=>dragFiles("dragenter"));
-    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);await vi.waitFor(()=>expect(request).toHaveBeenCalledTimes(2));});
+    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);await vi.waitFor(()=>expect(request).toHaveBeenCalledTimes(2));await vi.waitFor(()=>expect(submitted).toEqual(["первый.txt"]));});
     expect(submitted).toEqual(["первый.txt"]);
     await act(async()=>root!.render(null));expect(signal?.aborted).toBe(true);expect(submitted).toEqual(["первый.txt"]);
+  });
+  it("папка: служебное отобрано до загрузки, сводка, загрузка и повтор незагрузившегося", async()=>{
+    const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
+    const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
+    const submitted:string[]=[];let count=0,refusals=0;
+    class Issuer extends RpcTarget {
+      issue(size:number,checksum:string){return {upload_id:String(++count),url:"https://storage.example/file",method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
+      submit(_id:string,path:string){if(path.endsWith("смета.txt")&&refusals++===0)throw Error("Недопустимое имя или область");submitted.push(path);return {outcome:"enqueued",enqueued:true};}
+    }
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:200})));
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
+    const opened:string[]=[];
+    const file=(name:string,text="x")=>({name,isFile:true,isDirectory:false,file:(done:(file:File)=>void)=>{opened.push(name);done(new RealFile([text],name) as unknown as File)}});
+    const dir=(name:string,children:unknown[])=>({name,isFile:false,isDirectory:true,createReader:()=>{let read=false;return {readEntries:(done:(items:unknown[])=>void)=>{done(read?[]:children);read=true;}}}});
+    const folder=dir("Проект",[file("договор.txt"),file("смета.txt"),file(".gitignore","*.log"),file("сборка.log"),dir("node_modules",[dir("react",[file("index.js"),file("package.json")])]),dir(".venv",[file("pyvenv.cfg")])]);
+    const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{items:[{kind:"file",getAsFile:()=>null,webkitGetAsEntry:()=>folder}]}});
+    await act(async()=>dragFiles("dragenter"));
+    // Обновления состояния внутри act применяются только по его завершении: ждём, отпуская act.
+    const until=(check:()=>void)=>vi.waitFor(async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5))});check();},{timeout:3000});
+    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);});
+    await until(()=>expect(container!.textContent).toContain("Будет загружено"));
+    expect(container.querySelector('[data-testid="intake-upload-summary"]')!.textContent).toBe("Будет загружено 3 файла (меньше 0,1 МБ). Пропущено 4 служебных файла: node_modules, .venv, по .gitignore.");
+    // Файлы служебных каталогов не открывались: для сводки хватает их имён.
+    expect(opened.sort()).toEqual([".gitignore","договор.txt","смета.txt"].sort());
+    const button=(text:string)=>[...container!.querySelectorAll("button")].find(b=>b.textContent?.startsWith(text))!;
+    expect(button("Загрузить всё").textContent).toBe("Загрузить всё, включая служебные (7)");
+    await act(async()=>{button("Загрузить").click();});
+    await until(()=>expect(container!.textContent).toContain("Не загрузилось 1 файл: Проект/смета.txt"));
+    expect(container.textContent).toContain("Загружено 2 из 3.");
+    expect(submitted.sort()).toEqual(["Проект/.gitignore","Проект/договор.txt"]);
+    await act(async()=>{button("Повторить").click();});
+    await until(()=>expect(container!.textContent).toContain("Загружено 3 из 3."));
+    expect(submitted).toContain("Проект/смета.txt");
+    expect(container.textContent).not.toContain("Не загрузилось");
   });
   it("uploads through the real host port and cancels transfer when the frame closes", async () => {
     const { webcrypto } = await vi.importActual<{ webcrypto: Crypto }>("node:crypto");

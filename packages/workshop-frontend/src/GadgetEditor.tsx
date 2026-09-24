@@ -1618,6 +1618,7 @@ export default function GadgetEditor() {
                 format={selectedNativeFormat}
                 snapshotSource={nativeSnapshotSource}
                 chatId={previewChatId}
+                projectChatId={effectiveSelectedChatId ?? undefined}
                 disabled={activeTab !== 'app' || previewMode}
                 panelHost={versionPanelHost}
                 onCollapseChat={() => setChatWidth(MIN_CHAT_WIDTH)}
@@ -1657,6 +1658,8 @@ export default function GadgetEditor() {
                 gadgetTitle={selectedGadgetSummary?.title ?? 'Гаджет'}
                 chatId={previewChatId}
                 disabled={activeTab !== 'app' || previewMode}
+                outputId={selectedGadgetSummary?.output?.id}
+                snapshotSource={nativeSnapshotSource}
               />
             )}
 

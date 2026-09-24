@@ -13,6 +13,7 @@ import NativeDocumentReviewInbox, { ReviewComparisonView, loadReviewComparison, 
 import NativeDocumentSave from './NativeDocumentSave'
 import NativeEditorUpdate from './NativeEditorUpdate'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
+import { mnemosDocumentName } from './nativeMnemosDocument'
 
 export type PanelSection = 'save' | 'conflict' | 'invite' | 'open' | 'bind'
 type Props = {
@@ -69,6 +70,18 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
   const review = data?.review ?? null
   const invited = data?.participants?.filter(p => p.mode !== '') ?? []
   const showConflict = section === 'conflict' || model?.kind === 'conflict'
+  // Имя нового документа в Mnemos — название из шапки редактора.
+  const [documentTitle, setDocumentTitle] = useState<string | null>(null)
+  useEffect(() => {
+    if (binding || section !== 'save') return
+    const abort = new AbortController()
+    setDocumentTitle(null)
+    const read = snapshotSource.current
+    void (read ? read(format, abort.signal) : Promise.reject(new Error())).then(
+      snapshot => { if (!abort.signal.aborted) setDocumentTitle(mnemosDocumentName(format, snapshot.document)) },
+      () => { if (!abort.signal.aborted) setDocumentTitle('') })
+    return () => abort.abort()
+  }, [binding, section, format, snapshotSource])
   // В панели документ и проект называются по имени, а не опознавателем хранилища.
   const [documentName, setDocumentName] = useState<string | null>(null)
   useEffect(() => {
@@ -112,7 +125,16 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
           </div>
           <WorkshopButton disabled={status.busy} onClick={() => onSection('bind')}>Сменить</WorkshopButton>
           <WorkshopButton disabled={status.busy} onClick={status.refresh}>Перечитать</WorkshopButton>
-        </Row></Rows> : <BindingChooser status={status} onDone={() => onSection(null)} />}
+        </Row></Rows> : <>
+          {!binding && section !== 'save' && <Rows><Row>
+            <div className="min-w-0 flex-1">
+              <div className={rowText}>Документ ещё не сохранён в Mnemos</div>
+              <div className={subText}>После сохранения в проект появятся версии, согласование и скачивание в Word.</div>
+            </div>
+            <WorkshopButton tone="primary" disabled={disabled} onClick={() => onSection('save')}>Сохранить в проект…</WorkshopButton>
+          </Row></Rows>}
+          {section !== 'save' && <BindingChooser status={status} onDone={() => onSection(null)} />}
+        </>}
         {status.error && <p role="alert" className={`m-0 ${rowText} text-kumo-danger`}>{status.error}</p>}
         {status.notice && <p role="status" className={`m-0 ${rowText}`}>{status.notice}</p>}
       </Section>
@@ -122,6 +144,15 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
           initialAccountId={binding.accountId ?? undefined} initialScope={binding.scope} initialResource={binding.resource || undefined}
           onSaved={result => status.bind({ accountId: result.accountId, scope: result.scope, resource: result.resource || binding.resource, savedRevision: result.revision })}
           onClose={() => { onSection(null); status.refresh() }} />
+      </Section>}
+
+      {section === 'save' && !binding && <Section label="Сохранить в проект" name="save">
+        {documentTitle === null && <p role="status" className={`m-0 ${subText}`}>Читаю название документа…</p>}
+        {documentTitle !== null && 
+        <NativeDocumentSave gadget={gadget} format={format} snapshotSource={snapshotSource} chatId={chatId} disabled={disabled}
+          initialAccountId={status.suggestedProject?.accountId} initialScope={status.suggestedProject?.projectId} initialName={documentTitle ?? ''}
+          onSaved={result => { if (result.resource) status.bind({ accountId: result.accountId, scope: result.scope, resource: result.resource, savedRevision: result.revision }) }}
+          onClose={() => { onSection(null); status.refresh() }} />}
       </Section>}
 
       {showConflict && binding && <Section label="Конфликт с новой публикацией" name="conflict">

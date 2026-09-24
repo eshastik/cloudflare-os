@@ -5,7 +5,7 @@ import { ClockCounterClockwise } from '@phosphor-icons/react'
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentSelector, GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
-import type { NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
+import { cleanNativeTitle, nativeTitleSource, type NativeDocumentFormat, type NativeMnemosBinding, type NativeMnemosState } from '@gadgets/workshop-shared/native-document'
 import type { PublicationReview } from '@gadgets/workshop-shared/publication-review'
 import { useAuthenticatedApi } from './AuthContext'
 import { WorkshopButton } from './components/WorkshopControls'
@@ -15,13 +15,14 @@ import DocumentVersionPanel, { type PanelSection } from './DocumentVersionPanel'
 import { nativeOpenKey, readPendingNativeOpen } from './NativeDocumentOpen'
 import { loadPublication, publishCandidate, reviewKey, submitReview, type PublicationState } from './NativeDocumentPublication'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
+import { NATIVE_BINDING_EVENT, createMnemosDocument, mnemosDocumentName, type NativeBindingEventDetail } from './nativeMnemosDocument'
 
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
 type Downloads = RpcStub<GatekeeperNativeDocumentSelector>
 type Decision = PublicationReview['domains'][number]['decisions'][number] & { comment?: string }
 
 /** Какой документ Mnemos открыт в редакторе и с какой ревизией редактора он последний раз совпадал. */
-export type DocumentBinding = { accountId: number | null; scope: string; resource: string; savedRevision?: number }
+export type DocumentBinding = NativeMnemosBinding
 export type Participant = Awaited<ReturnType<Selector['participants']>>['participants'][number]
 export type HistoryEntry = { id: string; label: string; recordedAt: string; actor: string; onBehalfOf?: string; personal: boolean }
 /** conflict null — черновик не прочитан; participants null — приглашённые не прочитаны. */
@@ -95,11 +96,16 @@ export function deriveDocumentStatus(input: StatusInput): DocumentStatusModel {
 
 const dotTone = { neutral: 'bg-kumo-inactive', warning: 'bg-kumo-warning', danger: 'bg-kumo-danger', success: 'bg-kumo-success', info: 'bg-kumo-info' } as const
 
-export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, onPrimary, onSecondary, onOpenVersion }: {
+export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, saving, onPrimary, onSecondary, onOpenVersion, onSaveToProject }: {
   /** Привязка есть, но модели нет — состояние не прочитано, а не «не привязан». */
   model: DocumentStatusModel | null; bound?: boolean; busy?: boolean; disabled?: boolean; versionOpen: boolean
+  /** Идёт автоматическое сохранение в проект: текст состояния. */
+  saving?: string
   onPrimary(kind: PrimaryKind): void; onSecondary(): void; onOpenVersion(): void
+  /** Документ не сохранён в Mnemos: открыть выбор проекта. */
+  onSaveToProject?(): void
 }) {
+  const unsaved = !model && !bound && !busy && !saving
   // Шапка гаджета по макету: одна строка состояния некрупным серым текстом и пилюли действий.
   // Полный текст состояния — во всплывающей подсказке, если строка не помещается.
   const statusText = model ? `${model.version} · ${model.audience} · ${model.saved}` : undefined
@@ -109,12 +115,13 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
         <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone[model.tone]}`} />
         <span className={`min-w-0 max-w-full shrink truncate ${model.tone === 'warning' ? 'text-kumo-warning' : model.tone === 'neutral' ? '' : 'text-kumo-default'}`}>{model.saved}</span>
         <span className="min-w-0 flex-1 truncate text-kumo-inactive">· {model.version} · {model.audience}</span>
-      </> : <span className="truncate">{busy ? 'Читаю состояние в Mnemos…' : bound ? 'Состояние документа не прочитано' : 'Документ не привязан к Mnemos'}</span>}
+      </> : <span className="truncate">{saving ?? (busy ? 'Читаю состояние в Mnemos…' : bound ? 'Состояние документа не прочитано' : 'Не сохранён в Mnemos, версий нет')}</span>}
     </span>
     <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
       className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>
     {model?.secondary && <WorkshopButton className="!h-8 !rounded-full" disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
     {model?.primary && <WorkshopButton tone="primary" className="!h-8 !rounded-full" data-primary-action title={model.primary.hint} disabled={disabled || busy} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
+    {unsaved && onSaveToProject && <WorkshopButton tone="primary" className="!h-8 !rounded-full" data-primary-action title="Документ сохранится в выбранный проект Mnemos как ваш личный черновик; после этого появятся версии, согласование и скачивание в Word." disabled={disabled} onClick={onSaveToProject}>Сохранить в проект…</WorkshopButton>}
   </div>
 }
 
@@ -191,7 +198,11 @@ export const CHANGES_POLL_MS = 10_000
 export type DocumentStatusHandle = ReturnType<typeof useDocumentStatus>
 
 /** Один хук на все факты шапки: черновик, конфликт, приглашённые, заявка, история — теми же RPC, что и секции панели. */
-export function useDocumentStatus({ gadget, format, snapshotSource, chatId, changesPollMs = CHANGES_POLL_MS }: { gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; changesPollMs?: number }) {
+export function useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs = CHANGES_POLL_MS }: {
+  gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number
+  /** Открытая беседа: её проект — место автосохранения, если беседа создания редактора неизвестна. */
+  projectChatId?: number; changesPollMs?: number
+}) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [gadgetId, setGadgetId] = useState<string | number | null>(null)
   const [binding, setBindingState] = useState<DocumentBinding | null>(null)
@@ -200,6 +211,9 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, chan
   const [changes, setChanges] = useState<Changes>('unread')
   const [busy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [tick, setTick] = useState(0)
+  /** Что знает рабочее место о документе Mnemos: привязка на сервере, начатое создание, проект беседы. null — не прочитано. */
+  const [mnemos, setMnemos] = useState<NativeMnemosState | null>(null)
+  const [saving, setSaving] = useState<string | undefined>()
   const source = useRef<{ selector: Selector; downloads: Downloads | null; origin: string } | null>(null)
   const lifetime = useRef(new AbortController())
   const working = useRef(false)
@@ -207,13 +221,20 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, chan
 
   useEffect(() => {
     let cancelled = false
-    setGadgetId(null); setBindingState(null); setData(null); setChanges('unread'); setNotice('')
-    void gadget.getId().then(id => {
+    setGadgetId(null); setBindingState(null); setData(null); setChanges('unread'); setNotice(''); setMnemos(null)
+    void (async () => {
+      const id = await gadget.getId()
+      // Привязка живёт на сервере рабочего места: её видят все вкладки и устройства человека.
+      // Привязка, записанная раньше только во вкладке, переносится туда же.
+      let state: NativeMnemosState | null = null
+      try { state = await gadget.getMnemosDocument(projectChatId) } catch { state = null }
       if (cancelled) return
-      setBindingState(readBinding(bindingKeyFor(id, format))); setGadgetId(id)
-    }).catch(() => {})
+      const local = readBinding(bindingKeyFor(id, format))
+      if (state && !state.binding && local) { state = { ...state, binding: local, creation: null, project: null }; void Promise.resolve(gadget.setMnemosDocument(local)).catch(() => {}) }
+      setMnemos(state); setBindingState(state?.binding ?? local); setGadgetId(id)
+    })().catch(() => {})
     return () => { cancelled = true }
-  }, [gadget, chatId, format])
+  }, [gadget, chatId, format, projectChatId])
 
   useEffect(() => {
     if (!bindingKey) return
@@ -276,6 +297,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, chan
     if (!bindingKey) return
     if (next) sessionStorage.setItem(bindingKey, JSON.stringify(next)); else sessionStorage.removeItem(bindingKey)
     setBindingState(next)
+    // Вкладка хранит копию; источник истины — сервер рабочего места.
+    if (mnemos) void Promise.resolve(gadget.setMnemosDocument(next)).catch(() => {})
   }
   /** Привязка, объявляющая текущую ревизию редактора сохранённой: сначала пишется сама привязка (за ней может идти перезагрузка), потом дочитывается ревизия. */
   async function bindAtEditorRevision(next: DocumentBinding) {
@@ -295,6 +318,95 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, chan
     catch { if (!signal.aborted) setError('Результат не подтверждён. Перечитайте состояние: могли измениться версия, права или решения. Повтор отправки той же версии не создаёт дубликат.') }
     finally { working.current = false; if (!signal.aborted) setBusy(false) }
   }
+  // Автосохранение в проект беседы: документ, таблица или презентация, созданные в беседе с проектом,
+  // сразу получают документ в Mnemos (личный черновик человека) — без этого нет версий. Ждём, пока в
+  // редакторе появится содержимое, чтобы в проект не ушёл пустой «Новый документ». Начатое и
+  // оборвавшееся создание повторяется той же заявкой (creation с квитанцией), без второго документа.
+  const autoResume = !binding && mnemos && gadgetId !== null && mnemos.creation?.receipt ? mnemos.creation : null
+  const autoProject = !binding && mnemos && gadgetId !== null && !autoResume ? mnemos.project : null
+  const autoKey = autoResume ? `resume:${autoResume.claim}` : autoProject ? `project:${autoProject.accountId}:${autoProject.projectId}` : ''
+  useEffect(() => {
+    if (!autoKey || !(changesPollMs > 0)) return
+    const abort = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined, failures = 0
+    const later = (ms = changesPollMs) => { if (!abort.signal.aborted) timer = setTimeout(() => { void attempt() }, ms) }
+    const attempt = async () => {
+      if (working.current || document.visibilityState === 'hidden') return later()
+      let frame: GatekeeperUiFrame | null = null
+      try {
+        const read = snapshotSource.current
+        if (!read) return later()
+        const snapshot = await read(format, abort.signal)
+        if (!autoResume && !nativeTitleSource(format, snapshot.document).hasContent) return later()
+        working.current = true
+        setSaving(autoProject ? `Сохраняю в проект «${autoProject.title}»…` : 'Сохраняю в Mnemos…')
+        // Имя в Mnemos совпадает с названием в шапке редактора: сначала название, потом документ.
+        const title = autoResume ? null : await Promise.resolve(gadget.ensureNativeDocumentTitle(chatId)).catch(() => null)
+        abort.signal.throwIfAborted()
+        const name = autoResume?.name ?? (cleanNativeTitle(title ?? '') || mnemosDocumentName(format, snapshot.document, await Promise.resolve(gadget.getTitle()).catch(() => '')))
+        const accountId = autoResume?.accountId ?? autoProject!.accountId
+        const writes = await openNativeWritesFrame(authenticatedApi, accountId); frame = writes
+        abort.signal.throwIfAborted()
+        const created = await createMnemosDocument({ gadget, writes: { selector: writes.nativeWrites.selector as unknown as Selector, storageOrigin: writes.nativeWrites.storageOrigin },
+          format, snapshotSource, accountId, scope: autoResume?.scope ?? autoProject!.projectId, name, resume: autoResume, signal: abort.signal })
+        if (created) {
+          bind(created)
+          setNotice(autoProject ? `Документ сохранён в проект «${autoProject.title}» как ваш личный черновик. Здесь видны его версии.` : 'Документ сохранён в Mnemos как ваш личный черновик.')
+          return
+        }
+        // Документ создаёт другая вкладка: ждём её привязку.
+        const state = await gadget.getMnemosDocument(projectChatId)
+        if (state.binding) { bind(state.binding); return }
+        later()
+      } catch {
+        if (abort.signal.aborted) return
+        if (++failures < 3) later(changesPollMs * failures * 3)
+        else setError('Документ не сохранился в проект автоматически. Сохраните его кнопкой «Сохранить в проект…».')
+      } finally {
+        working.current = false
+        if (!abort.signal.aborted) setSaving(undefined)
+        disposeGatekeeperFrame(frame)
+      }
+    }
+    void attempt()
+    return () => { abort.abort(); clearTimeout(timer) }
+  }, [autoKey])
+
+  // Выгрузка в Word сохраняет редактор сама — шапка принимает новую привязку.
+  useEffect(() => {
+    if (!bindingKey) return
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent<NativeBindingEventDetail>).detail
+      if (detail?.gadgetId !== gadgetId || detail.format !== format) return
+      sessionStorage.setItem(bindingKey, JSON.stringify(detail.binding)); setBindingState(detail.binding)
+    }
+    window.addEventListener(NATIVE_BINDING_EVENT, listener)
+    return () => window.removeEventListener(NATIVE_BINDING_EVENT, listener)
+  }, [bindingKey, gadgetId, format])
+
+  // Название: документ без названия, в котором появился текст, получает его сам (из заголовка, первой
+  // строки или от быстрой модели), чтобы не оставаться «Новым документом». При автосохранении название
+  // задаёт оно само.
+  const [titled, setTitled] = useState(false)
+  useEffect(() => { setTitled(false) }, [gadget, format])
+  useEffect(() => {
+    if (titled || !mnemos || gadgetId === null || autoKey || !(changesPollMs > 0)) return
+    const abort = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const check = async () => {
+      try {
+        const read = snapshotSource.current
+        if (read && document.visibilityState !== 'hidden') {
+          const source = nativeTitleSource(format, (await read(format, abort.signal)).document)
+          if (source.title || (source.hasContent && await gadget.ensureNativeDocumentTitle(chatId))) { setTitled(true); return }
+        }
+      } catch { if (abort.signal.aborted) return }
+      if (!abort.signal.aborted) timer = setTimeout(() => { void check() }, changesPollMs)
+    }
+    void check()
+    return () => { abort.abort(); clearTimeout(timer) }
+  }, [titled, mnemos, gadgetId, autoKey, format, chatId, changesPollMs])
+
   const refresh = () => setTick(t => t + 1)
   const submit = () => run(async (selector, signal) => {
     if (!binding || !data?.state) return
@@ -321,17 +433,19 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, chan
   const listDocuments = async (scope: string) => (await source.current?.selector.documents(scope, ''))?.documents ?? []
   const comparison = () => source.current ? { selector: source.current.selector, downloads: source.current.downloads, origin: source.current.origin } : null
 
-  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, listScopes, listDocuments, comparison, lifetime }
+  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, saving, suggestedProject: mnemos?.project ?? null, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, listScopes, listDocuments, comparison, lifetime }
 }
 
-export default function DocumentStatus({ gadget, format, snapshotSource, chatId, disabled, panelHost, onCollapseChat, changesPollMs }: {
+export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs }: {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
+  /** Открытая беседа рабочего места: её проект — место автосохранения. */
+  projectChatId?: number
   /** Куда монтировать панель; без него панель рисуется рядом с блоком. */
   panelHost?: Element | null; onCollapseChat?(): void
   /** Период опроса ревизии редактора, мс. */
   changesPollMs?: number
 }) {
-  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, changesPollMs })
+  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs })
   const [panel, setPanel] = useState<{ open: boolean; section: PanelSection | null }>({ open: false, section: null })
   const [launch, setLaunch] = useState<NativeDocumentLaunch | null>(null)
 
@@ -357,8 +471,9 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
     onClose={() => setPanel({ open: false, section: null })} onCollapseChat={onCollapseChat} /> : null
   return <>
     {status.projectLink && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
-    <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open}
-      onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))} />
+    <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open} saving={status.saving}
+      onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))}
+      onSaveToProject={() => setPanel({ open: true, section: 'save' })} />
     {panelHost ? createPortal(panelNode, panelHost) : panelNode}
   </>
 }

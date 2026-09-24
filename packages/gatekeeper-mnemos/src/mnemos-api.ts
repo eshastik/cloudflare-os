@@ -1108,7 +1108,9 @@ export interface OrgUnitDeletion { deleted: true; projects_made_private: number;
 export type InvitationStatus = "open" | "accepted" | "revoked" | "expired";
 export type InvitationRole = "employee" | "head" | "admin";
 export const INVITATION_ROLES: readonly InvitationRole[] = ["employee", "head", "admin"];
-export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; role?: InvitationRole; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string }
+export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; role?: InvitationRole; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string; email_status?: InvitationEmailStatus }
+/** Судьба письма со ссылкой при создании приглашения. */
+export type InvitationEmailStatus = "sent" | "failed" | "not_configured";
 function shortText(value: unknown, max = 255): value is string { return typeof value === "string" && value.length <= max; }
 function validOrgUnit(value: unknown): value is OrgUnit {
   const unit = value as OrgUnit;
@@ -1122,7 +1124,8 @@ function validInvitation(value: unknown): value is OrganizationInvitation {
     (i.org_unit_id === undefined || shortText(i.org_unit_id)) && (i.org_unit_name === undefined || shortText(i.org_unit_name)) &&
     shortText(i.created_by) && shortText(i.created_by_name) && typeof i.created_at === "string" && typeof i.expires_at === "string" &&
     ["open", "accepted", "revoked", "expired"].includes(i.status) && (i.accepted_by === undefined || shortText(i.accepted_by)) &&
-    (i.accepted_by_name === undefined || shortText(i.accepted_by_name)) && (i.role === undefined || INVITATION_ROLES.includes(i.role));
+    (i.accepted_by_name === undefined || shortText(i.accepted_by_name)) && (i.role === undefined || INVITATION_ROLES.includes(i.role)) &&
+    (i.email_status === undefined || ["sent", "failed", "not_configured"].includes(i.email_status));
 }
 
 /** Authorized immutable versions explicitly invited by their owners. */

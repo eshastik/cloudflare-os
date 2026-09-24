@@ -2,7 +2,9 @@ import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi, ChatProjectChoice } from '@gadgets/workshop-shared/api'
 import type { GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { uploadIntakeFile } from '../../gatekeeper-mnemos/src/intake.ts'
-import { collectEntryFiles, type IntakeDroppedFile } from './intakeDrop'
+import { planDirectoryEntry, type IntakeDroppedFile } from './intakeDrop'
+import { isPermanentUploadError, uploadInBatches } from '../../gatekeeper-mnemos/src/upload-batches.ts'
+import type { SkippedGroup } from '../../gatekeeper-mnemos/src/upload-filter.ts'
 import { listAccounts } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 
@@ -15,9 +17,11 @@ import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 
 export type DroppedFolder = {
   name: string
-  // Файлы для загрузки: без служебного содержимого .git и системного мусора.
+  // Файлы для загрузки: без служебных каталогов и файлов (upload-filter.ts) и без правил .gitignore.
   files: IntakeDroppedFile[]
   hasCode: boolean
+  // Что отобрано как служебное; all() отдаёт все файлы папки для «загрузить всё».
+  skipped?: { files: number; more: boolean; groups: SkippedGroup[]; all(): Promise<IntakeDroppedFile[]> }
 }
 
 export type FolderProjectResult = {
@@ -77,11 +81,14 @@ export function uploadableFiles(files: IntakeDroppedFile[]): IntakeDroppedFile[]
 }
 
 export async function readDroppedFolder(entry: FileSystemDirectoryEntry): Promise<DroppedFolder> {
-  const all = await collectEntryFiles(entry)
+  const plan = await planDirectoryEntry(entry)
+  const files = uploadableFiles(plan.files)
   return {
     name: entry.name,
-    files: uploadableFiles(all),
-    hasCode: looksLikeCodeFolder(all.map(f => f.path)),
+    files,
+    // Пропущенный .git тоже говорит о коде: его содержимое не читалось, но сам каталог был.
+    hasCode: looksLikeCodeFolder([...plan.files.map(f => f.path), ...plan.skippedDirs]),
+    ...(plan.skippedFiles ? { skipped: { files: plan.skippedFiles, more: plan.skippedMore, groups: plan.groups, all: async () => uploadableFiles(await plan.allFiles()) } } : {}),
   }
 }
 
@@ -141,31 +148,45 @@ export async function createProjectFromFolder(
   const { frame, accountId } = await openUploadFrame(api)
   try {
     const project = await createWithFreeSlug(frame.ui as unknown as ProjectCreator, folder.name)
-    const uploads = frame.inboxUploads
-    const failed: string[] = []
-    let uploaded = 0
-    for (const [index, { file, path }] of folder.files.entries()) {
-      signal?.throwIfAborted()
-      try {
-        const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
-          const ticket = await uploads.issuer.issue(size, checksum, project.id)
-          if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) {
-            throw new Error('Адрес хранилища не совпадает с настройкой установки')
-          }
-          return ticket
-        }, (url, options) => fetch(url, { ...options, signal }))
-        await uploads.issuer.submit(uploadId, path, file.lastModified, project.id)
-        uploaded++
-      } catch {
-        signal?.throwIfAborted()
-        failed.push(path)
-      }
-      onProgress?.(index + 1, folder.files.length)
-    }
+    const { uploaded, failed } = await uploadIntoProject(frame, project.id, folder.files, onProgress, signal)
     return {
       project: { accountId, projectId: project.id, title: project.name || folder.name, hasCode: false },
       uploaded, failed,
     }
+  } finally {
+    disposeGatekeeperFrame(frame)
+  }
+}
+
+// Файлы в проект пакетами, по несколько параллельно, с повтором временных ошибок (upload-batches.ts).
+async function uploadIntoProject(
+    frame: UploadFrame, projectId: string, files: IntakeDroppedFile[],
+    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[] }> {
+  const uploads = frame.inboxUploads
+  const result = await uploadInBatches({
+    items: files, signal, onProgress, permanent: isPermanentUploadError,
+    upload: async ({ file, path }) => {
+      const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
+        const ticket = await uploads.issuer.issue(size, checksum, projectId)
+        if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) {
+          throw new Error('Адрес хранилища не совпадает с настройкой установки')
+        }
+        return ticket
+      }, (url, options) => fetch(url, { ...options, signal }))
+      await uploads.issuer.submit(uploadId, path, file.lastModified, projectId)
+    },
+  })
+  const failed = new Set(result.failed.map(({ item }) => item.path))
+  return { uploaded: result.done.length, failed: files.filter(({ path }) => failed.has(path)).map(({ path }) => path) }
+}
+
+/** Повтор незагрузившихся файлов в уже созданный проект. */
+export async function retryProjectUpload(
+    api: Api, project: ChatProjectChoice, files: IntakeDroppedFile[],
+    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[] }> {
+  const { frame } = await openUploadFrame(api)
+  try {
+    return await uploadIntoProject(frame, project.projectId, files, onProgress, signal)
   } finally {
     disposeGatekeeperFrame(frame)
   }
@@ -180,6 +201,7 @@ export async function createCodeProjectFromFolder(
     onProgress?: (done: number, total: number) => void,
     signal?: AbortSignal): Promise<FolderProjectResult> {
   const MAX_FILES = 2000, MAX_FILE_BYTES = 4 * 1024 * 1024, MAX_TOTAL_BYTES = 16 * 1024 * 1024
+  // node_modules обычно уже отобран при чтении папки; здесь — на случай «загрузить всё».
   const chosen = folder.files.filter(({ path }) => !inner(path).split('/').includes('node_modules'))
   const total = chosen.reduce((sum, { file }) => sum + file.size, 0)
   if (chosen.length === 0 || chosen.length > MAX_FILES || total > MAX_TOTAL_BYTES || chosen.some(({ file }) => file.size > MAX_FILE_BYTES)) {

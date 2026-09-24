@@ -568,6 +568,8 @@ export interface GatekeeperNativeDocumentCreator extends GatekeeperNativeDocumen
   checkpoint(expectedHead: string, uploadId: string): Promise<string>;
   /** Return the frozen base and upload of a recovered creation. */
   recoveryState(): Promise<{ head: string; uploadId: string }>;
+  /** Документ, созданный этим сохранением; до успешного save — ошибка. */
+  document(): Promise<string>;
 }
 
 /** Frozen office update, authorized again whenever save is retried. */

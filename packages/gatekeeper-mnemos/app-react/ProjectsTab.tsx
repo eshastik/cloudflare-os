@@ -231,7 +231,9 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
       {uploaded.length > 0 && <div className="mb-4 text-[14px]" role="status">
         <p className="m-0 text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
         {uploaded.some(file => file.receipt?.placement_state === "personal") && <p className="m-0 mt-1">Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
-        {uploaded.filter(file => file.error).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
+        {/* Папка может дать тысячи файлов: подробности — по первым, полный итог и повтор показывает оболочка. */}
+        {uploaded.filter(file => file.error).slice(0, 5).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
+        {uploaded.filter(file => file.error).length > 5 && <p className="m-0 mt-1 text-kumo-subtle">Не подтверждено ещё {uploaded.filter(file => file.error).length - 5}.</p>}
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
       {total === 0
