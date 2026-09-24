@@ -259,7 +259,7 @@ function ProjectPeople({ project, data, onOpenSources }: { project: ProjectData;
   const sourceErrors = [mail.error, calendars.error, databases.error].filter(Boolean);
   return (
     <div>
-      <Block title="Участники и направления" count={members.length} empty={policy.error || approvers.error || "Участники не назначены."}>
+      <Block title="Участники" count={members.length} empty={policy.error || approvers.error || "Участники не назначены."}>
         <RowList>{members.map(member => <Row key={member.id}><RowText title={member.name} note={member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"} /></Row>)}</RowList>
       </Block>
       <Block title="Агенты проекта" count={agents.length} empty={data.connectionsError || "Ваших агентов в проекте нет."}>

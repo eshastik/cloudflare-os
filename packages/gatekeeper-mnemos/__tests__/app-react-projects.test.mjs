@@ -24,9 +24,9 @@ test("«Проекты»: страница проекта одним экран�
     await app.until(() => section("Материалы")?.textContent.includes("Заметка команды"), "материалы проекта на той же странице");
     assert.ok(section("Материалы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
     assert.ok(section("Папки")?.textContent.includes("Папка"), "папки проекта");
-    await app.until(() => section("Участники и направления")?.textContent.includes("Кэрол"), "участники из политики");
-    assert.ok(section("Участники и направления").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
-    assert.ok(section("Участники и направления").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
+    await app.until(() => section("Участники")?.textContent.includes("Кэрол"), "участники из политики");
+    assert.ok(section("Участники").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
+    assert.ok(section("Участники").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
     await app.until(() => section("Агенты проекта")?.textContent.includes("Агент AgenticOS") && !section("Агенты проекта").textContent.includes("agent-alice"), "агенты по имени, без идентификатора");
     await app.until(() => section("Согласование")?.textContent.includes("Папка"), "правило по папке");
     assert.ok(section("Согласование").textContent.includes("Все документы проекта"), "правило на весь проект");
@@ -205,6 +205,10 @@ test("Переходы между разделами и проектами не 
     app.button("Второй проект").click();
     await app.until(() => heading("Второй проект"), "второй проект без перезагрузки");
     await app.until(() => app.document.querySelector('#root section[aria-label="Согласование"]'), "блоки сразу после смены проекта");
+    // Выбор проекта уходит в адрес асинхронным вызовом; если он дойдёт после перехода из меню,
+    // адрес вернётся на «Проекты». Ждём его, как ждала бы оболочка, прежде чем переходить дальше.
+    await app.until(() => app.calls.some(([name, section, project]) => name === "openSection" && section === "projects" && project === "two"), "выбор проекта записан в адрес");
+    await new Promise(resolve => setTimeout(resolve, 0));
     app.go("documents");
     await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "раздел из меню");
     app.go("projects", "one", "members");
