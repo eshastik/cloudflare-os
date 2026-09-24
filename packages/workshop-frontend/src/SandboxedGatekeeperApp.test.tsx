@@ -74,6 +74,27 @@ describe("SandboxedGatekeeperApp navigation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("ссылка на документ в адресе: фрейм получает сигнал перечитать выбор; переход в раздел снимает документ", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute();
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId", component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: ["/gatekeepers/mnemos?section=projects&project=p1"] }), routeTree: rootRoute.addChildren([appRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const { port1, port2 } = new MessageChannel();
+    host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "handshake" }, origin: "null", source: iframe.contentWindow, ports: [port2] }));
+    await host.getSelectedSection();
+    const posted = vi.spyOn(iframe.contentWindow!, "postMessage");
+    // Та же страница проекта, в адресе появился только документ — ссылка из хода агента.
+    await act(async () => { await router.navigate({ to: "/gatekeepers/$appId", params: { appId: "mnemos" }, search: { section: "projects", project: "p1", document: "n1" } as never }); });
+    await vi.waitFor(() => expect(posted).toHaveBeenCalledWith({ type: "gatekeeper-location" }, "*"));
+    await act(async () => { await host!.openSection("documents"); await vi.waitFor(() => expect(router.state.location.search).toMatchObject({ section: "documents" })); });
+    expect(router.state.location.search).not.toHaveProperty("document");
+  });
+
   it("routes validated targets and bounded prompts from the iframe host", async () => {
     const frame = {
       iframeHtml: "<!doctype html><title>Scheduler</title>",
@@ -311,6 +332,37 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await until(()=>expect(container!.textContent).toContain("Загружено 3 файла · 7 Б"));
     expect(submitted).toContain("Проект/смета.txt");
     expect(container.textContent).not.toContain("Не загрузилось");
+  });
+  it("отказ приёмной политики: файл «не принят» с причиной, не повторяется и не попадает в «Повторить»", async()=>{
+    const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
+    const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
+    const submits=new Map<string,number>();let count=0;
+    class Issuer extends RpcTarget {
+      issue(size:number,checksum:string){return {upload_id:String(++count),url:"https://storage.example/file",method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
+      submit(_id:string,path:string){
+        submits.set(path,(submits.get(path)??0)+1);
+        // Так ошибку отдаёт приложение Mnemos (uploadFailure): свойства по RPC не доходят, текст — доходит.
+        if(path==="секрет.txt")throw Error("Не принят приёмной политикой [secret]: файлы .env, ключи и сертификаты не загружаются");
+        if(path==="lib.js")throw Error("Не принят приёмной политикой [build]: папки сборки и сторонних библиотек не загружаются");
+        if(path==="битый.txt")throw Error("Mnemos request failed (HTTP 422)");
+        return {outcome:"enqueued",enqueued:true};
+      }
+    }
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:200})));
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
+    const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{files:["договор.txt","секрет.txt","lib.js","битый.txt"].map(name=>new File(["x"],name)),items:[]}});
+    await act(async()=>dragFiles("dragenter"));
+    const until=(check:()=>void)=>vi.waitFor(async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5))});check();},{timeout:3000});
+    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);});
+    await until(()=>expect(container!.querySelector('[data-testid="intake-upload-refused"]')?.textContent).toBe("Не приняты 2: секреты (секрет.txt) — 1, сторонний код (lib.js) — 1."));
+    expect(container.textContent).toContain("Загружено 1 файл");
+    // 422 — настоящий отказ сервера: не повторяется, но показан как «не загрузилось» с повтором.
+    expect(container.textContent).toContain("Не загрузилось 1 файл: битый.txt");
+    expect(Object.fromEntries(submits)).toEqual({"договор.txt":1,"секрет.txt":1,"lib.js":1,"битый.txt":1});
   });
   it("фрейм рисует загрузку сам: сводка без «загрузить всё», ход по байтам, остановка и догрузка остального", async()=>{
     const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");

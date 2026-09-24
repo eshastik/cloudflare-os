@@ -1,4 +1,5 @@
 import { BlueprintTemplates } from "./blueprint-templates.ts";
+import { uploadFailure } from "./upload-batches.ts";
 import { managementSections } from "./management-sections.ts";
 import { inboxCounts } from "./inbox-count.ts";
 import {storedAccountOwner} from './account-identity.ts';
@@ -1229,8 +1230,9 @@ class MnemosAgentDraftWriter extends RpcTarget {
 class MnemosInboxUploadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) {super();this.#session=session;}
-  async issue(size:number,checksum:string,project?:string) {return project ? this.#session.beginProjectUpload(project,size,checksum) : this.#session.beginInboxUpload(size,checksum);}
-  async submit(uploadId:string,sourcePath:string,modifiedAt:number,project?:string) {return project ? this.#session.submitProjectUpload(project,uploadId,sourcePath,modifiedAt) : this.#session.submitInboxUpload(uploadId,sourcePath,modifiedAt);}
+  // Ошибки переводятся в текст (uploadFailure): код состояния и отказ политики иначе теряются по дороге в браузер.
+  async issue(size:number,checksum:string,project?:string) {try{return await (project ? this.#session.beginProjectUpload(project,size,checksum) : this.#session.beginInboxUpload(size,checksum));}catch(error){throw uploadFailure(error);}}
+  async submit(uploadId:string,sourcePath:string,modifiedAt:number,project?:string) {try{return await (project ? this.#session.submitProjectUpload(project,uploadId,sourcePath,modifiedAt) : this.#session.submitInboxUpload(uploadId,sourcePath,modifiedAt));}catch(error){throw uploadFailure(error);}}
   [Symbol.dispose]():void {this.#session.dispose();}
 }
 

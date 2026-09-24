@@ -36,11 +36,48 @@ export type UploadView =
       failed: string[]; failedCount: number;
       /** Не начатые из-за «Остановить». */
       stopped: number;
+      /** Не приняты по правилу установки, по причинам; повтор их не примет. Старый хост поля не шлёт. */
+      refused?: RefusedGroup[];
       /** Файлы легли личными черновиками проекта. */
       personal: boolean;
       note: string;
     }
   | { phase: "error"; id: number; project: string; message: string };
+
+/** Файлы, не принятые по одной причине: подпись, число, примеры имён и объяснение сервера. */
+export interface RefusedGroup { reason: string; label: string; files: number; examples: string[]; detail: string }
+
+const REFUSAL_LABELS: Record<string, string> = { secret: "секреты", build: "сторонний код" };
+/** Папки сборки и сторонних библиотек: по ним пример в подписи — «vendor», а не имя файла внутри. */
+const BUILD_DIRS = new Set(["node_modules", "vendor", "dist", "build", "target", "out", ".venv", "venv", "bower_components", "__pycache__", ".next", ".nuxt", "Pods", "third_party"]);
+
+function refusalExample(reason: string, path: string): string {
+  const parts = path.split("/");
+  if (reason === "build") { const dir = parts.slice(0, -1).find(part => BUILD_DIRS.has(part)); if (dir) return dir; }
+  return parts[parts.length - 1] || path;
+}
+
+/** Отказы по причинам в порядке первого появления; у каждой — до двух примеров. */
+export function groupRefusals(items: readonly { path: string; reason: string; detail: string }[]): RefusedGroup[] {
+  const groups = new Map<string, RefusedGroup>();
+  for (const { path, reason, detail } of items) {
+    let group = groups.get(reason);
+    if (!group) { group = { reason, label: REFUSAL_LABELS[reason] ?? "правило установки", files: 0, examples: [], detail }; groups.set(reason, group); }
+    group.files++;
+    const example = refusalExample(reason, path);
+    if (group.examples.length < 2 && !group.examples.includes(example)) group.examples.push(example);
+    if (!group.detail && detail) group.detail = detail;
+  }
+  return [...groups.values()];
+}
+
+/** «Не приняты 8: секреты (.env) — 1, сторонний код (vendor) — 7». */
+export function refusedLine(groups: readonly RefusedGroup[]): string {
+  const total = groups.reduce((sum, group) => sum + group.files, 0);
+  if (!total) return "";
+  const parts = groups.map(group => `${group.label}${group.examples.length ? ` (${group.examples.join(", ")})` : ""} — ${groupDigits(group.files)}`);
+  return `Не ${total === 1 ? "принят" : "приняты"} ${groupDigits(total)}: ${parts.join(", ")}`;
+}
 
 /** Сколько путей не принятых файлов отдавать фрейму: полный список бывает в тысячи строк. */
 export const FAILED_PATHS_SHOWN = 50;

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowClockwise, FileText, Folder, Plus, Robot, UploadSimple } from "@phosphor-icons/react";
 import type { PickedIntakeFile } from "../src/intake.ts";
+import { groupRefusals, refusedLine } from "../src/upload-progress.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
 import { VISIBILITY_TITLES } from "../src/project-sharing.ts";
 import { useHost, useUi } from "./host.ts";
@@ -22,7 +23,7 @@ const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_revi
 const FILES_SHOWN = 8;
 
 /** Раздел «Проекты»: слева список проектов, справа страница выбранного проекта одним экраном. */
-export default function ProjectsTab({ data, initialProject = "", initialView = "", onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
+export default function ProjectsTab({ data, initialProject = "", initialView = "", linkedDocument = null, onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; linkedDocument?: LinkedDocument | null; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
   // Вкладка каждого проекта переживает возврат из прежних разделов, которые на время заменяют страницу.
@@ -68,7 +69,7 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
         {creating
           ? <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />
           : selected
-            ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} />
+            ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} linkedDocument={selected.id === initialProject ? linkedDocument : null} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} />
             : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
       </div>
     </div>
@@ -82,6 +83,8 @@ function projectNote(project: ProjectData): string {
 }
 
 type ProjectView = "overview" | "materials" | "code" | "tasks" | "people";
+/** Документ проекта из адреса страницы; seq отличает повторный переход по той же ссылке. */
+export type LinkedDocument = { node: string; seq: number };
 /** Имена вкладок в адресе страницы; «Участники» в адресе — members. */
 const ADDRESS: Record<ProjectView, string> = { overview: "overview", materials: "materials", code: "code", tasks: "tasks", people: "members" };
 function viewFromAddress(value: string): ProjectView | null {
@@ -91,7 +94,7 @@ function viewFromAddress(value: string): ProjectView | null {
 
 /** Страница проекта — один экран: заголовок и описание, файлы, что сейчас ждёт решения, кто видит,
  * согласование, источники и код (если подключён). Вкладка из адреса страницы только прокручивает к своему блоку. */
-function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { project: ProjectData; data: MemoryData; view: ProjectView; onView(view: ProjectView): void; onOpenDocuments(): void; onOpenSources(): void }) {
+function ProjectPage({ project, data, view, linkedDocument = null, onOpenDocuments, onOpenSources }: { project: ProjectData; data: MemoryData; view: ProjectView; linkedDocument?: LinkedDocument | null; onView(view: ProjectView): void; onOpenDocuments(): void; onOpenSources(): void }) {
   const ui = useUi();
   const host = useHost();
   const [actionError, setActionError] = useState("");
@@ -122,7 +125,7 @@ function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { 
         <div className="min-w-0">
           {overview.value?.l1 ? <p className="mt-0 mb-7 max-w-[650px] whitespace-pre-line text-[15px] leading-[23px] text-kumo-default">{overview.value.l1}</p>
             : <div className="mb-7"><Notice>{overview.value?.pending ? "Описание проекта готовится по его материалам." : "Описание проекта появится, когда в нём будут материалы."}</Notice></div>}
-          <ProjectFiles project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} />
+          <ProjectFiles project={project} data={data} descriptions={overview.value?.children ?? []} linkedDocument={linkedDocument} onOpenDocuments={onOpenDocuments} />
         </div>
         <div className="min-w-0">
           <ProjectNow project={project} data={data} />
@@ -189,7 +192,7 @@ function ProjectNow({ project, data }: { project: ProjectData; data: MemoryData 
 }
 
 /** «Файлы»: папки и документы проекта. Документ открывается рядом с беседой в своём редакторе. */
-function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { project: ProjectData; data: MemoryData; descriptions: { node_id: string; name: string; is_dir: boolean; l0: string }[]; onOpenDocuments(): void }) {
+function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOpenDocuments }: { project: ProjectData; data: MemoryData; descriptions: { node_id: string; name: string; is_dir: boolean; l0: string }[]; linkedDocument?: LinkedDocument | null; onOpenDocuments(): void }) {
   const host = useHost();
   const [actionError, setActionError] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -218,6 +221,17 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
     setActionError("");
     void host.openNativeDocument(project.id, nodeId).then(opened => { if (!opened) void host.openSection("documents", project.id); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
   }
+  // Ссылка на документ (из хода агента в беседе) открывает его так же, как щелчок в списке, — один раз
+  // на переход. Строка документа выделяется и прокручивается в видимую часть, если она показана.
+  const [highlighted, setHighlighted] = useState("");
+  const openedLink = useRef(0);
+  useEffect(() => {
+    if (!linkedDocument || openedLink.current === linkedDocument.seq) return;
+    openedLink.current = linkedDocument.seq;
+    setHighlighted(linkedDocument.node);
+    openDocument(linkedDocument.node);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedDocument]);
   const ui = useUi();
   // Личные документы других людей в этом проекте, открытые вам: в общих файлах проекта их нет.
   const shared = useLoad(async () => (await ui.listSharedDocuments().catch(() => [])).filter(d => d.project_id === project.id), "", [ui, project.id]);
@@ -225,12 +239,19 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
   const described = useMemo(() => new Map(descriptions.filter(d => d.l0).map(d => [d.node_id, d.l0])), [descriptions]);
   const folders = project.nodes.filter(n => n.is_dir);
   const total = folders.length + materials.length;
+  // Документ по ссылке может лежать дальше первых строк: тогда он всё равно показывается в списке.
+  const linkedRow = highlighted ? materials.find(row => row.nodeId === highlighted) : undefined;
   const shownFolders = all ? folders : folders.slice(0, FILES_SHOWN);
-  const shownFiles = all ? materials : materials.slice(0, Math.max(0, FILES_SHOWN - shownFolders.length));
+  const firstFiles = all ? materials : materials.slice(0, Math.max(0, FILES_SHOWN - shownFolders.length));
+  const shownFiles = linkedRow && !firstFiles.includes(linkedRow) ? [linkedRow, ...firstFiles] : firstFiles;
+  useEffect(() => {
+    if (highlighted) [...document.querySelectorAll("[data-document]")].find(row => row.getAttribute("data-document") === highlighted)?.scrollIntoView?.({ block: "center" });
+  }, [highlighted, !!linkedRow]);
   const name = "block max-w-full truncate border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default hover:text-kumo-brand";
   return (
     <section id="project-materials" aria-label="Файлы" className="mb-7">
-      <SectionTitle title="Файлы" count={materials.length} actions={<>
+      {/* Сервер не отдаёт общего числа: список читается постранично, недочитанный счёт помечен «+». */}
+      <SectionTitle title="Файлы" count={`${materials.length}${project.truncated ? "+" : ""}`} actions={<>
         <Button variant="secondary" size="sm" disabled={busy} icon={<UploadSimple size={15} aria-hidden="true" />} onClick={() => void pick(false)}>Загрузить файлы</Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => void pick(true)}>Выбрать папку</Button>
       </>} />
@@ -238,7 +259,8 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
       {uploading && !upload.live && <p role="status" className="m-0 mb-2 text-[14px] text-kumo-subtle">Загружаем в проект…</p>}
       {actionError && <div className="mb-2"><Notice tone="danger">{actionError}</Notice></div>}
       {uploaded.length > 0 && !upload.live && <div className="mb-4 text-[14px]" role="status">
-        <p className="m-0 text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
+        <p className="m-0 text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error && !file.refused && !file.stopped).length} из {uploaded.length}.</p>
+        {uploaded.some(file => file.refused) && <p className="m-0 mt-1 text-kumo-subtle" data-upload-refused="">{refusedLine(groupRefusals(uploaded.flatMap(file => file.refused ? [{ path: file.path, ...file.refused }] : [])))}.</p>}
         {uploaded.some(file => file.receipt?.placement_state === "personal") && <p className="m-0 mt-1">Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
         {/* Папка может дать тысячи файлов: подробности — по первым, полный итог и повтор показывает оболочка. */}
         {uploaded.filter(file => file.error).slice(0, 5).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
@@ -255,9 +277,9 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
             </ListRow>
           ))}
           {shownFiles.map(row => (
-            <ListRow key={row.nodeId} data-document={row.nodeId} icon={<FileText size={18} />}
+            <ListRow key={row.nodeId} data-document={row.nodeId} aria-current={row.nodeId === highlighted ? "true" : undefined} className={row.nodeId === highlighted ? "rounded-[10px] bg-selection-bg" : ""} icon={<FileText size={18} />}
               meta={row.status.tone === "success" ? undefined : <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>}>
-              <button type="button" className={name} onClick={() => openDocument(row.nodeId)}>{row.name}</button>
+              <button type="button" className={row.nodeId === highlighted ? `${name} font-semibold text-kumo-brand` : name} onClick={() => { setHighlighted(row.nodeId); openDocument(row.nodeId); }}>{row.name}</button>
               {described.get(row.nodeId) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(row.nodeId)}</div>}
             </ListRow>
           ))}
@@ -272,7 +294,7 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
             {!all && total > shownFolders.length + shownFiles.length && <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={() => setAll(true)}>Показать все {total}</button>}
             <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={onOpenDocuments}>Все документы проекта</button>
           </div>
-          {project.truncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показана первая страница проекта; остальное — по ссылке «Все документы проекта».</p>}
+          {project.truncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показаны не все файлы: проект слишком большой для списка на этой странице. Остальное — по ссылке «Все документы проекта».</p>}
         </div>}
     </section>
   );

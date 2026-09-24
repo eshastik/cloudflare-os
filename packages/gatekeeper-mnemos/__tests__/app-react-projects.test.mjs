@@ -235,3 +235,84 @@ test("Переходы между разделами и проектами не 
     assert.ok(app.calls.some(([name, section, project]) => name === "openSection" && section === "projects" && project === "two"), "выбор проекта записан в адрес");
   } finally { app.dispose(); }
 });
+
+const filesSection = app => app.document.querySelector('#root section[aria-label="Файлы"]');
+const filesCount = app => filesSection(app)?.querySelector("h2 + span")?.textContent;
+const nodePage = (from, count) => Array.from({ length: count }, (_, i) => ({ node_id: `n${from + i}`, name: `Документ ${from + i}`, is_dir: false }));
+
+test("«Файлы»: счётчик по всем страницам дерева, а не по первой тысяче узлов", async () => {
+  const cursors = [];
+  const app = await mountMemoryApp({
+    async browseProject(id, cursor) {
+      if (id !== "two") return { nodes: [], truncated: false };
+      cursors.push(cursor);
+      // 3 670 файлов и 30 папок: страницы по 1000 узлов, как отдаёт сервер.
+      if (cursor === "") return { nodes: [...nodePage(0, 970), ...Array.from({ length: 30 }, (_, i) => ({ node_id: `d${i}`, name: `Папка ${i}`, is_dir: true }))], next_cursor: "c1", truncated: true };
+      if (cursor === "c1") return { nodes: nodePage(970, 1000), next_cursor: "c2", truncated: true };
+      if (cursor === "c2") return { nodes: nodePage(1970, 1000), next_cursor: "c3", truncated: true };
+      return { nodes: nodePage(2970, 700), next_cursor: "", truncated: false };
+    },
+  }, { section: "projects", project: "two" });
+  try {
+    await app.until(() => filesCount(app) === "3670", `счётчик 3670, а не ${filesCount(app)}`);
+    assert.deepEqual(cursors, ["", "c1", "c2", "c3"]);
+    assert.ok(!app.text().includes("Показаны не все файлы"));
+    assert.ok(app.text().includes("3670 файлов"), "подпись проекта в списке — тоже полное число");
+  } finally { app.dispose(); }
+});
+
+test("«Файлы»: сверх предела страниц счёт честно помечен «+»", async () => {
+  let pages = 0;
+  const app = await mountMemoryApp({
+    async browseProject(id, cursor) {
+      if (id !== "two") return { nodes: [], truncated: false };
+      pages++;
+      const n = cursor === "" ? 0 : Number(cursor.slice(1));
+      return { nodes: nodePage(n * 1000, 1000), next_cursor: `c${n + 1}`, truncated: true };
+    },
+  }, { section: "projects", project: "two" });
+  try {
+    await app.until(() => filesCount(app) === "10000+", `счётчик 10000+, а не ${filesCount(app)}`);
+    assert.equal(pages, 10);
+    assert.ok(app.text().includes("Показаны не все файлы"));
+  } finally { app.dispose(); }
+});
+
+test("ссылка на документ из хода агента открывает документ, как щелчок в списке, и выделяет его строку", async () => {
+  const app = await mountMemoryApp({
+    async browseProject(id) {
+      if (id !== "two") return { nodes: [], truncated: false };
+      return { nodes: nodePage(0, 20), truncated: false };
+    },
+  }, { section: "projects", project: "two", document: "n15" });
+  try {
+    await app.until(() => app.calls.some(c => c[0] === "openNativeDocument"), "документ по ссылке открыт");
+    assert.deepEqual(app.calls.filter(c => c[0] === "openNativeDocument"), [["openNativeDocument", "two", "n15"]]);
+    // Редактора нет (nativeOpen=false): как и при щелчке, открывается раздел документов проекта.
+    await app.until(() => app.calls.some(c => c[0] === "openSection" && c[1] === "documents"), "запасной переход");
+    assert.deepEqual(app.calls.find(c => c[0] === "openSection"), ["openSection", "documents", "two"]);
+  } finally { app.dispose(); }
+});
+
+test("ссылка на документ: строка выделена и видна, хотя лежит дальше первых строк; повторный сигнал не открывает его снова", async () => {
+  const app = await mountMemoryApp({
+    async browseProject(id) {
+      if (id !== "two") return { nodes: [], truncated: false };
+      return { nodes: nodePage(0, 20), truncated: false };
+    },
+  }, { section: "projects", project: "two", nativeOpen: true });
+  try {
+    await app.until(() => filesSection(app)?.querySelector('[data-document="n0"]'), "список файлов");
+    assert.equal(app.calls.filter(c => c[0] === "openNativeDocument").length, 0, "без документа в адресе ничего не открывается");
+    app.go("projects", "two", "", "n15");
+    await app.until(() => app.calls.some(c => c[0] === "openNativeDocument"), "документ по ссылке открыт");
+    await app.until(() => filesSection(app).querySelector('[data-document="n15"][aria-current="true"]'), "строка документа выделена");
+    // Повторный сигнал с тем же адресом — новый переход по ссылке; без документа — ничего не открывает.
+    app.go("projects", "two", "", "");
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(app.calls.filter(c => c[0] === "openNativeDocument").length, 1);
+    app.go("projects", "two", "", "n3");
+    await app.until(() => app.calls.filter(c => c[0] === "openNativeDocument").length === 2, "второй документ по новой ссылке");
+    assert.deepEqual(app.calls.filter(c => c[0] === "openNativeDocument").at(-1), ["openNativeDocument", "two", "n3"]);
+  } finally { app.dispose(); }
+});

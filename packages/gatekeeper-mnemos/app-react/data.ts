@@ -164,6 +164,26 @@ export function agentEnvironment(connection: AgentConnection): string {
   return "среда не указана";
 }
 
+/** Столько страниц дерева проекта читаем при загрузке раздела: по 1000 узлов, дальше счёт помечается «+». */
+export const PROJECT_PAGES = 10;
+/**
+ * Все узлы проекта по курсору, до PROJECT_PAGES страниц. Сервер не отдаёт общего числа узлов, поэтому
+ * иначе счётчик «Файлы» показывал бы размер первой страницы. truncated — прочитано не всё.
+ */
+export async function browseWholeProject(ui: { browseProject(project: string, cursor: string): Promise<{ nodes: ProjectData["nodes"]; next_cursor?: string; truncated: boolean }> }, project: string, pages = PROJECT_PAGES): Promise<{ nodes: ProjectData["nodes"]; truncated: boolean }> {
+  const nodes: ProjectData["nodes"] = [];
+  let cursor = "";
+  for (let page = 0; page < pages; page++) {
+    const result = await ui.browseProject(project, cursor);
+    nodes.push(...result.nodes);
+    const next = result.next_cursor || "";
+    // Усечение без курсора (обрыв по сроку) или повтор курсора: дальше не прочитать, счёт неполон.
+    if (!next || next === cursor) return { nodes, truncated: result.truncated || next === cursor && !!next };
+    cursor = next;
+  }
+  return { nodes, truncated: true };
+}
+
 async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -286,10 +306,10 @@ export function useMemoryData(ui: Ui): MemoryData {
         setProjects(initial);
         readinessReady();
         await forEachLimited(initial, 4, async project => {
-          const [nodes, privateDocs, draft, absence] = await Promise.allSettled([ui.browseProject(project.id, ""), ui.listPrivateDocuments(project.id, ""), ui.draftState(project.id), ui.readAgentAbsence(project.id)]);
+          const [nodes, privateDocs, draft, absence] = await Promise.allSettled([browseWholeProject(ui, project.id), ui.listPrivateDocuments(project.id, ""), ui.draftState(project.id), ui.readAgentAbsence(project.id)]);
           if (!alive.current) return;
           const patch: Partial<ProjectData> = {};
-          if (nodes.status === "fulfilled") { patch.nodes = nodes.value.nodes; patch.truncated = nodes.value.truncated || !!nodes.value.next_cursor; }
+          if (nodes.status === "fulfilled") { patch.nodes = nodes.value.nodes; patch.truncated = nodes.value.truncated; }
           else patch.nodesError = true;
           if (privateDocs.status === "fulfilled") patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted, contentType: d.content_type }]));
           if (draft.status === "fulfilled") patch.draftState = draft.value;

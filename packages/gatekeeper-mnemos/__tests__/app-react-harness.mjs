@@ -91,7 +91,7 @@ export function defaultMethods(calls) {
 
 export async function mountMemoryApp(overrides = {}, options = {}) {
   const calls = [];
-  let selectedSection = options.section ?? "my-work", selectedProject = options.project ?? "", selectedView = options.view ?? "";
+  let selectedSection = options.section ?? "my-work", selectedProject = options.project ?? "", selectedView = options.view ?? "", selectedDocument = options.document ?? "";
   const methods = { ...defaultMethods(calls), ...overrides };
   // capnweb ищет методы цели на прототипе, а не среди собственных свойств экземпляра.
   class UI extends RpcTarget {}
@@ -103,7 +103,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async setUnsavedChanges(dirty) { calls.push(["setUnsavedChanges",dirty]); }
     async getSelectedProject() { return selectedProject; }
     async getSelectedView() { return selectedView; }
-    async getSelectedDocument() { return options.document ?? ""; }
+    async getSelectedDocument() { return selectedDocument; }
     async selectView(view) { calls.push(["selectView",view]); selectedView = view; setTimeout(locationChanged, 0); }
     async getSelectedSection() { return selectedSection; }
     async getPresentationMode() { return options.presentationMode ?? "page"; }
@@ -187,7 +187,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
   }
   /** Переход из меню оболочки: адрес меняется, фрейм остаётся тем же. */
-  function go(section, project = "", view = "") { selectedSection = section; selectedProject = project; selectedView = view; locationChanged(); }
+  function go(section, project = "", view = "", document = "") { selectedSection = section; selectedProject = project; selectedView = view; selectedDocument = document; locationChanged(); }
   function dispose() {
     dom.window.dispatchEvent(new dom.window.Event("pagehide"));
     frame?.[Symbol.dispose](); dom.window.close();

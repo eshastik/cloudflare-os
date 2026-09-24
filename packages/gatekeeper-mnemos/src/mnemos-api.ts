@@ -93,7 +93,7 @@ export class MnemosAPI {
     try {
       response = await this.#fetch(this.#origin + path, { method, redirect: "manual", cache: "no-store", signal: combined, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     } catch { throw new MnemosAPIError(503); }
-    if (!response.ok) { const code=await safeFailureCode(response); throw new MnemosAPIError(response.status,code); }
+    if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal); }
     if (response.status === 204 && allowNoContent) return undefined as T;
     // Read bounded metadata; files are downloaded directly through separate tickets.
     const reader = response.body?.getReader();
@@ -1087,20 +1087,39 @@ export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 /** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
 export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
-async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|undefined>{
- if(response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
+type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS;
+/** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
+export interface IngestRefusal {reason:string;detail:string}
+/** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
+function publicText(value:unknown):string{return typeof value==='string'?[...value].filter(char=>char.charCodeAt(0)>=32).join('').trim().slice(0,600):'';}
+async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal}|undefined>{
+ if(response.status!==400&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
+ // Отказ политики несёт готовый абзац по-русски, поэтому у 400 предел тела больше.
+ const limit=response.status===400?4096:1024;
  const reader=response.body?.getReader();if(!reader)return undefined;
- try{const chunks:Uint8Array[]=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>1024){await reader.cancel();return undefined;}chunks.push(part.value);}
+ try{const chunks:Uint8Array[]=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>limit){await reader.cancel();return undefined;}chunks.push(part.value);}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   const body:unknown=JSON.parse(new TextDecoder().decode(bytes));
-  if(body&&typeof body==='object'&&'code' in body&&response.status===409&&body.code==='agent.memory_unavailable')return 'agent.memory_unavailable';
-  if(body&&typeof body==='object'&&'code' in body&&response.status===409&&body.code===REVIEW_NOT_REQUIRED)return REVIEW_NOT_REQUIRED;
-  if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='request.rate_limit')return 'request.rate_limit';
-  if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='external_db.query_busy')return 'external_db.query_busy';
-  if(body&&typeof body==='object'&&'code' in body&&typeof body.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(body.code))return body.code as GitFailureCode;
+  if(!body||typeof body!=='object'||!('code' in body))return undefined;
+  const fields=body as {code:unknown;reason?:unknown;detail?:unknown;message?:unknown};
+  if(response.status===400&&fields.code===INGEST_REFUSED){
+   const reason=typeof fields.reason==='string'&&/^[a-z_]{1,32}$/.test(fields.reason)?fields.reason:'';
+   return {code:INGEST_REFUSED,refusal:{reason,detail:publicText(fields.detail)||publicText(fields.message)}};
+  }
+  if(response.status===409&&fields.code==='agent.memory_unavailable')return {code:'agent.memory_unavailable'};
+  if(response.status===409&&fields.code===REVIEW_NOT_REQUIRED)return {code:REVIEW_NOT_REQUIRED};
+  if(response.status===429&&fields.code==='request.rate_limit')return {code:'request.rate_limit'};
+  if(response.status===429&&fields.code==='external_db.query_busy')return {code:'external_db.query_busy'};
+  if(response.status===429&&fields.code===UPLOAD_IN_PROGRESS)return {code:UPLOAD_IN_PROGRESS};
+  if(response.status!==400&&typeof fields.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as GitFailureCode};
  }catch{return undefined;}finally{reader.releaseLock();}
  return undefined;
 }
+/** Файл не принят приёмной политикой установки (400): повтор ничего не изменит. */
+export const INGEST_REFUSED="ingest.refused_by_policy";
+/** В проект ещё загружаются файлы (429): история проекта откроется позже, повтор допустим. */
+export const UPLOAD_IN_PROGRESS="project.upload_in_progress";
+export const UPLOAD_IN_PROGRESS_ERROR="В проект ещё загружаются файлы; повторите через несколько минут";
 export const REQUEST_RATE_ERROR="Request rate limit exceeded";
 /** Отказы операций с кодом, которые клиент показывает человеку своими словами. */
 export const GIT_FAILURE_CODES=["git.merge.no_approver","git.merge.stale","git.merge.not_ready","git.merge.not_responsible","git.merge.not_approved","git.merge.revert_conflict","git.merge.revert_unsupported","git.unavailable"] as const;
@@ -1108,7 +1127,8 @@ export type GitFailureCode=typeof GIT_FAILURE_CODES[number];
 export class MnemosAPIError extends Error {
   readonly status: number;
   readonly code?: string;
-  constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit"|typeof REVIEW_NOT_REQUIRED|GitFailureCode) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; }
+  readonly refusal?: IngestRefusal;
+  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */

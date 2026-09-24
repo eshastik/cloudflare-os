@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PickedIntakeFile } from '../../gatekeeper-mnemos/src/intake.ts'
 import { filesWord, megabytes, skippedFilesPhrase, skippedGroupsText } from '../../gatekeeper-mnemos/src/upload-filter.ts'
 import {
-  FAILED_PATHS_SHOWN, SpeedMeter, bytesText, filesCount, groupDigits, paceLine, progressLine, skippedLine, uploadPercent,
+  FAILED_PATHS_SHOWN, SpeedMeter, bytesText, filesCount, groupDigits, groupRefusals, paceLine, progressLine, refusedLine, skippedLine, uploadPercent,
   type UploadView,
 } from '../../gatekeeper-mnemos/src/upload-progress.ts'
 import { MAX_UPLOAD_FILES, type IntakeDroppedFile, type IntakeUploadPlan } from './intakeDrop'
@@ -19,6 +19,9 @@ export const AUTO_CLOSE_MS = 6000
 /** Ход загрузки обновляется не чаще: тысячи файлов не должны давать тысячи перерисовок. */
 const PROGRESS_INTERVAL_MS = 200
 
+/** Файл, не принятый по правилу установки: повтор его не примет, поэтому он не входит в «Повторить». */
+export interface RefusedFile { path: string; reason: string; detail: string }
+
 /** Ход одного прогона: обработано файлов и байт, отказы, текущий файл. */
 export interface UploadProgress { doneFiles: number; doneBytes: number; failed: number; current: string }
 
@@ -27,7 +30,7 @@ export type IntakeUploadPanelState = Base & (
   | { phase: 'reading' }
   | { phase: 'confirm'; plan: IntakeUploadPlan; choose(choice: 'filtered' | 'all' | null): void }
   | { phase: 'uploading'; files: number; bytes: number; progress: UploadProgress; speed: number; eta: number | null; stopping: boolean; stop(): void }
-  | { phase: 'done'; files: number; accepted: number; acceptedBytes: number; failed: string[]; stopped: number; personal: boolean; note: string; retry: (() => void) | null; resume: (() => void) | null }
+  | { phase: 'done'; files: number; accepted: number; acceptedBytes: number; failed: string[]; refused: RefusedFile[]; stopped: number; personal: boolean; note: string; retry: (() => void) | null; resume: (() => void) | null }
   | { phase: 'error'; message: string }
 )
 
@@ -55,14 +58,16 @@ export async function runIntakeUpload(ui: IntakeUploadUi, plan: IntakeUploadPlan
     afterRun?: () => void): Promise<PickedIntakeFile[]> {
   const files = await ui.choose(plan)
   if (!files?.length) return []
-  const status = new Map<string, 'ok' | 'failed' | 'stopped'>()
+  const status = new Map<string, 'ok' | 'failed' | 'stopped' | 'refused'>()
+  const refusals = new Map<string, { reason: string; detail: string }>()
   let personal = false
   const run = async (list: IntakeDroppedFile[]) => {
     const controller = new AbortController()
     ui.start(list, () => controller.abort(new Error('Загрузка остановлена')))
     const results = await upload(list, progress => ui.progress(progress), controller.signal)
     for (const result of results) {
-      status.set(result.path, result.error ? 'failed' : result.stopped ? 'stopped' : 'ok')
+      status.set(result.path, result.error ? 'failed' : result.stopped ? 'stopped' : result.refused ? 'refused' : 'ok')
+      if (result.refused) refusals.set(result.path, result.refused); else refusals.delete(result.path)
       personal ||= result.receipt?.placement_state === 'personal'
     }
     report()
@@ -82,6 +87,7 @@ export async function runIntakeUpload(ui: IntakeUploadUi, plan: IntakeUploadPlan
     ui.done({
       files: files.length, accepted: accepted.length, acceptedBytes: accepted.reduce((sum, { file }) => sum + file.size, 0),
       failed, stopped: files.filter(({ path }) => status.get(path) === 'stopped').length, personal, note,
+      refused: files.flatMap(({ path }) => { const refused = status.get(path) === 'refused' ? refusals.get(path) : undefined; return refused ? [{ path, ...refused }] : [] }),
       retry: again('failed'), resume: again('stopped'),
     })
   }
@@ -156,7 +162,8 @@ export function useIntakeUploadPanel(options: { autoCloseMs?: number } = {}): { 
       done: result => {
         clearTimers(); run = null
         set({ ...base, phase: 'done', ...result })
-        if (!result.failed.length && !result.stopped && autoClose > 0) {
+        // Итог с отказами не закрывается сам: человек должен увидеть, какие файлы не приняты и почему.
+        if (!result.failed.length && !result.stopped && !result.refused.length && autoClose > 0) {
           const id = base.id
           closer = setTimeout(() => { closer = null; if (stateRef.current?.id === id && stateRef.current.phase === 'done') set(null) }, autoClose)
         }
@@ -180,7 +187,8 @@ export function toUploadView(state: IntakeUploadPanelState | null): UploadView |
     case 'uploading': return { phase: 'uploading', id, project, folder: state.folder, files: state.files, bytes: state.bytes, doneFiles: state.progress.doneFiles,
       doneBytes: state.progress.doneBytes, failed: state.progress.failed, current: state.progress.current, speed: state.speed, eta: state.eta, stopping: state.stopping }
     case 'done': return { phase: 'done', id, project, files: state.files, accepted: state.accepted, acceptedBytes: state.acceptedBytes,
-      failed: state.failed.slice(0, FAILED_PATHS_SHOWN), failedCount: state.failed.length, stopped: state.stopped, personal: state.personal, note: state.note }
+      failed: state.failed.slice(0, FAILED_PATHS_SHOWN), failedCount: state.failed.length, stopped: state.stopped, personal: state.personal, note: state.note,
+      refused: groupRefusals(state.refused) }
     case 'error': return { phase: 'error', id, project, message: state.message }
   }
 }
@@ -237,6 +245,7 @@ export function IntakeUploadPanel({ state, onClose }: { state: IntakeUploadPanel
       return <div>
         <p className="m-0 break-words font-semibold text-kumo-default">Загружено {filesCount(state.accepted)} · {bytesText(state.acceptedBytes)}{state.accepted < state.files ? ` из ${groupDigits(state.files)}` : ''}</p>
         {!failed && !state.stopped && <p className="m-0 mt-1">{state.note}</p>}
+        {state.refused.length > 0 && <p className="m-0 mt-1 break-words text-kumo-subtle" data-testid="intake-upload-refused">{refusedLine(groupRefusals(state.refused))}.</p>}
         {state.stopped > 0 && <p className="m-0 mt-1">Остановлено: не загружено {filesCount(state.stopped)}.</p>}
         {failed > 0 && <p className="m-0 mt-1 break-words text-kumo-danger">Не загрузилось {failed} {filesWord(failed)}: {state.failed.slice(0, 3).join(', ')}{failed > 3 ? '…' : ''}</p>}
         <div className="mt-2 flex flex-wrap gap-2">

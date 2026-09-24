@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { RpcTarget } from "capnweb";
 import { CaretDown, CaretRight, CheckCircle, Folder, UploadSimple, WarningCircle, X } from "@phosphor-icons/react";
 import {
-  bytesText, filesCount, groupDigits, paceLine, progressLine, skippedLine, uploadPercent, wordFor, type UploadView,
+  bytesText, filesCount, groupDigits, paceLine, progressLine, refusedLine, skippedLine, uploadPercent, wordFor, type UploadView,
 } from "../src/upload-progress.ts";
 import { useHost } from "./host.ts";
 import { Button } from "./ui.tsx";
@@ -122,6 +122,7 @@ function target(view: UploadView): string {
 function UploadCard({ value, view, compact = false }: { value: UploadContextValue; view: UploadView; compact?: boolean }) {
   const [skippedOpen, setSkippedOpen] = useState(false);
   const [failedOpen, setFailedOpen] = useState(false);
+  const [refusedOpen, setRefusedOpen] = useState(false);
   switch (view.phase) {
     case "reading":
       return (
@@ -183,6 +184,7 @@ function UploadCard({ value, view, compact = false }: { value: UploadContextValu
       );
     }
     case "done": {
+      const refused = view.refused ?? [];
       const complete = view.failedCount === 0 && view.stopped === 0;
       return (
         <div data-upload="done" className="flex items-start gap-3">
@@ -191,6 +193,22 @@ function UploadCard({ value, view, compact = false }: { value: UploadContextValu
             <p className={titleClass} data-upload-result="">Загружено {filesCount(view.accepted)} · {bytesText(view.acceptedBytes)}</p>
             {complete && <p className={`${noteClass} mt-0.5`}>{view.personal ? "Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать." : view.note}</p>}
             {view.stopped > 0 && <p className={`${noteClass} mt-0.5`}>Остановлено: не загружено {filesCount(view.stopped)} из {groupDigits(view.files)}.</p>}
+            {/* Отказ по правилу установки — решение о файле, а не сбой: без красного и без повтора, с объяснением сервера. */}
+            {refused.length > 0 && <>
+              <button type="button" aria-expanded={refusedOpen} onClick={() => setRefusedOpen(!refusedOpen)}
+                className="mt-1 flex max-w-full cursor-pointer items-start gap-1 border-0 bg-transparent p-0 text-left text-[14px] leading-5 text-kumo-subtle hover:text-kumo-default">
+                <span aria-hidden="true" className="mt-0.5 shrink-0">{refusedOpen ? <CaretDown size={14} /> : <CaretRight size={14} />}</span>
+                <span data-upload-refused="">{refusedLine(refused)}</span>
+              </button>
+              {refusedOpen && <ul aria-label="Почему не приняты" className="m-0 mt-2 ml-[18px] flex list-none flex-col gap-2 border-l border-kumo-fill p-0 pl-3 text-[13px] leading-[18px]">
+                {refused.map(group => (
+                  <li key={group.reason || "other"}>
+                    <span className="text-kumo-default">{group.label[0].toUpperCase() + group.label.slice(1)}: {filesCount(group.files)}</span>
+                    {group.detail && <span className="block text-kumo-subtle">{group.detail}</span>}
+                  </li>
+                ))}
+              </ul>}
+            </>}
             {view.failedCount > 0 && <p className="m-0 mt-0.5 text-[14px] leading-5 text-kumo-danger">
               Не загрузилось {filesCount(view.failedCount)}.{" "}
               <button type="button" aria-expanded={failedOpen} onClick={() => setFailedOpen(!failedOpen)} className="cursor-pointer border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover">{failedOpen ? "Скрыть" : "Показать"}</button>

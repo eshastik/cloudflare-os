@@ -1,4 +1,5 @@
 import { HUMAN_SESSION_MS } from "./human-session.ts";
+import { retryWhileUploading } from "./upload-batches.ts";
 import {validateUploadUsage} from './upload-usage.ts';
 import {CentroidRequests} from './centroid.ts';
 import {ReindexBatches,type ReindexBatch} from './reindex-batch.ts';
@@ -401,12 +402,12 @@ export class MnemosAccountSession {
   async readPublishedHead(project:string) {this.#check();const result=await this.#client.readPublishedHead(project,this.#lifetime.signal);this.#check();return result;}
   async draftState(projectId: string) {
     this.#check();
-    const result = await this.#client.draftState(projectId, this.#lifetime.signal);
+    const result = await retryWhileUploading(() => this.#client.draftState(projectId, this.#lifetime.signal), { signal: this.#lifetime.signal });
     this.#check(); return result;
   }
   async openDraft(projectId: string) {
     this.#check();
-    const result = await this.#client.openDraft(projectId, this.#lifetime.signal);
+    const result = await retryWhileUploading(() => this.#client.openDraft(projectId, this.#lifetime.signal), { signal: this.#lifetime.signal });
     this.#check(); return result;
   }
   async checkTrackerAssignee(project:string,node:string,head:string,principal:string){

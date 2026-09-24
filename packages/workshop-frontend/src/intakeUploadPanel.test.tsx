@@ -42,7 +42,7 @@ describe("уведомление о загрузке в оболочке", () =>
   it("итог без ошибок закрывается сам, с ошибками — остаётся", () => {
     vi.useFakeTimers({ now: 0 });
     const { ui, state } = mount();
-    const done = { files: 2, accepted: 2, acceptedBytes: 10, failed: [] as string[], stopped: 0, personal: false, note: "", retry: null, resume: null };
+    const done = { files: 2, accepted: 2, acceptedBytes: 10, failed: [] as string[], refused: [], stopped: 0, personal: false, note: "", retry: null, resume: null };
     act(() => { ui.reading("p1"); ui.done(done); });
     act(() => { vi.advanceTimersByTime(AUTO_CLOSE_MS - 1); });
     expect(state()?.phase).toBe("done");
@@ -70,5 +70,27 @@ describe("уведомление о загрузке в оболочке", () =>
     await act(async () => { (state() as Extract<IntakeUploadPanelState, { phase: "done" }>).retry!(); await vi.waitFor(() => expect(afterRun).toHaveBeenCalled()); });
     expect(runs).toEqual([["Лев/a", "Лев/b", "Лев/c"], ["Лев/b"]]);
     expect(toUploadView(state())).toMatchObject({ phase: "done", accepted: 3, acceptedBytes: 600, failedCount: 0 });
+  });
+
+  it("отказ по правилу установки — не ошибка: без повтора, с причиной и группировкой, итог не закрывается сам", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const { ui, state } = mount();
+    const files = [file("Лев/.env", 10), file("Лев/vendor/a.js", 20), file("Лев/vendor/b.js", 30), file("Лев/doc.pdf", 40), file("Лев/broken.pdf", 50)];
+    const secret = { reason: "secret", detail: "файлы .env, ключи и сертификаты не загружаются" };
+    const build = { reason: "build", detail: "папки сборки и сторонних библиотек не загружаются" };
+    const upload = vi.fn(async (list: IntakeDroppedFile[]) => list.map(({ path }) =>
+      path.endsWith(".env") ? { path, refused: secret } : path.includes("/vendor/") ? { path, refused: build } : path.endsWith("broken.pdf") ? { path, error: "сбой" } : { path, uploadId: "u" }));
+    await act(async () => { ui.reading("p1"); await runIntakeUpload(ui, plan(files), upload, "готово"); });
+    const view = toUploadView(state());
+    expect(view).toMatchObject({ phase: "done", files: 5, accepted: 1, failed: ["Лев/broken.pdf"], failedCount: 1 });
+    expect((view as { refused: unknown }).refused).toEqual([
+      { reason: "secret", label: "секреты", files: 1, examples: [".env"], detail: secret.detail },
+      { reason: "build", label: "сторонний код", files: 2, examples: ["vendor"], detail: build.detail },
+    ]);
+    // Повтор берёт только настоящий сбой: отказанные файлы сервер всё равно не примет.
+    await act(async () => { (state() as Extract<IntakeUploadPanelState, { phase: "done" }>).retry!(); });
+    expect(upload.mock.calls[1][0].map(f => f.path)).toEqual(["Лев/broken.pdf"]);
+    act(() => { vi.advanceTimersByTime(AUTO_CLOSE_MS * 2); });
+    expect(toUploadView(state())).toMatchObject({ phase: "done", failedCount: 1, refused: [{ files: 1 }, { files: 2 }] });
   });
 });

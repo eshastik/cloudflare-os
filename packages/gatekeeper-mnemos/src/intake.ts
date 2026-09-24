@@ -16,8 +16,8 @@ export interface IntakeAlert {
 export interface IntakeAlerts {alerts:IntakeAlert[];truncated:boolean}
 export interface IntakeDecision {intake_project_id?:string;approve:boolean;place?:string;candidate?:number;note?:string}
 export interface IntakeReceipt {outcome:string;blob_sha256_hex:string;enqueued:boolean;repeat:boolean;deduplicated:boolean;decider:string;notes:string[]}
-/** stopped — файл не загружался: человек остановил загрузку раньше. */
-export interface PickedIntakeFile {path:string;uploadId?:string;error?:string;stopped?:boolean;modifiedAt?:number;receipt?:{outcome:string;enqueued:boolean;placement_state?:string}}
+/** stopped — файл не загружался: человек остановил загрузку раньше. refused — не принят по правилу установки; повтор его не примет. */
+export interface PickedIntakeFile {path:string;uploadId?:string;error?:string;stopped?:boolean;refused?:{reason:string;detail:string};modifiedAt?:number;receipt?:{outcome:string;enqueued:boolean;placement_state?:string}}
 
 function part(value:string):string {
  if(typeof value!=="string" || !value.trim() || value==="." || value===".." || (/[\\/]/.test(value) || [...value].some(char => char.charCodeAt(0) < 32))) throw Error("Недопустимое имя или область");

@@ -3,7 +3,7 @@ import type { AuthenticatedApi, ChatProjectChoice } from '@gadgets/workshop-shar
 import type { GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { uploadIntakeFile } from '../../gatekeeper-mnemos/src/intake.ts'
 import { planDirectoryEntry, type IntakeDroppedFile } from './intakeDrop'
-import { isPermanentUploadError, uploadInBatches } from '../../gatekeeper-mnemos/src/upload-batches.ts'
+import { isPermanentUploadError, isRefusedUpload, uploadInBatches, uploadRefusal } from '../../gatekeeper-mnemos/src/upload-batches.ts'
 import type { SkippedGroup } from '../../gatekeeper-mnemos/src/upload-filter.ts'
 import { listAccounts } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
@@ -28,6 +28,8 @@ export type FolderProjectResult = {
   project: ChatProjectChoice
   uploaded: number
   failed: string[]
+  /** Не приняты по правилу установки (секреты, сторонний код): повтор их не примет. */
+  refused?: { path: string; reason: string; detail: string }[]
 }
 
 export class FolderProjectNotConnected extends Error {
@@ -148,10 +150,10 @@ export async function createProjectFromFolder(
   const { frame, accountId } = await openUploadFrame(api)
   try {
     const project = await createWithFreeSlug(frame.ui as unknown as ProjectCreator, folder.name)
-    const { uploaded, failed } = await uploadIntoProject(frame, project.id, folder.files, onProgress, signal)
+    const { uploaded, failed, refused } = await uploadIntoProject(frame, project.id, folder.files, onProgress, signal)
     return {
       project: { accountId, projectId: project.id, title: project.name || folder.name, hasCode: false },
-      uploaded, failed,
+      uploaded, failed, refused,
     }
   } finally {
     disposeGatekeeperFrame(frame)
@@ -161,10 +163,10 @@ export async function createProjectFromFolder(
 // Файлы в проект пакетами, по несколько параллельно, с повтором временных ошибок (upload-batches.ts).
 async function uploadIntoProject(
     frame: UploadFrame, projectId: string, files: IntakeDroppedFile[],
-    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[] }> {
+    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[]; refused: NonNullable<FolderProjectResult['refused']> }> {
   const uploads = frame.inboxUploads
   const result = await uploadInBatches({
-    items: files, signal, onProgress, permanent: isPermanentUploadError,
+    items: files, signal, onProgress, permanent: isPermanentUploadError, refused: isRefusedUpload,
     upload: async ({ file, path }) => {
       const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
         const ticket = await uploads.issuer.issue(size, checksum, projectId)
@@ -176,14 +178,16 @@ async function uploadIntoProject(
       await uploads.issuer.submit(uploadId, path, file.lastModified, projectId)
     },
   })
-  const failed = new Set(result.failed.map(({ item }) => item.path))
-  return { uploaded: result.done.length, failed: files.filter(({ path }) => failed.has(path)).map(({ path }) => path) }
+  const refused = result.failed.flatMap(({ item, error }) => { const why = uploadRefusal(error); return why ? [{ path: item.path, ...why }] : [] })
+  const refusedPaths = new Set(refused.map(({ path }) => path))
+  const failed = new Set(result.failed.map(({ item }) => item.path).filter(path => !refusedPaths.has(path)))
+  return { uploaded: result.done.length, failed: files.filter(({ path }) => failed.has(path)).map(({ path }) => path), refused }
 }
 
 /** Повтор незагрузившихся файлов в уже созданный проект. */
 export async function retryProjectUpload(
     api: Api, project: ChatProjectChoice, files: IntakeDroppedFile[],
-    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[] }> {
+    onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ uploaded: number; failed: string[]; refused?: FolderProjectResult['refused'] }> {
   const { frame } = await openUploadFrame(api)
   try {
     return await uploadIntoProject(frame, project.projectId, files, onProgress, signal)

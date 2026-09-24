@@ -58,7 +58,7 @@ export function Card({ children, className = "", ...rest }: { children: ReactNod
 }
 
 /** Заголовок секции страницы: 16 px, 600, действия справа. */
-export function SectionTitle({ title, count, actions }: { title: ReactNode; count?: number; actions?: ReactNode }) {
+export function SectionTitle({ title, count, actions }: { title: ReactNode; count?: number | string; actions?: ReactNode }) {
   return (
     <div className="mb-2.5 flex min-h-8 flex-wrap items-center gap-2">
       <h2 className="m-0 text-[16px] leading-[22px] font-semibold text-kumo-default">{title}</h2>

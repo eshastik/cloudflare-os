@@ -117,3 +117,29 @@ test("уведомление переживает смену раздела: п�
     await app.until(() => section(app)?.querySelector('[data-upload="uploading"]') && !floating(app), "снова в блоке «Файлы»");
   } finally { app.dispose(); }
 });
+
+test("итог с отказами политики: «Не приняты» по причинам без красного, объяснение сервера раскрывается, повтор — только для сбоев", async () => {
+  const app = await mountMemoryApp(empty, { section: "projects", project: "two", uploads: { initial: uploading() } });
+  try {
+    await app.until(() => section(app)?.querySelector('[data-upload="uploading"]'), "ход");
+    const secret = "файлы .env, ключи и сертификаты не загружаются: в них могут быть пароли и токены";
+    const build = "папки сборки и сторонних библиотек (node_modules, vendor, dist, build и подобные) не загружаются";
+    await app.pushUpload({ phase: "done", id: 7, project: "two", files: 3670, accepted: 3662, acceptedBytes: 406 * MB, failed: [], failedCount: 0, stopped: 0, personal: false, note: "Материалы добавлены в проект.",
+      refused: [{ reason: "secret", label: "секреты", files: 1, examples: [".env"], detail: secret }, { reason: "build", label: "сторонний код", files: 7, examples: ["vendor"], detail: build }] });
+    await app.until(() => section(app).querySelector('[data-upload="done"]'), "итог");
+    const card = section(app).querySelector('[data-upload="done"]');
+    assert.equal(card.querySelector("[data-upload-refused]").textContent, "Не приняты 8: секреты (.env) — 1, сторонний код (vendor) — 7");
+    assert.equal(card.querySelector(".text-kumo-danger"), null, "отказ — не ошибка: без красного");
+    assert.equal(app.buttons().some(b => b.textContent.startsWith("Повторить")), false, "отказанные файлы не повторяются");
+    assert.equal(card.querySelector('[aria-label="Почему не приняты"]'), null);
+    card.querySelector("[data-upload-refused]").closest("button").click();
+    await app.until(() => card.querySelector('[aria-label="Почему не приняты"]'), "объяснение");
+    const reasons = [...card.querySelectorAll('[aria-label="Почему не приняты"] li')].map(li => li.textContent);
+    assert.deepEqual(reasons, [`Секреты: 1 файл${secret}`, `Сторонний код: 7 файлов${build}`]);
+    // Настоящий сбой рядом с отказами: «Повторить N» считает только сбои.
+    await app.pushUpload({ phase: "done", id: 8, project: "two", files: 3670, accepted: 3660, acceptedBytes: 406 * MB, failed: ["Красноярский лев/a.pdf", "Красноярский лев/b.pdf"], failedCount: 2, stopped: 0, personal: false, note: "",
+      refused: [{ reason: "build", label: "сторонний код", files: 8, examples: ["vendor", "node_modules"], detail: build }] });
+    await app.until(() => app.button("Повторить 2"), "повтор только сбоев");
+    assert.equal(section(app).querySelector("[data-upload-refused]").textContent, "Не приняты 8: сторонний код (vendor, node_modules) — 8");
+  } finally { app.dispose(); }
+});

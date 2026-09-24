@@ -22,6 +22,12 @@ export interface BatchUploadOptions<T, R> {
   retries?: number;
   /** Ошибка, которую бесполезно повторять (файл слишком большой, недопустимое имя). */
   permanent?(error: unknown): boolean;
+  /**
+   * Файл не принят по правилу установки (секреты, сторонний код). Это решение о файле, а не сбой:
+   * не повторяется и не входит в серию отказов подряд — папка vendor из сотен файлов не должна
+   * останавливать загрузку остальных.
+   */
+  refused?(error: unknown): boolean;
   /** Остановиться после стольких отказов подряд; оставшиеся файлы помечаются незагруженными. */
   stopAfterConsecutiveFailures?: number;
   onProgress?(done: number, total: number): void;
@@ -82,6 +88,11 @@ export async function uploadInBatches<T, R>(options: BatchUploadOptions<T, R>): 
         return;
       } catch (error) {
         signal?.throwIfAborted();
+        if (options.refused?.(error)) {
+          failed.push({ item, error });
+          options.onSettled?.(item, error);
+          return;
+        }
         if (tryNo >= retries || options.permanent?.(error) || stopped) {
           failed.push({ item, error });
           options.onSettled?.(item, error);
@@ -112,8 +123,64 @@ export async function uploadInBatches<T, R>(options: BatchUploadOptions<T, R>): 
   return { done, failed, stopped };
 }
 
-/** Ошибки, повтор которых ничего не изменит: локальные проверки файла и пути. */
+/** Отказ приёмной политики, пересёкший RPC: только имя и текст ошибки доходят до браузера. */
+const REFUSAL_PREFIX = "Не принят приёмной политикой";
+const REFUSAL = /^Не принят приёмной политикой \[([a-z_]*)\]: ([\s\S]*)$/;
+/** Ответ сервера с кодом состояния: «… (HTTP 400)». */
+const HTTP_STATUS = /\(HTTP (\d{3})\)$/;
+
+export interface UploadRefusal { reason: string; detail: string }
+
+/**
+ * Ошибка приёма для передачи через RPC. Свойства ошибки (status, code) по дороге теряются, поэтому
+ * всё нужное браузеру кладётся в текст: отказ политики — с причиной и абзацем сервера, прочие ответы
+ * сервера — с кодом состояния.
+ */
+export function uploadFailure(error: unknown): unknown {
+  const failure = error as { message?: unknown; status?: unknown; code?: unknown; refusal?: { reason?: unknown; detail?: unknown } } | null;
+  if (!failure || typeof failure !== "object" || typeof failure.status !== "number") return error;
+  if (failure.code === "ingest.refused_by_policy") {
+    const reason = typeof failure.refusal?.reason === "string" ? failure.refusal.reason : "";
+    const detail = typeof failure.refusal?.detail === "string" ? failure.refusal.detail : "";
+    return new Error(`${REFUSAL_PREFIX} [${reason}]: ${detail}`);
+  }
+  return new Error(`${String(failure.message ?? "Mnemos request failed")} (HTTP ${failure.status})`);
+}
+
+/** Причина отказа политики или undefined, если это не отказ. */
+export function uploadRefusal(error: unknown): UploadRefusal | undefined {
+  const match = REFUSAL.exec(String((error as Error)?.message ?? ""));
+  return match ? { reason: match[1], detail: match[2].trim() } : undefined;
+}
+
+export function isRefusedUpload(error: unknown): boolean {
+  return uploadRefusal(error) !== undefined;
+}
+
+/** Ошибки, повтор которых ничего не изменит: локальные проверки файла и пути, отказы сервера 4xx. */
 export function isPermanentUploadError(error: unknown): boolean {
   const message = String((error as Error)?.message ?? error ?? "");
+  if (isRefusedUpload(error)) return true;
+  const status = HTTP_STATUS.exec(message);
+  // 408, 409, 425 и 429 — «не сейчас», а не «никогда»: их стоит повторить после паузы.
+  if (status) { const code = Number(status[1]); return code >= 400 && code < 500 && ![408, 409, 425, 429].includes(code); }
   return /64 МБ|Недопустимое имя|Слишком длинный путь|Некорректная дата|Некорректный файл|не соответствует файлу|Небезопасный адрес|Адрес хранилища не совпадает/.test(message);
+}
+
+/**
+ * Повтор операции, которую сервер отложил ответом 429 project.upload_in_progress: история проекта
+ * не открывается, пока в него загружаются файлы. Паузы растут; после последней ошибка уходит
+ * вызывающему с понятным текстом.
+ */
+export async function retryWhileUploading<T>(run: () => Promise<T>, options: { pausesMs?: readonly number[]; wait?(ms: number, signal?: AbortSignal): Promise<void>; signal?: AbortSignal } = {}): Promise<T> {
+  const pauses = options.pausesMs ?? [2000, 5000, 10000];
+  const wait = options.wait ?? defaultWait;
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); }
+    catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code !== "project.upload_in_progress" || attempt >= pauses.length) throw error;
+      await wait(pauses[attempt], options.signal);
+    }
+  }
 }

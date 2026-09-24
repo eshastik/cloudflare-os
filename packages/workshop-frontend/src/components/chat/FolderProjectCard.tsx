@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { groupRefusals, refusedLine } from "../../../../gatekeeper-mnemos/src/upload-progress.ts";
 import { FolderSimple, FolderSimpleStar } from "@phosphor-icons/react";
 import type { ChatProjectChoice } from "@gadgets/workshop-shared/api";
 import {
@@ -113,7 +114,7 @@ export function useFolderProject(
         (done, total) => { if (!controller.signal.aborted) setState({ phase: "creating", folder, done, total }); },
         controller.signal);
       if (controller.signal.aborted) return;
-      setState({ phase: "done", folder, result: { ...previous, uploaded: previous.uploaded + again.uploaded, failed: again.failed } });
+      setState({ phase: "done", folder, result: { ...previous, uploaded: previous.uploaded + again.uploaded, failed: again.failed, refused: [...previous.refused ?? [], ...again.refused ?? []] } });
     } catch (error) {
       if (controller.signal.aborted) return;
       setState({ phase: "done", folder, result: previous });
@@ -175,10 +176,11 @@ export function FolderProjectCard({ state, onCreate, onRetry, onDismiss }: {
       text = `Проект «${result.project.title}» создан, загружено ${result.uploaded} ${loadedWord(result.uploaded)}.`;
       const paths = new Set(state.folder.files.map(({ path }) => path));
       const retryable = !!onRetry && result.failed.length > 0 && result.failed.every(path => paths.has(path));
+      const refused = result.refused?.length ? `${refusedLine(groupRefusals(result.refused))}.` : "";
       if (result.failed.length) {
-        note = `Не загрузилось ${result.failed.length} ${countWord(result.failed.length)}: ${result.failed.slice(0, 3).join(", ")}${result.failed.length > 3 ? "…" : ""}`;
+        note = [`Не загрузилось ${result.failed.length} ${countWord(result.failed.length)}: ${result.failed.slice(0, 3).join(", ")}${result.failed.length > 3 ? "…" : ""}`, refused].filter(Boolean).join(" ");
       } else {
-        note = "Проект подключён к беседе.";
+        note = [refused, "Проект подключён к беседе."].filter(Boolean).join(" ");
       }
       actions = <>
         {retryable && <button type="button" className={primary} onClick={() => onRetry!(state.folder, result)}>Повторить</button>}

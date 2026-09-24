@@ -36,6 +36,8 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
   const [panelIntake, setPanelIntake] = useState(false);
   const [selectedProject, setSelectedProject] = useState("");
   const [selectedView, setSelectedView] = useState("");
+  // Документ из адреса (ссылка из хода агента в беседе). seq отличает повторный переход по той же ссылке.
+  const [linkedDocument, setLinkedDocument] = useState<{ node: string; seq: number } | null>(null);
   const [documentsProject, setDocumentsProject] = useState("");
   const [notice, setNotice] = useState("");
   const [compact, setCompact] = useState(false);
@@ -47,9 +49,10 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
     const read = () => {
       const current = ++generation;
       // Старый хост без вкладок в адресе отвечает отказом: тогда открывается вкладка по умолчанию.
-      void Promise.all([host.getSelectedSection().catch(() => ""), host.getSelectedProject().catch(() => ""), host.getPresentationMode().catch(() => "page"), host.getSelectedView().catch(() => "")]).then(([selected, project, mode, view]) => {
+      void Promise.all([host.getSelectedSection().catch(() => ""), host.getSelectedProject().catch(() => ""), host.getPresentationMode().catch(() => "page"), host.getSelectedView().catch(() => ""), host.getSelectedDocument().catch(() => "")]).then(([selected, project, mode, view, node]) => {
         if (cancelled || current !== generation) return;
         setSelectedProject(project); setSelectedView(view); setDocumentsProject(project); setCompact(mode === "panel");
+        setLinkedDocument(node && project ? { node, seq: current } : null);
         setPanelIntake(selected === "intake" && mode === "panel");
         setSection(selected ? resolveSection(selected) : project ? "projects" : "my-work");
       });
@@ -80,7 +83,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
 
   if (section === "projects" && !compact) return <>
     {notice && <p role="alert" className="m-0 px-10 pt-4 text-[14px] text-kumo-danger">{notice}</p>}
-    <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />
+    <ProjectsTab initialProject={selectedProject} initialView={selectedView} linkedDocument={linkedDocument} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />
   </>;
 
   return <div className={compact ? "flex w-full flex-col px-4 py-4" : `mx-auto flex w-full ${(section && WIDTH[section]) ?? "max-w-[1120px]"} flex-col px-4 py-8 sm:px-6 sm:py-12`}>
@@ -89,7 +92,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
     {!section && <p className="m-0 text-[15px] text-kumo-subtle">Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status" className="m-0 text-[15px] text-kumo-subtle">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>
       {section === "my-work" && <MyWorkTab data={data} />}
-      {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />}
+      {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} linkedDocument={linkedDocument} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />}
       {section === "documents" && <DocumentsTab key={documentsProject} data={data} initialProject={documentsProject} />}
       {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} onInvite={() => open("people")} />}
       {section === "people" && <PeopleTab data={data} />}

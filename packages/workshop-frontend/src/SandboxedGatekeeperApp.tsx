@@ -6,7 +6,7 @@ import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
 import {MAX_UPLOAD_FILES, planIntakeDrop, planPickedFiles, type IntakeDroppedFile} from "./intakeDrop"
 import {IntakeUploadPanel, runIntakeUpload, toUploadView, useIntakeUploadPanel, type IntakeUploadPanelState, type IntakeUploadUi, type UploadProgress} from "./intakeUploadPanel"
 import type { UploadView } from "../../gatekeeper-mnemos/src/upload-progress.ts"
-import {isPermanentUploadError, uploadInBatches} from "../../gatekeeper-mnemos/src/upload-batches.ts"
+import {isPermanentUploadError, isRefusedUpload, uploadInBatches, uploadRefusal} from "../../gatekeeper-mnemos/src/upload-batches.ts"
 import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
 import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
@@ -391,11 +391,11 @@ class GatekeeperAppHostImpl extends RpcTarget {
     const active:number[]=[]
     const report=()=>onProgress?.({...progress,current:active.length?files[active[active.length-1]].path:''})
     const run=uploadInBatches({
-      items: files.map((_, index) => index), signal, permanent: isPermanentUploadError,
+      items: files.map((_, index) => index), signal, permanent: isPermanentUploadError, refused: isRefusedUpload,
       onStart: index => { if(!active.includes(index))active.push(index); report() },
       onSettled: (index, error) => {
         const at=active.indexOf(index); if(at>=0)active.splice(at,1)
-        progress.doneFiles++; progress.doneBytes+=files[index].file.size; if(error!==undefined)progress.failed++
+        progress.doneFiles++; progress.doneBytes+=files[index].file.size; if(error!==undefined&&!isRefusedUpload(error))progress.failed++
         report()
       },
       upload: async index => {
@@ -419,7 +419,10 @@ class GatekeeperAppHostImpl extends RpcTarget {
       if (lifetime.aborted || !stop?.aborted) throw error
       return files.map(({ path }, index) => result[index] ?? { path, stopped: true })
     }
-    for (const { item } of outcome.failed) result[item] = { path: files[item].path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' }
+    for (const { item, error } of outcome.failed) {
+      const refused = uploadRefusal(error)
+      result[item] = refused ? { path: files[item].path, refused } : { path: files[item].path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' }
+    }
     return result
   }
 
@@ -804,20 +807,24 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.mailDraftSender,
         frame.calendarDraftCreator,
         // Выбор проекта внутри раздела заменяет адрес, переход в другой раздел — новая запись истории.
-        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, view: undefined, ...(project === undefined ? {} : { project }) }), replace: new URLSearchParams(window.location.search).get('section') === section }) },
+        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, view: undefined, document: undefined, ...(project === undefined ? {} : { project }) }), replace: new URLSearchParams(window.location.search).get('section') === section }) },
         () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
         embeddedIntake,
         async (scope, resource) => {
           if (accountId === undefined || !frame.nativeDownloads) return false
-          return launchNativeDocument(authenticatedApi, frame.nativeDownloads.selector, accountId, scope, resource, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
+          return launchNativeDocument(authenticatedApi, frame.nativeDownloads.selector, accountId, scope, resource, async id => {
+            // Ссылка на документ отработала: без этого «Назад» из редактора снова открыл бы документ по адресу.
+            if (new URLSearchParams(window.location.search).has('document')) await navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, document: undefined }), replace: true })
+            await navigate({to: '/workspace/$id', params: {id}})
+          })
         },
         async (scope,resource,proposal,signal)=>{
           if(!frame.textDownloads)throw Error('Хранилище шаблонов недоступно')
           await launchTemplateProposal(authenticatedApi,frame.textDownloads,scope,resource,proposal,signal,async id=>{await navigate({to:'/workspace/$id',params:{id}})})
         },
-        view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view }), replace: true }) },
+        view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view, document: undefined }), replace: true }) },
         { ui: uploadUi, updated: () => { if (hostRef.current === host) iframeRef.current?.contentWindow?.postMessage({ type: 'mnemos-inbox-updated' }, '*') },
           current: () => uploadCurrent.current(), claimed: () => { if (hostRef.current === host) setFrameShowsUploads(true) } },
         async (scope, owner, resource) => {
@@ -884,7 +891,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   // приложение перечитывает выбор у хоста по этому сигналу и сохраняет загруженные данные.
   const locationKey = useRouterState({ select: state => {
     const search = new URLSearchParams(state.location.searchStr)
-    return `${search.get('section') ?? ''}\n${search.get('project') ?? ''}\n${search.get('view') ?? ''}`
+    return `${search.get('section') ?? ''}\n${search.get('project') ?? ''}\n${search.get('view') ?? ''}\n${search.get('document') ?? ''}`
   } })
   const announcedLocation = useRef(locationKey)
   useEffect(() => {

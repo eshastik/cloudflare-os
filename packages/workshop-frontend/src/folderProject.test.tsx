@@ -116,8 +116,33 @@ describe("создание проекта существующими метод�
     // Файлы идут параллельно: порядок приёма не задан, задан состав.
     expect(submitted.map(s => [s[1], s[3]]).sort()).toEqual([["Отчёты 2026/итог.txt", "p1"], ["Отчёты 2026/смета.txt", "p1"]]);
     expect(progress).toEqual([1, 2]);
-    expect(result).toEqual({ project: { accountId: 7, projectId: "p1", title: "Отчёты 2026", hasCode: false }, uploaded: 2, failed: [] });
+    expect(result).toEqual({ project: { accountId: 7, projectId: "p1", title: "Отчёты 2026", hasCode: false }, uploaded: 2, failed: [], refused: [] });
     expect(frame.ui[Symbol.dispose]).toHaveBeenCalled();
+  });
+
+  it("отказ политики — отдельно от сбоев: без повтора, с причиной; серия отказов не останавливает загрузку", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    const { api, frame, submitted } = fakeApi(async name => ({ project: { id: "p1", name } }));
+    const paths = [...Array.from({ length: 40 }, (_, i) => `Сайт/vendor/lib${i}.js`), "Сайт/.env", "Сайт/итог.txt"];
+    frame.inboxUploads.issuer.submit = async (...args: unknown[]) => {
+      submitted.push(args);
+      const path = String(args[1]);
+      if (path.includes("/vendor/")) throw new Error("Не принят приёмной политикой [build]: папки сборки не загружаются");
+      if (path.endsWith(".env")) throw new Error("Не принят приёмной политикой [secret]: файлы .env не загружаются");
+      return { outcome: "accepted", enqueued: true };
+    };
+    const result = await createProjectFromFolder(api, { name: "Сайт", files: paths.map(at), hasCode: false });
+    expect(result.uploaded).toBe(1);
+    expect(result.failed).toEqual([]);
+    expect(result.refused).toHaveLength(41);
+    expect(result.refused?.find(r => r.path === "Сайт/.env")).toEqual({ path: "Сайт/.env", reason: "secret", detail: "файлы .env не загружаются" });
+    // Каждый файл отправлен один раз: отказ не повторяется, 40 отказов подряд не останавливают загрузку.
+    expect(submitted).toHaveLength(42);
+    const box = document.createElement("div"); const card = createRoot(box);
+    act(() => card.render(<FolderProjectCard state={{ phase: "done", folder: { name: "Сайт", files: paths.map(at), hasCode: false }, result }} onCreate={() => {}} onRetry={() => {}} onDismiss={() => {}} />));
+    expect(box.textContent).toContain("Не приняты 41: сторонний код (vendor) — 40, секреты (.env) — 1.");
+    expect([...box.querySelectorAll("button")].some(b => b.textContent === "Повторить")).toBe(false);
+    act(() => card.unmount());
   });
 
   it("занятое имя — следующий номер; отказ в правах — понятная ошибка", async () => {
