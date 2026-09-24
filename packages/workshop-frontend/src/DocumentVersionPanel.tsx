@@ -7,8 +7,6 @@ import type { GatekeeperNativeDocumentSelector } from '@gadgets/workshop-shared/
 import type { NativeDocumentEditor, NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { WorkshopButton, WorkshopIconButton } from './components/WorkshopControls'
 import { formatAgo, type DocumentStatusHandle, type HistoryEntry } from './DocumentStatus'
-import { useAuthenticatedApi } from './AuthContext'
-import { listAccounts, storesDocuments } from './accountCapabilities'
 import { downloadGatekeeperNativeDocument } from './gatekeeperAppDownload'
 import { reloadPage } from './pageReload'
 import NativeDocumentConflict from './NativeDocumentConflict'
@@ -16,7 +14,6 @@ import NativeDocumentOpen from './NativeDocumentOpen'
 import NativeDocumentSave from './NativeDocumentSave'
 import NativeEditorUpdate from './NativeEditorUpdate'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
-import { createMnemosDocument, mnemosDocumentName } from './nativeMnemosDocument'
 import { compareSnapshots, type ParagraphChange, type Piece, type VersionDiff } from './versionDiff'
 
 export type PanelSection = 'save' | 'conflict' | 'open' | 'bind' | 'share' | 'reopen' | 'restore'
@@ -363,44 +360,45 @@ export function VersionComparison({ diff, labels, onClose }: { diff: VersionDiff
   </section>
 }
 
-/** Документ ещё не в Mnemos: одна кнопка «Сохранить в проект…» и выбор одного проекта. */
-function SaveToProject({ gadget, format, snapshotSource, disabled, status }: { gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; disabled?: boolean; status: DocumentStatusHandle }) {
-  const { authenticatedApi } = useAuthenticatedApi()
+/** Документ ещё не в Mnemos. Документ из беседы с проектом сохраняется туда сам — панель говорит, куда и что
+ *  происходит; выбор проекта нужен, только когда проект неизвестен или человек хочет другой. */
+function SaveToProject({ disabled, status }: { gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; disabled?: boolean; status: DocumentStatusHandle }) {
+  const suggested = status.suggestedProject
   const [open, setOpen] = useState(false), [scopes, setScopes] = useState<{ id: string; name: string }[] | null>(null)
-  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [chosen, setChosen] = useState('')
   useEffect(() => {
     if (!open) return
     let cancelled = false
     status.listScopes().then(list => { if (!cancelled) setScopes(list) }).catch(() => { if (!cancelled) setError('Проекты не прочитаны. Проверьте подключение Mnemos.') })
     return () => { cancelled = true }
   }, [open, status.busy])
-  async function save(scope: string) {
-    const selector = status.selector()
-    if (!selector || busy) return
-    setBusy(true); setError('')
+  async function save(scope: string, accountId?: number) {
+    if (busy) return
+    setBusy(true); setError(''); setChosen(scope)
     const signal = status.lifetime.current.signal
-    try {
-      const accountId = status.suggestedProject?.accountId ?? (await listAccounts(authenticatedApi)).find(storesDocuments)?.id
-      if (accountId === undefined) throw new Error('no account')
-      const read = snapshotSource.current
-      const snapshot = read ? await read(format, signal) : null
-      const name = mnemosDocumentName(format, snapshot?.document, await Promise.resolve(gadget.getTitle()).catch(() => ''))
-      const writes = { selector, storageOrigin: status.writesOrigin() }
-      const created = await createMnemosDocument({ gadget, writes, format, snapshotSource, accountId, scope, name, signal })
-      if (created) status.bind(created)
-      else setError('Документ уже сохраняется в другой вкладке. Обновите страницу через минуту.')
-    } catch { if (!signal.aborted) setError('Документ не сохранился в проект. Повторите попытку.') }
+    try { await status.saveToProject(scope, accountId) }
+    catch { if (!signal.aborted) setError('Документ не сохранился в проект: Mnemos не ответил. Повторите попытку.') }
     finally { if (!signal.aborted) setBusy(false) }
   }
+  const elsewhere = status.creationElsewhere
+  const working = busy || !!status.saving
   return <Section name="save">
     <p className={`m-0 ${rowText}`}>Документ ещё не сохранён в Mnemos. После сохранения появятся версии и доступ для коллег.</p>
-    {!open ? <div><button type="button" className={primaryButton} disabled={disabled} onClick={() => setOpen(true)}>Сохранить в проект…</button></div>
+    {elsewhere ? <p role="status" data-creation-elsewhere="" className={`m-0 ${rowText}`}>
+        Документ уже сохраняет другая ваша вкладка или устройство (с {new Date(elsewhere.since).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}). Когда оно закончится, версии появятся здесь сами.
+      </p>
+      : working ? <p role="status" className={`m-0 ${subText}`}>{status.saving ?? 'Сохраняю…'}</p>
+      : suggested && !open ? <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={primaryButton} disabled={disabled} onClick={() => { void save(suggested.projectId, suggested.accountId) }}>Сохранить в «{suggested.title}»</button>
+        <button type="button" className={pillButton} disabled={disabled} onClick={() => setOpen(true)}>Другой проект…</button>
+      </div>
+      : !open ? <div><button type="button" className={primaryButton} disabled={disabled} onClick={() => setOpen(true)}>Сохранить в проект…</button></div>
       : <div role="list" aria-label="Проекты" className="flex flex-wrap gap-2">
         {scopes === null && !error && <p role="status" className={`m-0 ${subText}`}>Загрузка проектов…</p>}
-        {scopes?.map(s => <button type="button" key={s.id} role="listitem" className={pillButton} disabled={busy || disabled} onClick={() => { void save(s.id) }}>{s.name}</button>)}
+        {scopes?.map(s => <button type="button" key={s.id} role="listitem" aria-pressed={s.id === (chosen || suggested?.projectId)} className={pillButton} disabled={disabled} onClick={() => { void save(s.id) }}>{s.name}</button>)}
         {scopes?.length === 0 && <p className={`m-0 ${subText}`}>Нет проектов, куда можно сохранить.</p>}
       </div>}
-    {busy && <p role="status" className={`m-0 ${subText}`}>Сохраняю…</p>}
+    {suggested && !elsewhere && !working && !error && !status.error && !open && <p className={`m-0 ${subText}`}>Документ создан в беседе проекта «{suggested.title}» и сохраняется туда сам, как только в нём появится текст.</p>}
     {error && <p role="alert" className={`m-0 ${rowText} text-kumo-danger`}>{error}</p>}
   </Section>
 }

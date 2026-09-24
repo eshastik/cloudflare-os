@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { BlueprintOutput } from "@gadgets/workshop-shared/api";
 import {
   MNEMOS_CLAIM_TTL_MS, MNEMOS_RECEIPT_TTL_MS, claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat,
-  recordMnemosReceipt, setMnemosBinding, validateMnemosBinding,
+  recordMnemosReceipt, releaseMnemosCreation, setMnemosBinding, validateMnemosBinding,
 } from "../src/native-mnemos-binding";
 import { ensureNativeTitle, type NativeTitleEditor } from "../src/native-document-title";
 import { nativeEditorCodeLock } from "../src/native-editor-guard";
@@ -43,6 +43,27 @@ describe("автопривязка встроенного документа к 
     // Чужой или сменившийся захват квитанцию не перезаписывает.
     expect(() => recordMnemosReceipt(sealed, "claim-2", "receipt-2")).toThrow();
     expect(() => recordMnemosReceipt(sealed, "claim-1", "receipt-2")).toThrow();
+  });
+
+  it("создание упало до квитанции: захват снимается, и следующая попытка захватывает сразу, без ожидания срока", () => {
+    const first = claimMnemosCreation({}, 7, "project", "Док", T0, "claim-1", "tab-A");
+    const released = releaseMnemosCreation(first.entry, "claim-1");
+    expect(released).toEqual({});
+    expect(claimMnemosCreation(released, 7, "project", "Док", T0 + 1000, "claim-2", "tab-B").creation?.claim).toBe("claim-2");
+    // Чужая метка захвата ничего не снимает; захват с квитанцией не снимается — по нему повторяют заявку.
+    expect(releaseMnemosCreation(first.entry, "claim-x")).toBe(first.entry);
+    const sealed = recordMnemosReceipt(first.entry, "claim-1", "receipt-1");
+    expect(releaseMnemosCreation(sealed, "claim-1")).toBe(sealed);
+  });
+
+  it("вкладка не блокирует сама себя: свой захват без квитанции перехватывается сразу, чужой — нет", () => {
+    const first = claimMnemosCreation({}, 7, "project", "Док", T0, "claim-1", "tab-A");
+    expect(first.creation?.holder).toBe("tab-A");
+    expect(claimMnemosCreation(first.entry, 7, "project", "Док", T0 + 1000, "claim-2", "tab-A").creation?.claim).toBe("claim-2");
+    expect(claimMnemosCreation(first.entry, 7, "project", "Док", T0 + 1000, "claim-2", "tab-B").creation).toBeNull();
+    expect(claimMnemosCreation(first.entry, 7, "project", "Док", T0 + 1000, "claim-2").creation).toBeNull();
+    const sealed = recordMnemosReceipt(first.entry, "claim-1", "receipt-1");
+    expect(claimMnemosCreation(sealed, 7, "project", "Док", T0 + 1000, "claim-2", "tab-A").creation).toBeNull();
   });
 
   it("после привязки создание не захватывается, а привязка переживает любую вкладку", () => {

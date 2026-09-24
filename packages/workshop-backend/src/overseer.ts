@@ -12,7 +12,7 @@ import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, russianTitle, display
 import { maintainAccessLease } from './access-lease.js';
 import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
 import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "./native-editor-update.js";
-import { claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat, recordMnemosReceipt, setMnemosBinding, type MnemosDocumentEntry } from "./native-mnemos-binding.js";
+import { claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat, recordMnemosReceipt, releaseMnemosCreation, setMnemosBinding, type MnemosDocumentEntry } from "./native-mnemos-binding.js";
 import { ensureNativeTitle, titlePrompt, type NativeTitleEditor } from "./native-document-title.js";
 import { nativeFormatForOutput, type NativeMnemosBinding } from "@gadgets/workshop-shared/native-document";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
@@ -9689,11 +9689,17 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
     return mnemosDocumentState(entry, mnemosProjectForChat(meta, userId), Date.now());
   }
 
-  async claimMnemosDocument(accountId: number, scope: string, name: string) {
+  async claimMnemosDocument(accountId: number, scope: string, name: string, holder?: string) {
     const {record, userId, entry} = this.#mnemosEntry();
-    const claimed = claimMnemosCreation(entry, accountId, scope, name, Date.now(), crypto.randomUUID());
+    const claimed = claimMnemosCreation(entry, accountId, scope, name, Date.now(), crypto.randomUUID(), holder);
     if (claimed.creation) this.#putMnemosEntry(record, userId, claimed.entry);
     return claimed.creation;
+  }
+
+  async releaseMnemosDocument(claim: string) {
+    const {record, userId, entry} = this.#mnemosEntry();
+    const next = releaseMnemosCreation(entry, claim);
+    if (next !== entry) this.#putMnemosEntry(record, userId, next);
   }
 
   async recordMnemosDocumentReceipt(claim: string, receipt: string) {
@@ -10032,7 +10038,8 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
   async getNativeEditorUpdate() { return null; }
   async applyNativeEditorUpdate(_codeVersion: number, _revision: number): Promise<void> { this.#deny(); }
   async getMnemosDocument(_chatId?: number): Promise<never> { this.#deny(); }
-  async claimMnemosDocument(_accountId: number, _scope: string, _name: string): Promise<never> { this.#deny(); }
+  async claimMnemosDocument(_accountId: number, _scope: string, _name: string, _holder?: string): Promise<never> { this.#deny(); }
+  async releaseMnemosDocument(_claim: string): Promise<void> { this.#deny(); }
   async recordMnemosDocumentReceipt(_claim: string, _receipt: string): Promise<void> { this.#deny(); }
   async setMnemosDocument(_binding: NativeMnemosBinding | null): Promise<void> { this.#deny(); }
   async ensureNativeDocumentTitle(_chatId?: number): Promise<never> { this.#deny(); }

@@ -7,8 +7,13 @@ import { downloadGatekeeperOffice } from './gatekeeperAppDownload'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
-type Gadget = Pick<RpcStub<GadgetClient>, 'claimMnemosDocument' | 'recordMnemosDocumentReceipt' | 'setMnemosDocument'>
+type Gadget = Pick<RpcStub<GadgetClient>, 'claimMnemosDocument' | 'recordMnemosDocumentReceipt' | 'setMnemosDocument'> & Partial<Pick<RpcStub<GadgetClient>, 'releaseMnemosDocument'>>
 export type WritesSource = { selector: Selector; storageOrigin: string }
+
+/** Метка этой загрузки страницы для захвата создания: свой захват вкладка перехватывает сразу.
+ *  Не sessionStorage: дубликат вкладки получил бы ту же метку и создал бы второй документ. */
+export const TAB_HOLDER: string = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+  ? crypto.randomUUID() : `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 
 /** Ревизия редактора из снимка; undefined — ревизии в снимке нет. */
 export function snapshotRevision(document: unknown): number | undefined {
@@ -31,9 +36,9 @@ export function mnemosDocumentName(format: NativeDocumentFormat, document: unkno
  * созданный документ. Правки не теряются: в Mnemos уходит снимок, который редактор выгрузил на
  * подтверждённой ревизии; всё, что пришло позже, шапка покажет как несохранённое.
  */
-export async function createMnemosDocument({ gadget, writes, format, snapshotSource, accountId, scope, name, resume, signal }: {
+export async function createMnemosDocument({ gadget, writes, format, snapshotSource, accountId, scope, name, resume, signal, holder = TAB_HOLDER }: {
   gadget: Gadget; writes: WritesSource; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef
-  accountId: number; scope: string; name: string; resume?: NativeMnemosCreation | null; signal: AbortSignal
+  accountId: number; scope: string; name: string; resume?: NativeMnemosCreation | null; signal: AbortSignal; holder?: string
 }): Promise<NativeMnemosBinding | null> {
   if (resume?.receipt) {
     using writer = await writes.selector.resumeCreation(resume.receipt, format)
@@ -44,23 +49,31 @@ export async function createMnemosDocument({ gadget, writes, format, snapshotSou
     await gadget.setMnemosDocument(binding)
     return binding
   }
-  const claim = await gadget.claimMnemosDocument(accountId, scope, name)
+  const claim = await gadget.claimMnemosDocument(accountId, scope, name, holder)
   if (!claim) return null
-  signal.throwIfAborted()
-  using writer = await writes.selector.create(scope, claim.name, format)
-  const head = await writer.head(); signal.throwIfAborted()
-  const read = snapshotSource.current
-  if (!read) throw new Error('Editor is not ready')
-  const snapshot = await read(format, signal); signal.throwIfAborted()
-  const revision = snapshotRevision(snapshot.document)
-  const upload = await uploadGatekeeperNativeDocument(snapshot, format, writes.storageOrigin, (size, checksum) => writer.issue(head, size, checksum), signal)
-  signal.throwIfAborted()
-  const receipt = await writer.checkpoint(head, upload)
-  await gadget.recordMnemosDocumentReceipt(claim.claim, receipt)
-  const saved = await writer.save(head, upload)
-  const binding: NativeMnemosBinding = { accountId, scope, resource: await writer.document(), ...(revision !== undefined ? { savedRevision: revision } : {}), ...(/^[a-f0-9]{64}$/.test(saved) ? { savedHead: saved } : {}) }
-  await gadget.setMnemosDocument(binding)
-  return binding
+  let receipt: string | undefined
+  try {
+    signal.throwIfAborted()
+    using writer = await writes.selector.create(scope, claim.name, format)
+    const head = await writer.head(); signal.throwIfAborted()
+    const read = snapshotSource.current
+    if (!read) throw new Error('Editor is not ready')
+    const snapshot = await read(format, signal); signal.throwIfAborted()
+    const revision = snapshotRevision(snapshot.document)
+    const upload = await uploadGatekeeperNativeDocument(snapshot, format, writes.storageOrigin, (size, checksum) => writer.issue(head, size, checksum), signal)
+    signal.throwIfAborted()
+    const sealed = await writer.checkpoint(head, upload)
+    await gadget.recordMnemosDocumentReceipt(claim.claim, sealed); receipt = sealed
+    const saved = await writer.save(head, upload)
+    const binding: NativeMnemosBinding = { accountId, scope, resource: await writer.document(), ...(revision !== undefined ? { savedRevision: revision } : {}), ...(/^[a-f0-9]{64}$/.test(saved) ? { savedHead: saved } : {}) }
+    await gadget.setMnemosDocument(binding)
+    return binding
+  } catch (error) {
+    // До квитанции ничего не отправлено: захват снимается сразу, иначе следующая попытка — своя или
+    // другой вкладки — упиралась бы в него до конца срока. С квитанцией захват остаётся для повтора заявки.
+    if (receipt === undefined) await Promise.resolve(gadget.releaseMnemosDocument?.(claim.claim)).catch(() => {})
+    throw error
+  }
 }
 
 /** Документ изменил другой человек после версии, от которой правит редактор. Правка не записана и остаётся в редакторе. */

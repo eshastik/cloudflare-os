@@ -38,15 +38,26 @@ function stale(creation: NativeMnemosCreation, now: number) {
   return now - creation.at > (creation.receipt ? MNEMOS_RECEIPT_TTL_MS : MNEMOS_CLAIM_TTL_MS) || creation.at > now;
 }
 
-/** Захват создания. null — документ уже привязан или создание ведёт другая вкладка. */
+/** Захват создания. null — документ уже привязан или создание ведёт другая вкладка.
+ *  holder — метка загрузки вкладки: свой захват без квитанции вкладка перехватывает сразу, не дожидаясь
+ *  срока. Иначе вкладка, у которой создание упало, пока освобождение не дошло, блокировала бы саму себя. */
 export function claimMnemosCreation(entry: MnemosDocumentEntry, accountId: number, scope: string, name: string,
-    now: number, claim: string): {entry: MnemosDocumentEntry; creation: NativeMnemosCreation | null} {
-  if (!Number.isSafeInteger(accountId) || !text(scope, 255) || !text(name.trim(), 255) || /[/\\\0]/.test(name)) {
+    now: number, claim: string, holder?: string): {entry: MnemosDocumentEntry; creation: NativeMnemosCreation | null} {
+  if (!Number.isSafeInteger(accountId) || !text(scope, 255) || !text(name.trim(), 255) || /[/\\\0]/.test(name) ||
+      !(holder === undefined || text(holder, 128))) {
     throw new Error("Invalid document creation.");
   }
-  if (entry.binding || (entry.creation && !stale(entry.creation, now))) return {entry, creation: null};
-  let creation: NativeMnemosCreation = {claim, accountId, scope, name: name.trim(), at: now};
+  const own = !!holder && entry.creation?.holder === holder && !entry.creation.receipt;
+  if (entry.binding || (entry.creation && !own && !stale(entry.creation, now))) return {entry, creation: null};
+  let creation: NativeMnemosCreation = {claim, accountId, scope, name: name.trim(), at: now, ...(holder ? {holder} : {})};
   return {entry: {creation}, creation};
+}
+
+/** Снять захват, по которому ничего не отправлено (нет квитанции): создание упало или вкладку закрыли.
+ *  Захват с квитанцией остаётся — по нему любая вкладка повторяет ту же заявку без второго документа. */
+export function releaseMnemosCreation(entry: MnemosDocumentEntry, claim: string): MnemosDocumentEntry {
+  if (entry.binding || !entry.creation || entry.creation.claim !== claim || entry.creation.receipt) return entry;
+  return {};
 }
 
 export function recordMnemosReceipt(entry: MnemosDocumentEntry, claim: string, receipt: string): MnemosDocumentEntry {

@@ -16,7 +16,7 @@ import DocumentSharePanel from './DocumentSharePanel'
 import { nativeOpenKey, readPendingNativeOpen } from './NativeDocumentOpen'
 import { CANDIDATE_PUBLISHED_NOTICE, loadPublication, publishCandidate, reviewKey, type PublicationState } from './NativeDocumentPublication'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
-import { NATIVE_BINDING_EVENT, createMnemosDocument, isDocumentChanged, mnemosDocumentName, sameNativeContent, saveToMnemosDocument, type NativeBindingEventDetail } from './nativeMnemosDocument'
+import { NATIVE_BINDING_EVENT, TAB_HOLDER, createMnemosDocument, isDocumentChanged, mnemosDocumentName, sameNativeContent, saveToMnemosDocument, type NativeBindingEventDetail } from './nativeMnemosDocument'
 
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
 type Downloads = RpcStub<GatekeeperNativeDocumentSelector>
@@ -335,6 +335,12 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   /** Что знает рабочее место о документе Mnemos: привязка на сервере, начатое создание, проект беседы. null — не прочитано. */
   const [mnemos, setMnemos] = useState<NativeMnemosState | null>(null)
   const [saving, setSaving] = useState<string | undefined>()
+  /** Документ создаёт другая вкладка или устройство человека: с какого времени. Шапка ждёт и продолжает сама. */
+  const [creationElsewhere, setCreationElsewhere] = useState<{ since: number } | null>(null)
+  /** Идущее в этой вкладке создание документа в Mnemos: автосохранение и кнопка панели разделяют одну попытку. */
+  const creating = useRef<Promise<DocumentBinding | null> | null>(null)
+  /** Проект, выбранный в панели, пока документ создаёт другая вкладка: когда её захват снимется, сохраняем сюда сами. */
+  const wanted = useRef<{ scope: string; accountId?: number } | null>(null)
   /** Сохранение отклонено: документ изменил другой человек. Сбрасывается открытием новой версии. */
   const [changedByOther, setChangedByOther] = useState(false)
   /** Последнее сохранение не прошло; сбрасывается удачным сохранением или другим документом. */
@@ -366,7 +372,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
 
   useEffect(() => {
     let cancelled = false
-    setGadgetId(null); setBindingState(null); setData(null); setChanges('unread'); setNotice(''); setMnemos(null)
+    setGadgetId(null); setBindingState(null); setData(null); setChanges('unread'); setNotice(''); setMnemos(null); setCreationElsewhere(null); wanted.current = null
     void (async () => {
       const id = await gadget.getId()
       // Привязка живёт на сервере рабочего места: её видят все вкладки и устройства человека.
@@ -377,6 +383,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
       const local = readBinding(bindingKeyFor(id, format))
       if (state && !state.binding && local) { state = { ...state, binding: local, creation: null, project: null }; void Promise.resolve(gadget.setMnemosDocument(local)).catch(() => {}) }
       setMnemos(state); setBindingState(state?.binding ?? local); setGadgetId(id)
+      // Создание без квитанции начато в другой вкладке: панель сразу говорит об этом и ждёт её.
+      if (state?.creation && !state.binding && !local && !state.creation.receipt && state.creation.holder !== TAB_HOLDER) setCreationElsewhere({ since: state.creation.at })
     })().catch(() => {})
     return () => { cancelled = true }
   }, [gadget, chatId, format, projectChatId])
@@ -482,6 +490,62 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     catch { if (!signal.aborted) setError('Результат не подтверждён. Перечитайте состояние: могли измениться версия, права или решения. Повтор отправки той же версии не создаёт дубликат.') }
     finally { working.current = false; if (!signal.aborted) setBusy(false) }
   }
+  /** Одна попытка создания на вкладку: второй заказ ждёт первый, а не упирается в захват своей же вкладки. */
+  function createOnce(start: () => Promise<DocumentBinding | null>): Promise<DocumentBinding | null> {
+    if (creating.current) return creating.current
+    const next = start().finally(() => { if (creating.current === next) creating.current = null })
+    creating.current = next
+    return next
+  }
+  /** Захват создания держит другая вкладка: прочитать состояние рабочего места и ждать её. */
+  async function awaitOtherCreation(): Promise<DocumentBinding | null> {
+    const state = await gadget.getMnemosDocument(projectChatId)
+    if (state.binding) { setCreationElsewhere(null); await bind(state.binding); setMnemos(state); return state.binding }
+    // Квитанция есть — заявку повторит и эта вкладка (без второго документа): состояние обновляется ради неё.
+    if (state.creation?.receipt) setMnemos(state)
+    setCreationElsewhere({ since: state.creation?.at ?? Date.now() })
+    return null
+  }
+  /** «Сохранить в проект»: создать документ в выбранном проекте. null — его уже создаёт другая вкладка; шапка дождётся её. */
+  async function saveToProject(scope: string, accountId?: number): Promise<DocumentBinding | null> {
+    const writes = source.current
+    if (!writes) throw new Error('Mnemos недоступен')
+    const signal = lifetime.current.signal
+    const created = await createOnce(async () => {
+      const account = accountId ?? mnemos?.project?.accountId ?? (await listAccounts(authenticatedApi)).find(storesDocuments)?.id
+      if (account === undefined) throw new Error('no account')
+      const read = snapshotSource.current
+      const snapshot = read ? await read(format, signal) : null
+      const name = mnemosDocumentName(format, snapshot?.document, await Promise.resolve(gadget.getTitle()).catch(() => ''))
+      return createMnemosDocument({ gadget, writes: { selector: writes.selector, storageOrigin: writes.writesOrigin }, format, snapshotSource, accountId: account, scope, name, signal })
+    })
+    if (created) { wanted.current = null; setCreationElsewhere(null); await bind(created); return created }
+    wanted.current = { scope, accountId }
+    return awaitOtherCreation()
+  }
+  const latest = useRef({ bind, saveToProject })
+  latest.current = { bind, saveToProject }
+  // Пока документ создаёт другая вкладка, рабочее место опрашивается: её привязка подхватывается сама,
+  // а снятый или истёкший захват запускает сохранение в выбранный здесь проект.
+  useEffect(() => {
+    if (!creationElsewhere || binding || !(changesPollMs > 0)) return
+    let stopped = false, inFlight = false
+    const timer = setInterval(() => {
+      if (inFlight) return
+      inFlight = true
+      void (async () => {
+        const state = await gadget.getMnemosDocument(projectChatId)
+        if (stopped) return
+        if (state.binding) { setCreationElsewhere(null); setMnemos(state); await latest.current.bind(state.binding); return }
+        if (state.creation && !state.creation.receipt) return
+        setCreationElsewhere(null); setMnemos(state)
+        const next = wanted.current
+        if (next && !state.creation) await latest.current.saveToProject(next.scope, next.accountId)
+      })().catch(() => {}).finally(() => { inFlight = false })
+    }, changesPollMs)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [creationElsewhere, binding, gadget, projectChatId, changesPollMs])
+
   // Автосохранение в проект беседы: документ, таблица или презентация, созданные в беседе с проектом,
   // сразу получают документ в Mnemos (личный черновик человека) — без этого нет версий. Ждём, пока в
   // редакторе появится содержимое, чтобы в проект не ушёл пустой «Новый документ». Начатое и
@@ -511,21 +575,23 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
         const accountId = autoResume?.accountId ?? autoProject!.accountId
         const writes = await openNativeWritesFrame(authenticatedApi, accountId); frame = writes
         abort.signal.throwIfAborted()
-        const created = await createMnemosDocument({ gadget, writes: { selector: writes.nativeWrites.selector as unknown as Selector, storageOrigin: writes.nativeWrites.storageOrigin },
-          format, snapshotSource, accountId, scope: autoResume?.scope ?? autoProject!.projectId, name, resume: autoResume, signal: abort.signal })
+        const created = await createOnce(() => createMnemosDocument({ gadget, writes: { selector: writes.nativeWrites.selector as unknown as Selector, storageOrigin: writes.nativeWrites.storageOrigin },
+          format, snapshotSource, accountId, scope: autoResume?.scope ?? autoProject!.projectId, name, resume: autoResume, signal: abort.signal }))
         if (created) {
+          setCreationElsewhere(null)
           bind(created)
           setNotice(autoProject ? `Документ сохранён в проект «${autoProject.title}» как ваш личный черновик. Здесь видны его версии.` : 'Документ сохранён в Mnemos как ваш личный черновик.')
           return
         }
         // Документ создаёт другая вкладка: ждём её привязку.
-        const state = await gadget.getMnemosDocument(projectChatId)
-        if (state.binding) { bind(state.binding); return }
+        if (await awaitOtherCreation()) return
         later()
       } catch {
         if (abort.signal.aborted) return
+        // Создание могло упасть после квитанции: следующая попытка повторяет ту же заявку, а не захватывает заново.
+        void Promise.resolve(gadget.getMnemosDocument(projectChatId)).then(state => { if (!abort.signal.aborted && state.creation?.receipt && !mnemos?.creation?.receipt) setMnemos(state) }, () => {})
         if (++failures < 3) later(changesPollMs * failures * 3)
-        else setError('Документ не сохранился в проект автоматически. Сохраните его кнопкой «Сохранить в проект…».')
+        else setError(autoProject ? `Документ не сохранился в проект «${autoProject.title}» автоматически: Mnemos не ответил. Повторите сохранение в панели «Версии».` : 'Документ не сохранился в Mnemos автоматически: Mnemos не ответил. Повторите сохранение в панели «Версии».')
       } finally {
         working.current = false
         if (!abort.signal.aborted) setSaving(undefined)
@@ -678,7 +744,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   /** Открыта новая версия документа: чужая правка принята, можно снова сохранять. */
   const reopened = () => setChangedByOther(false)
 
-  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, flash, saving, changedByOther, suggestedProject: mnemos?.project ?? null, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
+  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, flash, saving, changedByOther, suggestedProject: mnemos?.project ?? null, creationElsewhere, saveToProject, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
 }
 
 export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs, flashMs }: {
@@ -733,7 +799,7 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
     onClose={() => setPanel({ open: false, section: null })} onCollapseChat={onCollapseChat} /> : null
   return <>
     {status.projectLink && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
-    <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open} saving={status.saving} flash={status.flash || undefined}
+    <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open} saving={status.saving ?? (status.creationElsewhere && !status.binding ? 'Сохраняет другая ваша вкладка…' : undefined)} flash={status.flash || undefined}
       error={panel.open ? undefined : status.error || undefined}
       onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))}
       onSaveToProject={() => setPanel({ open: true, section: 'save' })} />

@@ -2970,7 +2970,9 @@ export interface GadgetClient extends WorkpieceClient {
    *  chatId — открытая беседа; её проект берётся, если беседа создания редактора неизвестна. */
   getMnemosDocument(chatId?: number): Promise<import('./native-document.js').NativeMnemosState>;
   /** Захватить создание документа в Mnemos. null — документ уже привязан или его создаёт другая вкладка. */
-  claimMnemosDocument(accountId: number, scope: string, name: string): Promise<import('./native-document.js').NativeMnemosCreation | null>;
+  claimMnemosDocument(accountId: number, scope: string, name: string, holder?: string): Promise<import('./native-document.js').NativeMnemosCreation | null>;
+  /** Снять свой захват без квитанции: создание упало или вкладку закрыли. */
+  releaseMnemosDocument(claim: string): Promise<void>;
   /** Запомнить квитанцию замороженного создания, чтобы повтор после сбоя не создал второй документ. */
   recordMnemosDocumentReceipt(claim: string, receipt: string): Promise<void>;
   /** Записать привязку (null — снять); начатое создание при этом завершается. */
