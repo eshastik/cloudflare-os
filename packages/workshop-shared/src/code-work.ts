@@ -55,6 +55,9 @@ export type AgentStep = {
 
 export type ChangedFile = {path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number};
 
+/** «Что изменилось» в одном репозитории проекта; name — имя репозитория для человека, пути — внутри него. */
+export type CodeChangesRepository = {name: string; files: ChangedFile[]; diff: string; truncated: boolean};
+
 /** Итог одного хода работы с кодом: то, что видит агент беседы и человек. */
 export type CodeWorkOutput = {
   taskId: string;
@@ -65,6 +68,8 @@ export type CodeWorkOutput = {
   answer: string;
   changedFiles: ChangedFile[];
   durationMs: number;
+  /** Человек остановил ответ агента кода; работа с кодом осталась живой. */
+  interrupted?: boolean;
 };
 
 export const MAX_CHAT_PROJECTS = 8;
@@ -122,6 +127,9 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
     // попадать в его ответ человеку; projectId нужен для следующих вызовов инструментов.
     `Работа с кодом проекта «${output.projectTitle}» (projectId для инструментов: ${output.projectId}), состояние: ${output.state}.`,
   ];
+  if (output.interrupted) {
+    lines.push("", "Человек остановил ответ агента кода. Работа с кодом не закрыта и продолжится по следующему сообщению человека. Сам работу не продолжай: коротко скажи, на чём остановились.");
+  }
   if (output.answer.trim()) lines.push("", "Ответ агента кода:", output.answer.trim());
   let steps = output.steps.filter(s => s.kind !== "state");
   if (steps.length) {

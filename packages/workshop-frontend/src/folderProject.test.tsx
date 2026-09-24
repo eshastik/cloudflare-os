@@ -116,11 +116,44 @@ describe("создание проекта существующими метод�
     await expect(createProjectFromFolder(fakeApi(denied).api, folder)).rejects.toThrow("Не удалось создать проект «Отчёты»: нет права создавать проекты.");
   });
 
-  it("проект с кодом пока не подключён — заглушка с понятной ошибкой", async () => {
-    const folder: DroppedFolder = { name: "Сайт", files: [at("Сайт/app.ts")], hasCode: true };
-    const error = await createCodeProjectFromFolder(null as never, folder).catch(e => e);
+  function codeApi(createCodeProject: (name: string, slug: string, files: { path: string; content: Uint8Array }[]) => Promise<unknown>) {
+    const { api, frame } = fakeApi(vi.fn());
+    (frame.ui as Record<string, unknown>).createCodeProject = createCodeProject;
+    return { api, frame };
+  }
+
+  it("проект с кодом: одна отправка — проект, хранилище и первая версия; без .git и node_modules", async () => {
+    const createCodeProject = vi.fn(async (name: string) => ({ project: { id: "c1", name }, repository: { connection_id: "internal-code", repository_id: "7", repository_name: "projects/sajt", commit_sha: "a".repeat(40) } }));
+    const { api, frame } = codeApi(createCodeProject);
+    const folder: DroppedFolder = { name: "Сайт", files: [at("Сайт/src/app.ts"), at("Сайт/package.json"), at("Сайт/web/node_modules/x/index.js")], hasCode: true };
+    const progress: number[] = [];
+    const result = await createCodeProjectFromFolder(api, folder, done => progress.push(done));
+    expect(createCodeProject).toHaveBeenCalledTimes(1);
+    const [name, slug, files] = createCodeProject.mock.calls[0] as unknown as [string, string, { path: string; content: Uint8Array }[]];
+    expect(name).toBe("Сайт");
+    expect(slug).toMatch(/^sayt-[0-9a-f]{4}$/);
+    expect(files.map(f => f.path)).toEqual(["src/app.ts", "package.json"]);
+    expect([...files[0].content]).toEqual([120]);
+    expect(progress).toEqual([1, 2]);
+    expect(result).toEqual({ project: { accountId: 7, projectId: "c1", title: "Сайт", hasCode: true }, uploaded: 2, failed: [] });
+    expect(frame.ui[Symbol.dispose]).toHaveBeenCalled();
+  });
+
+  it("проект создан, а хранилище кода не приняло папку — проект отдаётся беседе с причиной", async () => {
+    const { api } = codeApi(async (name: string) => ({ project: { id: "c2", name }, repository: null, repository_error: "Внутреннее хранилище кода не подключено." }));
+    const result = await createCodeProjectFromFolder(api, { name: "Сайт", files: [at("Сайт/app.ts")], hasCode: true });
+    expect(result).toEqual({ project: { accountId: 7, projectId: "c2", title: "Сайт", hasCode: false }, uploaded: 0, failed: ["Внутреннее хранилище кода не подключено."] });
+  });
+
+  it("слишком большая папка — ничего не создаётся, предлагается обычный проект; отказ в правах — понятная ошибка", async () => {
+    const createCodeProject = vi.fn();
+    const huge = new File([new Uint8Array(5 * 1024 * 1024)], "big.bin");
+    const error = await createCodeProjectFromFolder(codeApi(createCodeProject).api, { name: "Сайт", files: [{ file: huge, path: "Сайт/big.bin" }], hasCode: true }).catch(e => e);
     expect(error).toBeInstanceOf(FolderProjectNotConnected);
-    expect(error.message).toContain("ещё не подключён");
+    expect(error.message).toContain("слишком большая");
+    expect(createCodeProject).not.toHaveBeenCalled();
+    const denied = codeApi(async () => { throw new Error("403 forbidden"); });
+    await expect(createCodeProjectFromFolder(denied.api, { name: "Сайт", files: [at("Сайт/app.ts")], hasCode: true })).rejects.toThrow("Не удалось создать проект «Сайт»: нет права создавать проекты.");
   });
 });
 
@@ -161,7 +194,7 @@ describe("карточка «Создать проект из папки»", () 
     expect(container.textContent).toBe("");
   });
 
-  it("папка с кодом: заглушка → предложение создать обычный проект", async () => {
+  it("папка с кодом: отказ хранилища кода → предложение создать обычный проект", async () => {
     const plain = vi.fn(async (_api: unknown, folder: DroppedFolder) => ({ project: { accountId: 7, projectId: "p9", title: folder.name, hasCode: false }, uploaded: 2, failed: [] }));
     const code = vi.fn(async () => { throw new FolderProjectNotConnected("Проект с кодом из папки ещё не подключён."); });
     let hook!: ReturnType<typeof useFolderProject>;

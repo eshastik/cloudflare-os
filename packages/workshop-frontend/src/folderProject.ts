@@ -10,8 +10,8 @@ import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 // движением»). Папка читается в браузере; человек подтверждает «Создать проект «…» из N файлов?»,
 // после чего проект создаётся и файлы загружаются в него существующими методами приложения
 // Mnemos: createProject у экрана управления и выдача билетов приёмной (inboxUploads) с проектом.
-// Проект с кодом (есть .git или исходники) требует внутреннего репозитория — такого метода у
-// приложения нет, поэтому он оформлен одной заглушкой createCodeProjectFromFolder.
+// Проект с кодом (есть .git или исходники) создаётся вместе с внутренним хранилищем кода:
+// createCodeProjectFromFolder.
 
 export type DroppedFolder = {
   name: string
@@ -171,11 +171,48 @@ export async function createProjectFromFolder(
   }
 }
 
-// Заглушка: у приложения Mnemos нет метода, который создаёт внутренний репозиторий проекта и
-// кладёт в него папку. Нужны: создание проекта с кодом (проект + репозиторий во внутренней
-// Gitea) и загрузка дерева файлов первым коммитом; см. отчёт по задаче.
-export async function createCodeProjectFromFolder(_api: Api, _folder: DroppedFolder): Promise<FolderProjectResult> {
-  throw new FolderProjectNotConnected(
-    'Проект с кодом из папки ещё не подключён: приложение памяти пока не умеет само создавать ' +
-    'внутреннее хранилище кода. Можно создать обычный проект — файлы загрузятся как документы.')
+// Проект с кодом: проект, внутреннее хранилище кода и первая версия из файлов папки — одним
+// запросом к приложению Mnemos (createCodeProject). Содержимое .git и зависимости node_modules не
+// отправляются: хранилище кода само ведёт историю, зависимости ставятся заново. Пределы — те же,
+// что у сервера (gitprovider.MaxSeed*): больше — предлагаем обычный проект.
+export async function createCodeProjectFromFolder(
+    api: Api, folder: DroppedFolder,
+    onProgress?: (done: number, total: number) => void,
+    signal?: AbortSignal): Promise<FolderProjectResult> {
+  const MAX_FILES = 2000, MAX_FILE_BYTES = 4 * 1024 * 1024, MAX_TOTAL_BYTES = 16 * 1024 * 1024
+  const chosen = folder.files.filter(({ path }) => !inner(path).split('/').includes('node_modules'))
+  const total = chosen.reduce((sum, { file }) => sum + file.size, 0)
+  if (chosen.length === 0 || chosen.length > MAX_FILES || total > MAX_TOTAL_BYTES || chosen.some(({ file }) => file.size > MAX_FILE_BYTES)) {
+    throw new FolderProjectNotConnected(
+      `Папка «${folder.name}» слишком большая для проекта с кодом: можно до ${MAX_FILES} файлов и до 16 МБ ` +
+      'вместе, каждый файл до 4 МБ. Можно создать обычный проект — файлы загрузятся как документы.')
+  }
+  const files: { path: string; content: Uint8Array }[] = []
+  for (const [index, { file, path }] of chosen.entries()) {
+    signal?.throwIfAborted()
+    files.push({ path: inner(path), content: new Uint8Array(await file.arrayBuffer()) })
+    onProgress?.(index + 1, chosen.length)
+  }
+  const { frame, accountId } = await openUploadFrame(api)
+  try {
+    signal?.throwIfAborted()
+    type CodeCreator = { createCodeProject(name: string, slug: string, files: { path: string; content: Uint8Array }[]): Promise<{
+      project: { id: string; name: string }; repository: unknown | null; repository_error?: string }> }
+    // Случайный хвост вместо повторов: при занятом имени пришлось бы заново отправлять всю папку.
+    const slug = `${projectSlug(folder.name)}-${crypto.randomUUID().slice(0, 4)}`
+    let created: Awaited<ReturnType<CodeCreator['createCodeProject']>>
+    try {
+      created = await (frame.ui as unknown as CodeCreator).createCodeProject(folder.name, slug, files)
+    } catch (error) {
+      throw new Error(`Не удалось создать проект «${folder.name}»: ${describeError(error)}`)
+    }
+    const project = { accountId, projectId: created.project.id, title: created.project.name || folder.name }
+    if (!created.repository) {
+      // Проект уже есть: второй такой же проект повтором не создаём, причину показываем человеку.
+      return { project: { ...project, hasCode: false }, uploaded: 0, failed: [created.repository_error || 'Код не сохранён в хранилище.'] }
+    }
+    return { project: { ...project, hasCode: true }, uploaded: files.length, failed: [] }
+  } finally {
+    disposeGatekeeperFrame(frame)
+  }
 }

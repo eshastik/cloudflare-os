@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import type { AiChatMetadata, AiChatStreamEvent } from "@gadgets/workshop-shared/api";
 import type { AgentStep, ChangedFile } from "@gadgets/workshop-shared/code-work";
 import { formatCodeWorkResult, validateChatProjects, chatProjects } from "@gadgets/workshop-shared/code-work";
-import { CodeWorkTimeline, shortCommand, type CodeWorkEvent } from "../src/code-work-timeline";
+import { CodeWorkTimeline, relativePath, shortCommand, type CodeWorkEvent } from "../src/code-work-timeline";
 import { runCodeWorkTurn, type CodeWorkBackend } from "../src/code-work";
 import {
-  acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, revertChatCodeChanges, runChatCodeWork, setChatProjects,
+  acceptChatCodeChanges, codeWorkForeground, leaveCodeWork, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects,
   type ChatCodeWorkHost, type CodeWorkUser,
 } from "../src/chat-code-work";
 
@@ -106,6 +106,8 @@ class FakeBackend implements CodeWorkBackend {
     return {events: page.events, next: page.events.at(-1)?.seq ?? after, state: page.state};
   }
   async abort(project: string, task: string) { this.calls.push(["abort", project, task]); }
+  interruptFails = false;
+  async interrupt(project: string, task: string) { this.calls.push(["interrupt", project, task]); if (this.interruptFails) throw new Error("Агент сейчас не работает"); }
   async changes() { return {files: this.files, diff: "", truncated: false}; }
 }
 const TARGET = {connectionId: "c", repositoryId: "1", repositoryName: "org/repo"};
@@ -139,7 +141,7 @@ describe("ход работы с кодом", () => {
     expect(backend.calls[1]).toEqual(["events", 9]);
   });
 
-  it("«свободен» до начала работы не заканчивает ход сразу; остановка прерывает задачу", async () => {
+  it("«свободен» до начала работы не заканчивает ход сразу; остановка прерывает только ответ, работа остаётся", async () => {
     const backend = new FakeBackend();
     backend.pages = [{events: [], state: "idle"}, {events: [], state: "idle"}, {events: [role(1, "a", "assistant")], state: "idle"}];
     const {output} = await runCodeWorkTurn({backend, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 0, prompt: "x", signal: new AbortController().signal, onStep: () => {}, idleWithoutWorkPolls: 5});
@@ -153,8 +155,43 @@ describe("ход работы с кодом", () => {
     stopped.pages.push({events: [part(1, {id: "k", type: "tool", tool: "read", callID: "c", state: {status: "running", input: {}}})], state: "running"});
     stopped.pages.shift();
     const result = await run;
-    expect(result.output.state).toBe("stopped");
-    expect(stopped.calls.some(c => c[0] === "abort")).toBe(true);
+    expect(result.output.state).toBe("idle");
+    expect(result.output.interrupted).toBe(true);
+    expect(result.output.steps.at(-1)?.title).toBe("Остановлено по вашей просьбе");
+    expect(stopped.calls.some(c => c[0] === "interrupt")).toBe(true);
+    expect(stopped.calls.some(c => c[0] === "abort")).toBe(false);
+    expect(formatCodeWorkResult(result.output)).toContain("Человек остановил ответ агента кода");
+  });
+
+  it("если прервать ответ нельзя, работа с кодом закрывается", async () => {
+    const stop = new AbortController();
+    const backend = new FakeBackend();
+    backend.interruptFails = true;
+    backend.pages = [{events: [part(1, {id: "k", type: "tool", tool: "read", callID: "c", state: {status: "running", input: {}}})], state: "running"}];
+    const {output} = await runCodeWorkTurn({backend, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 0, prompt: "x", signal: stop.signal, onStep: () => stop.abort()});
+    expect(output.state).toBe("stopped");
+    expect(backend.calls.map(c => c[0])).toEqual(expect.arrayContaining(["interrupt", "abort"]));
+  });
+
+  it("«Остановить» не ждёт конца долгого опроса событий", async () => {
+    const stop = new AbortController();
+    const calls: unknown[][] = [];
+    const backend: CodeWorkBackend = {
+      async start() { throw new Error("не нужен"); },
+      async message(p, t, text) { calls.push(["message", text]); },
+      // Долгий опрос не заканчивается сам; опрос без ожидания отвечает сразу.
+      events: (_p, _t, after, waitMs) => waitMs > 0 ? new Promise(() => {}) : Promise.resolve({events: [], next: after, state: "idle"}),
+      async abort() { calls.push(["abort"]); },
+      async interrupt() { calls.push(["interrupt"]); },
+      async changes() { return {files: [], diff: "", truncated: false}; },
+    };
+    const run = runCodeWorkTurn({backend, projectId: "p", projectTitle: "P", taskId: "t1", cursor: 0, prompt: "x", signal: stop.signal, onStep: () => {}, waitMs: 15_000});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(calls).toEqual([["message", "x"]]);
+    stop.abort();
+    const {output} = await run;
+    expect(output.state).toBe("idle");
+    expect(calls).toEqual([["message", "x"], ["interrupt"]]);
   });
 });
 
@@ -192,6 +229,7 @@ describe("работа с кодом в беседе", () => {
       codeWorkMessage: (_a, p, t, text) => backend.message(p, t, text),
       codeWorkEvents: (_a, p, t, after, wait) => backend.events(p, t, after),
       codeWorkAbort: (_a, p, t) => backend.abort(p, t),
+      codeWorkInterrupt: (_a, p, t) => backend.interrupt(p, t),
       codeWorkChanges: () => backend.changes(),
     };
     const {host, events, meta} = fakeHost(baseMeta(), user);
@@ -233,5 +271,30 @@ describe("работа с кодом в беседе", () => {
     expect((await revertChatCodeChanges(host, 1, "u1")).outcome).toBe("reverted");
     expect(calls[1]).toEqual(["revert", 1, "p", "t1", 7]);
     expect(meta().codeWork?.review?.outcome).toBe("reverted");
+  });
+
+  it("«Что изменилось» группируется по репозиториям, только когда их несколько", async () => {
+    const files = [{path: "a.go", status: "modified" as const, additions: 1, deletions: 0}];
+    const repos = [
+      {dir: "site", name: "site", files, diff: "diff --git a/a.go b/a.go", truncated: false},
+      {dir: "api", name: "0123456789abcdef0123", files, diff: "", truncated: false},
+    ];
+    let value: Awaited<ReturnType<CodeWorkUser["codeWorkChanges"]>> = {files, diff: "", truncated: false, repositories: repos};
+    const work = {accountId: 1, projectId: "p", projectTitle: "P", taskId: "t1", state: "idle" as const, foreground: false, cursor: 3, review: {outcome: "draft" as const}};
+    const {host} = fakeHost(baseMeta({codeWork: work, projectContext: {accountId: 1, projectId: "p", title: "P", creatorId: "u1", creatorProfileId: "pr"}}), {
+      async codeWorkChanges() { return value; },
+    });
+    const grouped = await readChatCodeChanges(host, 1);
+    expect(grouped?.repositories?.map(r => r.name)).toEqual(["site", "api"]);
+    expect(grouped?.repositories?.[0]).toEqual({name: "site", files, diff: "diff --git a/a.go b/a.go", truncated: false});
+    value = {files, diff: "", truncated: false, repositories: [repos[0]]};
+    expect((await readChatCodeChanges(host, 1))?.repositories).toBeUndefined();
+  });
+
+  it("путь в шаге — без каталога рабочего места; папка репозитория остаётся", () => {
+    expect(relativePath("/workspace/repo/a.go")).toBe("a.go");
+    expect(relativePath("/workspace/site/src/a.go")).toBe("site/src/a.go");
+    expect(relativePath("/workspace/repository/a.go")).toBe("repository/a.go");
+    expect(relativePath("a.go")).toBe("a.go");
   });
 });

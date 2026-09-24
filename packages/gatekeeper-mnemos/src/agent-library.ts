@@ -7,7 +7,9 @@ import {
 import {
   MnemosAPIError, type DocumentContent, type DraftDocument, type DraftDownloadTicket, type DraftHead, type DraftState,
   type PrivateDocumentPage, type PrivateDocumentCreate, type NodeHistoryPage, type NodePage, type ProjectPage, type ProjectSearchPage, type UploadTicket,
+  type PublicationPolicy, type PublicationResult, type PublicationReview,
 } from "./mnemos-api.ts";
+import { changeTrackerTask, decodeTrackerPreview, type Task } from "./tracker-artifact.ts";
 import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
 import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
@@ -23,6 +25,12 @@ export interface LibraryReader {
   searchProject(projectId: string, query: string): Promise<ProjectSearchPage>;
   readProjectDocument(projectId: string, nodeId: string): Promise<DocumentContent>;
   nodeHistory(projectId: string, nodeId: string, cursor: string): Promise<NodeHistoryPage>;
+  /** Методы ниже — те же, что у экрана управления; старые сессии их не знают, поэтому вызов защищён. */
+  searchAll?(query: string, limit: number): Promise<ProjectSearchPage>;
+  readProjectDocumentWindow?(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes: number): Promise<DocumentContent>;
+  readPublicationPolicy?(projectId: string): Promise<PublicationPolicy>;
+  readPublicationReview?(id: string): Promise<PublicationReview>;
+  checkTrackerAssignee?(project: string, node: string, head: string, principal: string): Promise<void>;
   [Symbol.dispose](): void;
 }
 /** Те же методы сессии, которыми человек пишет личный черновик из приложения Mnemos. */
@@ -45,6 +53,9 @@ export interface AgentDraftWriter {
   draftState(projectId: string): Promise<DraftState>;
   openDraft(projectId: string): Promise<DraftHead>;
   saveDraftDocument(projectId: string, nodeId: string, uploadId: string, expectedHead: string): Promise<DraftHead>;
+  /** Запись в общую память от имени агента; старые подключения этих методов не имеют. */
+  requestPublicationReview?(projectId: string, personalHead: string, sharedHead: string): Promise<{ candidate_id: string }>;
+  publishDraft?(projectId: string, expectedHead: string, sharedHead: string, message: string): Promise<PublicationResult>;
   [Symbol.dispose](): void;
 }
 /** Что отдаёт UserAccount.startWorkshopAgent(): имя связи, сессия и выдача загрузок под агентским credential. */
@@ -73,6 +84,17 @@ export interface MnemosSearchResult {
   indexPending: boolean; degraded: boolean;
 }
 export interface MnemosDocument { document: string; name: string; text: string; mediaType: string; truncated: boolean }
+/** Окно чтения: фрагмент ordinal и radius соседних фрагментов с каждой стороны. */
+export interface MnemosReadWindow { ordinal: number; radius: number; maxBytes?: number }
+export interface MnemosSearchAllResult {
+  hits: { project: string; projectName: string; document: string; name: string; text: string; ordinal: number }[];
+  indexPending: boolean; degraded: boolean;
+}
+export interface MnemosFolderEntry { id: string; name: string; path: string; kind: "folder" | "document" }
+export interface MnemosFolderListing { project: string; folder: string; entries: MnemosFolderEntry[]; truncated: boolean }
+export interface MnemosPublication { status: "published" | "awaiting_approval" | "nothing_to_publish" | "conflict"; message: string }
+export interface MnemosTracker { document: string; head: string; revision: number; title: string; stages: { id: string; name: string; department: string }[]; tasks: Task[] }
+export interface MnemosTrackerChange { document: string; head: string; revision: number; task: string }
 export interface MnemosDraftProposal { action: number; document: string; name: string; status: "saved"; head: string }
 /** Подтверждение выполняется отдельной карточкой в разговоре. */
 export interface MnemosAdminProposal { action: number; summary: string; status: AdminOperation["state"]; result?: Record<string, string> }
@@ -98,11 +120,34 @@ interface DraftProposal {
 const NODE_PAGES_LIMIT = 8;
 const CONTENT_LIMIT = 262144;
 const TEXT_TYPES = new Set(["text/plain", "text/markdown"]);
+const TRACKER_TYPES = new Set(["application/vnd.mnemos.task-tracker+json"]);
+/** Сколько строк папки отдаётся за один обзор. */
+const FOLDER_ENTRIES_LIMIT = 500;
+const UNSUPPORTED = "Эта версия подключения Mnemos не умеет выполнять действие; обновите приложение Mnemos.";
 const REVOKED = "Аккаунт Mnemos отключён или срок входа истёк; войдите заново в приложении Mnemos.";
 const AGENT_REVOKED = "Агентская связь Workshop с Mnemos отозвана или аккаунт отключён; переподключите аккаунт в приложении Mnemos.";
 const UNAVAILABLE = "Документ недоступен: его нет, к нему нет доступа, либо это не текстовый документ.";
 const STALE = "Версия устарела: документ изменён во время записи. Прочитайте документ заново и повторите сохранение.";
 const NOT_FOUND = "Действие не найдено: у Mnemos нет такого ожидающего действия.";
+const PUBLISH_REFUSED = "Mnemos не разрешил агенту публикацию в этом проекте (нет права записи у агента или человека). Черновик сохранён; опубликовать его может человек в приложении Mnemos.";
+const TRACKER_STALE = "Трекер изменился после чтения. Прочитайте его заново и повторите изменение.";
+/** Причины отказа проверки трекера (tracker-artifact.ts) по-русски; неизвестная — общая фраза. */
+const TRACKER_REASONS: Record<string, string> = {
+  "Task creation/update intent mismatch": "задача с таким id уже есть (create=true) или её нет (create=false)",
+  "Invalid principal or task": "некорректный id задачи или ответственного",
+  "Invalid task text": "пустое название или слишком длинный текст",
+  "Invalid handoff": "переход между этапами не разрешён или нет ответственного и следующего шага",
+  "Missing assignee/next step": "для «в работе» нужны ответственный и следующий шаг",
+  "Missing blocker/next step": "для «заблокировано» нужны причина и следующий шаг",
+  "Missing result": "для «готово» и «отменено» нужен результат",
+  "Stale blocker": "причина блокировки осталась у незаблокированной задачи",
+  "Unfinished dependency": "не завершены задачи, от которых зависит эта",
+  "Cyclic dependencies": "зависимости образуют цикл",
+  "Duplicate dependency": "зависимость указана дважды",
+  "Invalid task references": "зависимость ссылается на несуществующую задачу",
+  "Invalid task stage/status": "неизвестный этап или статус",
+  "Tracker exceeds editor limit": "трекер превысит 256 КиБ",
+};
 
 function identifier(value: unknown, what: string, max = 255): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) throw new Error(`Некорректное значение: ${what}.`);
@@ -153,8 +198,13 @@ interface SessionCalls {
   createDraft(queue: RpcStub<ApprovalQueue>, project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown"): Promise<MnemosDraftProposal>;
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
   searchProject(queue: RpcStub<ApprovalQueue>, project: string, query: string): Promise<MnemosSearchResult>;
-  readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosDocument>;
+  readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument>;
   saveDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string, content: string): Promise<MnemosDraftProposal>;
+  search(queue: RpcStub<ApprovalQueue>, query: string, limit: number): Promise<MnemosSearchAllResult>;
+  browseProject(queue: RpcStub<ApprovalQueue>, project: string, folder: string): Promise<MnemosFolderListing>;
+  publishDraft(queue: RpcStub<ApprovalQueue>, project: string, message: string): Promise<MnemosPublication>;
+  readTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosTracker>;
+  changeTrackerTask(queue: RpcStub<ApprovalQueue>, project: string, document: string, expectedHead: string, task: Task, create: boolean): Promise<MnemosTrackerChange>;
 }
 
 /** Сессия агента: чтение — наблюдение, запись личного черновика — сразу по выданным правам. */
@@ -169,7 +219,12 @@ export class MnemosLibrarySession extends RpcTarget {
   async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
   async proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write") { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "grant_project_access", person, project, domain, mode}); }
   async searchProject(project: string, query: string): Promise<MnemosSearchResult> { return this.#calls.searchProject(this.#queue, project, query); }
-  async readDocument(project: string, document: string): Promise<MnemosDocument> { return this.#calls.readDocument(this.#queue, project, document); }
+  async readDocument(project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument> { return this.#calls.readDocument(this.#queue, project, document, window); }
+  async search(query: string, limit = 20): Promise<MnemosSearchAllResult> { return this.#calls.search(this.#queue, query, limit); }
+  async browseProject(project: string, folder = ""): Promise<MnemosFolderListing> { return this.#calls.browseProject(this.#queue, project, folder); }
+  async publishDraft(project: string, message = ""): Promise<MnemosPublication> { return this.#calls.publishDraft(this.#queue, project, message); }
+  async readTracker(project: string, document: string): Promise<MnemosTracker> { return this.#calls.readTracker(this.#queue, project, document); }
+  async changeTrackerTask(project: string, document: string, expectedHead: string, task: Task, create = false): Promise<MnemosTrackerChange> { return this.#calls.changeTrackerTask(this.#queue, project, document, expectedHead, task, create); }
   async createDraft(project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown" = "text/markdown") { return this.#calls.createDraft(this.#queue, project, parent, name, content, mediaType); }
   async saveDraft(project: string, document: string, content: string): Promise<MnemosDraftProposal> { return this.#calls.saveDraft(this.#queue, project, document, content); }
   [Symbol.dispose](): void { this.#queue[Symbol.dispose](); }
@@ -205,7 +260,12 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         proposeAdmin: (q, id, request) => this.#proposeAdmin(q, id, request),
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
-        readDocument: (q, project, document) => this.#readDocument(q, project, document),
+        readDocument: (q, project, document, window) => this.#readDocument(q, project, document, window),
+        search: (q, query, limit) => this.#search(q, query, limit),
+        browseProject: (q, project, folder) => this.#browse(q, project, folder),
+        publishDraft: (q, project, message) => this.#publish(q, project, message),
+        readTracker: (q, project, document) => this.#readTracker(q, project, document),
+        changeTrackerTask: (q, project, document, expectedHead, task, create) => this.#changeTracker(q, project, document, expectedHead, task, create),
         createDraft: (q, project, parent, name, content, mediaType) => this.#createDraft(q, project, parent, name, content, mediaType),
         saveDraft: (q, project, document, content) => this.#saveDraft(q, project, document, content),
       }, queue);
@@ -269,20 +329,13 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         proposal.base = { head: expected, personal: true };
         this.ctx.storage.kv.put(this.#key(action), proposal);
       }
-      const content = new TextEncoder().encode(proposal.content ?? "");
-      const sum = await sha256(content);
-      const { storageOrigin, issuer } = app.textUploads;
-      const ticket = await this.#data(() => issuer.issue(proposal.project, content.length, sum.base64));
-      if (ticket.method !== "PUT" || ticket.content_length !== content.length || ticket.checksum_value !== sum.base64) throw new Error("Выдача загрузки Mnemos не совпала с текстом предложения.");
-      const response = await fetch(storageTarget(storageOrigin, ticket.url), { method: "PUT", redirect: "manual", signal: AbortSignal.timeout(20000), headers: { [ticket.checksum_header]: sum.base64 }, body: content });
-      await response.body?.cancel();
-      if (!response.ok) throw new Error(`Хранилище Mnemos не приняло текст (код ${response.status}).`);
+      const upload = await this.#putText(app.textUploads, proposal.project, proposal.content ?? "");
       let saved: DraftHead | undefined;
       try {
         if (proposal.create) {
-          const result = await ui.createPrivateDocument(proposal.project, {request_id: proposal.create.requestId, expected_head: expected, parent_id: proposal.create.parent, name: proposal.name, content_type: proposal.create.mediaType, upload_id: ticket.upload_id, message: "Новый личный документ агента"});
+          const result = await ui.createPrivateDocument(proposal.project, {request_id: proposal.create.requestId, expected_head: expected, parent_id: proposal.create.parent, name: proposal.name, content_type: proposal.create.mediaType, upload_id: upload, message: "Новый личный документ агента"});
           proposal.node = result.node_id; saved = result;
-        } else saved = await ui.saveDraftDocument(proposal.project, proposal.node, ticket.upload_id, expected);
+        } else saved = await ui.saveDraftDocument(proposal.project, proposal.node, upload, expected);
       }
       catch (error) {
         // 409 — голова ушла между сверкой и записью: предложение устарело, остальное — обычная ошибка API.
@@ -310,6 +363,18 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   }
 
   #key(action: number): string { return `draft:${action}`; }
+  /** Кладёт текст в хранилище по подписанной ссылке агента; возвращает upload_id для записи черновика. */
+  async #putText(uploads: NonNullable<LibraryAgent["textUploads"]>, project: string, text: string): Promise<string> {
+    const content = new TextEncoder().encode(text);
+    const sum = await sha256(content);
+    const { storageOrigin, issuer } = uploads;
+    const ticket = await this.#data(() => issuer.issue(project, content.length, sum.base64));
+    if (ticket.method !== "PUT" || ticket.content_length !== content.length || ticket.checksum_value !== sum.base64) throw new Error("Выдача загрузки Mnemos не совпала с текстом предложения.");
+    const response = await fetch(storageTarget(storageOrigin, ticket.url), { method: "PUT", redirect: "manual", signal: AbortSignal.timeout(20000), headers: { [ticket.checksum_header]: sum.base64 }, body: content });
+    await response.body?.cancel();
+    if (!response.ok) throw new Error(`Хранилище Mnemos не приняло текст (код ${response.status}).`);
+    return ticket.upload_id;
+  }
   async #proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, input: AdminOperationRequest): Promise<MnemosAdminProposal> {
     identifier(requestId, "ключ операции", 128);
     const request = checkedAdminOperation(input);
@@ -482,20 +547,25 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     await this.#authorizePersonal(queue);
     const agent = await this.#agent();
     try {
-      if (!agent.personal || !agent.textDownloads) throw new Error(UNAVAILABLE);
-      const draft = await this.#data(() => agent.personal!.read(project, node));
-      if (!draft.exists || draft.conflicted || !TEXT_TYPES.has(draft.content_type ?? "")) throw new Error("Личный документ недоступен как текст или содержит конфликт.");
-      const {issuer, storageOrigin} = agent.textDownloads;
-      const ticket = await this.#data(() => issuer.issue(project, node, draft.head, 0));
-      if (ticket.node_id !== node || ticket.head !== draft.head || ticket.term_index !== 0 || ticket.method !== "GET" || ticket.size_bytes < 0 || ticket.size_bytes > CONTENT_LIMIT) throw new Error(UNAVAILABLE);
-      const response = await fetch(storageTarget(storageOrigin, ticket.url), {redirect: "manual", signal: AbortSignal.timeout(20000)});
-      if (!response.ok) { await response.body?.cancel(); throw new Error(UNAVAILABLE); }
-      const body = new Uint8Array(await response.arrayBuffer());
-      if (body.length !== ticket.size_bytes || (await sha256(body)).hex !== ticket.sha256_hex) throw new Error(UNAVAILABLE);
-      const latest = await this.#data(() => agent.personal!.read(project, node));
-      if (!latest.exists || latest.head !== draft.head) throw new Error("Личная версия изменилась. Повторите чтение.");
-      return {document: node, name: draft.terms[0]?.metadata?.name ?? node, text: new TextDecoder("utf-8", {fatal: true, ignoreBOM: false}).decode(body), mediaType: draft.content_type!, truncated: false};
+      const {draft, text} = await this.#personalText(agent, project, node, TEXT_TYPES, "Личный документ недоступен как текст или содержит конфликт.");
+      return {document: node, name: draft.terms[0]?.metadata?.name ?? node, text, mediaType: draft.content_type!, truncated: false};
     } finally { release(agent); }
+  }
+  /** Текст личной версии под агентским credential; версия сверяется до и после скачивания. */
+  async #personalText(agent: LibraryAgent, project: string, node: string, types: Set<string>, refusal: string): Promise<{ draft: DraftDocument; text: string }> {
+    if (!agent.personal || !agent.textDownloads) throw new Error(UNAVAILABLE);
+    const draft = await this.#data(() => agent.personal!.read(project, node));
+    if (!draft.exists || draft.conflicted || !types.has(draft.content_type ?? "")) throw new Error(refusal);
+    const {issuer, storageOrigin} = agent.textDownloads;
+    const ticket = await this.#data(() => issuer.issue(project, node, draft.head, 0));
+    if (ticket.node_id !== node || ticket.head !== draft.head || ticket.term_index !== 0 || ticket.method !== "GET" || ticket.size_bytes < 0 || ticket.size_bytes > CONTENT_LIMIT) throw new Error(UNAVAILABLE);
+    const response = await fetch(storageTarget(storageOrigin, ticket.url), {redirect: "manual", signal: AbortSignal.timeout(20000)});
+    if (!response.ok) { await response.body?.cancel(); throw new Error(UNAVAILABLE); }
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (body.length !== ticket.size_bytes || (await sha256(body)).hex !== ticket.sha256_hex) throw new Error(UNAVAILABLE);
+    const latest = await this.#data(() => agent.personal!.read(project, node));
+    if (!latest.exists || latest.head !== draft.head) throw new Error("Личная версия изменилась. Повторите чтение.");
+    return {draft, text: new TextDecoder("utf-8", {fatal: true, ignoreBOM: false}).decode(body)};
   }
 
   async #listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]> {
@@ -525,8 +595,13 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     };
   }
 
-  async #readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosDocument> {
+  async #readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument> {
     identifier(project, "проект"); identifier(document, "документ", 4096);
+    if (window !== undefined && (!window || typeof window !== "object" || !Number.isSafeInteger(window.ordinal) || window.ordinal < 0 ||
+        !Number.isSafeInteger(window.radius) || window.radius < 1 || window.radius > 50 ||
+        (window.maxBytes !== undefined && (!Number.isSafeInteger(window.maxBytes) || window.maxBytes < 1 || window.maxBytes > CONTENT_LIMIT)))) {
+      throw new Error("Некорректное окно чтения: ordinal ≥ 0, radius от 1 до 50, maxBytes до 262144.");
+    }
     using reader = await this.#open();
     // Поиск узла не бросает: наблюдение записывается и при неудаче, а один текст ошибки после
     // него не выдаёт, существует ли имя в проекте (TD-177).
@@ -545,10 +620,170 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       excludeObservers: await this.#excludedObservers(publication),
     });
     if (!located || !publication) throw new Error(UNAVAILABLE);
-    const content = await this.#quiet(() => reader.readProjectDocument(project, located.id));
+    const content = await this.#quiet(() => {
+      if (!window) return reader.readProjectDocument(project, located.id);
+      if (!reader.readProjectDocumentWindow) throw new Error(UNSUPPORTED);
+      return reader.readProjectDocumentWindow(project, located.id, window.ordinal, window.radius, window.maxBytes ?? CONTENT_LIMIT);
+    });
     if (!content) throw new Error(UNAVAILABLE);
     await this.#recordWorkContext(queue, reader, project, located.name !== located.id ? located.name : undefined, publication);
     return { document: content.node_id, name: located.name, text: content.text, mediaType: content.media_type, truncated: content.truncated };
+  }
+
+  /** Поиск по всем проектам, которые видит человек. */
+  async #search(queue: RpcStub<ApprovalQueue>, query: string, limit: number): Promise<MnemosSearchAllResult> {
+    identifier(query, "запрос", 4096);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Некорректное значение: limit — целое от 1 до 50.");
+    using reader = await this.#open();
+    if (!reader.searchAll) throw new Error(UNSUPPORTED);
+    await queue.authorizeObservation({
+      title: "Поиск в Mnemos",
+      description: `Все доступные проекты, запрос: «${clip(query, 200)}».`,
+      excludeObservers: await this.#excludedObservers(),
+    });
+    const page = await this.#data(() => reader.searchAll!(query, limit));
+    const projects = await this.#quiet(() => reader.listProjects());
+    const names = new Map((projects?.projects ?? []).map(project => [project.id, project.name]));
+    return {
+      hits: page.hits.map(hit => ({ project: hit.project_id, projectName: names.get(hit.project_id) ?? "", document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
+      indexPending: page.index_pending, degraded: page.degraded,
+    };
+  }
+
+  /** Обзор одной папки проекта: вложенные папки и документы с путями. */
+  async #browse(queue: RpcStub<ApprovalQueue>, project: string, folder: string): Promise<MnemosFolderListing> {
+    identifier(project, "проект");
+    if (typeof folder !== "string" || folder.length > 4096) throw new Error("Некорректное значение: папка.");
+    using reader = await this.#open();
+    await queue.authorizeObservation({
+      title: "Папки проекта Mnemos",
+      description: `Проект «${project}», папка «${clip(folder, 200) || "корень"}».`,
+      excludeObservers: await this.#excludedObservers(),
+    });
+    const listing = await this.#data(() => this.#nodePages(reader, project));
+    const nodes = listing.nodes.filter(node => !node.shared_deleted);
+    const byId = new Map(nodes.map(node => [node.node_id, node]));
+    const path = (node: Node): string => {
+      const parts = [node.name];
+      let parent = node.parent_id ? byId.get(node.parent_id) : undefined;
+      // Глубина ограничена: повреждённое дерево не должно зациклить обзор.
+      for (let depth = 0; parent && depth < 64; depth++) { parts.unshift(parent.name); parent = parent.parent_id ? byId.get(parent.parent_id) : undefined; }
+      return parts.join("/");
+    };
+    let parent = "";
+    if (folder) {
+      const segments = folder.split("/").filter(Boolean);
+      let found: Node | undefined;
+      let under: string | undefined;
+      for (const segment of segments) {
+        found = nodes.find(node => node.is_dir && node.name === segment && (node.parent_id || undefined) === under);
+        if (!found) break;
+        under = found.node_id;
+      }
+      if (!found && segments.length === 1) found = nodes.find(node => node.is_dir && node.node_id === folder);
+      if (!found) throw new Error("Папка не найдена или недоступна. Посмотрите корень проекта: browseProject(project).");
+      parent = found.node_id;
+    }
+    const children = nodes.filter(node => (node.parent_id || "") === parent)
+      .toSorted((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
+    await this.#recordWorkContext(queue, reader, project);
+    return {
+      project, folder: parent ? path(byId.get(parent)!) : "",
+      entries: children.slice(0, FOLDER_ENTRIES_LIMIT).map(node => ({ id: node.node_id, name: node.name, path: path(node), kind: node.is_dir ? "folder" : "document" })),
+      truncated: children.length > FOLDER_ENTRIES_LIMIT || !listing.complete,
+    };
+  }
+
+  /** Публикация личного черновика проекта: без политики согласования — сразу,
+   * с политикой — запрос ответственным; решение ответственных агент не обходит. */
+  async #publish(queue: RpcStub<ApprovalQueue>, project: string, message: string): Promise<MnemosPublication> {
+    identifier(project, "проект");
+    if (typeof message !== "string" || message.includes("\0") || bytes(message) > 1024) throw new Error("Некорректное значение: сообщение публикации (до 1 КиБ).");
+    using reader = await this.#open();
+    if (!reader.readPublicationPolicy || !reader.readPublicationReview) throw new Error(UNSUPPORTED);
+    await queue.authorizeObservation({
+      title: "Публикация Mnemos",
+      description: `Публикация личного черновика в проекте «${project}».`,
+      excludeObservers: await this.#excludedObservers(),
+    });
+    // Запись — под агентским credential: в журнале действие агента от имени человека (ADR 0010).
+    const agent = await this.#agent();
+    try {
+      const writer = agent.ui;
+      if (!writer.requestPublicationReview || !writer.publishDraft) throw new Error(UNSUPPORTED);
+      const written = async <T>(write: () => Promise<T>): Promise<T> => {
+        try { return await write(); }
+        catch (error) {
+          if (error instanceof MnemosAPIError && error.status === 403) throw new Error(PUBLISH_REFUSED);
+          throw failure(error);
+        }
+      };
+      const state = await this.#data(() => writer.draftState(project));
+      if (!state.personal_exists) return { status: "nothing_to_publish", message: "В проекте нет личного черновика: публиковать нечего." };
+      let policy: PublicationPolicy | null = null;
+      try { policy = await reader.readPublicationPolicy(project); }
+      catch (error) { if (!(error instanceof MnemosAPIError && error.status === 404)) throw failure(error); }
+      if (policy && policy.domains.length > 0) {
+        const { candidate_id } = await written(() => writer.requestPublicationReview!(project, state.personal_head, state.shared_head));
+        const review = await this.#quiet(() => reader.readPublicationReview!(candidate_id));
+        // Изменения не задели ни одного направления политики — согласовывать нечего, публикуем сразу.
+        if (!review || review.stale || !review.ready) {
+          await this.#recordWorkContext(queue, reader, project);
+          return { status: "awaiting_approval", message: "В проекте включено согласование: изменения отправлены ответственным. После их решения публикацию подтвердит человек во «Входящих»." };
+        }
+      }
+      const result = await written(() => writer.publishDraft!(project, state.personal_head, state.shared_head, message.trim() || "Публикация из беседы"));
+      await this.#recordWorkContext(queue, reader, project);
+      if (result.conflicted) return { status: "conflict", message: "Изменения конфликтуют с опубликованной версией. Конфликт сохранён в черновике; его решает человек в приложении Mnemos." };
+      if (!result.published) return { status: "nothing_to_publish", message: "Черновик не отличается от опубликованной версии: публиковать нечего." };
+      return { status: "published", message: "Изменения опубликованы: их видят все, у кого есть доступ к проекту." };
+    } finally { release(agent); }
+  }
+
+  async #readTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosTracker> {
+    identifier(project, "проект"); identifier(document, "трекер");
+    await this.#authorizePersonal(queue);
+    const agent = await this.#agent();
+    try {
+      const { draft, text } = await this.#personalText(agent, project, document, TRACKER_TYPES, "Трекер недоступен: документа нет, это не трекер или в нём конфликт.");
+      let tracker: ReturnType<typeof decodeTrackerPreview>;
+      try { tracker = decodeTrackerPreview(text); } catch { throw new Error("Трекер повреждён или записан неизвестной версией формата."); }
+      return { document, head: draft.head, ...tracker };
+    } finally { release(agent); }
+  }
+
+  /** Изменение одной задачи трекера в личном черновике: проверка переходов — та же, что у экрана трекера. */
+  async #changeTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string, expectedHead: string, task: Task, create: boolean): Promise<MnemosTrackerChange> {
+    identifier(project, "проект"); identifier(document, "трекер");
+    if (typeof expectedHead !== "string" || !/^[a-f0-9]{64}$/.test(expectedHead)) throw new Error("Некорректное значение: expectedHead — head из readTracker().");
+    if (typeof create !== "boolean" || !task || typeof task !== "object") throw new Error("Некорректная задача трекера.");
+    await this.#authorizePersonal(queue);
+    const agent = await this.#agent();
+    try {
+      if (!agent.textUploads) throw new Error("Хранилище Mnemos не настроено; загрузка текста недоступна.");
+      const { draft, text } = await this.#personalText(agent, project, document, TRACKER_TYPES, "Трекер недоступен: документа нет, это не трекер или в нём конфликт.");
+      if (draft.head !== expectedHead) throw new Error(TRACKER_STALE);
+      let content: string;
+      try { content = changeTrackerTask(text, structuredClone(task), create); }
+      catch (error) {
+        const reason = TRACKER_REASONS[error instanceof Error ? error.message : ""];
+        throw new Error(`Изменение трекера не прошло проверку${reason ? `: ${reason}` : ""}.`);
+      }
+      if (task.assignee_id) {
+        using reader = await this.#open();
+        if (!reader.checkTrackerAssignee) throw new Error(UNSUPPORTED);
+        try { await reader.checkTrackerAssignee(project, document, draft.head, task.assignee_id); }
+        catch (error) { const fatal = revocation(error); if (fatal) throw fatal; throw new Error("Ответственный недоступен для этого трекера: у него нет доступа к проекту."); }
+      }
+      const upload = await this.#putText(agent.textUploads, project, content);
+      let saved: DraftHead;
+      try { saved = await agent.ui.saveDraftDocument(project, document, upload, draft.head); }
+      catch (error) {
+        if (error instanceof MnemosAPIError && error.status === 409) throw new Error(TRACKER_STALE);
+        throw failure(error);
+      }
+      return { document, head: saved.head, revision: decodeTrackerPreview(content).revision, task: task.id };
+    } finally { release(agent); }
   }
 
   /** Контекст фиксируется после успешного чтения; недоступное имя не подменяется ID. */
@@ -588,15 +823,19 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     return { id: document, name: byId?.name ?? document };
   }
   async #nodes(reader: LibraryReader, project: string): Promise<Node[]> {
+    return (await this.#nodePages(reader, project)).nodes;
+  }
+  /** complete=false — дерево длиннее NODE_PAGES_LIMIT страниц, часть узлов не прочитана. */
+  async #nodePages(reader: LibraryReader, project: string): Promise<{ nodes: Node[]; complete: boolean }> {
     const nodes: Node[] = [];
     let cursor = "";
     for (let page = 0; page < NODE_PAGES_LIMIT; page++) {
       const listing = await reader.browseProject(project, cursor);
       nodes.push(...listing.nodes);
-      if (!listing.next_cursor) break;
+      if (!listing.next_cursor) return { nodes, complete: true };
       cursor = listing.next_cursor;
     }
-    return nodes;
+    return { nodes, complete: false };
   }
 
   // ---- наблюдатели ----

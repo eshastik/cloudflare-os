@@ -18,9 +18,10 @@ function short(value: string): string {
   const line = value.replace(/\s+/g, " ").trim();
   return line.length > MAX_TEXT ? line.slice(0, MAX_TEXT - 1) + "…" : line;
 }
-/** Путь внутри рабочей копии без каталога контейнера. */
+/** Путь без каталога контейнера. Прежние задачи клонировали в /workspace/repo — эта папка
+ * убирается; у задач с именованными папками репозиториев имя папки остаётся в пути. */
 function relative(path: string): string {
-  return path.replace(/^\/workspace\/repo\/?/, "") || path;
+  return path.replace(/^\/workspace\/(?:repo(?:\/|$))?/, "") || path;
 }
 
 function toolStep(part: Record<string, unknown>): WorkspaceStep | null {

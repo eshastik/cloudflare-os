@@ -7635,6 +7635,7 @@ function ChatInterface({
                                 title={t.toolName === "codeAsk" ? "Спрашиваю агента кода" : "Работаю с кодом проекта"}
                                 steps={t.steps ?? []}
                                 running
+                                onStop={handleStop}
                               />
                             ))}
 

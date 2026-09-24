@@ -97,21 +97,30 @@ export type CodeWorkRowProps = {
   error?: string;
   /** Шаги раскрыты: во время работы — всегда, после — по нажатию. */
   defaultOpen?: boolean;
+  /** «Остановить» текущий ответ агента кода; работа с кодом остаётся, можно писать дальше. */
+  onStop?: () => void | Promise<void>;
 };
 
 export const CodeWorkRow = memo(function CodeWorkRow({
-  title, steps, running, durationMs, changedFiles, error, defaultOpen = false,
+  title, steps, running, durationMs, changedFiles, error, defaultOpen = false, onStop,
 }: CodeWorkRowProps) {
   const [openState, setOpen] = useState(defaultOpen);
+  const [stopping, setStopping] = useState(false);
   const open = running || openState;
   const summary = steps.length || durationMs !== undefined ? summarizeAgentSteps(steps, durationMs) : "";
+  const stop = async () => {
+    if (!onStop || stopping) return;
+    setStopping(true);
+    try { await onStop(); } catch { setStopping(false); }
+  };
   return (
     <div className="-ml-0.5">
+      <div className="flex items-center gap-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 text-left text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 text-left text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
       >
         <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
           <Code size={15} className="text-kumo-inactive" />
@@ -135,6 +144,17 @@ export const CodeWorkRow = memo(function CodeWorkRow({
           )}
         </span>
       </button>
+      {running && onStop && (
+        <button
+          type="button"
+          onClick={stop}
+          disabled={stopping}
+          className="flex-shrink-0 cursor-pointer rounded-lg border border-kumo-line px-2 py-0.5 text-[12px] leading-4 text-kumo-subtle transition-colors hover:text-kumo-default disabled:cursor-default disabled:opacity-60"
+        >
+          {stopping ? "Останавливаю…" : "Остановить"}
+        </button>
+      )}
+      </div>
       {open && (
         <div className="ml-8 mt-1 space-y-0.5" data-testid="code-work-steps">
           {steps.map((step) => <StepRow key={step.id} step={step} />)}

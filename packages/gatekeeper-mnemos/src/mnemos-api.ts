@@ -73,11 +73,11 @@ export class MnemosAPI {
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Invalid Mnemos origin");
     this.#origin = url.origin; this.#credential = credential; this.#fetch = fetcher.bind(globalThis);
   }
-  async #request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE", signal?: AbortSignal, body?: object, allowNoContent = false): Promise<T> {
+  async #request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE", signal?: AbortSignal, body?: object, allowNoContent = false, timeoutMs = 20_000): Promise<T> {
     let token: string;
     try { token = await this.#credential(); } catch { throw new MnemosAPIError(401); }
     if (!token || /\s/.test(token)) throw new MnemosAPIError(401);
-    const timeout = AbortSignal.timeout(20_000);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
     try {
@@ -603,6 +603,28 @@ export class MnemosAPI {
   createProject(name: string, slug: string, signal?: AbortSignal): Promise<{project: ProjectPage["projects"][number]}> {
     return this.#request("/v1/projects", "POST", signal, {name, slug});
   }
+  /** Проект с внутренним репозиторием: дерево папки ложится первым коммитом. Запись в хранилище кода идёт дольше обычного запроса. */
+  createCodeProject(name: string, slug: string, files: CodeProjectFile[], signal?: AbortSignal): Promise<CodeProjectResult> {
+    if (typeof name !== "string" || !name.trim() || typeof slug !== "string" || !Array.isArray(files) || files.length === 0 || files.length > CODE_PROJECT_LIMITS.files) throw new MnemosAPIError(400);
+    let total = 0;
+    const body = files.map(file => {
+      if (!file || typeof file.path !== "string" || !file.path || !(file.content instanceof Uint8Array) || file.content.length > CODE_PROJECT_LIMITS.fileBytes) throw new MnemosAPIError(400);
+      total += file.content.length;
+      if (total > CODE_PROJECT_LIMITS.totalBytes) throw new MnemosAPIError(400);
+      return { path: file.path, content_base64: base64(file.content) };
+    });
+    return this.#request("/v1/code-projects", "POST", signal, { name, slug, files: body }, false, 180_000);
+  }
+  /** Поиск по всем проектам, доступным человеку; проект у каждого совпадения свой. */
+  searchAll(query: string, limit = 20, signal?: AbortSignal): Promise<ProjectSearchPage> {
+    if (typeof query !== "string" || !query.trim() || new TextEncoder().encode(query).length > 4096 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new MnemosAPIError(400);
+    return this.#request(`/v1/search?${new URLSearchParams({ q: query, limit: String(limit) })}`, "GET", signal);
+  }
+  /** Окно документа: фрагмент ordinal и radius соседей с каждой стороны, не больше maxBytes. */
+  readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144, signal?: AbortSignal): Promise<DocumentContent> {
+    if (!Number.isSafeInteger(ordinal) || ordinal < 0 || !Number.isSafeInteger(radius) || radius < 1 || radius > 50 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 262144) throw new MnemosAPIError(400);
+    return this.#request(`/v1/projects/${segment(projectId)}/nodes/${segment(nodeId)}/content?${new URLSearchParams({ ordinal: String(ordinal), radius: String(radius), max_bytes: String(maxBytes) })}`, "GET", signal);
+  }
   workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest, signal?: AbortSignal): Promise<import("./admin-operations.ts").AdminOperation> {
     return this.#request(`/v1/agent-connections/${segment(binding)}/admin-operations/${segment(operation)}/${phase}`, "POST", signal, request);
   }
@@ -937,6 +959,12 @@ function segment(id: string): string {
   if (typeof id !== "string" || !id || id === "." || id === ".." || new TextEncoder().encode(id).length > 255 || /[\x00-\x1f\x7f]/.test(id)) throw new MnemosAPIError(400);
   return encodeURIComponent(id);
 }
+/** base64 кусками: String.fromCharCode(...bytes) на мегабайтах переполняет стек аргументов. */
+function base64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
 export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|GitFailureCode|undefined>{
@@ -968,7 +996,19 @@ export interface WorkshopAgentConnection { binding_id: string; agent_principal_i
 export interface AgentCredential { access_token: string; token_type: string; expires_in: number }
 export interface NodeHistoryPage { events: { event_id: string; head: string; recorded_at: string; exists: boolean; content_type?: string; observed: boolean; actor: string; on_behalf_of: string }[]; next_cursor?: string }
 
-export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string; capabilities?: string[] }
+export interface WhoAmI { subject: { tenant_id: string; user_id: string; agent_principal_id?: string }; tenant_name: string; capabilities?: string[]; roles?: PersonRoles }
+/** Роли для меню: руководитель отдела, ответственный за проекты, право создавать проекты по правилу организации. */
+export interface PersonRoles { department_head: boolean; project_responsible: boolean; can_create_projects: boolean; responsible_projects: string[] }
+/** Файл папки для проекта с кодом; путь — внутри папки, без её имени. */
+export interface CodeProjectFile { path: string; content: Uint8Array }
+export interface CodeProjectResult {
+  project: ProjectPage["projects"][number];
+  /** null — проект создан, но хранилище кода не приняло папку; причина в repository_error. */
+  repository: { connection_id: string; repository_id: string; repository_name: string; commit_sha: string } | null;
+  repository_error?: string;
+}
+/** Пределы первого коммита, те же, что у сервера (gitprovider.MaxSeed*). */
+export const CODE_PROJECT_LIMITS = { files: 2000, fileBytes: 4 * 1024 * 1024, totalBytes: 16 * 1024 * 1024 } as const;
 /** visibility, can_edit, created_by и pending_share приходят с сервером, где есть видимость проектов. */
 export interface ProjectPage { projects: { id: string; name: string; slug: string; org_unit_id?: string; visibility?: ProjectVisibility; can_edit?: boolean; created_by?: string; pending_share?: ProjectVisibility }[] }
 

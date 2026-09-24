@@ -22,9 +22,10 @@ function oneLine(value: string, max = MAX_TITLE): string {
 function clip(value: string): string {
   return value.length > MAX_OUTPUT ? value.slice(0, MAX_OUTPUT) + "\n…" : value;
 }
-/** Путь внутри рабочей копии без каталога контейнера. */
+/** Путь без каталога контейнера. Прежние задачи клонировали в /workspace/repo — эта папка
+ * убирается; при нескольких репозиториях имя папки репозитория остаётся в пути. */
 export function relativePath(path: string): string {
-  return path.replace(/^\/workspace\/repo\/?/, "") || path;
+  return path.replace(/^\/workspace\/(?:repo(?:\/|$))?/, "") || path;
 }
 function lineCount(value: unknown): number {
   let s = text(value);

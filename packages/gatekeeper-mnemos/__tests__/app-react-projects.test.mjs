@@ -46,8 +46,8 @@ test("«Проекты»: список, страница проекта с уч�
     await app.until(() => app.button("Все документы проекта"), "вкладка материалов");
     app.button("Все документы проекта").click();
     await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "переход к документам");
-    // Кнопка проекта в «Документах» несёт счётчик документов, поэтому ищется по началу текста.
-    await app.until(() => app.buttons().find(b => b.textContent.startsWith("Общий проект"))?.getAttribute("aria-current") === "true", "выбран тот же проект");
+    // Проект в «Материалах» выбирается простым списком; выбран тот же, что был открыт.
+    await app.until(() => app.document.querySelector('#root select[aria-label="Проект"]')?.value === "one", "выбран тот же проект");
   } finally { app.dispose(); }
 });
 

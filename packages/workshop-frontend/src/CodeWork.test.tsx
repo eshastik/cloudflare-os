@@ -58,6 +58,17 @@ describe("шаги агента", () => {
     const view = render(<CodeWorkRow title="Работаю с кодом проекта" steps={[]} running />);
     expect(view.textContent).toContain("Готовлю рабочее место…");
   });
+  it("«Остановить» есть только у идущего хода и вызывается один раз", async () => {
+    const onStop = vi.fn(async () => {});
+    const view = render(<CodeWorkRow title="Работаю с кодом проекта" steps={steps} running onStop={onStop} />);
+    await act(async () => { button(view, "Остановить").click(); await Promise.resolve(); });
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(view.textContent).toContain("Останавливаю…");
+    expect(button(view, "Останавливаю").disabled).toBe(true);
+    act(() => root?.unmount()); container?.remove();
+    const done = render(<CodeWorkRow title="Работал с кодом" steps={steps} running={false} onStop={onStop} />);
+    expect([...done.querySelectorAll("button")].some(b => b.textContent === "Остановить")).toBe(false);
+  });
   it("состояние беседы в списке", () => {
     expect(chatListState({ activeAgent: {} })).toBe("working");
     expect(chatListState({ codeWork: { review: { outcome: "draft" } } })).toBe("review");
@@ -161,5 +172,35 @@ describe("«Что изменилось»", () => {
     const view = render(<CodeChangesCard refreshKey="k" load={async () => ({ ...changes, files: [], diff: "" })} accept={vi.fn()} />);
     await flush();
     expect(view.textContent).toBe("");
+  });
+
+  it("при нескольких репозиториях изменения группируются по имени репозитория, без служебных путей", async () => {
+    const multi: ChatCodeChanges = {
+      ...changes,
+      files: [{ path: "site/a.go", status: "modified", additions: 2, deletions: 1 }, { path: "api/b.ts", status: "added", additions: 5, deletions: 0 }],
+      diff: "",
+      repositories: [
+        { name: "site", files: [{ path: "a.go", status: "modified", additions: 2, deletions: 1 }], diff: changes.diff, truncated: false },
+        { name: "api", files: [{ path: "b.ts", status: "added", additions: 5, deletions: 0 }], diff: "diff --git a/b.ts b/b.ts\n@@ -0,0 +1 @@\n+x", truncated: false },
+        { name: "docs", files: [], diff: "", truncated: false },
+      ],
+    };
+    const view = render(<CodeChangesCard refreshKey="k" review={{ outcome: "draft" }} load={async () => multi} accept={vi.fn()} />);
+    await flush();
+    const groups = [...view.querySelectorAll('[data-testid="code-changes-repository"]')];
+    expect(groups.map(g => g.firstElementChild?.textContent)).toEqual(["site", "api"]);
+    expect(groups[1].textContent).toContain("b.ts");
+    expect(groups[1].textContent).not.toContain("api/b.ts");
+    expect(view.textContent).not.toMatch(/\.git|ветк|коммит/i);
+    expect(view.textContent).not.toContain("docs");
+    act(() => button(view, "Подробнее").click());
+    expect(view.textContent).toContain("+x");
+  });
+
+  it("после «Принять» без новых изменений карточка говорит об этом словами", async () => {
+    const view = render(<CodeChangesCard refreshKey="k" review={{ outcome: "accepted" }} load={async () => ({ ...changes, files: [], diff: "" })} accept={vi.fn()} />);
+    await flush();
+    expect(view.querySelector('[role="status"]')?.textContent).toContain("Принято");
+    expect(view.textContent).toContain("Новых изменений после принятия пока нет");
   });
 });

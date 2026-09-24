@@ -1,7 +1,7 @@
 // Один ход работы с кодом: запустить или продолжить сессию в рабочем месте, показывать шаги по
 // мере прихода событий и вернуть итог агенту беседы. Долговечная запись хода — вызов codeWork в
 // ленте беседы, поэтому история не зависит от контейнера.
-import type {AgentStep, ChangedFile, CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
+import type {AgentStep, ChangedFile, CodeChangesRepository, CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkState, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {CodeWorkTimeline, type CodeWorkEvent} from "./code-work-timeline.js";
 
@@ -11,7 +11,11 @@ export interface CodeWorkBackend {
   message(project: string, taskId: string, text: string): Promise<void>;
   events(project: string, taskId: string, after: number, waitMs: number): Promise<{events: CodeWorkEvent[]; next: number; state: CodeWorkState}>;
   abort(project: string, taskId: string): Promise<void>;
-  changes(project: string, taskId: string): Promise<{files: ChangedFile[]; diff: string; truncated: boolean}>;
+  /** Остановить текущий ответ агента кода, не закрывая работу с кодом. */
+  interrupt(project: string, taskId: string): Promise<void>;
+  /** Изменения с последнего «Принять»; repositories — по репозиториям, когда их несколько. */
+  changes(project: string, taskId: string): Promise<{files: ChangedFile[]; diff: string; truncated: boolean;
+    repositories?: (CodeChangesRepository & {dir?: string})[]}>;
 }
 
 export type CodeWorkTurn = {
@@ -65,18 +69,41 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
   }
   turn.onStarted?.(taskId);
 
-  let sawBusy = false, quietPolls = 0, stopped = false;
+  // «Остановить» не ждёт конца долгого опроса событий.
+  let abortedSignal = new Promise<"aborted">(resolve => {
+    if (turn.signal.aborted) resolve("aborted");
+    else turn.signal.addEventListener("abort", () => resolve("aborted"), {once: true});
+  });
+  let apply = (events: CodeWorkEvent[]) => {
+    let {steps, textDelta} = timeline.apply(events);
+    for (let step of steps) turn.onStep(step);
+    if (textDelta) turn.onText?.(textDelta);
+  };
+  let sawBusy = false, quietPolls = 0, stopped = false, interrupted = false;
+  let tail: AgentStep[] = [];
   for (;;) {
     if (turn.signal.aborted) {
-      await turn.backend.abort(turn.projectId, taskId).catch(() => {});
-      state = "stopped"; stopped = true;
+      // Остановка прерывает только текущий ответ: рабочая копия с непринятыми изменениями остаётся.
+      // Если прервать ход нельзя (рабочее место ещё готовится или служба отказала) — работа закрывается.
+      try {
+        await turn.backend.interrupt(turn.projectId, taskId);
+        state = "idle"; interrupted = true;
+        let step: AgentStep = {id: "interrupted", kind: "state", status: "done", title: "Остановлено по вашей просьбе"};
+        try { apply((await turn.backend.events(turn.projectId, taskId, timeline.cursor, 0)).events); } catch { /* хвост событий прочитает следующий ход */ }
+        tail.push(step);
+        turn.onStep(step);
+      } catch {
+        await turn.backend.abort(turn.projectId, taskId).catch(() => {});
+        state = "stopped"; stopped = true;
+      }
       break;
     }
     if (clock() - startedAt > maxDuration) break;
-    let batch = await turn.backend.events(turn.projectId, taskId, timeline.cursor, waitMs);
-    let {steps, textDelta} = timeline.apply(batch.events);
-    for (let step of steps) turn.onStep(step);
-    if (textDelta) turn.onText?.(textDelta);
+    let poll = turn.backend.events(turn.projectId, taskId, timeline.cursor, waitMs);
+    poll.catch(() => {});
+    let batch = await Promise.race([poll, abortedSignal]);
+    if (batch === "aborted") continue;
+    apply(batch.events);
     state = batch.state;
     if (state === "starting" || state === "running" || timeline.sawWork()) sawBusy = true;
     if (state === "stopped" || state === "failed") break;
@@ -93,7 +120,7 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
   }
   return {
     cursor: timeline.cursor,
-    output: {taskId, projectId: turn.projectId, projectTitle: turn.projectTitle, state, steps: [...extra, ...timeline.steps()],
-      answer: timeline.answer(), changedFiles, durationMs: Math.max(0, clock() - startedAt)},
+    output: {taskId, projectId: turn.projectId, projectTitle: turn.projectTitle, state, steps: [...extra, ...timeline.steps(), ...tail],
+      answer: timeline.answer(), changedFiles, durationMs: Math.max(0, clock() - startedAt), ...(interrupted ? {interrupted} : {})},
   };
 }

@@ -159,7 +159,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     }
   }
   async function open(name) {
-    const names = {"Моя работа":"my-work","Входящие":"my-work","Проекты":"projects","Документы":"documents","Материалы":"documents","Согласования":"approvals","Источники":"sources","Агенты":"agents","Организация":"organization","Люди и доступ":"people","Приём данных":"intake","Рабочие шаблоны":"templates","Обзор работы":"analytics"};
+    const names = {"Моя работа":"my-work","Входящие":"my-work","Проекты":"projects","Документы":"documents","Материалы":"documents","Согласования":"approvals","Источники":"sources","Агенты":"agents","Организация":"organization","Люди и доступ":"people","Приём данных":"intake","Рабочие шаблоны":"templates","Обзор работы":"analytics","Мой отдел":"team"};
     assert.ok(names[name], `Неизвестный раздел: ${name}`);
     dispose(); selectedSection=names[name]; selectedProject=""; mount();
     await until(() => document.querySelector("#root h1") && document.querySelector("#root h1").textContent !== "Входящие" || selectedSection === "my-work" && document.querySelector("#root h1"), `раздел ${name}`);

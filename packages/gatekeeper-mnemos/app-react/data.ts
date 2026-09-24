@@ -16,6 +16,8 @@ export interface ProjectData {
   /** Видящие проект могут его править. */
   canEdit?: boolean;
   createdBy?: string;
+  /** Отдел проекта; пусто — проект вне отделов. */
+  orgUnit?: string;
   /** Уровень, который ждёт решения руководителя или администратора. */
   pendingShare?: ProjectVisibility;
   /** Первая страница общей версии проекта. */
@@ -277,7 +279,7 @@ export function useMemoryData(ui: Ui): MemoryData {
         const [person, page] = await Promise.all([ui.whoAmI(), ui.listProjects()]);
         if (!alive.current) return;
         setIdentity(person);
-        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null }));
+        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null }));
         setProjects(initial);
         await forEachLimited(initial, 4, async project => {
           const [nodes, privateDocs, draft, absence] = await Promise.allSettled([ui.browseProject(project.id, ""), ui.listPrivateDocuments(project.id, ""), ui.draftState(project.id), ui.readAgentAbsence(project.id)]);

@@ -11,6 +11,7 @@ export const sections = {
   intake: { title: "Приём данных", description: "Загрузите материалы организации и проверьте их распределение." },
   templates: { title: "Рабочие шаблоны", description: "Повторяющиеся задачи и документы команды." },
   analytics: { title: "Обзор работы", description: "Состояние проектов, расходы и качество результатов." },
+  team: { title: "Мой отдел", description: "Сотрудники отдела, проекты отдела и проекты, за которые вы отвечаете, и запросы на решение." },
 } as const;
 export type SectionId = keyof typeof sections;
 export function resolveSection(value: string): SectionId | null {

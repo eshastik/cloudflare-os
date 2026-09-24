@@ -58,7 +58,8 @@ test("прямые разделы Mnemos: документы, согласова
     assert.equal(app.document.querySelector("#root h1")?.textContent,"Входящие");
     assert.equal(app.document.querySelectorAll('[role="tab"]').length,0,"вторая навигация отсутствует");
     await app.open("Материалы");
-    await until(() => button("Общий проект") && button("Второй проект"), "проекты слева");
+    const option = name => [...app.document.querySelectorAll('#root select[aria-label="Проект"] option')].find(o => o.textContent.startsWith(name));
+    await until(() => option("Общий проект") && option("Второй проект"), "проекты в выборе");
     await until(() => text().includes("Заметка команды") && text().includes("Другой документ"), "документы обоих проектов");
     const row = name => [...app.document.querySelectorAll("#root [data-document]")].find(r => r.textContent.includes(name));
     await until(() => row("Заметка команды")?.textContent.includes("На согласовании · 1 из 2"), "бейдж «на согласовании»");
@@ -68,8 +69,8 @@ test("прямые разделы Mnemos: документы, согласова
     assert.ok(!row("Папка"), "каталоги в списке документов не показываются");
     await until(() => row("Заметка команды").querySelector("time")?.getAttribute("datetime") === "2026-09-12T10:00:00Z", "время из истории документа");
     assert.ok(histories.some(([p, n, c]) => p === "one" && n === "doc" && c === ""));
-    assert.equal(button("Общий проект").textContent, "Общий проект2");
-    assert.equal(button("Все проекты").textContent, "Все проекты4");
+    assert.equal(option("Общий проект").textContent, "Общий проект · 2");
+    assert.equal(option("Все проекты").textContent, "Все проекты · 4");
 
     const search = app.document.querySelector("#root input[type=search]");
     // React сверяет значение со своим слепком, поэтому ввод ставится нативным сеттером, как это делает браузер.
@@ -82,7 +83,7 @@ test("прямые разделы Mnemos: документы, согласова
     assert.equal(app.document.querySelector("#root b"), null);
 
     button("Найденная заметка").click();
-    await until(() => text().includes("Содержимое документа") && text().includes("Текст документа"), "просмотр документа");
+    await until(() => app.document.querySelector('#root aside[aria-label="Просмотр документа"]')?.textContent.includes("Текст документа"), "просмотр документа");
 
     await app.open("Согласования");
     await until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");

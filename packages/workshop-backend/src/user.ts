@@ -2038,7 +2038,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   /** Работа с кодом беседы через подключение человека: только его собственное действующее подключение. */
   #codeWorkAccount(accountId: number): Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser,
-      "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert">> {
+      "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkInterrupt" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert">> {
     const record = this.storage.connectedAccounts.get(accountId);
     if (!Number.isSafeInteger(accountId) || !record || !areCredentialsValid(record)) throw new Error("Подключение проекта недоступно.");
     return record.account as never;
@@ -2052,6 +2052,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async codeWorkMessage(accountId: number, project: string, task: string, text: string) { return this.#codeWorkAccount(accountId).codeWorkMessage(project, task, text); }
   async codeWorkEvents(accountId: number, project: string, task: string, after: number, waitMs: number) { return this.#codeWorkAccount(accountId).codeWorkEvents(project, task, after, waitMs); }
   async codeWorkAbort(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkAbort(project, task); }
+  async codeWorkInterrupt(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkInterrupt(project, task); }
   async codeWorkChanges(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkChanges(project, task); }
   async codeWorkAccept(accountId: number, project: string, task: string, summary: string) { return this.#codeWorkAccount(accountId).codeWorkAccept(project, task, summary); }
   async codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number) { return this.#codeWorkAccount(accountId).codeWorkRevert(project, task, mergeRequest); }

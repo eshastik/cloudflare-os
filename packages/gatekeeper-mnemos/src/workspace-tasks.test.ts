@@ -15,7 +15,10 @@ function remote(state: RemoteTask["state"], extra: Partial<RemoteTask> = {}): Re
 
 class FakeControl implements WorkspaceControl {
   calls: unknown[][] = []; state: RemoteTask["state"] = "running"; missing = false;
-  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting"); }
+  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })) }); }
+  interruptError: WorkspaceError | null = null;
+  async interrupt(id: string) { this.calls.push(["interrupt", id]); if (this.interruptError) throw this.interruptError; }
+  async accept(id: string) { this.calls.push(["markAccepted", id]); return { repositories: [] }; }
   async status(id: string) { this.calls.push(["status", id]); if (this.missing) throw new WorkspaceError("not_found", "нет"); return remote(this.state); }
   async credential(id: string, token: string) { this.calls.push(["credential", id, token]); }
   async events(id: string) { this.calls.push(["events", id]); return []; }
@@ -23,9 +26,11 @@ class FakeControl implements WorkspaceControl {
   async abort(id: string) { this.calls.push(["abort", id]); }
   page: Awaited<ReturnType<WorkspaceControl["eventsAfter"]>> = { events: [], next: 0, state: "running" };
   async eventsAfter(id: string, after: number, waitMs: number) { this.calls.push(["eventsAfter", id, after, waitMs]); if (this.missing) throw new WorkspaceError("not_found", "нет"); return this.page; }
-  async changes(id: string) { this.calls.push(["changes", id]); return { files: [{ path: "a.go", status: "modified" as const, additions: 2, deletions: 1 }], diff: "diff --git a/a.go b/a.go", truncated: false }; }
+  changesValue: Awaited<ReturnType<WorkspaceControl["changes"]>> = { files: [{ path: "a.go", status: "modified" as const, additions: 2, deletions: 1 }], diff: "diff --git a/a.go b/a.go", truncated: false };
+  async changes(id: string, since?: string) { this.calls.push(["changes", id, since]); return this.changesValue; }
   noChanges = false;
-  async publish(id: string, message: string) { this.calls.push(["publish", id, message]); if (this.noChanges) throw new WorkspaceError("no_changes", "Изменений нет."); return { branch: "agents/binding/" + TASK, head_sha: "abc123" }; }
+  published: Awaited<ReturnType<WorkspaceControl["publish"]>> = { branch: "agents/binding/" + TASK, head_sha: "abc123" };
+  async publish(id: string, message: string) { this.calls.push(["publish", id, message]); if (this.noChanges) throw new WorkspaceError("no_changes", "Изменений нет."); return this.published; }
 }
 function human(log: string[], overrides: Partial<WorkspaceHuman> = {}): () => WorkspaceHuman {
   let n = 0;
@@ -292,4 +297,174 @@ test("client calls fetch without its own this, as the Workers runtime requires",
   }
   const client = new WorkspaceClient("https://localhost:9452", "token", strictFetch as typeof fetch);
   assert.equal((await client.status("0123456789abcdef")).state, "running");
+});
+
+const REPOS = [
+  { project_id: "p", connection_id: "c", repository_id: "1", repository_name: "org/site.git", revision: 1, enabled: true, provider: "gitea" as const, connection_revision: 1 },
+  { project_id: "p", connection_id: "c", repository_id: "2", repository_name: "org/api", revision: 1, enabled: true, provider: "gitea" as const, connection_revision: 1 },
+  { project_id: "p", connection_id: "c", repository_id: "3", repository_name: "org/old", revision: 1, enabled: false, provider: "gitea" as const, connection_revision: 1 },
+  ...[4, 5, 6, 7].map(n => ({ project_id: "p", connection_id: "d", repository_id: String(n), repository_name: `r${n}`, revision: 1, enabled: true, provider: "github" as const, connection_revision: 1 })),
+];
+const manyRepos = (overrides: Partial<WorkspaceHuman> = {}) => setup({ async listProjectGitRepositories() { return { repositories: REPOS }; }, ...overrides });
+
+test("Задача передаёт репозитории с именами; беседа берёт все включённые репозитории проекта, не больше пяти", async () => {
+  const single = setup();
+  await single.tasks.start("p", "c", "1", "задача");
+  const one = single.control.calls.find(c => c[0] === "create")![1] as Record<string, unknown>;
+  assert.deepEqual(one.repositories, [{ connection_id: "c", repository_id: "1", name: "repo" }]);
+  assert.equal("agent_name" in one, false, "без имени агента поле не передаётся");
+  assert.equal("connection_id" in one, false, "старые одиночные поля вместе с repositories не передаются");
+
+  const chat = manyRepos();
+  const { task } = await chat.tasks.startTask("p", "c", "2", "задача", { agentName: "chat", allRepositories: true });
+  const many = chat.control.calls.find(c => c[0] === "create")![1] as { repositories: { repository_id: string; name?: string }[]; agent_name?: string };
+  assert.equal(many.agent_name, "chat");
+  assert.deepEqual(many.repositories.map(r => r.repository_id), ["2", "1", "4", "5", "6"], "указанный первым, выключенный пропущен, всего пять");
+  assert.deepEqual(many.repositories.map(r => r.name), ["api", "site", "r4", "r5", "r6"], "имя без пути и без .git");
+  assert.equal(task.repository_id, "2");
+  assert.equal(task.repository_name, "org/api");
+  assert.deepEqual(task.repositories!.map(r => r.dir), ["api", "site", "r4", "r5", "r6"], "папки — из ответа службы");
+});
+
+test("«Остановить» прерывает только ответ агента: задача остаётся живой; завершённую прервать нельзя", async () => {
+  const { control, tasks } = setup();
+  await tasks.start("p", "c", "1", "задача");
+  await tasks.interrupt("p", TASK);
+  assert.deepEqual(control.calls.at(-1), ["interrupt", TASK]);
+  assert.equal(tasks.list("p")[0].state, "idle");
+  assert.equal(control.calls.some(c => c[0] === "abort"), false);
+  control.interruptError = new WorkspaceError("not_found", "нет");
+  await assert.rejects(tasks.interrupt("p", TASK), (e: WorkspaceError) => e.code === "stopped");
+  assert.equal(tasks.list("p")[0].state, "stopped", "потерянная службой задача становится остановленной");
+  await assert.rejects(tasks.interrupt("p", TASK), (e: WorkspaceError) => e.code === "stopped");
+  await assert.rejects(tasks.interrupt("other", TASK), (e: WorkspaceError) => e.code === "not_found", "чужой проект");
+});
+
+test("«Что изменилось» по репозиториям: имена для человека и выбор места отсчёта", async () => {
+  const { control, tasks } = manyRepos();
+  await tasks.startTask("p", "c", "1", "задача", { allRepositories: true });
+  control.changesValue = {
+    files: [{ path: "site/a.go", status: "modified", additions: 1, deletions: 0 }], diff: "", truncated: false, since: "accepted",
+    repositories: [
+      { dir: "site", name: "site", connection_id: "c", repository_id: "1", files: [{ path: "a.go", status: "modified", additions: 1, deletions: 0 }], diff: "", truncated: false },
+      { dir: "x9", name: "x9", connection_id: "c", repository_id: "2", files: [], diff: "", truncated: false },
+    ],
+  };
+  const changes = await tasks.changes("p", TASK, "start");
+  assert.deepEqual(control.calls.at(-1), ["changes", TASK, "start"]);
+  assert.deepEqual(changes.repositories!.map(r => r.name), ["site", "api"], "имя из привязки проекта, найденное по папке или по репозиторию");
+});
+
+test("«Принять» при нескольких репозиториях: запрос в каждом, где есть изменения; место отсчёта сдвигается; повтор не открывает лишних запросов", async () => {
+  const opened: unknown[][] = [], accepted: unknown[][] = [], reverted: unknown[][] = [];
+  let next = 10;
+  const { control, tasks } = manyRepos({
+    async openMergeRequest(_p, c, r, head) { opened.push([c, r, head]); return { index: next++ }; },
+    async acceptMergeRequest(_p, c, r, index, head) { accepted.push([c, r, index, head]); return { index, outcome: "accepted" }; },
+    async revertMergeRequest(_p, c, r, index) { reverted.push([c, r, index]); return { index, outcome: "reverted" }; },
+  });
+  await tasks.startTask("p", "c", "1", "задача", { allRepositories: true });
+  control.published = { branch: "agents/chat/x", head_sha: "h-site", repositories: [{ dir: "site", head_sha: "h-site", pushed: true }, { dir: "api", pushed: false }, { dir: "r4", head_sha: "h-r4", pushed: true }] };
+  const first = await tasks.accept("p", TASK, "Итог");
+  assert.deepEqual(first, { outcome: "accepted", note: "Принято", mergeRequest: 10 });
+  assert.deepEqual(opened, [["c", "1", "agents/chat/x"], ["d", "4", "agents/chat/x"]], "репозиторий без изменений пропущен");
+  assert.deepEqual(accepted, [["c", "1", 10, "h-site"], ["d", "4", 11, "h-r4"]]);
+  assert.ok(control.calls.some(c => c[0] === "markAccepted"), "после «Принять» служба запоминает принятое место");
+
+  // Второе «Принять»: новое только в site — второй запрос в r4 не открывается.
+  control.published = { branch: "agents/chat/x", head_sha: "h-site2", repositories: [{ dir: "site", head_sha: "h-site2", pushed: true }, { dir: "r4", head_sha: "h-r4", pushed: true }] };
+  assert.equal((await tasks.accept("p", TASK, "Ещё")).mergeRequest, 12);
+  assert.equal(opened.length, 3);
+
+  assert.deepEqual(await tasks.revert("p", TASK, 12), { outcome: "reverted", note: "Возвращено как было.", mergeRequest: 12 });
+  assert.deepEqual(reverted, [["c", "1", 12]], "возвращается только последнее «Принять»");
+});
+
+test("«Вернуть как было» отменяет все репозитории одного «Принять»", async () => {
+  const reverted: unknown[][] = [];
+  let next = 1;
+  const { control, tasks } = manyRepos({
+    async openMergeRequest() { return { index: next++ }; },
+    async acceptMergeRequest(_p, _c, _r, index) { return { index, outcome: "accepted" }; },
+    async revertMergeRequest(_p, c, r, index) { reverted.push([c, r, index]); return { index, outcome: "reverted" }; },
+  });
+  await tasks.startTask("p", "c", "1", "задача", { allRepositories: true });
+  control.published = { branch: "b", head_sha: "h1", repositories: [{ dir: "site", head_sha: "h1", pushed: true }, { dir: "api", head_sha: "h2", pushed: true }] };
+  const accepted = await tasks.accept("p", TASK, "итог");
+  assert.equal((await tasks.revert("p", TASK, accepted.mergeRequest!)).outcome, "reverted");
+  assert.deepEqual(reverted, [["c", "1", 1], ["c", "2", 2]]);
+  assert.deepEqual(tasks.list("p")[0].merges!.map(m => m.outcome), ["reverted", "reverted"]);
+});
+
+test("«Принять» при нескольких репозиториях: согласование и частичный отказ объясняются словами", async () => {
+  let n = 0;
+  const waiting = manyRepos({
+    async openMergeRequest() { return { index: ++n }; },
+    async acceptMergeRequest(_p, _c, r, index) { return r === "1" ? { index, outcome: "accepted" } : { index, outcome: "awaiting_approval", responsible: [{ principal_id: "u", display_name: "Анна" }] }; },
+  });
+  await waiting.tasks.startTask("p", "c", "1", "задача", { allRepositories: true });
+  waiting.control.published = { branch: "b", head_sha: "h1", repositories: [{ dir: "site", head_sha: "h1", pushed: true }, { dir: "api", head_sha: "h2", pushed: true }] };
+  assert.deepEqual(await waiting.tasks.accept("p", TASK, "итог"), { outcome: "awaiting_approval", note: "Ждёт согласования у Анна", mergeRequest: 1 });
+
+  const partial = manyRepos({
+    async openMergeRequest() { return { index: 5 }; },
+    async acceptMergeRequest(_p, _c, r, index) { if (r === "2") throw apiError(409, "git.merge.stale"); return { index, outcome: "accepted" }; },
+  });
+  await partial.tasks.startTask("p", "c", "1", "задача", { allRepositories: true });
+  partial.control.published = { branch: "b", head_sha: "h1", repositories: [{ dir: "site", head_sha: "h1", pushed: true }, { dir: "api", head_sha: "h2", pushed: true }] };
+  await assert.rejects(partial.tasks.accept("p", TASK, "итог"), /в «site» приняты, в «api» — нет: Агент изменил результат/);
+  assert.equal(partial.control.calls.some(c => c[0] === "markAccepted"), false, "непринятое не прячется из «Что изменилось»");
+});
+
+test("Клиент: остановка ответа, «принято до этого места», изменения с начала и по репозиториям", async () => {
+  const requests: { url: string; method: string; body: string }[] = [];
+  let status = 202, conflict = "";
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = String(input);
+    requests.push({ url, method: init?.method ?? "GET", body: String(init?.body ?? "") });
+    if (url.endsWith("/interrupt")) return new Response(null, { status });
+    if (url.endsWith("/accept")) return conflict ? Response.json({ error: conflict }, { status: 409 }) : Response.json({ repositories: [{ dir: "site", accepted: "a1", head: "h1" }, { dir: 7 }] });
+    if (url.includes("/changes")) return Response.json({ files: [{ path: "site/a.go", status: "added", additions: 3, deletions: 0 }], diff: "d", truncated: false, base: "", head: "", since: "start",
+      repositories: [{ dir: "site", connection_id: "c", repository_id: "1", files: [{ path: "a.go", status: "added", additions: 3, deletions: 0 }], diff: "d", truncated: false, base: "b", head: "h", since: "start" }, { dir: "" }] });
+    if (url.endsWith("/publish")) return conflict ? Response.json({ error: conflict }, { status: 409 }) : Response.json({ branch: "agents/chat/x", head_sha: "h1", pushed: true, repositories: [{ dir: "site", head_sha: "h1", pushed: true }, { dir: "api", pushed: false }] });
+    if (url.endsWith("/tasks")) return Response.json(remote("starting", { repositories: [{ connection_id: "c", repository_id: "1", dir: "site" }] }), { status: 201 });
+    return new Response(null, { status: 204 });
+  };
+  const client = new WorkspaceClient("https://localhost:9452", "t", fetcher);
+  const created = await client.create({ binding_id: "b", agent_credential: "k", project_id: "p", repositories: [{ connection_id: "c", repository_id: "1", name: "site" }], agent_name: "chat", prompt: "x", title: "x" });
+  assert.deepEqual(JSON.parse(requests[0].body).repositories, [{ connection_id: "c", repository_id: "1", name: "site" }]);
+  assert.equal(JSON.parse(requests[0].body).agent_name, "chat");
+  assert.equal(created.repositories?.[0].dir, "site");
+
+  await client.interrupt(TASK);
+  assert.equal(requests.at(-1)!.method, "POST");
+  status = 409;
+  await assert.rejects(client.interrupt(TASK), (e: WorkspaceError) => e.code === "stopped");
+  status = 502;
+  await assert.rejects(client.interrupt(TASK), /Агент не остановился/);
+
+  assert.deepEqual(await client.accept(TASK), { repositories: [{ dir: "site", accepted: "a1", head: "h1" }] });
+  const changes = await client.changes(TASK, "start");
+  assert.match(requests.at(-1)!.url, /\/changes\?since=start$/);
+  assert.equal(changes.since, "start");
+  assert.deepEqual(changes.repositories, [{ dir: "site", name: "site", connection_id: "c", repository_id: "1", files: [{ path: "a.go", status: "added", additions: 3, deletions: 0 }], diff: "d", truncated: false }]);
+  await client.changes(TASK);
+  assert.match(requests.at(-1)!.url, /\/changes$/, "по умолчанию — с последнего «Принять»");
+  await assert.rejects(client.changes(TASK, "вчера" as never), (e: WorkspaceError) => e.code === "invalid");
+  assert.deepEqual(await client.publish(TASK, "m"), { branch: "agents/chat/x", head_sha: "h1", repositories: [{ dir: "site", head_sha: "h1", pushed: true }, { dir: "api", pushed: false }] });
+
+  conflict = "no_repository";
+  await assert.rejects(client.accept(TASK), (e: WorkspaceError) => e.code === "no_repository");
+  await assert.rejects(client.publish(TASK, "m"), (e: WorkspaceError) => e.code === "no_repository");
+  conflict = "stopped";
+  await assert.rejects(client.accept(TASK), (e: WorkspaceError) => e.code === "stopped");
+});
+
+test("Шаги: путь без каталога контейнера, папка репозитория остаётся", () => {
+  const progress = workspaceProgress([
+    { seq: 1, type: "message.part.updated", data: { part: { id: "k1", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "/workspace/site/docs/a.md" } } } } },
+    { seq: 2, type: "message.part.updated", data: { part: { id: "k2", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "/workspace/repo/b.md" } } } } },
+    { seq: 3, type: "message.part.updated", data: { part: { id: "k3", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "/workspace/repository/c.md" } } } } },
+  ]);
+  assert.deepEqual(progress.steps.slice(1).map(s => s.text), ["Читаю site/docs/a.md", "Читаю b.md", "Читаю repository/c.md"]);
 });

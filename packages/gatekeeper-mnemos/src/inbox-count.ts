@@ -74,6 +74,15 @@ export function inboxEntries(sources: InboxSources, userId: string): InboxEntry[
   return out.map((entry, index) => ({ entry, index })).sort((a, b) => time(b.entry) - time(a.entry) || a.index - b.index).map(x => x.entry);
 }
 
+/** Виды, которые решает согласующий или руководитель: чужая работа ждёт его решения. */
+const APPROVAL_KINDS = new Set<InboxKind>(["approval", "template", "share"]);
+
+/** Два счётчика меню из одного списка: всё во «Входящих» и решения по чужой работе. */
+export function inboxCounts(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[] } = {}): { inbox: number; approvals: number } {
+  const entries = inboxEntries({ reviews, collaborations, ...extra }, userId);
+  return { inbox: entries.length, approvals: entries.filter(entry => APPROVAL_KINDS.has(entry.kind)).length };
+}
+
 /** Число решений, которые ждут человека во «Входящих». */
 export function inboxDecisions(reviews: PublicationReview[], collaborations: InboxCollaboration[], userId: string, extra: { templates?: InboxTemplate[]; alerts?: InboxAlert[]; shares?: ShareRequest[] } = {}): number {
   return inboxEntries({ reviews, collaborations, ...extra }, userId).length;

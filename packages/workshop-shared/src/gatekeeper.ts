@@ -1101,8 +1101,13 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   codeWorkEvents?(project: string, taskId: string, after: number, waitMs: number): Promise<{events: Array<{seq: number; type: string; data: unknown}>; next: number; state: CodeWorkState}>;
   /** Остановить работу с кодом. */
   codeWorkAbort?(project: string, taskId: string): Promise<void>;
-  /** Изменения рабочей копии, включая ещё не сохранённые. */
-  codeWorkChanges?(project: string, taskId: string): Promise<{files: Array<{path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number}>; diff: string; truncated: boolean}>;
+  /** Остановить текущий ответ агента кода; работа с кодом остаётся и принимает следующее сообщение. */
+  codeWorkInterrupt?(project: string, taskId: string): Promise<void>;
+  /** Изменения рабочей копии, включая ещё не сохранённые; по умолчанию — с последнего «Принять».
+   * repositories — то же по репозиториям задачи (name — имя репозитория для человека). */
+  codeWorkChanges?(project: string, taskId: string, since?: "accepted" | "start"): Promise<{files: Array<{path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number}>; diff: string; truncated: boolean;
+    since?: "accepted" | "start";
+    repositories?: Array<{dir: string; name: string; files: Array<{path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number}>; diff: string; truncated: boolean}>}>;
   /** «Принять»: сохранить работу и влить её в проект (или отправить на согласование, если оно включено). */
   codeWorkAccept?(project: string, taskId: string, summary: string): Promise<CodeWorkReview>;
   /** «Вернуть как было» для принятых изменений задачи. */

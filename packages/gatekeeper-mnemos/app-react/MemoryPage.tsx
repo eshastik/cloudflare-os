@@ -10,6 +10,7 @@ import AgentsTab from "./AgentsTab.tsx";
 import PeopleTab from "./PeopleTab.tsx";
 import IntakeTab from "./IntakeTab.tsx";
 import OrganizationTab from "./OrganizationTab.tsx";
+import TeamTab from "./TeamTab.tsx";
 import { sections, resolveSection, type SectionId } from "./navigation.ts";
 import { LegacyPanel, LegacySwitch, useLegacySection } from "./legacy.tsx";
 import SectionTools from "./SectionTools.tsx";
@@ -88,6 +89,7 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
       {section === "people" && <PeopleTab data={data} />}
       {section === "intake" && <IntakeTab data={data} compact={compact} />}
       {section === "organization" && <OrganizationTab data={data} />}
+      {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} />}
       {section === "templates" && <LegacyPanel section={{kind:"workTemplates"}} title="Рабочие шаблоны" onClose={() => open("my-work")} />}
       {!compact && section && <SectionTools section={section} onOpen={tools.open} />}
     </LegacySwitch>}

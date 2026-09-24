@@ -50,7 +50,7 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
           {data.projectsLoading && <p className="m-0 px-2.5 py-1 text-[12px] text-kumo-subtle">Загрузка…</p>}
           {data.projectsError && <Notice tone="danger">{data.projectsError}</Notice>}
           {!data.projectsLoading && !data.projectsError && data.projects.length === 0 && <Notice>Доступных проектов нет.</Notice>}
-          {data.identity?.capabilities?.includes("project.create") && <Button variant="secondary" size="sm" onClick={() => setCreating(true)}>Создать проект</Button>}
+          {canCreateProjects(data.identity) && <Button variant="secondary" size="sm" onClick={() => setCreating(true)}>Создать проект</Button>}
           {creating && <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />}
 
         </nav>
@@ -330,18 +330,23 @@ function membersByDomain(policy: PublicationPolicy | null, names: Map<string, st
   return [...byId].map(([id, domains]) => ({ id, name: personName(id, names), domains })).sort((a, b) => b.domains.length - a.domains.length || a.name.localeCompare(b.name, "ru"));
 }
 
+/** Создать проект может каждый, кому это разрешает правило организации (решение владельца 23.09);
+ * тенантное полномочие project.create — у администраторов. Проверяет всё равно сервер. */
+function canCreateProjects(identity: MemoryData["identity"]): boolean {
+  return !!identity?.capabilities?.includes("project.create") || !!identity?.roles?.can_create_projects;
+}
+
 function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise<void>; onCancel(): void }) {
   const ui = useUi();
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState(() => "project-" + crypto.randomUUID().slice(0, 8));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit() {
     if (busy || !name.trim()) return;
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(slug.trim())) { setError("Код проекта: латинские строчные буквы, цифры и дефисы."); return; }
     setBusy(true); setError("");
     try {
-      const result = await ui.createProject(name.trim(), slug.trim());
+      // Краткое имя проекта сервер придумывает сам: человеку служебный код не нужен.
+      const result = await ui.createProject(name.trim(), "");
       await onCreated(result.project.id);
     } catch {
       setError("Проект не создан или ответ не получен. Проверьте список проектов, имя и ваши полномочия перед повтором.");
@@ -350,7 +355,6 @@ function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise
   // The management frame intentionally disallows native form submissions.
   return <form aria-label="Новый проект" onSubmit={e => e.preventDefault()} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void submit(); } }}>
     <label>Название проекта<TextInput required maxLength={255} value={name} onChange={e => setName(e.target.value)} disabled={busy} /></label>
-    <label>Код проекта<TextInput required maxLength={100} value={slug} onChange={e => setSlug(e.target.value)} disabled={busy} /></label>
     {error && <Notice tone="danger">{error}</Notice>}
     <Button type="button" onClick={() => void submit()} disabled={busy || !name.trim()}>Создать</Button>
     <Button type="button" disabled={busy} onClick={onCancel}>Отмена</Button>

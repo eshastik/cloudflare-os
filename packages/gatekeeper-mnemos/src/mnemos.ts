@@ -1,6 +1,6 @@
 import { BlueprintTemplates } from "./blueprint-templates.ts";
 import { managementSections } from "./management-sections.ts";
-import { inboxDecisions } from "./inbox-count.ts";
+import { inboxCounts } from "./inbox-count.ts";
 import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
@@ -108,7 +108,12 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     return { displayName: identity.tenant_name || identity.subject.user_id,
       uniqueName: identity.connectionName, avatar: AVATAR,
       sourceErrors: await this.#account().sourceErrors(),
-      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: managementSections(identity, await this.#account().inboxCount(identity.subject.user_id).catch(() => undefined)) } };
+      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: await this.#sections(identity) } };
+  }
+  /** Разделы меню со счётчиками; медленный или недоступный счётчик просто не показывается. */
+  async #sections(identity: Parameters<typeof managementSections>[0]) {
+    const counts = await this.#account().inboxCounts(identity.subject.user_id).catch(() => undefined);
+    return managementSections(identity, counts?.inbox, counts?.approvals);
   }
   /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
   async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
@@ -156,7 +161,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async codeWorkMessage(project:string,task:string,text:string){return this.#account().codeWorkMessage(project,task,text);}
   async codeWorkEvents(project:string,task:string,after:number,waitMs:number){return this.#account().codeWorkEvents(project,task,after,waitMs);}
   async codeWorkAbort(project:string,task:string){return this.#account().codeWorkAbort(project,task);}
-  async codeWorkChanges(project:string,task:string){return this.#account().codeWorkChanges(project,task);}
+  async codeWorkInterrupt(project:string,task:string){return this.#account().codeWorkInterrupt(project,task);}
+  async codeWorkChanges(project:string,task:string,since?:'accepted'|'start'){return this.#account().codeWorkChanges(project,task,since);}
   async codeWorkAccept(project:string,task:string,summary:string){return this.#account().codeWorkAccept(project,task,summary);}
   async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#account().codeWorkRevert(project,task,mergeRequest);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
@@ -239,11 +245,12 @@ export class UserAccount extends DurableObject<Env> {
    return {projects:out};
   }finally{session.dispose();}
  }
- async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string},prompt:string){const out=await this.#workspace().startTask(project,target.connectionId,target.repositoryId,prompt);return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended};}
+ async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string},prompt:string){const out=await this.#workspace().startTask(project,target.connectionId,target.repositoryId,prompt,{agentName:'chat',allRepositories:true});return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended};}
  async codeWorkMessage(project:string,task:string,text:string){return this.#workspace().message(project,task,text);}
  async codeWorkEvents(project:string,task:string,after:number,waitMs:number){return this.#workspace().events(project,task,after,waitMs);}
  async codeWorkAbort(project:string,task:string){return this.#workspace().abort(project,task);}
- async codeWorkChanges(project:string,task:string){return this.#workspace().changes(project,task);}
+ async codeWorkInterrupt(project:string,task:string){return this.#workspace().interrupt(project,task);}
+ async codeWorkChanges(project:string,task:string,since?:'accepted'|'start'){return this.#workspace().changes(project,task,since);}
  async codeWorkAccept(project:string,task:string,summary:string){return this.#workspace().accept(project,task,summary);}
  async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#workspace().revert(project,task,mergeRequest);}
  #auditCredential(kind:'mail'|'calendar',origin:string){
@@ -756,6 +763,10 @@ export class UserAccount extends DurableObject<Env> {
   /** Счётчик «Входящих» для навигации: первая страница согласований и обращения человека.
    * Недочитанное или медленное не выдаётся за ноль — тогда счётчика нет. */
   async inboxCount(userId: string): Promise<number | undefined> {
+    return (await this.inboxCounts(userId))?.inbox;
+  }
+  /** Оба счётчика меню одним чтением: «Входящие» и решения по чужой работе для «Согласований». */
+  async inboxCounts(userId: string): Promise<{ inbox: number; approvals: number } | undefined> {
     const session = this.#account().session();
     const count = (async () => {
       // Шаблоны и приёмная — те же источники, что строки «Входящих»; источник, в котором человеку
@@ -775,7 +786,7 @@ export class UserAccount extends DurableObject<Env> {
       const [reviews, requests] = await Promise.all([session.listPublicationReviews(""), session.listCollaborations("")]);
       const mine = requests.requests.filter(request => request.requester_user_id === userId).slice(0, INBOX_PROGRESS_LIMIT);
       const collaborations = await Promise.all(mine.map(async request => ({ request, progress: await session.readCollaborationProgress(request.request_id).catch(() => null) })));
-      return inboxDecisions(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts, shares: await shares });
+      return inboxCounts(reviews.reviews, collaborations, userId, { templates: await templates, alerts: await alerts, shares: await shares });
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1099,7 +1110,7 @@ const INBOX_PROGRESS_LIMIT = 20;
 const INBOX_TEMPLATE_SCOPES = 5;
 const INBOX_ALERT_PROJECTS = 10;
 
-/** Запись черновика синглтоном под агентским credential; методов чтения публикаций и публикации здесь нет. */
+/** Административные операции синглтона под агентским credential; чтения публикаций здесь нет. */
 class MnemosAgentAdministration extends RpcTarget {
   #session: MnemosAccountSession;
   #binding: string;
@@ -1126,6 +1137,9 @@ class MnemosAgentDraftWriter extends RpcTarget {
   async saveDraftDocument(projectId: string, nodeId: string, uploadId: string, expectedHead: string) {
     return this.#session.saveDraftDocument(projectId, nodeId, uploadId, expectedHead);
   }
+  /** Публикация и запрос согласования агента беседы: в аудите actor — агент, on_behalf_of — человек (ADR 0010). */
+  async requestPublicationReview(projectId: string, personalHead: string, sharedHead: string) { return this.#session.requestPublicationReview(projectId, personalHead, sharedHead); }
+  async publishDraft(projectId: string, expectedHead: string, sharedHead: string, message: string) { return this.#session.publishDraft(projectId, expectedHead, sharedHead, message); }
   [Symbol.dispose](): void { this.#session.dispose(); }
 }
 
@@ -1388,7 +1402,10 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async updateProjectSharingSettings(...args: Parameters<MnemosAccountSession["updateProjectSharingSettings"]>) { return this.#session.updateProjectSharingSettings(...args); }
   async nodeHistory(projectId: string, nodeId: string, cursor: string) { return this.#session.nodeHistory(projectId, nodeId, cursor, 50); }
   async searchProject(projectId: string, query: string) { return this.#session.searchProject(projectId, query); }
+  async searchAll(query: string, limit = 20) { return this.#session.searchAll(query, limit); }
   async readProjectDocument(projectId: string, nodeId: string) { return this.#session.readProjectDocument(projectId, nodeId); }
+  async readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144) { return this.#session.readProjectDocumentWindow(projectId, nodeId, ordinal, radius, maxBytes); }
+  async createCodeProject(...args: Parameters<MnemosAccountSession["createCodeProject"]>) { return this.#session.createCodeProject(...args); }
   async browseProject(projectId: string, cursor = "") {
     if (typeof projectId !== "string" || !projectId || projectId.length > 255 || typeof cursor !== "string" || cursor.length > 4096) throw new Error("Invalid project request");
     return this.#session.browseProject(projectId, cursor);

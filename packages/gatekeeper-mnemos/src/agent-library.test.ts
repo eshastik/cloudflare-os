@@ -39,6 +39,8 @@ interface Fixture {
   calls: string[]; revoked: boolean; agentRevoked: boolean; denyRead: boolean; projects: { id: string; name: string; slug: string }[];
   emptyProject?: boolean; openHead?: string; personalExists: boolean; personalHead: string; sharedHead: string; draftText: string;
   tenants: Record<string, string>;
+  /** Политика публикации проекта; null — сервер отвечает 404. */
+  policy?: { domains: unknown[] } | null; reviewReady?: boolean; denyPublish?: boolean;
 }
 
 function fixture(overrides: Partial<Fixture> = {}) {
@@ -78,6 +80,31 @@ function fixture(overrides: Partial<Fixture> = {}) {
       if (state.denyRead) throw new MnemosAPIError(403);
       return { node_id: node, text: "Текст документа", media_type: "text/markdown", truncated: false };
     },
+    async readProjectDocumentWindow(project: string, node: string, ordinal: number, radius: number, maxBytes: number) {
+      state.calls.push(`window:${project}:${node}:${ordinal}:${radius}:${maxBytes}`);
+      return { node_id: node, text: "Фрагмент", media_type: "text/markdown", truncated: true };
+    },
+    async searchAll(query: string, limit: number) {
+      state.calls.push(`searchAll:${query}:${limit}`);
+      return { hits: [{ project_id: "p2", node_id: "n2", name: "readme.md", text: "архив", ordinal: 3 }], index_pending: false, degraded: false };
+    },
+    async readPublicationPolicy(project: string) {
+      state.calls.push(`policy:${project}`);
+      if (!state.policy) throw new MnemosAPIError(404);
+      return { project_id: project, revision: 1, domains: state.policy.domains };
+    },
+    async requestPublicationReview(project: string, personal: string, shared: string) {
+      state.calls.push(`review:${project}:${personal}:${shared}`); return { candidate_id: "d".repeat(64) };
+    },
+    async readPublicationReview(id: string) { state.calls.push(`readReview:${id}`); return { candidate_id: id, ready: !!state.reviewReady, stale: false }; },
+    async publishDraft(project: string, head: string, shared: string, message: string) {
+      state.calls.push(`publish:${project}:${head}:${shared}:${message}`);
+      return { personal_head: head, shared_head: HEAD_B, published: true, conflicted: false };
+    },
+    async checkTrackerAssignee(project: string, node: string, head: string, principal: string) {
+      state.calls.push(`assignee:${project}:${node}:${head}:${principal}`);
+      if (principal !== "bob") throw new MnemosAPIError(403);
+    },
     async draftState(project: string) {
       state.calls.push(`draftState:${project}`);
       if(state.emptyProject)throw new MnemosAPIError(404);
@@ -90,6 +117,7 @@ function fixture(overrides: Partial<Fixture> = {}) {
     },
     async readDraftDocument(project: string, node: string) {
       state.calls.push(`draftDoc:${project}:${node}`);
+      if (node === "tracker") return { head: state.personalHead, node_id: node, exists: true, conflicted: false, content_type: "application/vnd.mnemos.task-tracker+json", terms: [] };
       const exists = NODES.some(n => n.node_id === node && !n.is_dir);
       return { head: state.personalHead, node_id: node, exists, conflicted: false, content_type: exists ? "text/markdown" : undefined,
         terms: exists ? [{ present: true, negative: false, metadata: { name: "plan.md", parent_id: "dir", content_type: "text/markdown" } }] : [] };
@@ -146,6 +174,14 @@ function fixture(overrides: Partial<Fixture> = {}) {
       if (expected !== state.personalHead) throw new MnemosAPIError(409);
       state.personalHead = HEAD_B; state.draftText = uploads.get(upload) ?? "";
       return { head: HEAD_B };
+    },
+    async requestPublicationReview(project: string, personal: string, shared: string) {
+      state.calls.push(`agent:review:${project}:${personal}:${shared}`); return { candidate_id: "d".repeat(64) };
+    },
+    async publishDraft(project: string, head: string, shared: string, message: string) {
+      state.calls.push(`agent:publish:${project}:${head}:${shared}:${message}`);
+      if (state.denyPublish) throw new MnemosAPIError(403);
+      return { personal_head: head, shared_head: HEAD_B, published: true, conflicted: false };
     },
     [Symbol.dispose]() { state.calls.push("dispose:agent"); },
   };
@@ -259,8 +295,9 @@ test("describe ресурса и типы для агента", async () => {
   assert.ok(types.length > 0);
   assert.match(types, /interface MnemosLibrary\b/);
   assert.match(types, /saveDraft\(project: string, document: string, content: string\)/);
-  // Публикация и отправка на согласование — решения человека; у агента таких методов нет.
-  assert.doesNotMatch(types, /\b(?:publish\w*|review\w*|approve\w*|share\w*)\s*\(/i);
+  // Решение владельца 23.09: без согласования агент публикует сам; согласовывать и делиться — решения людей.
+  assert.match(types, /publishDraft\(project: string, message\?: string\)/);
+  assert.doesNotMatch(types, /\b(?:review\w*|approve\w*|share\w*)\s*\(/i);
 });
 
 test("каталог: authorizeObservation до возврата, записи ограничены boundAgentCatalog", async () => {
@@ -507,4 +544,97 @@ test("подключение проекта остаётся owner-only пред
   await session.proposeConnectProject("connect-intake","Проект приёмной"); assert.equal(q.submitted.length,1);
   await assert.rejects(session.proposeConnectProject("connect-intake","Другой проект"));
   await library.applyAction(proposal.action); assert(state.calls.includes("human:approve")); assert(state.calls.includes("admin:execute"));
+});
+
+const TRACKER = JSON.stringify({ format: "mnemos.task-tracker", format_version: 1, revision: 1, title: "План", stages: [{ id: "s1", name: "Работа", department: "" }], transitions: [],
+  tasks: [{ id: "t1", title: "Сделать отчёт", description: "", stage_id: "s1", status: "todo", assignee_id: "", dependencies: [], next_step: "", blocker: "", result: "" }] });
+
+test("search: все проекты с именами, наблюдение до данных, предел числа совпадений", async () => {
+  const { library, state } = fixture();
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  const result = await session.search("архив", 5);
+  assert.deepEqual(result.hits, [{ project: "p2", projectName: "Архив", document: "n2", name: "readme.md", text: "архив", ordinal: 3 }]);
+  assert.ok(state.calls.indexOf("authorize") < state.calls.indexOf("searchAll:архив:5"));
+  await assert.rejects(session.search("архив", 500), /limit/);
+  await assert.rejects(session.search("", 5), /запрос/);
+});
+
+test("readDocument: окно по фрагментам уходит на сервер, неверное окно отвергается до запросов", async () => {
+  const { library, state } = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  const part = await session.readDocument("p1", "docs/plan.md", { ordinal: 4, radius: 2 });
+  assert.equal(part.text, "Фрагмент");
+  assert.equal(part.truncated, true);
+  assert.ok(state.calls.includes("window:p1:n1:4:2:262144"));
+  assert.ok(!state.calls.includes("read:p1:n1"));
+  state.calls.length = 0;
+  await assert.rejects(session.readDocument("p1", "docs/plan.md", { ordinal: -1, radius: 2 }), /окно/);
+  await assert.rejects(session.readDocument("p1", "docs/plan.md", { ordinal: 0, radius: 99 }), /окно/);
+  assert.deepEqual(state.calls, []);
+});
+
+test("browseProject: корень и папка по пути, пути документов, неизвестная папка — отказ", async () => {
+  const { library, state } = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  const root = await session.browseProject("p1");
+  assert.deepEqual(root.entries, [{ id: "dir", name: "docs", path: "docs", kind: "folder" }, { id: "n2", name: "readme.md", path: "readme.md", kind: "document" }]);
+  assert.equal(root.truncated, false);
+  const docs = await session.browseProject("p1", "docs");
+  assert.equal(docs.folder, "docs");
+  assert.deepEqual(docs.entries, [{ id: "n1", name: "plan.md", path: "docs/plan.md", kind: "document" }]);
+  await assert.rejects(session.browseProject("p1", "нет/такой"), /Папка не найдена/);
+});
+
+test("publishDraft: запись под агентским credential; без политики — сразу, с политикой — запрос ответственным", async () => {
+  const humanPublish = (state: Fixture) => state.calls.filter(c => /^(publish|review|draftState):/.test(c));
+  const plain = fixture({ policy: null });
+  const session = await plain.library.startSession(authorizer(plain.state) as any);
+  const published = await session.publishDraft("p1", "Отчёт за март");
+  assert.equal(published.status, "published");
+  assert.ok(plain.state.calls.includes(`agent:publish:p1:${HEAD_A}:${HEAD_S}:Отчёт за март`));
+  assert.deepEqual(humanPublish(plain.state), [], "публикация не идёт под bearer человека");
+  assert.ok(!plain.state.calls.some(c => c.startsWith("agent:review:")));
+  assert.ok(plain.state.calls.indexOf("authorize") < plain.state.calls.indexOf("agent:draftState:p1"));
+
+  const guarded = fixture({ policy: { domains: [{ domain_id: "finance" }] } });
+  const reviewed = await (await guarded.library.startSession(authorizer(guarded.state) as any)).publishDraft("p1");
+  assert.equal(reviewed.status, "awaiting_approval");
+  assert.ok(guarded.state.calls.includes(`agent:review:p1:${HEAD_A}:${HEAD_S}`));
+  assert.ok(!guarded.state.calls.some(c => c.startsWith("agent:publish:")), "согласование не обходится");
+  assert.deepEqual(humanPublish(guarded.state), []);
+
+  // Изменения не задели направлений политики: согласовывать нечего, публикуется сразу.
+  const untouched = fixture({ policy: { domains: [{ domain_id: "finance" }] }, reviewReady: true });
+  assert.equal((await (await untouched.library.startSession(authorizer(untouched.state) as any)).publishDraft("p1")).status, "published");
+
+  const empty = fixture({ personalExists: false });
+  assert.equal((await (await empty.library.startSession(authorizer(empty.state) as any)).publishDraft("p1")).status, "nothing_to_publish");
+  assert.ok(!empty.state.calls.some(c => c.startsWith("agent:publish:")));
+
+  // Сервер отказал агенту: честный отказ, без повтора под сессией человека.
+  const denied = fixture({ policy: null, denyPublish: true });
+  await assert.rejects((await denied.library.startSession(authorizer(denied.state) as any)).publishDraft("p1"), /не разрешил агенту публикацию/);
+  assert.deepEqual(humanPublish(denied.state), []);
+});
+
+test("трекер: чтение, изменение задачи с проверкой правил и версии под агентским credential", async () => {
+  const { library, state, uploads } = fixture({ draftText: TRACKER });
+  const session = await library.startSession(authorizer(state) as any);
+  const tracker = await session.readTracker("p1", "tracker");
+  assert.equal(tracker.head, HEAD_A);
+  assert.equal(tracker.tasks[0].id, "t1");
+  const task = { ...tracker.tasks[0], status: "in_progress" };
+  await assert.rejects(session.changeTrackerTask("p1", "tracker", tracker.head, task), /ответственный и следующий шаг/);
+  await assert.rejects(session.changeTrackerTask("p1", "tracker", tracker.head, { ...task, assignee_id: "eve", next_step: "Собрать данные" }), /Ответственный недоступен/);
+  await assert.rejects(session.changeTrackerTask("p1", "tracker", HEAD_S, { ...task, assignee_id: "bob", next_step: "Собрать данные" }), /Трекер изменился/);
+  assert.equal(humanWriteCalls(state).length, 0);
+  const changed = await session.changeTrackerTask("p1", "tracker", tracker.head, { ...task, assignee_id: "bob", next_step: "Собрать данные" });
+  assert.deepEqual(changed, { document: "tracker", head: HEAD_B, revision: 2, task: "t1" });
+  assert.ok(state.calls.some(c => c.startsWith(`agent:save:p1:tracker:`) && c.endsWith(HEAD_A)));
+  const saved = JSON.parse([...uploads.values()].at(-1)!);
+  assert.equal(saved.tasks[0].status, "in_progress");
+  assert.equal(saved.tasks[0].assignee_id, "bob");
+  assert.equal(saved.transitions.length, 0, "прочие поля трекера сохраняются");
+  await assert.rejects(session.readTracker("p1", "n1"), /не трекер/);
 });

@@ -64,6 +64,24 @@ function DiffFile({ section }: { section: DiffSection }) {
   );
 }
 
+function FileList({ files }: { files: ChangedFile[] }) {
+  return (
+    <ul className="mt-1 mb-0 list-none space-y-0.5 p-0">
+      {files.slice(0, 20).map((file) => (
+        <li key={file.path} className="flex items-center gap-2 text-[12px] leading-4">
+          <span className="min-w-0 flex-1 truncate font-mono text-kumo-default">{file.path}</span>
+          <span className="flex-shrink-0 text-kumo-inactive">{STATUS_WORDS[file.status]}</span>
+          <span className="flex-shrink-0 font-mono text-kumo-success">+{file.additions}</span>
+          <span className="flex-shrink-0 font-mono text-kumo-danger">−{file.deletions}</span>
+        </li>
+      ))}
+      {files.length > 20 && (
+        <li className="text-[12px] text-kumo-inactive">и ещё {files.length - 20}</li>
+      )}
+    </ul>
+  );
+}
+
 /** Текст итога «Принять» для человека; заметка службы важнее общего текста. */
 export function describeAcceptOutcome(outcome: Outcome, note?: string): string {
   switch (outcome) {
@@ -121,6 +139,10 @@ export function CodeChangesCard({ refreshKey, review, load, accept, revert, disa
   const canRevert = outcome === "accepted" && !!revert && !!(review?.mergeRequest ?? changes.review?.mergeRequest);
 
   const decided = outcome !== "draft";
+  // При нескольких репозиториях изменения группируются по ним; пути внутри группы — от папки репозитория.
+  const groups = changes.repositories && changes.repositories.length > 1 ? changes.repositories.filter((r) => r.files.length > 0) : null;
+  const hasDiff = groups ? groups.some((g) => g.diff) : !!changes.diff;
+  const truncated = changes.truncated || !!groups?.some((g) => g.truncated);
   const OutcomeIcon = outcome === "accepted" ? CheckCircle : outcome === "awaiting_approval" ? Clock : outcome === "reverted" ? ArrowUUpLeft : WarningCircle;
 
   return (
@@ -161,22 +183,19 @@ export function CodeChangesCard({ refreshKey, review, load, accept, revert, disa
       {changes.summary && (
         <p className="mt-2 mb-0 line-clamp-3 whitespace-pre-line text-kumo-subtle">{changes.summary}</p>
       )}
-      {changes.files.length > 0 && (
-        <ul className="mt-2 mb-0 list-none space-y-0.5 p-0">
-          {changes.files.slice(0, 20).map((file) => (
-            <li key={file.path} className="flex items-center gap-2 text-[12px] leading-4">
-              <span className="min-w-0 flex-1 truncate font-mono text-kumo-default">{file.path}</span>
-              <span className="flex-shrink-0 text-kumo-inactive">{STATUS_WORDS[file.status]}</span>
-              <span className="flex-shrink-0 font-mono text-kumo-success">+{file.additions}</span>
-              <span className="flex-shrink-0 font-mono text-kumo-danger">−{file.deletions}</span>
-            </li>
-          ))}
-          {changes.files.length > 20 && (
-            <li className="text-[12px] text-kumo-inactive">и ещё {changes.files.length - 20}</li>
-          )}
-        </ul>
-      )}
-      {changes.diff && (
+      {groups ? (
+        groups.map((group, index) => (
+          <div key={index} className="mt-2" data-testid="code-changes-repository">
+            <div className="text-[12px] font-medium leading-4 text-kumo-default">{group.name}</div>
+            <FileList files={group.files} />
+          </div>
+        ))
+      ) : changes.files.length > 0 ? (
+        <div className="mt-1"><FileList files={changes.files} /></div>
+      ) : decided ? (
+        <p className="mt-2 mb-0 text-[12px] text-kumo-inactive">Новых изменений после принятия пока нет.</p>
+      ) : null}
+      {hasDiff && (
         <button
           type="button"
           onClick={() => setShowDiff((v) => !v)}
@@ -189,8 +208,15 @@ export function CodeChangesCard({ refreshKey, review, load, accept, revert, disa
       )}
       {showDiff && (
         <div className="mt-2 max-h-[420px] overflow-auto">
-          {splitDiff(changes.diff).map((section, index) => <DiffFile key={index} section={section} />)}
-          {changes.truncated && (
+          {groups
+            ? groups.map((group, index) => (
+              <div key={index}>
+                <div className="mb-1 text-[12px] font-medium text-kumo-default">{group.name}</div>
+                {splitDiff(group.diff).map((section, n) => <DiffFile key={n} section={section} />)}
+              </div>
+            ))
+            : splitDiff(changes.diff).map((section, index) => <DiffFile key={index} section={section} />)}
+          {truncated && (
             <p className="m-0 text-[12px] text-kumo-inactive">Показана только часть изменений: остальное слишком велико.</p>
           )}
         </div>

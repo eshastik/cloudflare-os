@@ -13,6 +13,7 @@ export interface CodeWorkUser {
   codeWorkMessage(accountId: number, project: string, task: string, text: string): Promise<void>;
   codeWorkEvents(accountId: number, project: string, task: string, after: number, waitMs: number): ReturnType<CodeWorkBackend["events"]>;
   codeWorkAbort(accountId: number, project: string, task: string): Promise<void>;
+  codeWorkInterrupt(accountId: number, project: string, task: string): Promise<void>;
   codeWorkChanges(accountId: number, project: string, task: string): ReturnType<CodeWorkBackend["changes"]>;
   codeWorkAccept(accountId: number, project: string, task: string, summary: string): Promise<CodeWorkReview>;
   codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number): Promise<CodeWorkReview>;
@@ -34,6 +35,7 @@ function backendFor(user: CodeWorkUser, accountId: number): CodeWorkBackend {
     message: (project, task, text) => user.codeWorkMessage(accountId, project, task, text),
     events: (project, task, after, waitMs) => user.codeWorkEvents(accountId, project, task, after, waitMs),
     abort: (project, task) => user.codeWorkAbort(accountId, project, task),
+    interrupt: (project, task) => user.codeWorkInterrupt(accountId, project, task),
     changes: (project, task) => user.codeWorkChanges(accountId, project, task),
   };
 }
@@ -171,8 +173,12 @@ export async function readChatCodeChanges(host: ChatCodeWorkHost, chatId: number
   if (!work || !meta.projectContext?.creatorId) return null;
   let changes = await host.user(meta.projectContext.creatorId).codeWorkChanges(work.accountId, work.projectId, work.taskId).catch(() => null);
   if (!changes) return {projectTitle: work.projectTitle, summary: work.summary ?? "", files: [], diff: "", truncated: false, ...(work.review ? {review: work.review} : {})};
+  // Группы по репозиториям нужны, только когда их у работы несколько.
+  let repositories = (changes.repositories ?? []).length > 1
+    ? changes.repositories!.map(r => ({name: displayName(r.name, r.dir || "Репозиторий"), files: r.files, diff: r.diff, truncated: r.truncated}))
+    : undefined;
   return {projectTitle: work.projectTitle, summary: work.summary ?? "", files: changes.files, diff: changes.diff, truncated: changes.truncated,
-    ...(work.review ? {review: work.review} : {})};
+    ...(work.review ? {review: work.review} : {}), ...(repositories ? {repositories} : {})};
 }
 
 export async function acceptChatCodeChanges(host: ChatCodeWorkHost, chatId: number, userId: string): Promise<ChatCodeAcceptResult> {

@@ -3,22 +3,26 @@ import assert from 'node:assert/strict';
 import {mountMemoryApp} from './app-react-harness.mjs';
 
 test('permissions hide modules; refreshing exposes authorized project creation and opens the created project',async()=>{
- let capabilities=[],projects=[];
+ let capabilities=[],projects=[],roles;
  const app=await mountMemoryApp({
-  async whoAmI(){return {subject:{tenant_id:'org',user_id:'alice'},tenant_name:'Team',capabilities}},
+  async whoAmI(){return {subject:{tenant_id:'org',user_id:'alice'},tenant_name:'Team',capabilities,...(roles?{roles}:{})}},
   async listProjects(){return {projects}},
   async createProject(name,slug){app.calls.push(['createProject',name,slug]);const project={id:'created',name,slug};projects=[project];return {project}},
  });
  try{
   await app.open('Проекты');await app.until(()=>app.text().includes('Доступных проектов нет.'),'empty projects');
   assert.equal(app.button('Создать проект'),undefined);assert.equal(app.tab('Организация'),undefined);
-  capabilities=['project.create','platform.metrics.read'];app.button('Обновить').click();
+  // Сотрудник без полномочия: кнопку открывает правило организации «создают все».
+  roles={department_head:false,project_responsible:false,can_create_projects:true,responsible_projects:[]};app.button('Обновить').click();
+  await app.until(()=>app.button('Создать проект'),'organization rule allows creation');
+  roles=undefined;capabilities=['project.create','platform.metrics.read'];app.button('Обновить').click();
   await app.until(()=>app.button('Создать проект'),'permission refreshed');
   app.button('Создать проект').click();await app.until(()=>app.document.querySelector('form[aria-label="Новый проект"]'),'create form');
-  const inputs=app.document.querySelectorAll('form[aria-label="Новый проект"] input');app.type(inputs[0],'Новый проект команды');app.type(inputs[1],'new-team');
+  const inputs=app.document.querySelectorAll('form[aria-label="Новый проект"] input');
+  assert.equal(inputs.length,1,'служебный код проекта человеку не показывается');app.type(inputs[0],'Новый проект команды');
   await app.until(()=>!app.button('Создать').disabled,'name accepted');app.button('Создать').click();
   await app.until(()=>app.calls.some(c=>c[0]==='createProject')&&app.text().includes('Новый проект команды')&&!app.document.querySelector('form[aria-label="Новый проект"]'),'created project loaded');
-  assert.deepEqual(app.calls.find(c=>c[0]==='createProject'),['createProject','Новый проект команды','new-team']);
+  assert.deepEqual(app.calls.find(c=>c[0]==='createProject'),['createProject','Новый проект команды','']);
   await app.open('Организация');await app.until(()=>app.button('Открыть: Метрики платформы'),'metrics visible');
   assert.equal(app.button('Открыть: Журнал операций'),undefined);assert.equal(app.button('Открыть: Состав групп и ролей'),undefined);
  }finally{app.dispose()}

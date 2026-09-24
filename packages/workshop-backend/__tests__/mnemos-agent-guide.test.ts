@@ -10,15 +10,17 @@ describe("подсказка агенту беседы о Mnemos", () => {
     expect(findMnemosBinding([])).toBeUndefined();
   });
 
-  it("порядок работы: найти, прочитать частями, создать и изменить сразу; без обещаний публикации", () => {
+  it("порядок работы: найти по всем проектам, прочитать окнами, изменить, опубликовать, вести трекер", () => {
     const text = formatMnemosWorkPrompt("MNEMOS");
-    for (const method of ["searchProject", "readDocument", "createDraft", "saveDraft", "listPersonalDocuments", "proposeCreateProject"]) {
+    for (const method of ["search(", "searchProject", "browseProject", "readDocument", "createDraft", "saveDraft", "publishDraft", "readTracker", "changeTrackerTask", "listPersonalDocuments", "proposeCreateProject"]) {
       expect(text).toContain(`${method}`);
     }
-    expect(text).toContain("env.MNEMOS.searchProject");
+    expect(text).toContain("env.MNEMOS.search(");
     expect(text).toContain("doc.text.slice(0, 20000)");
-    expect(text).toContain("truncated: true");
-    expect(text).toContain("не пиши, что документ уже опубликован");
-    expect(text).toContain("вести задачи из беседы пока нельзя");
+    expect(text).toContain("{ordinal, radius}");
+    expect(text).toContain("не называй их опубликованными");
+    // Прежние оговорки сняты: публикация и трекер теперь доступны.
+    expect(text).not.toContain("пока нельзя");
+    expect(text).not.toContain("не пиши, что документ уже опубликован");
   });
 });

@@ -562,6 +562,32 @@ export class MnemosAccountSession {
   async createProject(name: string, slug: string) {
     this.#check(); const result = await this.#client.createProject(name, slug, this.#lifetime.signal); this.#check(); return result;
   }
+  /** Проект с кодом из папки: проект, внутренний репозиторий и первый коммит одним запросом. */
+  async createCodeProject(name: string, slug: string, files: import("./mnemos-api.ts").CodeProjectFile[]) {
+    this.#check();
+    const result = await this.#client.createCodeProject(name, slug, files, this.#lifetime.signal);
+    this.#check();
+    const repo = result?.repository;
+    if (!result?.project || typeof result.project.id !== "string" || !result.project.id ||
+        (repo !== null && (!repo || typeof repo.repository_id !== "string" || typeof repo.repository_name !== "string" || typeof repo.connection_id !== "string")) ||
+        (repo === null && typeof result.repository_error !== "string")) throw new MnemosAPIError(502);
+    return result;
+  }
+  /** Поиск по всем проектам, которые видит человек; limit — до 50 совпадений. */
+  async searchAll(query: string, limit = 20) {
+    this.#check();
+    const page = await this.#client.searchAll(query, Math.min(Math.max(Math.trunc(limit) || 20, 1), 50), this.#lifetime.signal);
+    this.#check();
+    if (!Array.isArray(page.hits) || page.hits.some(hit => typeof hit.project_id !== "string" || !hit.project_id)) throw new MnemosAPIError(502);
+    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal }) => ({ project_id, node_id, name, text, ordinal })), index_pending: page.index_pending, degraded: page.degraded };
+  }
+  async readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144) {
+    this.#check();
+    const content = await this.#client.readProjectDocumentWindow(projectId, nodeId, ordinal, radius, maxBytes, this.#lifetime.signal);
+    this.#check();
+    if (content.node_id !== nodeId) throw new MnemosAPIError(502);
+    return content;
+  }
   /** Субъект сохраняется: сервер различает человеческое подтверждение и агентское исполнение. */
   async workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest) {
     this.#check(); const result = await this.#client.workshopAdminOperation(binding, operation, phase, request, this.#lifetime.signal); this.#check(); return result;
