@@ -5,8 +5,12 @@ import type { GatekeeperNativeDocumentWriteSelector } from '@gadgets/workshop-sh
 import type { NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
 import type { DocumentBinding } from './DocumentStatus'
 import { plural } from './versionDiff'
+import { useAuthenticatedApi } from './AuthContext'
+import { listAccounts, storesDocuments } from './accountCapabilities'
+import MnemosAvatar from './components/MnemosAvatar'
+import { photoMap } from './mnemosPhotos'
 
-/** Отделы организации для выбора людей (метод моста `orgUnits`; в общем описании селектора его пока нет). */
+/** Отделы организации для выбора людей (метод моста `departments`). */
 export type ShareUnit = { id: string; name: string; members: { id: string; name: string }[] }
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
 type Page = Awaited<ReturnType<Selector['participants']>>
@@ -19,14 +23,15 @@ const PEOPLE_PAGES = 5
 /** Недавние приглашённые — удобство одного браузера, не источник прав. */
 const RECENT_KEY = 'mnemos-share-recent'
 
-const LEVELS: { id: Level; title: string }[] = [
-  { id: 'private', title: 'Только приглашённые' },
-  { id: 'department', title: 'Мой отдел' },
-  { id: 'organization', title: 'Вся организация' },
-]
-function levelLine(level: Level, project: string, pending: Level | null) {
-  if (pending) return `Запрос открыть проект «${project}» ${pending === 'organization' ? 'всей организации' : 'отделу'} ждёт решения руководителя.`
-  return level === 'private' ? 'Видят только вы и те, кого вы пригласили.' : level === 'department' ? `Видит ваш отдел: весь проект «${project}».` : `Видит вся организация: весь проект «${project}».`
+/**
+ * Кто видит проект документа — одной строкой. Панель документа уровень проекта не меняет: переключатель
+ * здесь открывал весь проект отделу или организации, хотя человек менял доступ к одному документу.
+ * Меняется это на странице проекта, раздел «Кто видит».
+ */
+export function projectLine(level: Level, project: string, unit: string, pending: Level | null): string {
+  const who = level === 'private' ? 'только автор' : level === 'department' ? (unit ? `отдел «${unit}»` : 'отдел') : 'вся организация'
+  const wait = pending ? ` Запрос открыть его ${pending === 'organization' ? 'всей организации' : 'отделу'} ждёт решения руководителя.` : ''
+  return `Проект «${project}» видят: ${who}.${wait}`
 }
 
 /** Человек в списке выбора: может ли его пригласить владелец документа и почему нет. */
@@ -34,29 +39,50 @@ export type Candidate = { id: string; name: string; unit: string; person: ShareP
 export type CandidateGroup = { id: string; title: string; people: Candidate[]; mine: boolean; unit: boolean }
 
 /**
- * Кого можно пригласить, по группам: «Недавние», затем отделы (свой первым), затем остальные коллеги.
- * Уже имеющие доступ сюда не попадают. Сервер отдаёт всех активных людей организации; человек из отдела,
- * которого среди них нет (отключён), остаётся в списке с person=null и не выбирается — молча его не прячем.
+ * Кого можно пригласить, по группам: «Недавние», затем отделы (свой первым: «Мой отдел · …»), затем «Без отдела».
+ * Человек стоит ровно в одной группе: попавший в «Недавние» ниже не повторяется, состоящий в нескольких
+ * отделах стоит в своём (общем с вами) или в первом по имени. Уже имеющие доступ сюда не попадают.
+ * Отделы человека приходят вместе со списком людей; состав отделов из `departments` дополняет его
+ * отключёнными людьми: такой остаётся в списке с person=null и не выбирается — молча его не прячем.
  */
 export function shareCandidates(people: SharePerson[], units: ShareUnit[], me: string, recent: string[]): CandidateGroup[] {
   const byId = new Map(people.map(p => [p.id, p]))
   const has = (id: string) => (byId.get(id)?.mode ?? '') !== ''
-  const unitOf = new Map<string, string>()
-  for (const u of units) for (const m of u.members) if (!unitOf.has(m.id)) unitOf.set(m.id, u.name)
-  const candidate = (id: string, name: string): Candidate => ({ id, name: byId.get(id)?.name || name || 'Коллега', unit: unitOf.get(id) ?? '', person: byId.get(id) ?? null })
-  const sort = (list: Candidate[]) => list.sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-  const groups: CandidateGroup[] = []
-  const recentPeople = recent.filter(id => id !== me && !has(id) && (byId.has(id) || unitOf.has(id))).map(id => candidate(id, units.flatMap(u => u.members).find(m => m.id === id)?.name ?? ''))
-  if (recentPeople.length) groups.push({ id: 'recent', title: 'Недавние', people: recentPeople.slice(0, 6), mine: false, unit: false })
-  const placed = new Set<string>()
-  const ordered = [...units].sort((a, b) => Number(b.members.some(m => m.id === me)) - Number(a.members.some(m => m.id === me)) || a.name.localeCompare(b.name, 'ru'))
-  for (const u of ordered) {
-    const list = sort(u.members.filter(m => m.id !== me && !has(m.id)).map(m => candidate(m.id, m.name)))
-    list.forEach(c => placed.add(c.id))
-    if (list.length) groups.push({ id: `unit:${u.id}`, title: u.name, people: list, mine: u.members.some(m => m.id === me), unit: true })
+  const mine = new Set(units.filter(u => u.members.some(m => m.id === me)).map(u => u.id))
+  const unitsOf = new Map<string, { id: string; name: string }[]>()
+  const names = new Map<string, string>()
+  for (const p of people) if (p.units?.length) unitsOf.set(p.id, p.units)
+  for (const u of units) for (const m of u.members) {
+    if (!names.has(m.id)) names.set(m.id, m.name)
+    if (byId.get(m.id)?.units?.length) continue
+    const list = unitsOf.get(m.id) ?? []
+    if (!list.some(x => x.id === u.id)) unitsOf.set(m.id, [...list, { id: u.id, name: u.name }])
   }
-  const rest = sort(people.filter(p => p.id !== me && p.mode === '' && !placed.has(p.id)).map(p => candidate(p.id, p.name)))
-  if (rest.length) groups.push({ id: 'rest', title: units.length ? 'Другие коллеги' : 'Коллеги', people: rest, mine: !units.length, unit: false })
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'ru')
+  const home = (id: string) => { const list = [...(unitsOf.get(id) ?? [])].sort(byName); return list.find(u => mine.has(u.id)) ?? list[0] ?? null }
+  const candidate = (id: string): Candidate => ({ id, name: byId.get(id)?.name || names.get(id) || 'Коллега',
+    unit: [...(unitsOf.get(id) ?? [])].sort(byName).map(u => u.name).join(', '), person: byId.get(id) ?? null })
+  const pool = new Set<string>()
+  for (const p of people) if (p.id !== me && p.mode === '') pool.add(p.id)
+  for (const id of names.keys()) if (id !== me && !has(id)) pool.add(id)
+
+  const groups: CandidateGroup[] = []
+  const recentPeople = [...new Set(recent)].filter(id => pool.has(id)).slice(0, 6).map(candidate)
+  if (recentPeople.length) groups.push({ id: 'recent', title: 'Недавние', people: recentPeople, mine: false, unit: false })
+  const shown = new Set(recentPeople.map(c => c.id))
+  const placed = new Map<string, { unit: { id: string; name: string }; people: Candidate[] }>()
+  const rest: Candidate[] = []
+  for (const id of pool) {
+    if (shown.has(id)) continue
+    const unit = home(id)
+    if (!unit) { rest.push(candidate(id)); continue }
+    const group = placed.get(unit.id) ?? { unit, people: [] }
+    group.people.push(candidate(id)); placed.set(unit.id, group)
+  }
+  const ordered = [...placed.values()].sort((a, b) => Number(mine.has(b.unit.id)) - Number(mine.has(a.unit.id)) || byName(a.unit, b.unit))
+  for (const g of ordered) groups.push({ id: `unit:${g.unit.id}`, title: g.unit.name, people: g.people.sort(byName), mine: mine.has(g.unit.id), unit: true })
+  const known = unitsOf.size > 0
+  if (rest.length) groups.push({ id: 'rest', title: known ? 'Без отдела' : 'Коллеги', people: rest.sort(byName), mine: !known, unit: false })
   return groups
 }
 
@@ -65,13 +91,6 @@ function readRecent(): string[] {
 }
 function rememberRecent(ids: string[]) {
   try { localStorage.setItem(RECENT_KEY, JSON.stringify([...new Set([...ids, ...readRecent()])].slice(0, 20))) } catch { /* без памяти браузера список «Недавние» просто короче */ }
-}
-
-const tones = ['bg-selection-bg text-selection-text', 'bg-kumo-warning-tint text-kumo-warning', 'bg-kumo-info-tint text-kumo-default', 'bg-kumo-tint text-kumo-default']
-function Avatar({ name, id }: { name: string; id: string }) {
-  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join('') || '?'
-  const tone = tones[[...id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % tones.length]
-  return <span aria-hidden="true" className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${tone}`}>{initials}</span>
 }
 
 const RIGHTS: { id: Right; title: string }[] = [{ id: 'write', title: 'может править' }, { id: 'read', title: 'может смотреть' }]
@@ -112,7 +131,7 @@ function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabl
 }
 
 /**
- * «Поделиться» документом по макету Share: уровень доступа одной строкой, кто имеет доступ, список людей
+ * «Поделиться» документом по макету Share: кто видит проект одной строкой (меняется на странице проекта), кто имеет доступ, список людей
  * организации для приглашения (недавние, свой отдел, остальные отделы свёрнуты) и одна кнопка «Пригласить N».
  * Всё сохраняется сразу и перечитывается само: без «Применить» и «Перечитать».
  */
@@ -123,7 +142,10 @@ export default function DocumentSharePanel({ selector, binding, format, document
   const [units, setUnits] = useState<ShareUnit[]>([]), [me, setMe] = useState(''), [recent, setRecent] = useState<string[]>(() => readRecent())
   const [owner, setOwner] = useState<boolean | null>(null)
   const [documentOnly, setDocumentOnly] = useState(false)
-  const [level, setLevel] = useState<{ name: string; level: Level; canEdit: boolean; pending: Level | null } | null>(null)
+  const [level, setLevel] = useState<{ name: string; level: Level; pending: Level | null; unit?: string } | null>(null)
+  const [photos, setPhotos] = useState<Map<string, string>>(new Map())
+  const [projectHref, setProjectHref] = useState('')
+  const { authenticatedApi, currentUser } = useAuthenticatedApi()
   const [query, setQuery] = useState(''), [right, setRight] = useState<Right>('write'), [picked, setPicked] = useState<string[]>([])
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
@@ -152,15 +174,16 @@ export default function DocumentSharePanel({ selector, binding, format, document
     }
     if (!alive.current) return
     setOwner(true); setPeople(all)
-    const extra = selector as unknown as { orgUnits?(): Promise<ShareUnit[]> }
-    const [project, orgUnits, identity, sharedWithMe] = await Promise.all([
+    const [project, departments, identity, sharedWithMe, pictures] = await Promise.all([
       Promise.resolve(selector.projectLevel(scope)).catch(() => null),
-      Promise.resolve(extra.orgUnits?.()).catch(() => undefined),
+      Promise.resolve(selector.departments()).catch(() => null),
       Promise.resolve(selector.reviewerIdentity()).catch(() => ''),
       Promise.resolve(selector.sharedDocuments()).catch(() => null),
+      Promise.resolve(selector.peoplePhotos()).catch(() => null),
     ])
     if (!alive.current) return
-    setLevel(project ?? null); setUnits(Array.isArray(orgUnits) ? orgUnits : []); setMe(typeof identity === 'string' ? identity : '')
+    setLevel(project ?? null); setUnits(Array.isArray(departments?.units) ? departments.units : []); setMe(typeof identity === 'string' ? identity : '')
+    setPhotos(photoMap(Array.isArray(pictures?.photos) ? pictures.photos : [], ''))
     // «Недавние»: кого вы приглашали в этом браузере и кто делился документами с вами.
     const owners = sharedWithMe?.documents.map(d => d.owner) ?? []
     setRecent(old => [...new Set([...old, ...owners])])
@@ -198,18 +221,21 @@ export default function DocumentSharePanel({ selector, binding, format, document
       `${who} ${chosen.length === 1 ? 'получит' : 'получат'} уведомление во «Входящих» и письмо.${only.length ? ` Только этот документ, без папки проекта: ${only.map(p => p.name || 'коллега').join(', ')}.` : ''}`)
     if (ok && alive.current) { rememberRecent(chosen.map(p => p.id)); setRecent(readRecent()); setPicked([]); setQuery('') }
   }
-  async function changeLevel(next: Level) {
-    if (!selector || !level || busy || next === level.level) return
-    setBusy(true); setError(''); setNotice('')
-    try {
-      const out = await selector.setProjectLevel(scope, next, level.canEdit)
-      if (!out.applied) setNotice('Расширение доступа ушло на решение руководителю — в его «Входящие».')
-      await load()
-    } catch { if (alive.current) setError('Уровень доступа не изменён: нужно право менять видимость проекта.') }
-    finally { if (alive.current) setBusy(false) }
-  }
+  // Ссылка на раздел «Кто видит» страницы проекта: уровень доступа проекта меняется там, осознанно.
+  useEffect(() => {
+    let cancelled = false
+    setProjectHref('')
+    if (!scope || !authenticatedApi) return
+    void listAccounts(authenticatedApi).then(accounts => {
+      const account = accounts.find(a => storesDocuments(a) && (binding?.accountId == null || a.id === binding.accountId))
+      if (!cancelled && account) setProjectHref(`/gatekeepers/${encodeURIComponent(account.vendorId)}?account=${account.id}&section=projects&project=${encodeURIComponent(scope)}&view=members`)
+    }, () => {})
+    return () => { cancelled = true }
+  }, [authenticatedApi, scope, binding?.accountId])
 
   const withAccess = (people ?? []).filter(p => p.mode !== '')
+  // Инициалы владельца — от его имени, а не от подписи «Вы».
+  const myName = units.flatMap(u => u.members).find(m => m.id === me)?.name || currentUser?.name || ''
   const groups = useMemo(() => shareCandidates(people ?? [], units, me, recent), [people, units, me, recent])
   const q = query.trim().toLocaleLowerCase('ru-RU')
   const found = q ? [...new Map(groups.flatMap(g => g.people).filter(c => c.name.toLocaleLowerCase('ru-RU').includes(q)).map(c => [c.id, c])).values()] : null
@@ -230,7 +256,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
         title={!c.person ? 'Учётная запись человека отключена.' : only ? 'У человека нет такого права на папку документа: приглашение откроет ему только этот документ.' : undefined}
         onClick={() => toggle(c)}
         className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border-0 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-default ${on ? 'bg-kumo-tint' : 'bg-transparent enabled:hover:bg-kumo-tint/60'}`}>
-        <Avatar name={c.name} id={c.id} />
+        <MnemosAvatar name={c.name} id={c.id} photo={photos.get(c.id)} />
         <span className="min-w-0 flex-1">
           <span className={`block truncate text-[15px] leading-5 ${ok ? 'text-kumo-default' : 'text-kumo-subtle'}`}>{c.name}</span>
           {sub && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">{sub}</span>}
@@ -253,21 +279,16 @@ export default function DocumentSharePanel({ selector, binding, format, document
       {!binding && <p className="m-0 text-kumo-subtle">Документ ещё не сохранён в проект. Поделиться можно, когда он сохранится.</p>}
       {binding && owner === false && <p className="m-0 text-kumo-subtle">С вами поделились этим документом.{documentOnly ? ' Вам открыт только он, без папки проекта.' : ''} Приглашать других может его владелец.</p>}
       {binding && owner && <>
-        {level && <div className="flex flex-col gap-2">
-          <div role="radiogroup" aria-label="Доступ" className="grid grid-cols-3 gap-0.5 rounded-full bg-kumo-tint p-1">
-            {LEVELS.map(l => <button key={l.id} type="button" role="radio" aria-checked={level.level === l.id} disabled={busy || !selector}
-              onClick={() => { void changeLevel(l.id) }}
-              className={`h-8 cursor-pointer truncate rounded-full border-0 px-2 text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-default ${level.level === l.id ? 'bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]' : 'bg-transparent text-kumo-subtle hover:text-kumo-default'}`}>
-              {l.title}{level.pending === l.id ? ' · ждёт' : ''}</button>)}
-          </div>
-          <p data-level-line="" className="m-0 px-1 text-[13px] leading-[18px] text-kumo-subtle">{levelLine(level.level, level.name, level.pending)}</p>
-        </div>}
+        {level && <p data-project-line="" className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-[18px] text-kumo-subtle">
+          <span>{projectLine(level.level, level.name, units.find(u => u.id === level.unit)?.name ?? '', level.pending)}</span>
+          {projectHref && <a href={projectHref} className="text-kumo-link hover:underline">Изменить доступ к проекту</a>}
+        </p>}
 
         <section aria-label="Имеют доступ" className="flex flex-col">
           <h3 className="m-0 pb-1 text-[15px] leading-5 font-semibold">Имеют доступ</h3>
-          <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><Avatar name="Вы" id={me || 'me'} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
+          <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><MnemosAvatar name={myName || 'Вы'} id={me || 'me'} photo={photos.get(me)} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
           {withAccess.map(p => <div key={p.id} data-share-person="" className="group flex items-center gap-3 border-b border-kumo-fill py-2.5 last:border-b-0">
-            <Avatar name={p.name || 'Коллега'} id={p.id} />
+            <MnemosAvatar name={p.name || 'Коллега'} id={p.id} photo={photos.get(p.id)} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px]">{p.name || 'Коллега'}</span>
               {documentOnlyWith(p, p.mode === 'write' ? 'write' : 'read') && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">только этот документ</span>}

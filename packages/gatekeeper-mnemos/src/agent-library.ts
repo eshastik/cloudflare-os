@@ -274,6 +274,7 @@ export class MnemosLibrarySession extends RpcTarget {
   async removeReviewDomain(project: string, domain: string) { return this.#calls.propose(this.#queue, {kind: "remove_review_domain", project, domain}); }
   async revokePersonRight(person: string, project: string, mode: "read" | "write" | "all" = "all") { return this.#calls.propose(this.#queue, {kind: "revoke_person_right", person, project, mode}); }
   async setPersonCodeAgent(person: string, enabled: boolean) { return this.#calls.propose(this.#queue, {kind: "set_person_code_agent", person, enabled}); }
+  async removePerson(person: string) { return this.#calls.propose(this.#queue, {kind: "remove_person", person}); }
   async createCompetency(name: string) { return this.#calls.propose(this.#queue, {kind: "create_competency", name}); }
   async setCompetencyMember(competency: string, person: string, member: boolean) { return this.#calls.propose(this.#queue, {kind: "set_competency_member", competency, person, member}); }
   async decideAcceptance(request: string, accept: boolean, comment = "") { return this.#calls.propose(this.#queue, {kind: "decide_acceptance", request, accept, comment}); }

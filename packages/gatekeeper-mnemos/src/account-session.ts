@@ -586,6 +586,8 @@ export class MnemosAccountSession {
   async listPersonRights(principal: string) { await this.requirePeopleManager(); const result = await this.#client.listPersonRights(principal,this.#lifetime.signal); this.#check(); return result; }
   async grantPersonRight(input: import("./admin-people.ts").AdminRight) { await this.requirePeopleManager(); const result = await this.#client.grantPersonRight(input,this.#lifetime.signal); this.#check(); return result; }
   async removePersonRight(input: import("./admin-people.ts").AdminRight) { await this.requirePeopleManager(); const result = await this.#client.removePersonRight(input,this.#lifetime.signal); this.#check(); return result; }
+  async removePerson(principal: string) { await this.requirePeopleManager(); const result = await this.#client.removePerson(principal,this.#lifetime.signal); this.#check(); return result; }
+  async returnPerson(principal: string) { await this.requirePeopleManager(); const result = await this.#client.returnPerson(principal,this.#lifetime.signal); this.#check(); return result; }
   async createProject(name: string, slug: string) {
     this.#check(); const result = await this.#client.createProject(name, slug, this.#lifetime.signal); this.#check(); return result;
   }
@@ -777,6 +779,10 @@ export class MnemosAccountSession {
   async decideShareRequest(request: string, approve: boolean) {
     await this.whoAmI(); const out = await this.#client.decideShareRequest(request, approve, this.#lifetime.signal); this.#check(); return out;
   }
+  async listPersonPhotos() { this.#check(); const out = await this.#client.listPersonPhotos(this.#lifetime.signal); this.#check(); return out; }
+  async beginPersonPhotoUpload(size: number, checksum: string) { this.#check(); const out = await this.#client.beginPersonPhotoUpload(size, checksum, this.#lifetime.signal); this.#check(); return out; }
+  async savePersonPhoto(uploadId: string) { this.#check(); const out = await this.#client.savePersonPhoto(uploadId, this.#lifetime.signal); this.#check(); return out; }
+  async removePersonPhoto(principal = "") { this.#check(); await this.#client.removePersonPhoto(principal, this.#lifetime.signal); this.#check(); }
   async listOrgUnits() { this.#check(); const out = await this.#client.listOrgUnits(this.#lifetime.signal); this.#check(); return out; }
   async createOrgUnit(name: string) { this.#check(); const out = await this.#client.createOrgUnit(name, this.#lifetime.signal); this.#check(); return out; }
   async deleteOrgUnit(unit: string) { this.#check(); const out = await this.#client.deleteOrgUnit(unit, this.#lifetime.signal); this.#check(); return out; }

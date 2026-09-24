@@ -58,4 +58,22 @@ test('ошибка сохранения остаётся после обновл
  assert.match(view.el.textContent,/Сервер не подтвердил изменение/);assert.ok(view.el.querySelector('[aria-label="Новое назначение"]'));assert.equal(view.el.querySelector('[aria-label="Проект"]').value,'project');await view.close();
 });
 
+test('удаление из организации: подтверждение в строке, сразу сохраняется, бывший уходит из списка и возвращается',async()=>{
+ const calls=[];let users=[{userName:'boss',displayName:'Анна',active:true},{userName:'person',displayName:'Иван',active:true}];
+ const ui={listPeople:async()=>({users:users.map(u=>({...u}))}),listPersonRights:async()=>({exists:true,rights:[]}),listOrganizationRoles:async()=>({roles:[],next_cursor:''}),
+  removePerson:async id=>{calls.push('remove:'+id);users=users.map(u=>u.userName===id?{...u,active:false}:u);return {outcome:'removed'};},
+  returnPerson:async id=>{calls.push('return:'+id);users=users.map(u=>u.userName===id?{...u,active:true}:u);return {outcome:'returned'};}};
+ const view=await render(ui,{...data,identity:{capabilities:['principal.manage'],subject:{user_id:'boss'}}});
+ await click(view.el,'Открыть карточку: Анна');assert.match(view.el.textContent,/Себя из организации удалить нельзя/);
+ assert.equal([...view.el.querySelectorAll('button')].some(b=>b.textContent.includes('Удалить из организации')),false);
+ await click(view.el,'Открыть карточку: Иван');await click(view.el,'Удалить из организации');assert.deepEqual(calls,[],'без подтверждения ничего не отправлено');
+ assert.ok(view.el.querySelector('[aria-label="Подтверждение удаления: Иван"]'));
+ await click(view.el,'Удалить');assert.deepEqual(calls,['remove:person']);
+ assert.equal(view.el.querySelector('[aria-label="Открыть карточку: Иван"]'),null,'бывший не в общем списке');
+ assert.match(view.el.querySelector('[aria-label="Бывшие сотрудники"]').textContent,/Иван/);assert.match(view.el.textContent,/Сотрудников: 1/);
+ await click(view.el,'Вернуть: Иван');assert.deepEqual(calls,['remove:person','return:person']);
+ assert.ok(view.el.querySelector('[aria-label="Открыть карточку: Иван"]'));assert.equal(view.el.querySelector('[aria-label="Бывшие сотрудники"]'),null);
+ await view.close();
+});
+
 after(()=>{dom.window.close();for(const channel of channels){channel.port1.close();channel.port2.close();}globalThis.MessageChannel=OriginalMessageChannel;});

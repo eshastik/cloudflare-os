@@ -26,3 +26,20 @@ it('cancels on editor replacement and rejects failed flushes instead of reading 
     ports[0].postMessage({ error: true })
   } } as Window, 'cloudflareos.document', new AbortController().signal)).rejects.toThrow('Редактор не смог сохранить текущую версию.')
 })
+
+it('запросы снимка к редактору идут по очереди: второй не уходит, пока не ответил первый', async () => {
+  const { queueNativeSnapshots } = await import('./nativeSnapshotSource')
+  let active = 0, overlapped = false
+  const read = queueNativeSnapshots(async format => {
+    active++; if (active > 1) overlapped = true
+    await new Promise(resolve => setTimeout(resolve, 5))
+    active--
+    return { format, formatVersion: 1 as const, document: { revision: 1 } }
+  })
+  const signal = new AbortController().signal
+  const results = await Promise.all([read('cloudflareos.document', signal), read('cloudflareos.document', signal), read('cloudflareos.document', signal)])
+  expect(results).toHaveLength(3)
+  expect(overlapped).toBe(false)
+  const aborted = new AbortController(); aborted.abort()
+  await expect(read('cloudflareos.document', aborted.signal)).rejects.toThrow()
+})

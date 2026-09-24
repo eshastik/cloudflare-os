@@ -1124,9 +1124,13 @@ class MnemosNativeDocumentSelector extends RpcTarget {
       for(const version of history.versions){const format=formatOf(version.content_type);if(format)privateVersions.push({id:`private:${version.head}`,recordedAt:version.recorded_at,actor:'',...(typeof version.author_name==='string'&&version.author_name.length<=255?{author:version.author_name}:{}),format});}
       privateNext=history.next_cursor?'private-history:'+history.next_cursor:'';
     }
+    // Документ по приглашению: своей ветки и опубликованной истории у приглашённого нет, их чтение
+    // заведомо отказывает (403 в журнале на каждое открытие и перечитывание состояния).
+    let invitedDocument = false;
     if (!cursor) {
-      try{const current=await this.#session.readDraftDocument(project,node);const shown=privateVersions.find(v=>v.id===`private:${current.head}`);if(shown&&current.recorded_by)shown.recordedBy={actor:current.recorded_by.actor,onBehalfOf:current.recorded_by.on_behalf_of};}catch(error){if(!(error instanceof MnemosAPIError&&[403,404].includes(error.status)))throw error;}
       const invited = await this.#session.listInvitedDocuments(project, "", node);
+      invitedDocument = invited.documents.length > 0;
+      if (!invitedDocument) {try{const current=await this.#session.readDraftDocument(project,node);const shown=privateVersions.find(v=>v.id===`private:${current.head}`);if(shown&&current.recorded_by)shown.recordedBy={actor:current.recorded_by.actor,onBehalfOf:current.recorded_by.on_behalf_of};}catch(error){if(!(error instanceof MnemosAPIError&&[403,404].includes(error.status)))throw error;}}
       for (const version of invited.documents) {
         const format = formatOf(version.content_type);
         if (format && !privateVersions.some(v => v.id === `private:${version.head}`)) {
@@ -1136,6 +1140,7 @@ class MnemosNativeDocumentSelector extends RpcTarget {
       }
     }
     if(privateNext)return {resourceUrl,publications:privateVersions,nextCursor:privateNext,historyLimited};
+    if(invitedDocument)return {resourceUrl,publications:privateVersions,nextCursor:"",historyLimited};
     if(cursor.startsWith('private-history:'))return {resourceUrl,publications:privateVersions,nextCursor:'published-history:',historyLimited};
     if(cursor==='published-history:')cursor='';
     try {
@@ -1456,6 +1461,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async listPersonRights(...args: Parameters<MnemosAccountSession["listPersonRights"]>) { return this.#session.listPersonRights(...args); }
   async grantPersonRight(...args: Parameters<MnemosAccountSession["grantPersonRight"]>) { return this.#session.grantPersonRight(...args); }
   async removePersonRight(...args: Parameters<MnemosAccountSession["removePersonRight"]>) { return this.#session.removePersonRight(...args); }
+  async removePerson(...args: Parameters<MnemosAccountSession["removePerson"]>) { return this.#session.removePerson(...args); }
+  async returnPerson(...args: Parameters<MnemosAccountSession["returnPerson"]>) { return this.#session.returnPerson(...args); }
   async whoAmI() { return this.#session.whoAmI(); }
   /** Relay UI diagnostics through the human management session. */
   async recordUIReadiness(sample:Parameters<MnemosAccountSession["recordUIReadiness"]>[0]) { return this.#session.recordUIReadiness(sample); }

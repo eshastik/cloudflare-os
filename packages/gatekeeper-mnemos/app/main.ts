@@ -29,6 +29,9 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  listPersonRights: MnemosAccountSession["listPersonRights"];
  grantPersonRight: MnemosAccountSession["grantPersonRight"];
  removePersonRight: MnemosAccountSession["removePersonRight"];
+ /** Вывести сотрудника из организации и вернуть выбывшего. */
+ removePerson: MnemosAccountSession["removePerson"];
+ returnPerson: MnemosAccountSession["returnPerson"];
  createProject:MnemosAccountSession["createProject"];
  /** Проект с кодом из перетащенной папки: проект, внутренний репозиторий и первый коммит. */
  createCodeProject:MnemosAccountSession["createCodeProject"];

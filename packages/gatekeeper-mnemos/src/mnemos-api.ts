@@ -133,6 +133,10 @@ export class MnemosAPI {
   listPersonRights(principal: string, signal?: AbortSignal): Promise<AdminRights> { return this.#request(`/v1/admin/rights?principal_id=${encodeURIComponent(principal)}`, 'GET', signal); }
   grantPersonRight(input: AdminRight, signal?: AbortSignal): Promise<{right: AdminRight}> { return this.#request('/v1/admin/rights', 'POST', signal, checkedAdminRight(input)); }
   removePersonRight(input: AdminRight, signal?: AbortSignal): Promise<{outcome: string; right: AdminRight}> { return this.#request('/v1/admin/rights/remove', 'POST', signal, checkedAdminRight(input)); }
+  /** Вывести сотрудника из организации: вход, токены, агенты, приглашения и права сняты; учётная запись остаётся. */
+  removePerson(principal: string, signal?: AbortSignal): Promise<PersonRemoval> { return this.#request(`/v1/admin/users/${segment(principal)}/remove`, 'POST', signal, {}); }
+  /** Вернуть выбывшего сотрудника: вход снова открыт, прежние права не возвращаются. */
+  returnPerson(principal: string, signal?: AbortSignal): Promise<PersonReturn> { return this.#request(`/v1/admin/users/${segment(principal)}/return`, 'POST', signal, {}); }
   listPrivateVersions(project:string,node:string,cursor='',signal?:AbortSignal):Promise<{versions:Array<{head:string;content_type:string;recorded_at:string;author_name?:string}>;next_cursor?:string;limited?:boolean}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
   restorePrivateDraftContent(project:string,node:string,source:string,expectedHead:string,signal?:AbortSignal):Promise<DraftHead>{return this.#request(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/restore-private`,"POST",signal,{source_head:source,expected_head:expectedHead});}
   checkPrivateVersionRead(project: string, node: string, version: string, signal?: AbortSignal): Promise<{node_id: string; head: string}> {
@@ -796,6 +800,29 @@ export class MnemosAPI {
     if (!validSharingSettings(out) || JSON.stringify(checkedSharingSettings(out)) !== JSON.stringify(body)) throw new MnemosAPIError(502);
     return checkedSharingSettings(out);
   }
+  /** Фотографии людей организации: ссылка на показ (presigned GET) и сумма тела. */
+  async listPersonPhotos(signal?: AbortSignal): Promise<PersonPhoto[]> {
+    const out = await this.#request<{ photos?: unknown }>("/v1/people/photos", "GET", signal);
+    const photos = out?.photos ?? [];
+    if (!Array.isArray(photos) || photos.length > 10000 || !photos.every(validPersonPhoto)) throw new MnemosAPIError(502);
+    return photos;
+  }
+  /** Билет на PUT своей фотографии во временную зону хранилища; тело — не больше 512 КБ. */
+  beginPersonPhotoUpload(size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
+    if (!Number.isSafeInteger(size) || size < 1 || size > PERSON_PHOTO_MAX_BYTES || typeof checksum !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(checksum)) throw new MnemosAPIError(400);
+    return this.#request("/v1/me/photo", "POST", signal, { size_bytes: size, checksum_sha256: checksum });
+  }
+  /** Сделать загруженное тело своей фотографией; сервис сверяет сумму и тип по байтам. */
+  async savePersonPhoto(uploadId: string, signal?: AbortSignal): Promise<PersonPhoto> {
+    segment(uploadId);
+    const out = await this.#request<unknown>("/v1/me/photo", "PUT", signal, { upload_id: uploadId });
+    if (!validPersonPhoto(out)) throw new MnemosAPIError(502);
+    return out;
+  }
+  /** Убрать фотографию: без principal — свою, с principal — чужую (только администратор). */
+  async removePersonPhoto(principal = "", signal?: AbortSignal): Promise<void> {
+    await this.#request(principal ? `/v1/people/${segment(principal)}/photo` : "/v1/me/photo", "DELETE", signal);
+  }
   /** Отделы: администратору — все, остальным — отделы, где человек состоит. */
   async listOrgUnits(signal?: AbortSignal): Promise<OrgUnit[]> {
     const out = await this.#request<{ org_units?: unknown }>("/v1/org-units", "GET", signal);
@@ -1058,13 +1085,16 @@ function base64(bytes: Uint8Array): string {
 }
 export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
-async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|GitFailureCode|undefined>{
+/** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
+export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
+async function safeFailureCode(response:Response):Promise<'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|undefined>{
  if(response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
  const reader=response.body?.getReader();if(!reader)return undefined;
  try{const chunks:Uint8Array[]=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>1024){await reader.cancel();return undefined;}chunks.push(part.value);}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   const body:unknown=JSON.parse(new TextDecoder().decode(bytes));
   if(body&&typeof body==='object'&&'code' in body&&response.status===409&&body.code==='agent.memory_unavailable')return 'agent.memory_unavailable';
+  if(body&&typeof body==='object'&&'code' in body&&response.status===409&&body.code===REVIEW_NOT_REQUIRED)return REVIEW_NOT_REQUIRED;
   if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='request.rate_limit')return 'request.rate_limit';
   if(body&&typeof body==='object'&&'code' in body&&response.status===429&&body.code==='external_db.query_busy')return 'external_db.query_busy';
   if(body&&typeof body==='object'&&'code' in body&&typeof body.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(body.code))return body.code as GitFailureCode;
@@ -1078,7 +1108,7 @@ export type GitFailureCode=typeof GIT_FAILURE_CODES[number];
 export class MnemosAPIError extends Error {
   readonly status: number;
   readonly code?: string;
-  constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit"|GitFailureCode) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; }
+  constructor(status: number,code?:"agent.memory_unavailable"|"external_db.query_busy"|"request.rate_limit"|typeof REVIEW_NOT_REQUIRED|GitFailureCode) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */
@@ -1175,7 +1205,7 @@ export interface PrivateDocumentPage {
 export type PrivateParticipantMode = "" | "read" | "write";
 
 /** document_only_read/_write — приглашение с этим правом откроет человеку только этот документ (у него нет такого права на папку). Старый сервер полей не присылает. */
-export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; document_only_read?: boolean; document_only_write?: boolean }[] }
+export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; document_only_read?: boolean; document_only_write?: boolean; org_units?: { org_unit_id: string; name: string }[] }[] }
 
 /** projects — проекты человека, которые можно отдать агенту; старый сервер их не присылает. */
 export interface AgentConsentPreview { client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }
@@ -1439,4 +1469,21 @@ function checkedGitHubAccounts(value:unknown):GitHubAccountPage{
     return account;
   });
   return {available:page.available,connectable:page.connectable,accounts};
+}
+
+/** Итог вывода сотрудника из организации (POST /v1/admin/users/{id}/remove). */
+export interface PersonRemoval { principal_id: string; outcome: "removed" | "already_removed"; agents_disabled: number; invitations_removed: number; rights_removed: number; groups_left: number }
+/** Итог возвращения выбывшего (POST /v1/admin/users/{id}/return). */
+export interface PersonReturn { principal_id: string; outcome: "returned" | "already_active" }
+
+/** Потолок тела фотографии человека на сервере (миграция 0162). */
+export const PERSON_PHOTO_MAX_BYTES = 512 * 1024;
+/** Фотография человека: url — presigned GET на 15 минут, sha256_hex — чтобы узнать, что фотография не менялась. */
+export interface PersonPhoto { principal_id: string; sha256_hex: string; media_type: "image/jpeg" | "image/png" | "image/webp"; size_bytes: number; updated_at: string; url: string; expires_at: string }
+function validPersonPhoto(value: unknown): value is PersonPhoto {
+  const p = value as Partial<PersonPhoto> | null;
+  if (!p || typeof p !== "object" || typeof p.principal_id !== "string" || !p.principal_id || p.principal_id.length > 255 ||
+      typeof p.sha256_hex !== "string" || !/^[0-9a-f]{64}$/.test(p.sha256_hex) || !["image/jpeg", "image/png", "image/webp"].includes(p.media_type as string) ||
+      !Number.isSafeInteger(p.size_bytes) || typeof p.url !== "string" || typeof p.expires_at !== "string") return false;
+  try { const url = new URL(p.url); return url.protocol === "https:" && !url.username && !url.password; } catch { return false; }
 }

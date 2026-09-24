@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../../AuthContext'
+import MnemosAvatar from '../MnemosAvatar'
+import { useMnemosPhotos } from '../../mnemosPhotos'
 import { loadSharedDocuments, openSharedDocument, sharedDocumentFailure, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
 
 /** Сколько недавних общих документов показывать под полем ввода; остальные — в поиске ⌘K. */
@@ -17,6 +19,7 @@ export default function SharedWithYou() {
   const toasts = useKumoToastManager()
   const [items, setItems] = useState<SharedDocumentItem[]>([])
   const [opening, setOpening] = useState('')
+  const photos = useMnemosPhotos(authenticatedApi)
   useEffect(() => {
     let cancelled = false
     Promise.resolve().then(() => loadSharedDocuments(authenticatedApi))
@@ -39,11 +42,13 @@ export default function SharedWithYou() {
     <div className="flex flex-wrap justify-center gap-2.5">
       {items.slice(0, SHOWN).map(item => {
         const key = `${item.accountId}/${item.scope}/${item.owner}/${item.resource}`
-        return <button key={key} type="button" data-shared-document="" disabled={!!opening} title={sharedDocumentNote(item)} onClick={() => { void open(item) }}
-          className="flex h-[38px] max-w-[320px] cursor-pointer items-center gap-2 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:opacity-60">
+        // Открытие поднимает подключение Mnemos и рабочее место — это секунды; без видимого хода щелчок кажется пропавшим.
+        return <button key={key} type="button" data-shared-document="" disabled={!!opening} aria-busy={opening === key || undefined} title={sharedDocumentNote(item)} onClick={() => { void open(item) }}
+          className="flex h-[38px] max-w-[320px] cursor-pointer items-center gap-2 rounded-full border border-kumo-fill-hover bg-kumo-overlay pr-4 pl-3 text-[14px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:opacity-60">
           {!item.seen && <i aria-label="новое" className="h-2 w-2 shrink-0 rounded-full bg-kumo-brand" />}
+          <MnemosAvatar name={item.ownerName || 'Коллега'} id={item.owner} photo={photos.photos.get(item.owner)} size={22} />
           <span className="truncate">«{item.name}»</span>
-          <span className="shrink-0 text-kumo-subtle">· {item.grantedByName || item.ownerName || 'коллега'}</span>
+          <span className="shrink-0 text-kumo-subtle">· {opening === key ? 'открываю…' : item.grantedByName || item.ownerName || 'коллега'}</span>
         </button>
       })}
     </div>

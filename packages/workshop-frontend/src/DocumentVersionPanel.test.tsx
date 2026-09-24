@@ -186,7 +186,7 @@ it('«Поделиться»: люди списком по отделам, вы�
     // Не видит папку документа: приглашение откроет ему только этот документ.
     { id: 'guest-3', name: 'Вера Гостева', mode: '' as string, canRead: false, canWrite: false, documentOnlyRead: true, documentOnlyWrite: true },
   ]
-  const calls: unknown[][] = []
+  const calls: unknown[][] = [], levelCalls: unknown[][] = []
   class Writer extends RpcTarget { async head() { return head } async access() { return 'owner' } }
   class Selector extends RpcTarget {
     async publicationState() { return { personal_head: head, shared_head: shared, personal_exists: true } }
@@ -200,11 +200,13 @@ it('«Поделиться»: люди списком по отделам, вы�
       if (person.mode !== args[4]) throw new Error('changed')
       person.mode = args[5] as string
     }
-    async projectLevel() { return { name: 'Mnemos', level: 'private', canEdit: false, pending: null } }
-    async orgUnits() { return [
-      { id: 'dev', name: 'Разработка', members: [{ id: 'owner', name: 'Владелец' }, { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов' }, { id: 'outsider', name: 'Пётр Сидоров' }] },
+    async projectLevel() { return { name: 'Mnemos', level: 'department', canEdit: false, pending: null, unit: 'dev' } }
+    async setProjectLevel(...args: unknown[]) { levelCalls.push(args); return { applied: true, level: 'organization', canEdit: false } }
+    async departments() { return { units: [
+      { id: 'dev', name: 'Разработка', members: [{ id: 'owner', name: 'Александр Егоров' }, { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов' }, { id: 'outsider', name: 'Пётр Сидоров' }] },
       { id: 'law', name: 'Юристы', members: [{ id: 'reader-1', name: 'Ольга Кузнецова' }, { id: 'viewer-2', name: 'Анна Смирнова' }, { id: 'guest-3', name: 'Вера Гостева' }] },
-    ] }
+    ] } }
+    async peoplePhotos() { return { photos: [{ id: 'reader-1', sha256: 'c'.repeat(64), url: 'https://objects.example/content/olga.jpg', expiresAt: '2026-09-24T12:00:00Z' }] } }
     async sharedDocuments() { return { documents: [] } }
     async reviewerIdentity() { return 'owner' }
   }
@@ -222,8 +224,17 @@ it('«Поделиться»: люди списком по отделам, вы�
     expect(panel().querySelectorAll('select')).toHaveLength(0)
     expect(panel().textContent).not.toContain('user-FGTK3l4q5INoE4X1')
     for (const gone of ['Перечитать', 'Применить']) expect(panel().textContent).not.toContain(gone)
-    expect([...panel().querySelectorAll('[role="radio"]')].map(b => b.textContent).slice(0, 3)).toEqual(['Только приглашённые', 'Мой отдел', 'Вся организация'])
-    expect(panel().querySelector('[data-level-line]')?.textContent).toBe('Видят только вы и те, кого вы пригласили.')
+    // Уровня проекта в панели документа нет: одна строка о проекте и ссылка на его страницу.
+    expect([...panel().querySelectorAll('[role="radio"]')].map(b => b.textContent)).not.toContain('Вся организация')
+    await act(async () => { await vi.waitFor(() => expect(panel().querySelector('[data-project-line]')?.textContent).toContain('Проект «Mnemos» видят: отдел «Разработка».')) })
+    await act(async () => { await vi.waitFor(() => expect(panel().querySelector('[data-project-line] a')?.getAttribute('href')).toBe('/gatekeepers/memory?account=1&section=projects&project=project&view=members')) })
+    expect(panel().querySelector('[data-project-line] a')?.textContent).toBe('Изменить доступ к проекту')
+    // У владельца — инициалы имени, подпись «Вы» остаётся; фотография показывается вместо инициалов.
+    const ownerRow = panel().querySelector('section[aria-label="Имеют доступ"] > div')!
+    expect(ownerRow.querySelector('[data-avatar]')?.textContent).toBe('АЕ')
+    expect(ownerRow.textContent).toContain('Вы')
+    const olga = [...panel().querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Ольга Кузнецова'))!
+    expect(olga.querySelector('[data-avatar="photo"] img')?.getAttribute('src')).toBe('https://objects.example/content/olga.jpg')
     // Свой отдел раскрыт первым; чужой свёрнут; уже имеющий доступ в кандидатах не повторяется.
     expect([...panel().querySelectorAll('[data-group]')].map(g => g.getAttribute('data-group'))).toEqual(['unit:dev', 'unit:law'])
     expect(panel().querySelector('[data-group="unit:dev"]')?.textContent).toContain('Мой отдел · Разработка')
@@ -282,6 +293,11 @@ it('«Поделиться»: люди списком по отделам, вы�
     await act(async () => { await vi.waitFor(() => expect(panel().textContent).toContain('больше не видит документ')) })
     // Недавние: приглашённые в этом браузере наверху.
     await act(async () => { await vi.waitFor(() => expect(panel().querySelector('[data-group="recent"]')?.textContent).toContain('Николай Деревцов')) })
+    // Человек из «Недавних» в группе отдела не повторяется.
+    expect(panel().querySelector('[data-group="unit:dev"]')?.textContent ?? '').not.toContain('Николай Деревцов')
+    // Ни одно действие в панели документа не меняет видимость проекта.
+    for (const b of [...panel().querySelectorAll('button')]) expect(b.textContent).not.toMatch(/Вся организация|Мой отдел$/)
+    expect(levelCalls).toHaveLength(0)
   } finally { await view.unmount(); localStorage.clear() }
 })
 

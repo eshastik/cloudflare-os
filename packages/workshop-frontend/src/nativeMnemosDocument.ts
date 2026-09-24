@@ -1,7 +1,7 @@
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentWriteSelector } from '@gadgets/workshop-shared/gatekeeper'
-import { cleanNativeTitle, defaultNativeTitle, nativeTitleSource, type NativeDocumentFormat, type NativeMnemosBinding, type NativeMnemosCreation } from '@gadgets/workshop-shared/native-document'
+import { cleanNativeTitle, defaultNativeTitle, nativeTitleSource, type NativeDocumentFormat, type NativeDocumentSnapshot, type NativeMnemosBinding, type NativeMnemosCreation } from '@gadgets/workshop-shared/native-document'
 import { uploadGatekeeperNativeDocument } from './gatekeeperAppUpload'
 import { downloadGatekeeperOffice } from './gatekeeperAppDownload'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
@@ -75,20 +75,37 @@ export const isDocumentChanged = (error: unknown) => error instanceof MnemosDocu
  * сервер отказывает, и функция бросает MnemosDocumentChanged — молча чужая правка не затирается.
  * Возвращает ревизию редактора и новую версию документа.
  */
-export async function saveToMnemosDocument({ writes, format, snapshotSource, binding, signal }: {
+export async function saveToMnemosDocument({ writes, format, snapshotSource, binding, signal, unchanged }: {
   writes: WritesSource; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; binding: NativeMnemosBinding; signal: AbortSignal
-}): Promise<{ revision: number | undefined; head: string }> {
+  /** Совпадает ли снимок редактора с версией base; true — новой версии не будет, вернётся base. */
+  unchanged?(snapshot: NativeDocumentSnapshot, base: string): Promise<boolean>
+}): Promise<{ revision: number | undefined; head: string; snapshot: NativeDocumentSnapshot; skipped: boolean }> {
   using writer = await writes.selector.select(binding.scope, binding.resource, format)
   const base = binding.savedHead ?? await writer.head(); signal.throwIfAborted()
   const read = snapshotSource.current
   if (!read) throw new Error('Editor is not ready')
   const snapshot = await read(format, signal); signal.throwIfAborted()
+  // Содержимое не менялось (открытие без правок, пересохранение того же): пустая версия в документ не пишется.
+  if (unchanged && await unchanged(snapshot, base).catch(() => false)) { signal.throwIfAborted(); return { revision: snapshotRevision(snapshot.document), head: base, snapshot, skipped: true } }
   const upload = await uploadGatekeeperNativeDocument(snapshot, format, writes.storageOrigin, (size, checksum) => writer.issue(base, size, checksum), signal)
   signal.throwIfAborted()
   let head: string
   try { head = await writer.save(base, upload) }
   catch (error) { if (isDocumentChanged(error)) throw new MnemosDocumentChanged(); throw error }
-  return { revision: snapshotRevision(snapshot.document), head }
+  return { revision: snapshotRevision(snapshot.document), head, snapshot, skipped: false }
+}
+
+// Поля, которые редактор меняет сам при каждой записи и восстановлении: к содержимому они не относятся.
+const VOLATILE = new Set(['revision', 'restoreRevision', 'lastModified', 'version', 'baseVersion'])
+function canonical(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim()
+  if (Array.isArray(value)) return value.map(canonical)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([key]) => !VOLATILE.has(key)).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]))
+  return value
+}
+/** Одно ли содержимое у двух снимков: без служебных счётчиков редактора, порядка ключей и переводов строк в разметке. */
+export function sameNativeContent(a: NativeDocumentSnapshot, b: NativeDocumentSnapshot): boolean {
+  return a.format === b.format && JSON.stringify(canonical(a.document)) === JSON.stringify(canonical(b.document))
 }
 
 /** Событие окна: привязку изменили вне шапки (выгрузка сохранила редактор); шапка обновляется без перезагрузки. */

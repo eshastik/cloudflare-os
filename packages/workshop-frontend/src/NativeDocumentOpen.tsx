@@ -14,7 +14,9 @@ import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 type Pending = { accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
 /** Что открыто в редакторе: адрес документа в Mnemos для привязки состояния. */
-export type NativeOpenResult = { accountId: number; scope: string; resource: string; publication?: string }
+export type NativeOpenResult = { accountId: number; scope: string; resource: string; publication?: string
+  /** Ревизия редактора сразу после того, как в него встала открытая версия; undefined — редактор её не сообщил. */
+  revision?: number }
 type Props = {
   gadget: Pick<RpcStub<GadgetClient>, 'getId' | 'prepareNativeDocumentRead' | 'readNativeDocument' | 'connectToGadget' | 'onRpcBroken'>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; disabled?: boolean; reconnect(): void
   /** Секция видна по запросу; незавершённое открытие показывается независимо от этого флага. */
@@ -24,6 +26,11 @@ type Props = {
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
 type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: NativeDocumentFormat }
+
+const editorRevision = (value: unknown) => {
+  const revision = (value as { revision?: unknown } | null | undefined)?.revision
+  return typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0 ? revision : undefined
+}
 
 export const nativeOpenKey = (gadgetId: string | number) => `mnemos-native-open:${location.pathname}:${gadgetId}`
 
@@ -235,17 +242,21 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
         signal.throwIfAborted(); reconnect(); return
       }
       const read = await gadget.readNativeDocument(prepared.sourceId)
+      // Ревизию после восстановления сообщает сам редактор (ответ restore или getDocument на сервере гаджета):
+      // запрос снимка у окна редактора сразу после восстановления отказывает, пока оно перерисовывается.
+      let opened: number | undefined
       try {
         const ticket = await read.download.issue()
         const snapshot = await downloadGatekeeperNativeDocument(read.storageOrigin, ticket, format, signal, () => read.download.validate())
         const editor = await gadget.connectToGadget() as RpcStub<NativeDocumentEditor>
         try {
           await read.download.validate(); signal.throwIfAborted()
-          await editor.restoreDocumentSnapshot(snapshot, revision)
+          const restored = await editor.restoreDocumentSnapshot(snapshot, revision)
+          opened = editorRevision(restored) ?? editorRevision(await (async () => editor.getDocument())().catch(() => undefined))
         } finally { editor[Symbol.dispose]() }
       } finally { read[Symbol.dispose]() }
       signal.throwIfAborted()
-      if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication })
+      if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })
       close(); reconnect()
     } catch {
       if (!signal.aborted) setError('Открытие не подтверждено. Документ мог измениться или доступ недоступен. Закройте диалог и выберите публикацию заново; после переподключения можно продолжить сохранённый выбор.')

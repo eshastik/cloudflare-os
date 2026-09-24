@@ -53,7 +53,7 @@ export function formatMnemosWorkPrompt(bindingName: string): string {
       "сотрудника к проекту — `proposeProjectAccess`. Сведения — `documentAccess`, `listReviews`, " +
       "`listAccessRequests`, `listDepartments`, `listInvitations`, `listConnections`, `readProjectBudget`, " +
       "`readWorkJournal`, `readSpending`. Для администратора и руководителя — правила организации " +
-      "(`updateOrgRules`), согласующие проекта (`setReviewDomain`), права и компетенции (`revokePersonRight`, `setPersonCodeAgent`, " +
+      "(`updateOrgRules`), согласующие проекта (`setReviewDomain`), права и компетенции (`revokePersonRight`, `setPersonCodeAgent`, `removePerson` — удалить сотрудника из организации, " +
       "`setCompetencyMember`), решения во «Входящих» (`decideAcceptance`, `decideTemplate`, `decideIntake`, " +
       "`decideTeamBudget`), внешние агенты (`revokeAgent`, `setAgentProjectRight`, `setAgentSourceAccess`), " +
       "отключение любых подключений (`disableConnection`) и синхронизация с GitHub (`linkRepository`, " +

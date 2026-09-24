@@ -28,3 +28,21 @@ export function requestNativeSnapshot(target: Window, format: NativeDocumentForm
     catch { cancel() }
   })
 }
+
+/**
+ * Запросы снимка к одному редактору по очереди. Редактор отвечает на один запрос за раз и на второй,
+ * пришедший во время первого, отказывает; шапка же спрашивает снимок из нескольких мест сразу (опрос правок,
+ * название, открытие версии, сохранение). Без очереди случайный отказ оставлял ревизию сохранения неизвестной
+ * и обрывал открытие документа.
+ */
+export function queueNativeSnapshots(read: NativeSnapshotSource): NativeSnapshotSource {
+  let tail: Promise<unknown> = Promise.resolve(), waiting = 0
+  return (format, signal) => {
+    // Свободный редактор получает запрос сразу, без лишнего шага очереди.
+    const turn = waiting === 0 ? (signal.aborted ? Promise.reject(signal.reason) : read(format, signal)) : tail.then(() => { signal.throwIfAborted(); return read(format, signal) })
+    waiting++
+    const settled = turn.then(() => {}, () => {}).finally(() => { waiting-- })
+    tail = settled
+    return turn
+  }
+}

@@ -10,6 +10,7 @@ import { formatAgo, type DocumentStatusHandle, type HistoryEntry } from './Docum
 import { useAuthenticatedApi } from './AuthContext'
 import { listAccounts, storesDocuments } from './accountCapabilities'
 import { downloadGatekeeperNativeDocument } from './gatekeeperAppDownload'
+import { reloadPage } from './pageReload'
 import NativeDocumentConflict from './NativeDocumentConflict'
 import NativeDocumentOpen from './NativeDocumentOpen'
 import NativeDocumentSave from './NativeDocumentSave'
@@ -290,10 +291,11 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
         onOpened={async result => {
           // Версия, от которой правит редактор: открытая личная версия.
           const head = result.publication?.startsWith('private:') ? result.publication.slice(8) : undefined
-          await status.bindAtEditorRevision({ accountId: result.accountId, scope: result.scope, resource: result.resource, ...(head && /^[a-f0-9]{64}$/.test(head) ? { savedHead: head } : {}) })
+          // Ревизию после открытия сообщает редактор: без неё шапка после перезагрузки сочла бы нетронутый документ несохранённым.
+          await status.bindAtEditorRevision({ accountId: result.accountId, scope: result.scope, resource: result.resource, ...(head && /^[a-f0-9]{64}$/.test(head) ? { savedHead: head } : {}), ...(result.revision !== undefined ? { savedRevision: result.revision } : {}) })
           status.reopened(); onLaunchConsumed?.()
         }}
-        onClose={() => { onLaunchConsumed?.(); onSection(null) }} reconnect={() => window.location.reload()} />}
+        onClose={() => { onLaunchConsumed?.(); onSection(null) }} reconnect={reloadPage} />}
 
       {chatId === undefined && <NativeEditorUpdate gadget={gadget} disabled={disabled} snapshotSource={snapshotSource} format={format} onUpdated={() => window.location.reload()} />}
 

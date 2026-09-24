@@ -105,6 +105,8 @@ interface MnemosLibrary {
   revokePersonRight(person: string, project: string, mode?: "read" | "write" | "all"): Promise<MnemosActionProposal>;
   /** Включить или выключить сотруднику «Агента кода» (работа беседы с кодом проектов). У администраторов он включён всегда. */
   setPersonCodeAgent(person: string, enabled: boolean): Promise<MnemosActionProposal>;
+  /** Удалить сотрудника из организации: вход, ключи и агенты отключаются, приглашения и доступ к проектам снимаются; учётная запись остаётся. Себя нельзя. */
+  removePerson(person: string): Promise<MnemosActionProposal>;
   createCompetency(name: string): Promise<MnemosActionProposal>;
   /** Добавить или убрать человека из компетенции (в том числе «Администраторы»). */
   setCompetencyMember(competency: string, person: string, member: boolean): Promise<MnemosActionProposal>;

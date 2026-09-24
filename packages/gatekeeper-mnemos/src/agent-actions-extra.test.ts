@@ -27,6 +27,7 @@ function session() {
       { kind: "anchor", principal_id: principal, project_id: "p2", class: "filesystem", mode: "read" },
     ] }; },
     async removePersonRight(right: { project_id: string; mode: string }) { calls.push(`remove-right:${right.project_id}:${right.mode}`); return { outcome: "removed" }; },
+    async removePerson(principal: string) { calls.push(`remove-person:${principal}`); return { outcome: "removed", agents_disabled: 1, invitations_removed: 0, rights_removed: 2 }; },
     async listOrganizationRoles() { return { roles: [{ id: "role-law", kind: "functional_role", name: "Юрист", active: true }, { id: "system:organization-admins", kind: "group", name: "Администраторы", active: true }], next_cursor: "", generation: roleGeneration }; },
     async createOrganizationRole(input: { name: string; expected_generation: number; kind: string }) { calls.push(`role:${input.name}:${input.kind}:${input.expected_generation}`); return { id: "new", kind: input.kind, name: input.name, active: true }; },
     async readPrincipalMembership(container: string, member: string) { return { container_id: container, member_id: member, enabled: false, generation: membershipGeneration }; },
@@ -276,4 +277,18 @@ test("агент кода сотрудника: включение и выклю
   });
   await assert.rejects(prepareAgentAction(admin as any, SCOPE, { kind: "set_person_code_agent", person: "u-nik", enabled: false }), /у администраторов агент кода включён всегда/);
   assert.throws(() => checkedAgentAction({ kind: "set_person_code_agent", person: "u-nik", enabled: "да" }), /enabled/);
+});
+
+test("удаление сотрудника: карточка подтверждения, выполнение одним вызовом; себя и бывшего не удаляет", async () => {
+  const s = session();
+  const { prepared, outcome } = await run(s, { kind: "remove_person", person: "Николай Деревцов" });
+  assert.equal(prepared.title, "Удалить Николай Деревцов из организации");
+  assert.equal(prepared.icon, "delete");
+  assert.equal(prepared.ownerOnly, true);
+  assert.deepEqual(s.calls, ["remove-person:u-nik"]);
+  assert.equal(outcome.summary, "Николай Деревцов удалён(а) из организации");
+  await assert.rejects(prepareAgentAction(session() as any, SCOPE, { kind: "remove_person", person: "Бывший" }), /Не найдено/);
+  const self = { ...session(), async listPeople() { return { users: [{ userName: "alice", externalId: "", displayName: "Алиса" }] }; } };
+  await assert.rejects(prepareAgentAction(self as any, SCOPE, { kind: "remove_person", person: "Алиса" }), /Себя/);
+  assert.throws(() => checkedAgentAction({ kind: "remove_person", person: "" }), /сотрудник/);
 });

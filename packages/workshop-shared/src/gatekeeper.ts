@@ -581,6 +581,9 @@ export interface GatekeeperSharedDocument {
   documentOnly?: boolean
 }
 
+/** Фотография человека Mnemos. id — служебный ключ человека, не для показа. */
+export interface GatekeeperPersonPhoto { id: string; sha256: string; url: string; expiresAt: string }
+
 /** A new-document writer whose frozen request can survive a browser reload. */
 export interface GatekeeperNativeDocumentCreator extends GatekeeperNativeDocumentWriter {
   /** Freeze an issued upload and return an account-bound receipt before attempting creation. */
@@ -698,13 +701,27 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
     sharedDeleted?: boolean }[]; nextCursor: string; truncated: boolean }>;
   /** List invitation choices and current modes for an owned private document at this head. */
   /** documentOnlyRead/documentOnlyWrite — приглашение с этим правом откроет человеку только этот документ, без папки. */
-  participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean; documentOnlyRead?: boolean; documentOnlyWrite?: boolean }[] }>;
+  participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean; documentOnlyRead?: boolean; documentOnlyWrite?: boolean;
+    /** Отделы человека по имени: «Поделиться» группирует людей по отделам. */
+    units?: { id: string; name: string }[] }[] }>;
   /** Change one invitation using the displayed mode; current ownership, folder rights and head are rechecked. */
   setParticipant(scope: string, resource: string, head: string, participant: string, expected: '' | 'read' | 'write', mode: '' | 'read' | 'write'): Promise<void>;
   /** Документы других людей, открытые этому человеку («Поделились с вами»), новые сверху. */
   sharedDocuments(): Promise<{ documents: GatekeeperSharedDocument[] }>;
+  /** Отделы для выбора людей: у сотрудника — его отделы, у администратора — все. Только имена. */
+  departments(): Promise<{ units: { id: string; name: string; members: { id: string; name: string }[] }[] }>;
+  /** Фотографии людей организации: url — ссылка на показ из хранилища (живёт 15 минут), sha256 меняется вместе с фотографией. */
+  peoplePhotos(): Promise<{ photos: GatekeeperPersonPhoto[] }>;
+  /** Билет на PUT своей фотографии прямо в хранилище; тело через RPC не идёт. */
+  beginPhotoUpload(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
+  /** Сделать загруженное своей фотографией; тип и сумму сервер проверяет по байтам. */
+  savePhoto(uploadId: string): Promise<GatekeeperPersonPhoto>;
+  /** Убрать свою фотографию; администратор может передать человека и убрать чужую. */
+  removePhoto(principal?: string): Promise<void>;
   /** Уровень доступа проекта документа. pending — запрошенное расширение, ждущее решения. */
-  projectLevel(scope: string): Promise<{ name: string; level: 'private' | 'department' | 'organization'; canEdit: boolean; pending: 'private' | 'department' | 'organization' | null }>;
+  projectLevel(scope: string): Promise<{ name: string; level: 'private' | 'department' | 'organization'; canEdit: boolean; pending: 'private' | 'department' | 'organization' | null;
+    /** Отдел проекта (служебный ключ); пусто — неизвестен. */
+    unit?: string }>;
   /** Сменить уровень доступа проекта; applied=false — изменение ушло на подтверждение. */
   setProjectLevel(scope: string, level: 'private' | 'department' | 'organization', canEdit: boolean): Promise<{ applied: boolean; level: 'private' | 'department' | 'organization'; canEdit: boolean }>;
   /** Снять отметку «новое» у уведомления о доступе к документу. */
@@ -715,6 +732,12 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   create(scope: string, name: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
   /** Restore the exact creation request from this account's receipt; saving rechecks current rights. */
   resumeCreation(receipt: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  /** «Опубликовать» при показанных головах: заявка на согласование; без согласования в проекте — публикация сразу.
+   *  denied — нет права записи в место изменённого документа; отказ состоянием, чтобы интерфейс мог его назвать. */
+  publishOrRequestReview(scope: string, personalHead: string, sharedHead: string): Promise<
+    | { status: 'review'; candidate_id: string }
+    | { status: 'published' | 'conflict' | 'unchanged'; personal_head: string; shared_head: string }
+    | { status: 'denied' }>;
 }
 
 /** A human-only, account-bound authorization flow for an external agent. */

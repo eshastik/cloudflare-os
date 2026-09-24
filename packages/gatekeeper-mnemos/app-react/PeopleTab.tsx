@@ -53,18 +53,23 @@ function PeopleManager({ data }: { data: MemoryData }) {
     return () => { current = false; };
   }, [ui, revision]);
   const needle = query.toLocaleLowerCase().trim();
-  const visiblePeople = people.filter(p => `${p.displayName} ${p.userName}`.toLocaleLowerCase().includes(needle));
+  // Удалённые из организации в общем списке не показываются: у них своя свёрнутая строка «Бывшие сотрудники».
+  const current = people.filter(p => p.active !== false);
+  const former = people.filter(p => p.active === false);
+  const me = data.identity?.subject?.user_id ?? "";
+  const reload = () => { setSelected(""); setRevision(v => v + 1); };
+  const visiblePeople = current.filter(p => `${p.displayName} ${p.userName}`.toLocaleLowerCase().includes(needle));
   const openInvitations = (invitations.list ?? []).filter(i => i.status === "open" && (!needle || `${i.display_name} ${i.email}`.toLocaleLowerCase().includes(needle)));
   return <section aria-label="Люди и отделы" className="grid gap-8">
     <section aria-label="Приглашения" className="grid gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="m-0 flex-1 text-[15px] text-kumo-subtle">Сотрудников: {people.length}{openInvitations.length ? ` · приглашены и ещё не вошли: ${openInvitations.length}` : ""}</p>
+        <p className="m-0 flex-1 text-[15px] text-kumo-subtle">Сотрудников: {current.length}{openInvitations.length ? ` · приглашены и ещё не вошли: ${openInvitations.length}` : ""}</p>
         <Pill tone="primary" size="md" aria-expanded={inviting} onClick={() => setInviting(!inviting)}><UserPlus size={16} />{inviting ? "Свернуть" : "Пригласить"}</Pill>
       </div>
       {inviting && (org.loading ? <Notice>Загрузка отделов…</Notice> : <InviteForm units={org.units} allowNoUnit admin onCreated={invitations.reload} />)}
     </section>
     <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-      <DepartmentsPanel people={people} org={org} />
+      <DepartmentsPanel people={current} org={org} />
       <section aria-label="Люди" className="min-w-0">
         <SectionHead title="Люди"><PillInput type="search" aria-label="Найти сотрудника" placeholder="Найти" className="w-[180px]" value={query} onChange={e => setQuery(e.target.value)} /></SectionHead>
         {error && <div className="mb-2 flex flex-wrap items-center gap-2"><Notice tone="danger">{error}</Notice><Pill tone="ghost" disabled={loading} onClick={() => setRevision(v => v+1)}>Повторить</Pill></div>}
@@ -79,17 +84,18 @@ function PeopleManager({ data }: { data: MemoryData }) {
                 <RowTitle title={name} note={org.loading ? undefined : unitWords(org.units, p.userName)} />
                 {!p.active && <StatusBadge tone="neutral">Доступ приостановлен</StatusBadge>}
               </button>
-              {open && <div className="px-4 pb-4 sm:pl-[62px]"><PersonCard key={p.userName} person={p} data={data} units={org.units} unitsLoading={org.loading} /></div>}
+              {open && <div className="px-4 pb-4 sm:pl-[62px]"><PersonCard key={p.userName} person={p} data={data} units={org.units} unitsLoading={org.loading} self={p.userName === me} onRemoved={() => { reload(); org.reload(); }} /></div>}
             </div>;
           })}
           {invitations.list && <InvitationRows list={openInvitations} onChanged={invitations.reload} />}
-          {!error && !people.length && !openInvitations.length && <CardRow><Notice>Сотрудников пока нет. Пригласите первого.</Notice></CardRow>}
-          {people.length > 0 && !visiblePeople.length && <CardRow><Notice>По этому запросу никого не найдено.</Notice></CardRow>}
+          {!error && !current.length && !openInvitations.length && <CardRow><Notice>Сотрудников пока нет. Пригласите первого.</Notice></CardRow>}
+          {current.length > 0 && !visiblePeople.length && <CardRow><Notice>По этому запросу никого не найдено.</Notice></CardRow>}
         </Card>}
+        {!loading && former.length > 0 && <FormerPeople people={former} onChanged={reload} />}
         {invitations.failed && <div className="mt-2"><Notice tone="danger">Список приглашений недоступен.</Notice></div>}
       </section>
     </div>
-    <CompetenciesPanel people={people} />
+    <CompetenciesPanel people={current} />
   </section>;
 }
 const STANDARD_RESOURCE_DOMAINS=[
@@ -102,7 +108,7 @@ const CAPABILITY_WORDS: Record<string,string> = {"principal.manage":"Управ�
 const capabilityWords = (capability?: string) => CAPABILITY_WORDS[capability ?? ""] ?? "Особое полномочие";
 
 /** Раскрытая строка сотрудника: отдел словами, компетенции метками, «Администратор» и доступ к проектам. */
-function PersonCard({person,data,units,unitsLoading}: {person:AdminPerson;data:MemoryData;units:OrgUnit[];unitsLoading:boolean}) {
+function PersonCard({person,data,units,unitsLoading,self,onRemoved}: {person:AdminPerson;data:MemoryData;units:OrgUnit[];unitsLoading:boolean;self:boolean;onRemoved():void}) {
   const own = units.filter(u => u.members.some(m => m.principal_id === person.userName));
   return <section aria-label={`Сотрудник: ${person.displayName||"без имени"}`} className="grid min-w-0 gap-4">
     <section aria-label="Отдел" className="text-[13px]">
@@ -112,7 +118,60 @@ function PersonCard({person,data,units,unitsLoading}: {person:AdminPerson;data:M
     <section aria-label="Компетенции сотрудника"><PersonCompetencies person={person} /></section>
     <section aria-label="Права администратора"><AdminSwitch person={person} /></section>
     <PersonRights person={person} data={data} />
+    <RemovePerson person={person} self={self} onRemoved={onRemoved} />
   </section>;
+}
+
+/** «Удалить из организации»: подтверждение в строке, сохраняется сразу. Учётная запись остаётся ради истории и авторства. */
+function RemovePerson({person,self,onRemoved}: {person:AdminPerson;self:boolean;onRemoved():void}) {
+  const ui = useUi();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const name = person.displayName || "сотрудника";
+  const remove = async () => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try { await ui.removePerson(person.userName); setConfirming(false); onRemoved(); }
+    catch { setError("Сотрудник не удалён. Последнего администратора удалить нельзя — сначала назначьте другого; если дело не в этом, обновите страницу и повторите."); }
+    finally { setBusy(false); }
+  };
+  if (self) return <section aria-label="Удаление из организации"><p className="m-0 text-[13px] text-kumo-subtle">Себя из организации удалить нельзя.</p></section>;
+  return <section aria-label="Удаление из организации" className="grid gap-2 border-t border-kumo-fill pt-3">
+    {!confirming && <div><Pill tone="danger" disabled={busy} onClick={() => { setConfirming(true); setError(""); }}><Trash size={14} />Удалить из организации</Pill></div>}
+    {confirming && <div role="region" aria-label={`Подтверждение удаления: ${name}`} className="grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]">
+      <p className="m-0">Удалить {name} из организации? Вход и ключи доступа перестанут работать, агенты сотрудника отключатся, приглашения к документам и доступ к проектам снимутся, из отделов и компетенций сотрудник уйдёт.</p>
+      <p className="m-0 text-kumo-subtle">Учётная запись и авторство версий сохранятся. Вернуть можно в «Бывших сотрудниках» ниже списка — доступ к проектам тогда выдаётся заново.</p>
+      <div className="flex gap-2">
+        <Pill tone="danger" disabled={busy} onClick={() => void remove()}>{busy ? "Удаляем…" : "Удалить"}</Pill>
+        <Pill tone="ghost" disabled={busy} onClick={() => setConfirming(false)}>Отмена</Pill>
+      </div>
+    </div>}
+    {error && <Notice tone="danger">{error}</Notice>}
+  </section>;
+}
+
+/** Бывшие сотрудники: свёрнуты под списком, «Вернуть» открывает вход снова, без прежних прав. */
+function FormerPeople({people,onChanged}: {people:AdminPerson[];onChanged():void}) {
+  const ui = useUi();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{tone:"success"|"danger";text:string}|null>(null);
+  const restore = async (p: AdminPerson) => {
+    if (busy) return;
+    setBusy(true); setNotice(null);
+    try { await ui.returnPerson(p.userName); setNotice({ tone: "success", text: `${p.displayName || "Сотрудник"} снова в организации. Доступ к проектам выдайте в карточке.` }); onChanged(); }
+    catch { setNotice({ tone: "danger", text: "Сотрудник не возвращён. Обновите страницу и повторите." }); }
+    finally { setBusy(false); }
+  };
+  return <details aria-label="Бывшие сотрудники" className="mt-3 text-[13px]">
+    <summary className="cursor-pointer text-kumo-subtle">Бывшие сотрудники: {people.length}</summary>
+    <Card className="mt-2">{people.map(p => <CardRow key={p.userName}>
+      <Initials name={p.displayName || "Сотрудник"} />
+      <RowTitle title={p.displayName || "Сотрудник без имени"} note="удалён из организации" />
+      <Pill tone="ghost" aria-label={`Вернуть: ${p.displayName || "сотрудник без имени"}`} disabled={busy} onClick={() => void restore(p)}>Вернуть</Pill>
+    </CardRow>)}</Card>
+    {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
+  </details>;
 }
 
 function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {

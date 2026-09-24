@@ -10,6 +10,7 @@ import {OfficeUpdateWriter} from "./office-update-writer.ts";
 import {reviewOfficeUpdate} from "./office-update-review.ts";
 import { RpcStub, RpcTarget } from "cloudflare:workers";
 import { MnemosAPIError, type PrivateParticipantMode } from "./mnemos-api.ts";
+import { REVIEW_NOT_REQUIRED } from "./mnemos-api.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import { NativeCreationRecovery, type NativeCreationIntent } from "./native-creation-recovery.ts";
 import type { MnemosAccountSession } from "./account-session.ts";
@@ -142,7 +143,7 @@ export class NativeWriteSelector extends RpcTarget {
   async documents(project: string, cursor: string) { return listNativeDocuments(this.#session, project, cursor); }
   async participants(project: string, node: string, head: string, cursor: string) {
     const page = await this.#session.listPrivateDraftParticipants(project,node,head,cursor);
-    return { head: page.head, nextCursor: page.next_cursor, participants: page.participants.map(p => ({id:p.principal_id,name:p.display_name,mode:p.mode,canRead:p.can_read,canWrite:p.can_write,documentOnlyRead:p.document_only_read===true,documentOnlyWrite:p.document_only_write===true})) };
+    return { head: page.head, nextCursor: page.next_cursor, participants: page.participants.map(p => ({id:p.principal_id,name:p.display_name,mode:p.mode,canRead:p.can_read,canWrite:p.can_write,documentOnlyRead:p.document_only_read===true,documentOnlyWrite:p.document_only_write===true,units:(p.org_units??[]).map(u=>({id:u.org_unit_id,name:u.name}))})) };
   }
   async setParticipant(project: string, node: string, head: string, participant: string, expected: PrivateParticipantMode, mode: PrivateParticipantMode) {
     await this.#session.setPrivateDraftParticipant(project,node,head,participant,expected,mode);
@@ -152,6 +153,21 @@ export class NativeWriteSelector extends RpcTarget {
     const units = await this.#session.listOrgUnits();
     return units.map(u => ({ id: u.org_unit_id, name: u.name, members: u.members.map(m => ({ id: m.principal_id, name: m.display_name })) }));
   }
+  /** Фотографии людей организации: ссылка на показ живёт 15 минут, sha256 меняется вместе с фотографией. */
+  async peoplePhotos() {
+    return { photos: (await this.#session.listPersonPhotos()).map(p => ({ id: p.principal_id, sha256: p.sha256_hex, url: p.url, expiresAt: p.expires_at })) };
+  }
+  /** Отделы для «Поделиться» одним объектом: так метод объявлен в общем описании селектора. */
+  async departments() { return { units: await this.orgUnits() }; }
+  /** Билет на загрузку своей фотографии прямо в хранилище (тело сюда не приходит). */
+  async beginPhotoUpload(size: number, checksum: string) { return this.#session.beginPersonPhotoUpload(size, checksum); }
+  /** Сделать загруженное своей фотографией. */
+  async savePhoto(uploadId: string) {
+    const p = await this.#session.savePersonPhoto(uploadId);
+    return { id: p.principal_id, sha256: p.sha256_hex, url: p.url, expiresAt: p.expires_at };
+  }
+  /** Убрать свою фотографию; администратор может передать человека и убрать чужую. */
+  async removePhoto(principal = "") { await this.#session.removePersonPhoto(principal); }
   /** Документы других людей, открытые этому человеку, новые сверху. Владельца показывают по имени. */
   async sharedDocuments() {
     const documents = await this.#session.listSharedDocuments();
@@ -163,7 +179,7 @@ export class NativeWriteSelector extends RpcTarget {
   async projectLevel(scope: string) {
     const project = (await this.#session.listProjects()).projects.find(p => p.id === scope);
     if (!project) throw new Error("Project unavailable");
-    return { name: project.name, level: project.visibility ?? "private", canEdit: project.can_edit ?? false, pending: project.pending_share ?? null };
+    return { name: project.name, level: project.visibility ?? "private", canEdit: project.can_edit ?? false, pending: project.pending_share ?? null, unit: project.org_unit_id ?? "" };
   }
   /** Сменить уровень доступа проекта; расширение может уйти на подтверждение руководителю — тогда applied=false. */
   async setProjectLevel(scope: string, level: "private" | "department" | "organization", canEdit: boolean) {
@@ -174,20 +190,23 @@ export class NativeWriteSelector extends RpcTarget {
   async sharedDocumentSeen(scope: string, owner: string, resource: string) { await this.#session.markSharedDocumentSeen(scope, owner, resource); }
   async select(project: string, node: string, format: NativeDocumentFormat) {
     if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
-    // Приглашённому «только к документу» работать в проекте нельзя (403): свой
-    // черновик ему не нужен, документ открывается из ветки владельца.
-    try { await this.#session.openDraft(project); }
-    catch (error) { if (!(error instanceof MnemosAPIError && error.status === 403)) throw error; }
+    // Сначала приглашения: документ коллеги открывается из ветки владельца, и чтение своей ветки
+    // для него заведомо отказывает (403 в журнале на каждое перечитывание состояния).
     let owner = "";
-    let own;
-    try { own = await this.#session.readDraftDocument(project, node); }
-    catch (error) { if (!(error instanceof MnemosAPIError && [403, 404].includes(error.status))) throw error; }
-    if (!own?.exists && !own?.conflicted) {
-      const invited = (await this.#session.listInvitedDocuments(project, "", node)).documents;
+    const invited = (await this.#session.listInvitedDocuments(project, "", node)).documents;
+    if (invited.length) {
       if (invited.length !== 1 || invited[0].content_type !== `application/vnd.${format}+json`) throw new Error("Select an accessible document of the same format");
       owner = invited[0].owner_id;
       // Открыл документ — уведомление прочитано. Сбой отметки открытию не мешает.
       await this.#session.markSharedDocumentSeen(project, owner, node).catch(() => {});
+    } else {
+      // Приглашённому «только к документу» работать в проекте нельзя (403): свой черновик ему не нужен.
+      try { await this.#session.openDraft(project); }
+      catch (error) { if (!(error instanceof MnemosAPIError && error.status === 403)) throw error; }
+      let own;
+      try { own = await this.#session.readDraftDocument(project, node); }
+      catch (error) { if (!(error instanceof MnemosAPIError && [403, 404].includes(error.status))) throw error; }
+      if (!own?.exists && !own?.conflicted) throw new Error("Select an accessible document of the same format");
     }
     const writer = new NativeWriter(this.#session, project, node, format, owner);
     await writer.head();
@@ -203,8 +222,33 @@ export class NativeWriteSelector extends RpcTarget {
     const intent = await this.#recovery.open(receipt, format);
     return new RpcStub(new NativeCreator(this.#session, this.#recovery, intent));
   }
+  /** «Опубликовать» из шапки документа: заявка на согласование, а если сервер ответил, что согласование
+   *  в проекте не требуется, — публикация сразу при тех же головах. Отказ в праве отдаётся состоянием:
+   *  исключение через RPC теряет причину, и интерфейс не может её назвать. */
+  async publishOrRequestReview(project: string, personal: string, shared: string): Promise<NativePublishOutcome> {
+    try {
+      const { candidate_id } = await this.#session.requestPublicationReview(project, personal, shared);
+      return { status: "review", candidate_id };
+    } catch (error) {
+      if (error instanceof MnemosAPIError && error.status === 403) return { status: "denied" };
+      if (!(error instanceof MnemosAPIError && error.status === 409 && error.code === REVIEW_NOT_REQUIRED)) throw error;
+    }
+    try {
+      const result = await this.#session.publishDraft(project, personal, shared, "Публикация из шапки документа");
+      return { status: result.published ? "published" : result.conflicted ? "conflict" : "unchanged", personal_head: result.personal_head, shared_head: result.shared_head };
+    } catch (error) {
+      if (error instanceof MnemosAPIError && error.status === 403) return { status: "denied" };
+      throw error;
+    }
+  }
   [Symbol.dispose]() { this.#session.dispose(); }
 }
+
+/** Итог «Опубликовать»: ушло на согласование, опубликовано сразу (или конфликт/нечего публиковать), либо нет права записи. */
+export type NativePublishOutcome =
+  | { status: "review"; candidate_id: string }
+  | { status: "published" | "conflict" | "unchanged"; personal_head: string; shared_head: string }
+  | { status: "denied" };
 
 /** Frozen conflict authority retained by the trusted host; no arbitrary manifest inputs. */
 class NativeConflict extends RpcTarget {

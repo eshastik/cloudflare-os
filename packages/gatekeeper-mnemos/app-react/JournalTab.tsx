@@ -23,6 +23,23 @@ const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт 
 const SIGNAL_STATES: Record<string, string> = { ok: "в порядке", firing: "есть сбой", unknown: "нет свежих данных" };
 const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила" };
 
+/** Страница обновляется сама: раз в `every` мс, пока вкладка видна, и сразу при возврате на вкладку. */
+function useLiveRefresh(refresh: () => void, every: number) {
+  const latest = useRef(refresh);
+  latest.current = refresh;
+  useEffect(() => {
+    const visible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+    const timer = setInterval(() => { if (visible()) latest.current(); }, every);
+    const back = () => { if (visible()) latest.current(); };
+    document.addEventListener("visibilitychange", back);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", back); };
+  }, [every]);
+}
+
+/** Учётная запись внешней проверки установки (deploy/sophai/monitor.py): её вход,
+ * чтение и сохранение раз в две минуты — служебные записи, а не дела людей. */
+const SYNTHETIC_MONITOR = "synthetic-monitor";
+
 /** «Журнал и состояние»: одна страница — строка состояния и журнал действий словами. */
 export default function JournalTab({ data }: { data: MemoryData }) {
   const capabilities = data.identity?.capabilities ?? [];
@@ -37,7 +54,8 @@ export default function JournalTab({ data }: { data: MemoryData }) {
  * подробности проверок раскрываются на месте под «Подробнее для администратора». */
 function SystemState({ admin }: { admin: boolean }) {
   const ui = useUi();
-  const metrics = useLoad(() => ui.readPlatformMetrics(), "Состояние системы не прочитано. Обновите страницу.", [ui]);
+  const metrics = useLoad(() => ui.readPlatformMetrics(), "Состояние системы не прочитано. Повторим через минуту.", [ui]);
+  useLiveRefresh(() => { void metrics.reload(); }, 60_000);
   const usage = metrics.value;
   const signals = usage?.signals ?? [];
   const rows = SUBSYSTEMS.map(sub => {
@@ -127,6 +145,8 @@ interface AuditSource {
   events: OperationAuditEvent[];
   /** Номер записи, до которой журнал прочитан (сам номер не включён); 0 — прочитан до начала, -1 — не читался. */
   end: number;
+  /** Вершина журнала на момент последнего чтения: новые записи дочитываются выше неё. */
+  top: number;
   /** Время самой старой прочитанной записи, в том числе служебной. */
   oldestAt: string;
   /** Сколько служебных записей прочитано и сколько из них не сохранено. */
@@ -135,10 +155,10 @@ interface AuditSource {
   failed: boolean;
 }
 interface WorkSource { entries: WorkJournalEntry[]; cursor: string; failed: boolean }
-const NO_AUDIT: AuditSource = { events: [], end: -1, oldestAt: "", technical: 0, dropped: 0, failed: false };
+const NO_AUDIT: AuditSource = { events: [], end: -1, top: -1, oldestAt: "", technical: 0, dropped: 0, failed: false };
 
 function isMeaningful(e: OperationAuditEvent): boolean {
-  return MEANINGFUL.has(e.action) && e.reason !== "requested";
+  return MEANINGFUL.has(e.action) && e.reason !== "requested" && e.actor !== SYNTHETIC_MONITOR && e.on_behalf_of !== SYNTHETIC_MONITOR;
 }
 
 /** Журнал действий словами: журнал операций организации и журналы работ доступных проектов
@@ -161,7 +181,8 @@ function Journal({ data }: { data: MemoryData }) {
   const loadAudit = useCallback((from: AuditSource | null) => busy(async () => {
     const run = from ? auditRun.current : ++auditRun.current;
     try {
-      let end = from ? from.end : (await ui.readOperationAuditPage(0, 1)).checkpoint.sequence;
+      const top = from ? from.top : (await ui.readOperationAuditPage(0, 1)).checkpoint.sequence;
+      let end = from ? from.end : top;
       const meaningful: OperationAuditEvent[] = [];
       const kept: OperationAuditEvent[] = [];
       let technicalSeen = 0, oldestAt = from?.oldestAt ?? "";
@@ -180,11 +201,62 @@ function Journal({ data }: { data: MemoryData }) {
       const events = [...meaningful, ...kept].sort((a, b) => Number(b.id) - Number(a.id));
       setAudit(prev => {
         const base = from ? prev : NO_AUDIT;
-        return { events: [...base.events, ...events], end, oldestAt, technical: base.technical + technicalSeen, dropped: base.dropped + technicalSeen - kept.length, failed: false };
+        return { events: [...base.events, ...events], end, top: from ? prev.top : top, oldestAt, technical: base.technical + technicalSeen, dropped: base.dropped + technicalSeen - kept.length, failed: false };
       });
     } catch {
       if (alive.current && run === auditRun.current) setAudit(prev => ({ ...(from ? prev : NO_AUDIT), failed: true, end: 0 }));
     }
+  }), [ui]);
+
+  // Новые записи над прочитанной вершиной: подгруженное «ранее» и раскрытая строка остаются на месте.
+  // Если новых больше, чем помещается в одно чтение, журнал перечитывается целиком.
+  const loadNewer = useCallback(() => busy(async () => {
+    const run = auditRun.current;
+    try {
+      const top = (await ui.readOperationAuditPage(0, 1)).checkpoint.sequence;
+      const from = auditTop.current;
+      if (from < 0 || top <= from) return;
+      if (top - from > AUDIT_PAGE * AUDIT_PAGES) { void loadAudit(null); return; }
+      const fresh: OperationAuditEvent[] = [];
+      for (let after = from; after < top;) {
+        const out = await ui.readOperationAuditPage(after, Math.min(AUDIT_PAGE, top - after));
+        const page = out.events.filter(e => Number(e.id) > after && !(Number(e.id) > top));
+        if (!page.length) break;
+        fresh.push(...page);
+        after = Number(page.at(-1)!.id);
+      }
+      if (!alive.current || run !== auditRun.current) return;
+      const meaningful = fresh.filter(isMeaningful);
+      const technical = fresh.filter(e => !isMeaningful(e));
+      setAudit(prev => {
+        if (prev.top !== from) return prev;
+        const known = new Set(prev.events.map(e => e.id));
+        const added = [...meaningful, ...technical.slice(-TECHNICAL_KEEP)].filter(e => !known.has(e.id)).sort((a, b) => Number(b.id) - Number(a.id));
+        return { ...prev, events: [...added, ...prev.events], top, technical: prev.technical + technical.length, dropped: prev.dropped + Math.max(0, technical.length - TECHNICAL_KEEP) };
+      });
+    } catch { /* следующий опрос повторит */ }
+  }), [ui, loadAudit]);
+  const auditTop = useRef(-1);
+  auditTop.current = audit.top;
+
+  // Первая страница журналов работ заново: новые записи встают сверху, догруженные ранее остаются.
+  const loadNewerWork = useCallback((projects: string[]) => busy(async () => {
+    const run = workRun.current;
+    const results = await Promise.allSettled(projects.map(p => ui.listWorkJournal(p, "")));
+    if (!alive.current || run !== workRun.current) return;
+    setWork(prev => {
+      const next = new Map(prev);
+      projects.forEach((p, i) => {
+        const got = results[i];
+        if (got.status !== "fulfilled") return;
+        const before = next.get(p);
+        if (!before) { next.set(p, { entries: got.value.entries, cursor: got.value.next_cursor ?? "", failed: false }); return; }
+        const known = new Set(before.entries.map(e => e.entry_id));
+        const added = got.value.entries.filter(e => !known.has(e.entry_id));
+        if (added.length || before.failed) next.set(p, { ...before, entries: [...added, ...before.entries], failed: false });
+      });
+      return next;
+    });
   }), [ui]);
 
   // Журналы работ: по странице с каждого проекта; «ещё» — только у проектов, где записи остались.
@@ -237,7 +309,8 @@ function Journal({ data }: { data: MemoryData }) {
   const [opened, setOpened] = useState("");
 
   const sources = [...work.entries()];
-  const items = useMemo(() => mergeJournal(audit.events, [...work.values()].flatMap(w => w.entries), names), [audit.events, work, names]);
+  const items = useMemo(() => mergeJournal(audit.events, [...work.values()].flatMap(w => w.entries), names)
+    .map(item => item.people.includes(SYNTHETIC_MONITOR) ? { ...item, line: { ...item.line, technical: true } } : item), [audit.events, work, names]);
   // Граница слияния: ниже самой поздней из «нижних точек» источников, у которых есть ещё записи,
   // лента не показывается — туда могут встать записи, которые ещё не прочитаны.
   const bounds = [audit.end > 0 ? audit.oldestAt : "", ...sources.filter(([, w]) => w.cursor).map(([, w]) => w.entries.at(-1)?.recorded_at ?? "")].filter(Boolean).map(at => Date.parse(at));
@@ -245,6 +318,8 @@ function Journal({ data }: { data: MemoryData }) {
   const loaded = items.filter(item => !(Date.parse(item.at) < horizon));
   const visible = loaded.filter(({ line }) => technical || !line.technical);
   const actors = [...new Set(visible.flatMap(item => item.people))];
+  // Чипы проектов — только тех, где в прочитанной ленте что-то было; выбранный держится, даже если записей не осталось.
+  const projectsInFeed = data.projects.filter(p => p.id === project || visible.some(item => item.line.projectId === p.id));
   const shown = visible.filter(({ people: involved, line }) => (!actor || involved.includes(actor)) && (!project || line.projectId === project)
     && (!query.trim() || line.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
   const hidden = audit.technical;
@@ -252,7 +327,7 @@ function Journal({ data }: { data: MemoryData }) {
   const started = audit.end !== -1 || audit.failed;
   const deniedProjects = sources.filter(([, w]) => w.failed).map(([id]) => names.project(id) || "без названия");
   const allFailed = audit.failed && sources.every(([, w]) => w.failed);
-  const refresh = () => { void loadAudit(null); void loadWork(projectIds, null); };
+  useLiveRefresh(() => { if (!loading) { void loadNewer(); void loadNewerWork(projectIds); } }, 30_000);
   const earlier = () => { if (audit.end > 0) void loadAudit(audit); void loadWork(projectIds, work); };
   const groups: { day: string; items: typeof shown }[] = [];
   for (const item of shown) { const day = dayLabel(item.at); const last = groups.at(-1); if (last?.day === day) last.items.push(item); else groups.push({ day, items: [item] }); }
@@ -260,10 +335,9 @@ function Journal({ data }: { data: MemoryData }) {
     <div className="flex flex-wrap items-center gap-2">
       <h2 className="m-0 flex-1 text-[17px] font-semibold text-kumo-default">Что происходило</h2>
       <PillInput type="search" aria-label="Поиск по журналу" placeholder="Кто, что, где" value={query} onChange={e => setQuery(e.target.value)} className="w-[200px]" />
-      <PillSelect aria-label="Кто" value={actor} onChange={e => setActor(e.target.value)}><option value="">Все люди и агенты</option>{actors.map(a => <option key={a} value={a}>{who(a)}</option>)}</PillSelect>
-      <PillSelect aria-label="Проект журнала" value={project} onChange={e => setProject(e.target.value)}><option value="">Все проекты</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</PillSelect>
-      <Pill tone="ghost" disabled={loading > 0} onClick={refresh}>Обновить журнал</Pill>
     </div>
+    <FilterChips label="Кто" value={actor} onChange={setActor} options={[...new Set([...(actor ? [actor] : []), ...actors])].map(a => ({ id: a, name: who(a) }))} />
+    <FilterChips label="Проект журнала" value={project} onChange={setProject} options={projectsInFeed.map(p => ({ id: p.id, name: p.name }))} />
     {loading > 0 && !items.length && <Notice>Загрузка…</Notice>}
     {allFailed && <Notice tone="danger">Журнал не прочитан. Для просмотра нужны права администратора.</Notice>}
     {!loading && started && !allFailed && shown.length === 0 && <Notice>{visible.length ? "Под выбранные условия ничего не подходит." : "Действий людей и агентов пока не было."}</Notice>}
@@ -309,6 +383,14 @@ function Journal({ data }: { data: MemoryData }) {
       <p className="mt-1 mb-0 text-kumo-subtle">Служебные записи — это технические шаги системы: чтения, продление входа, работа хранилища и поиска.{audit.dropped ? ` Их много, поэтому показаны только последние ${TECHNICAL_KEEP}.` : ""}</p>
     </details>
   </section>;
+}
+
+/** Фильтр строкой чипов: нажатый чип сужает ленту, повторное нажатие снимает. */
+function FilterChips({ label, value, options, onChange }: { label: string; value: string; options: { id: string; name: string }[]; onChange(id: string): void }) {
+  if (!options.length) return null;
+  return <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1.5">
+    {options.map(o => <Pill key={o.id} aria-pressed={value === o.id} tone={value === o.id ? "primary" : "secondary"} onClick={() => onChange(value === o.id ? "" : o.id)}>{o.name}</Pill>)}
+  </div>;
 }
 
 /** «Сегодня», «Вчера» или дата словами — заголовок группы журнала. */

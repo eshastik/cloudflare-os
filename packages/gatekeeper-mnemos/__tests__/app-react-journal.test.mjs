@@ -22,6 +22,8 @@ function auditPages(events) {
   };
 }
 const PEOPLE = { users: [{ userName: "alice", displayName: "Алиса", active: true }, { userName: "bob", displayName: "Борис", active: true }, { userName: "carol", displayName: "Кира", active: true }] };
+/** Чип фильтра по подписи группы и тексту; повторное нажатие снимает выбор. */
+const chip = (app, group, text) => [...app.document.querySelectorAll(`#root [role="group"][aria-label="${group}"] button`)].find(b => b.textContent === text);
 const ev = (id, action, patch = {}) => ({ id: String(id), tenant_id: "org", actor: "alice", on_behalf_of: "", action, resource: "", subject: "", allowed: true, reason: "accepted", at: "2026-09-24T08:00:00Z", prev_hash: "", hash: "", ...patch });
 
 const EVENTS = [
@@ -62,11 +64,14 @@ test("«Журнал и состояние»: одна панель состоя
     assert.equal(settings.open, false, "переключатель свёрнут");
     const toggle = settings.querySelector('input[aria-label="Показывать служебные"]');
     assert.equal(toggle.checked, false, "и выключен");
-    app.type(app.document.querySelector('select[aria-label="Проект журнала"]'), "one");
+    assert.equal(app.buttons().some(b => /Обновить/.test(b.textContent)), false, "кнопки «Обновить» нет: журнал обновляется сам");
+    assert.equal(app.document.querySelector('#root select[aria-label="Проект журнала"]'), null, "проект выбирается чипом, не выпадающим списком");
+    chip(app, "Проект журнала", "Общий проект").click();
     await app.until(() => rows().length === 1, "фильтр по проекту");
+    assert.equal(chip(app, "Проект журнала", "Общий проект").getAttribute("aria-pressed"), "true");
     rows()[0].querySelector("button").click();
     await app.until(() => rows()[0].textContent.includes("Действие выполнено"), "строка раскрывается на месте");
-    app.type(app.document.querySelector('select[aria-label="Проект журнала"]'), "");
+    chip(app, "Проект журнала", "Общий проект").click();
     toggle.click();
     await app.until(() => rows().length === 4, "служебные записи показываются по запросу");
     assert.ok(rows().some(r => r.textContent.includes("Алиса: проверка работы системы")), "служебная запись тоже словами");
@@ -130,12 +135,12 @@ test("журнал действий: журнал операций и журна
     assert.equal(rows()[2].dataset.journalSource, "work+audit", "итог слияния из журнала операций и запись журнала работ — одна строка");
     assert.equal(texts().filter(t => /изменения кода/.test(t)).length, 1, "дубль не показан второй строкой");
     // Фильтры работают по всем источникам.
-    app.type(app.document.querySelector('select[aria-label="Проект журнала"]'), "two");
+    chip(app, "Проект журнала", "Второй проект").click();
     await app.until(() => rows().length === 1 && texts()[0].includes("Собрал отчёт"), "фильтр по проекту — журнал работ");
-    app.type(app.document.querySelector('select[aria-label="Проект журнала"]'), "");
-    app.type(app.document.querySelector('select[aria-label="Кто"]'), "bob");
+    chip(app, "Проект журнала", "Второй проект").click();
+    chip(app, "Кто", "Борис").click();
     await app.until(() => rows().length === 1 && texts()[0].includes("Борис"), "фильтр «кто» — журнал работ");
-    app.type(app.document.querySelector('select[aria-label="Кто"]'), "alice");
+    chip(app, "Кто", "Алиса").click();
     await app.until(() => rows().length === 3, "фильтр «кто»: и журнал операций, и работа агента по поручению");
     assert.equal(app.document.querySelector("#root [data-journal-unavailable]"), null, "все источники прочитаны — пометки нет");
   } finally { app.dispose(); }
@@ -189,5 +194,30 @@ test("журнал действий: недоступный источник н�
     assert.match(note, /«Второй проект»/);
     assert.ok(rows()[0].textContent.includes("Борис записал итог работы в проекте «Общий проект»"));
     assert.doesNotMatch(app.text(), /Журнал не прочитан/, "красного отказа нет");
+  } finally { app.dispose(); }
+});
+
+test("журнал действий обновляется сам: новые записи встают сверху при возврате на вкладку, раскрытая строка и «ранее» остаются", async () => {
+  const events = [ev(1, "org_unit.create", { resource: "unit-1", at: "2026-09-24T09:00:00Z" })];
+  const app = await mountMemoryApp({
+    readOperationAuditPage: auditPages(events),
+    async listWorkJournal() { return { entries: [], truncated: false }; },
+    async listPeople() { return { users: [...PEOPLE.users, { userName: "synthetic-monitor", displayName: "Проверка доступности", active: true }] }; },
+    async listOrgUnits() { return [{ org_unit_id: "unit-1", name: "Бухгалтерия" }]; },
+    async listInvitations() { return [{ invitation_id: "inv-1", display_name: "Ольга", email: "olga@example.test" }]; },
+  }, { section: "journal" });
+  try {
+    const rows = () => [...app.document.querySelectorAll("#root [data-journal-event]")];
+    const texts = () => rows().map(r => r.querySelector("button").textContent);
+    await app.until(() => rows().length === 1, "первая запись");
+    rows()[0].querySelector("button").click();
+    await app.until(() => rows()[0].textContent.includes("Действие выполнено"), "строка раскрыта");
+    events.push(ev(2, "upload.complete", { actor: "synthetic-monitor", at: "2026-09-24T10:00:00Z" }));
+    events.push(ev(3, "org_invitation.create", { resource: "inv-1", at: "2026-09-24T11:00:00Z" }));
+    app.document.dispatchEvent(new app.dom.window.Event("visibilitychange"));
+    await app.until(() => rows().length === 2, `новая запись без кнопки: ${texts().join(" | ")}`);
+    assert.ok(texts()[0].includes("пригласила"), texts()[0]);
+    assert.ok(rows()[1].textContent.includes("Действие выполнено"), "раскрытая строка осталась раскрытой");
+    assert.doesNotMatch(app.text(), /Проверка доступности/, "действия внешней проверки установки — служебные");
   } finally { app.dispose(); }
 });

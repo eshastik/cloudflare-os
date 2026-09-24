@@ -6,7 +6,7 @@ import { Text, Loader, Banner } from '@cloudflare/kumo'
 import { Sparkle } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
 import { GadgetClient, ConsoleLogEvent } from '@gadgets/workshop-shared/api'
-import { requestNativeSnapshot, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
+import { queueNativeSnapshots, requestNativeSnapshot, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 // We want to inject Cap'n Web into the Gadget. Luckily it has no dependencies, so we can just take
 // the whole module and embed it. We can import the module using ?raw to get a string of the
@@ -167,8 +167,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
     const target = iframeRef.current?.contentWindow
     if (!nativeSnapshotSource || !target || !isVisible || isInvalidated || loading || error || !sandboxedHtml) return
     const lifetime = new AbortController()
-    const read = (format: Parameters<typeof requestNativeSnapshot>[1], signal: AbortSignal) =>
-      requestNativeSnapshot(target, format, AbortSignal.any([signal, lifetime.signal]))
+    const read = queueNativeSnapshots((format, signal) =>
+      requestNativeSnapshot(target, format, AbortSignal.any([signal, lifetime.signal])))
     nativeSnapshotSource.current = read
     return () => {
       lifetime.abort()

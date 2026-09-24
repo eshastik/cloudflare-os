@@ -9,6 +9,7 @@ import type { ThemeMode } from './theme'
 import { useDocumentTitle } from './useDocumentTitle'
 import { personInitials } from './components/AppShell/initials'
 import { GROUP_CARD, SECONDARY_PILL, SECTION_TITLE } from './components/AppShell/pageStyles'
+import { removeMyPhoto, uploadMyPhoto, useMnemosPhotos } from './mnemosPhotos'
 
 // Настройки (макет Settings): одна страница, секции друг под другом, без вложенных вкладок.
 // Личное — профиль, оформление, свои результаты. Организационное (люди, правила, подключения,
@@ -20,7 +21,23 @@ const THEMES: [ThemeMode, string][] = [['light', 'Светлая'], ['dark', 'Т
 export default function SettingsHub() {
   useDocumentTitle('Настройки')
   const { authenticatedApi, currentUser, isAdmin, logout } = useAuthenticatedApi()
-  const avatarUrl = useAvatar(authenticatedApi, currentUser?.id)
+  const platformAvatar = useAvatar(authenticatedApi, currentUser?.id)
+  // Фотография в Mnemos видна всей организации; её и показываем, пока она есть.
+  const photos = useMnemosPhotos(authenticatedApi)
+  const myPhoto = photos.me ? photos.photos.get(photos.me) ?? null : null
+  const avatarUrl = myPhoto || platformAvatar
+  const [photoBusy, setPhotoBusy] = useState<'' | 'upload' | 'remove'>('')
+  const [photoError, setPhotoError] = useState('')
+  async function changePhoto(action: 'upload' | 'remove', file?: File) {
+    if (photoBusy) return
+    setPhotoBusy(action); setPhotoError('')
+    try {
+      if (action === 'upload' && file) await uploadMyPhoto(authenticatedApi, file)
+      else await removeMyPhoto(authenticatedApi)
+    } catch {
+      setPhotoError(action === 'upload' ? 'Фото не загрузилось. Выберите снимок JPEG, PNG или WebP и повторите.' : 'Фото не убралось. Повторите попытку.')
+    } finally { setPhotoBusy('') }
+  }
   const { themeMode, setThemeMode } = useTheme()
   const [accentOpen, setAccentOpen] = useState(false)
 
@@ -38,6 +55,25 @@ export default function SettingsHub() {
         </div>
         <Link to="/profile" className={SECONDARY_PILL}>Изменить</Link>
       </section>
+
+      {photos.me && (
+        <section aria-label="Фото" className={GROUP_CARD}>
+          <div className="flex flex-wrap items-center gap-3 px-[18px] py-3.5">
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] leading-5 text-kumo-default">Фото</span>
+              {photoError
+                ? <span role="alert" className="block text-[13px] leading-5 text-kumo-danger">{photoError}</span>
+                : <span className="block text-[13px] leading-5 text-kumo-subtle">{myPhoto ? 'Видят все люди организации.' : 'Пока фото нет, коллеги видят ваши инициалы.'}</span>}
+            </span>
+            <label className={`${SECONDARY_PILL} focus-within:outline-2 focus-within:outline-kumo-ring ${photoBusy ? 'pointer-events-none opacity-60' : ''}`}>
+              {photoBusy === 'upload' ? 'Загружаю…' : myPhoto ? 'Заменить' : 'Загрузить'}
+              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={!!photoBusy}
+                onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void changePhoto('upload', file) }} />
+            </label>
+            {myPhoto && <button type="button" className={SECONDARY_PILL} disabled={!!photoBusy} onClick={() => { void changePhoto('remove') }}>{photoBusy === 'remove' ? 'Убираю…' : 'Убрать'}</button>}
+          </div>
+        </section>
+      )}
 
       <section aria-label="Оформление" className="flex flex-col gap-2.5">
         <h2 className={SECTION_TITLE}>Оформление</h2>

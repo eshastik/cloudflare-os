@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber, GadgetClient } from '@gadgets/workshop-shared/api'
 import type { PublicationReview } from '@gadgets/workshop-shared/publication-review'
-import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, useDocumentStatus, type StatusInput } from './DocumentStatus'
+import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, publishDeniedMessage, useDocumentStatus, type StatusInput } from './DocumentStatus'
 
 const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
@@ -83,7 +83,7 @@ it('«только вы» показывается лишь без пригла�
 })
 
 // Живой хук с заглушками RPC: отказ каждого запроса и ревизия редактора задаются на вход.
-type Faults = { select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean }
+type Faults = { select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[] }
 const head = 'a'.repeat(64)
 
 function frame(faults: Faults) {
@@ -98,6 +98,16 @@ function frame(faults: Faults) {
     }
     async reviewerIdentity() { return 'owner' }
   }
+  // «Опубликовать» с ответом сервера: нет права записи либо публикация сразу (согласования в проекте нет).
+  class PublishingSelector extends Selector {
+    async publishOrRequestReview(scope: string, personal: string, shared: string) {
+      faults.published?.push(`${scope}:${personal}:${shared}`)
+      return faults.publish === 'denied' ? { status: 'denied' } : { status: 'published', personal_head: personal, shared_head: 'c'.repeat(64) }
+    }
+    async scopes() { return { scopes: [{ id: 'project', name: 'Mnemos' }] } }
+    async documentLocation() { return { head, name: 'Последние коммиты', parent: 'folder-1' } }
+    async folders() { return { folders: [{ id: 'folder-1', name: 'Презентации', parent: '' }], nextCursor: '' } }
+  }
   class Downloads extends RpcTarget {
     async publications() {
       if (faults.publications) throw new Error('Not found')
@@ -109,7 +119,7 @@ function frame(faults: Faults) {
   }
   class Empty extends RpcTarget {}
   return { iframeHtml: '', ui: new RpcStub(new Empty()),
-    nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Selector()) },
+    nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(faults.publish ? new PublishingSelector() : new Selector()) },
     nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Downloads()) } }
 }
 
@@ -129,8 +139,39 @@ async function mountStatus({ faults = {}, savedRevision, revision, pollMs }: { f
   const primary = () => container.querySelector('button[data-primary-action]')
   const settled = async () => { await act(async () => { await vi.waitFor(() => expect(status().textContent).not.toContain('Читаю состояние')) }) }
   const unmount = async () => { await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]() }
-  return { status, primary, settled, unmount }
+  return { status, primary, settled, unmount, container }
 }
+
+// Дефект 2026-09-24: «Опубликовать» при отказе сервера (403) молчало — ошибка жила только в закрытой панели.
+it('отказ «Опубликовать» в праве: строка рядом с кнопкой называет папку, проект и к кому идти', async () => {
+  const published: string[] = []
+  const view = await mountStatus({ faults: { publish: 'denied', published }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    expect(view.primary()?.textContent).toBe('Опубликовать')
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[role="alert"]')).not.toBeNull()) })
+    expect(published).toEqual([`project:${head}:${'b'.repeat(64)}`])
+    expect(view.container.querySelector('[role="alert"]')!.textContent).toBe('Публикация не прошла: нет права записи в папку «Презентации» проекта «Mnemos». Попросите владельца проекта или администратора открыть вам правку.')
+  } finally { await view.unmount() }
+})
+
+it('«Опубликовать» в проекте без согласования публикует сразу и говорит об этом', async () => {
+  const published: string[] = []
+  const view = await mountStatus({ faults: { publish: 'published', published }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { await vi.waitFor(() => expect(published).toHaveLength(1)) })
+    await view.settled()
+    expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  } finally { await view.unmount() }
+})
+
+it('сообщение об отказе без имени папки называет проект', () => {
+  expect(publishDeniedMessage('Mnemos', null)).toBe('Публикация не прошла: нет права записи в проект «Mnemos». Попросите владельца проекта или администратора открыть вам правку.')
+  expect(publishDeniedMessage(null, null)).toContain('в этот проект')
+})
 
 it('(а) отказ participants: блок «кто видит» — «не прочитано», а не «только вы»', async () => {
   const view = await mountStatus({ faults: { participants: true }, savedRevision: 7, revision: { current: 7 } })
