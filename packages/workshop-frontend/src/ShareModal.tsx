@@ -68,7 +68,12 @@ const ROLE_OPTIONS: CollaboratorRole[] = ['use', 'build']
 
 /** Пауза после ввода перед поиском подсказок, мс. */
 const SUGGEST_DELAY_MS = 150
-type Invitee = { id: string; name: string; email?: string }
+type Invitee = { id: string; name: string; email?: string; department?: string }
+
+/** Вторая строка подсказки: отдел из Mnemos, иначе почта (если её показали), иначе имя входа без почты. */
+function inviteeDetail(person: Invitee): string {
+  return person.department ?? person.email ?? (person.id.includes('@') ? '' : person.id)
+}
 
 /** Право получателя — переключатель из двух слов; подсказка к выбранному — строкой под ним у вызывающего. */
 function RoleSwitch({ value, onValueChange, disabled, ariaLabel }: {
@@ -301,8 +306,11 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   const [matchesOpen, setMatchesOpen] = useState(false)
   const [activeMatch, setActiveMatch] = useState(0)
   const matchRequestRef = useRef(0)
-  // Имя входа, подставленное из подсказки: по нему повторно не ищем.
+  // Текст поля, подставленный из подсказки: по нему повторно не ищем.
   const chosenRef = useRef<string | null>(null)
+  // Выбранная подсказка: в поле её имя, а приглашение уходит на её имя входа (почту человеку,
+  // которому Mnemos почт не показывает, в поле не выводим).
+  const [chosenPerson, setChosenPerson] = useState<Invitee | null>(null)
   const [landedPersonId, setLandedPersonId] = useState<string | null>(null)
   const [landedShareLinkId, setLandedShareLinkId] = useState<string | null>(null)
   const [editingShareLinkId, setEditingShareLinkId] = useState<string | null>(null)
@@ -364,8 +372,9 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   }, [addUsername, open, overseer, collaborators, sharingProhibited])
 
   const chooseMatch = (person: Invitee) => {
-    chosenRef.current = person.id
-    setAddUsername(person.id)
+    chosenRef.current = person.name
+    setChosenPerson(person)
+    setAddUsername(person.name)
     setMatches([])
     setMatchesOpen(false)
   }
@@ -439,6 +448,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
       loadData()
       if (!wasOpenRef.current) {
         setAddUsername('')
+        setChosenPerson(null)
         setNewShareLink(null)
         setNewShareLinkId(null)
         setNewShareLinkCopied(false)
@@ -572,7 +582,8 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   }
 
   const handleAddCollaborator = async () => {
-    const username = addUsername.trim()
+    const typed = addUsername.trim()
+    const username = chosenPerson && typed === chosenPerson.name ? chosenPerson.id : typed
     if (!username || sharingProhibited || addingRef.current) return
 
     addingRef.current = true
@@ -586,6 +597,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
         rememberRecentPerson({ id: result.profile.id, name: result.profile.name })
         setRecentPeople(readRecentPeople())
         setAddUsername('')
+        setChosenPerson(null)
         setInvitedName(result.profile.name)
         setInvitedLinkCopied(false)
         await loadData()
@@ -832,7 +844,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                   placeholder="Имя пользователя или почта"
                   aria-label="Имя пользователя или почта"
                   value={addUsername}
-                  onChange={(e) => { chosenRef.current = null; setAddUsername(e.target.value); setMatchesOpen(true) }}
+                  onChange={(e) => { chosenRef.current = null; setChosenPerson(null); setAddUsername(e.target.value); setMatchesOpen(true) }}
                   onKeyDown={onPeopleKey}
                   onBlur={() => setMatchesOpen(false)}
                   onFocus={() => setMatchesOpen(true)}
@@ -860,7 +872,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                         <PersonAvatar api={authenticatedApi} userId={person.id} name={person.name} size={32} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[15px] leading-5 text-kumo-default">{person.name}</span>
-                          <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">{person.email ?? person.id}</span>
+                          {inviteeDetail(person) && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">{inviteeDetail(person)}</span>}
                         </span>
                       </li>
                     ))}
@@ -876,7 +888,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                 <span className="px-1 text-[13px] text-kumo-subtle">Недавние</span>
                 {suggestions.map(p => (
                   <button key={p.id} type="button" className="h-7 cursor-pointer rounded-full border-0 bg-kumo-tint px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-fill-hover" title={p.id}
-                    onClick={() => { chosenRef.current = p.id; setAddUsername(p.id) }}>{p.name}</button>
+                    onClick={() => { chosenRef.current = p.id; setChosenPerson(null); setAddUsername(p.id) }}>{p.name}</button>
                 ))}
               </div>
             )}

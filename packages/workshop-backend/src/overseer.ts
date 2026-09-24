@@ -1,5 +1,5 @@
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
-import { findInvitees } from './user-directory.js';
+import { findInvitees, notYetSignedInProfile, rankInvitees } from './user-directory.js';
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import {acceptChatCodeChanges, applyChatProjectChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
@@ -3325,6 +3325,10 @@ class OverseerImpl implements AgentHooks {
   // Справочник пользователей установки (подсказки «Поделиться»); право искать проверяет вызывающий.
   async findDirectoryUsers(query: string, exclude: string[]) {
     return this.ctx.exports.AdminSettings.getByName("").findDirectoryUsers(query, exclude);
+  }
+
+  async directorySnapshot() {
+    return this.ctx.exports.AdminSettings.getByName("").directorySnapshot();
   }
 
   async scheduleRevocationRestart(): Promise<void> {
@@ -9207,7 +9211,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     // Look up the user DO to check if the account exists.
     let userDoId = this.impl.users.idFromName(username);
     let userDo = this.impl.users.get(userDoId);
-    let profile = await userDo.whoamiIfExists();
+    let profile = await userDo.whoamiIfExists() ?? await this.#notYetSignedIn(username);
     if (!profile) {
       return null;
     }
@@ -9225,7 +9229,19 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     });
   }
 
-  async findInvitees(query: string): Promise<{ id: string; name: string; email?: string }[]> {
+  // Человек организации, ещё ни разу не входивший в оболочку: учётной записи нет, но при первом
+  // входе через Mnemos она заведётся ровно под этой почтой (login-flow.ts). Приглашение ложится на
+  // это имя входа заранее. Только почта, которую Mnemos того, кто делится, отдал как почту
+  // сотрудника организации; права делиться проверяются до обращения к Mnemos.
+  async #notYetSignedIn(username: string): Promise<AiChatAuthorInfo | null> {
+    if (!username.includes("@")) return null;
+    if (this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()) return null;
+    (await this.impl.getSharingManager()).requireShareRole(this.#sharingCaller());
+    let [people, { aliases }] = await Promise.all([this.clientUser.listMnemosPeople(), this.impl.directorySnapshot()]);
+    return notYetSignedInProfile(username, people, new Map(Object.entries(aliases)));
+  }
+
+  async findInvitees(query: string): Promise<{ id: string; name: string; email?: string; department?: string }[]> {
     let sharing = await this.impl.getSharingManager();
     let owner = this.impl.ownerProfileId;
     return findInvitees({
@@ -9233,7 +9249,14 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       canShare: () => sharing.requireShareRole(this.#sharingCaller()),
       prohibited: !!(this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
       existing: [this.clientProfileId, ...(owner ? [owner] : []), ...sharing.listCollaborators().map(c => c.profile.id)],
-      search: (q, exclude) => this.impl.findDirectoryUsers(q, exclude),
+      search: async (q, exclude) => {
+        // Сбой Mnemos не лишает подсказок из справочника.
+        let [snapshot, mnemos] = await Promise.all([
+          this.impl.directorySnapshot(),
+          this.clientUser.listMnemosPeople().catch(() => null),
+        ]);
+        return rankInvitees({ query: q, directory: snapshot.entries, aliases: new Map(Object.entries(snapshot.aliases)), mnemos, exclude: new Set(exclude) });
+      },
     });
   }
 
@@ -9579,7 +9602,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async listCollaborators(): Promise<CollaboratorInfo[]> { this.#deny(); }
   async addCollaborator(_username: string, _role: CollaboratorRole, _note?: string)
       : Promise<CollaboratorInfo | null> { this.#deny(); }
-  async findInvitees(_query: string): Promise<{ id: string; name: string; email?: string }[]> { this.#deny(); }
+  async findInvitees(_query: string): Promise<{ id: string; name: string; email?: string; department?: string }[]> { this.#deny(); }
   async removeCollaborator(_profileId: string, _keepUsers: string[])
       : Promise<AffectedCollaborator[]> { this.#deny(); }
   async previewRemoveCollaborator(_profileId: string): Promise<AffectedCollaborator[]> {

@@ -27,7 +27,7 @@ function makeAdminSettingsStorage(storage: DurableObjectStorage) {
         primaryKey: 'id',
       }),
 
-      // Справочник для подсказок «Поделиться»: имя входа и отображаемое имя, больше ничего.
+      // Справочник для подсказок «Поделиться»: имя входа, отображаемое имя и принципал Mnemos.
       // Пополняется самими пользователями при входе (см. UserDurableObject.authenticate).
       userDirectory: collection<DirectoryEntry>()({
         primaryKey: 'id',
@@ -94,7 +94,19 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
   // пользователя со своим профилем.
   recordDirectoryUser(entry: DirectoryEntry): void {
     if (typeof entry?.id !== "string" || !entry.id || entry.id.length > 320 || typeof entry.name !== "string" || entry.name.length > 200) return;
-    this.storage.userDirectory.put({ id: entry.id, name: entry.name });
+    let mnemos = entry.mnemos;
+    let validMnemos = typeof mnemos?.tenant === "string" && typeof mnemos.principal === "string" &&
+        mnemos.tenant.length > 0 && mnemos.tenant.length <= 512 && mnemos.principal.length > 0 && mnemos.principal.length <= 512;
+    this.storage.userDirectory.put({ id: entry.id, name: entry.name,
+      ...(validMnemos ? { mnemos: { tenant: mnemos!.tenant, principal: mnemos!.principal } } : {}) });
+  }
+
+  // Весь справочник и привязки LOGIN_ALIASES для склейки с людьми Mnemos (user-directory.ts,
+  // rankInvitees). Право искать проверяет вызывающий, как и у findDirectoryUsers.
+  directorySnapshot(): { entries: DirectoryEntry[]; aliases: Record<string, string> } {
+    let aliases: Map<string, string>;
+    try { aliases = parseLoginAliases(this.env.LOGIN_ALIASES); } catch { aliases = new Map(); }
+    return { entries: [...this.storage.userDirectory.list()], aliases: Object.fromEntries(aliases) };
   }
 
   // До MAX_INVITEES людей по началу имени, имени входа или почты. Право искать проверяет вызывающий

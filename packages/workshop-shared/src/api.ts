@@ -1788,7 +1788,10 @@ export interface Overseer extends RpcTarget {
   // Подсказки для приглашения: до 8 пользователей установки, у которых имя, имя входа или почта
   // начинаются с `query`. Только для того, кто может приглашать; уже имеющие доступ не возвращаются.
   // `id` — имя входа, его и передают в addCollaborator.
-  findInvitees(query: string): Promise<{ id: string; name: string; email?: string }[]>;
+  // Источники: люди Mnemos того, кто делится, и справочник входивших. `department` — отдел из
+  // Mnemos; `email` — только если Mnemos показывает почты этому человеку. Ещё не входивший в
+  // оболочку приходит с id = его почта: addCollaborator принимает её, если Mnemos её подтверждает.
+  findInvitees(query: string): Promise<{ id: string; name: string; email?: string; department?: string }[]>;
 
   // Remove a collaborator (identified by profile.id).
   //

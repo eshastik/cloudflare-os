@@ -101,7 +101,8 @@ type OverseerOverrides = {
   listObserverRequirements?: (role: CollaboratorRole) => Promise<ObserverBindingNeed[]>
   shareLinks?: ShareLinkInfo[]
   updateShareLink?: (linkId: string, note?: string) => Promise<void>
-  findInvitees?: (query: string) => Promise<{ id: string; name: string; email?: string }[]>
+  findInvitees?: (query: string) => Promise<{ id: string; name: string; email?: string; department?: string }[]>
+  addCollaborator?: (username: string, role: CollaboratorRole) => Promise<unknown>
   collaborators?: { profile: AiChatAuthorInfo; role: CollaboratorRole; addedBy: [] }[]
 }
 
@@ -114,11 +115,11 @@ function fakeOverseer(overrides: OverseerOverrides = {}): RpcStub<Overseer> {
     listObserverRequirements:
       overrides.listObserverRequirements ??
       (async (role: CollaboratorRole) => requirements[role] ?? []),
-    addCollaborator: async () => ({
+    addCollaborator: overrides.addCollaborator ?? (async () => ({
       profile: { type: 'user', id: 'ada@cloudflare.com', name: 'Ada' },
       role: 'use',
       addedBy: [],
-    }),
+    })),
     createShareLink: async () => ({ key: 'secret', linkId: 'link-1' }),
     updateShareLink: overrides.updateShareLink ?? (async () => {}),
   } as unknown as RpcStub<Overseer>
@@ -346,13 +347,14 @@ describe('ShareModal', () => {
       await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })) })
     }
 
-    it('показывает людей по введённому началу, без уже имеющих доступ; вторая строка — почта или имя входа', async () => {
+    it('показывает людей по введённому началу, без уже имеющих доступ; вторая строка — показанная почта, иначе ничего', async () => {
       const findInvitees = vi.fn<(q: string) => Promise<typeof PEOPLE>>(async () => PEOPLE)
       const rendered = await render(fakeOverseer({ findInvitees, collaborators: [{ profile: { type: 'user', id: 'helper', name: 'Ника' }, role: 'use', addedBy: [] }] }))
       await type(rendered, 'ник')
       await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
       expect(findInvitees).toHaveBeenLastCalledWith('ник')
-      expect(options(rendered).map(o => o.textContent)).toEqual(['Николай Деревцовnikolay@example.ru', 'Никита Орловnikita@example.ru'])
+      // Почта, которую сервер не показал, не выводится и через имя входа.
+      expect(options(rendered).map(o => o.textContent)).toEqual(['Николай Деревцов', 'Никита Орловnikita@example.ru'])
       expect(rendered.querySelector('[aria-label="Недавние"]')).toBeNull()
     })
 
@@ -364,7 +366,7 @@ describe('ShareModal', () => {
       await key(input, 'ArrowDown')
       expect(options(rendered)[1]!.getAttribute('aria-selected')).toBe('true')
       await key(input, 'Enter')
-      expect(input.value).toBe('admin')
+      expect(input.value).toBe('Никита Орлов')
       expect(options(rendered)).toHaveLength(0)
       expect(button(rendered, 'Пригласить').disabled).toBe(false)
 
@@ -377,7 +379,44 @@ describe('ShareModal', () => {
       input = await type(rendered, 'ник')
       await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
       await click(options(rendered)[0]!)
-      expect(input.value).toBe('nikolay@example.ru')
+      expect(input.value).toBe('Николай Деревцов')
+    })
+
+    it('вторая строка — отдел из Mnemos; почта сотрудника, которому её не показали, нигде не видна', async () => {
+      const people = [
+        { id: 'olga@example.ru', name: 'Ольга Никонова', department: 'Бухгалтерия' },
+        { id: 'nina@example.ru', name: 'Нина Петрова', email: 'nina@example.ru', department: 'Продажи' },
+      ]
+      const rendered = await render(fakeOverseer({ findInvitees: async () => people }))
+      await type(rendered, 'ни')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
+      expect(options(rendered).map(o => o.textContent)).toEqual(['Ольга НиконоваБухгалтерия', 'Нина ПетроваПродажи'])
+      expect(rendered.textContent).not.toContain('olga@example.ru')
+    })
+
+    it('приглашение по выбранной подсказке уходит на её имя входа, а в поле — имя человека', async () => {
+      const addCollaborator = vi.fn<(username: string, role: CollaboratorRole) => Promise<unknown>>(async () => ({
+        profile: { type: 'user', id: 'olga@example.ru', name: 'Ольга Никонова' }, role: 'use', addedBy: [],
+      }))
+      const rendered = await render(fakeOverseer({ addCollaborator, findInvitees: async () => [{ id: 'olga@example.ru', name: 'Ольга Никонова', department: 'Бухгалтерия' }] }))
+      const input = await type(rendered, 'оль')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(1) })
+      await click(options(rendered)[0]!)
+      expect(input.value).toBe('Ольга Никонова')
+      expect(rendered.textContent).not.toContain('olga@example.ru')
+      await click(button(rendered, 'Пригласить'))
+      expect(addCollaborator).toHaveBeenCalledWith('olga@example.ru', 'use', undefined)
+    })
+
+    it('исправленный после выбора текст уходит как введён', async () => {
+      const addCollaborator = vi.fn<(username: string, role: CollaboratorRole) => Promise<unknown>>(async () => null)
+      const rendered = await render(fakeOverseer({ addCollaborator, findInvitees: async () => [{ id: 'olga@example.ru', name: 'Ольга Никонова' }] }))
+      await type(rendered, 'оль')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(1) })
+      await click(options(rendered)[0]!)
+      await type(rendered, 'anna')
+      await click(button(rendered, 'Пригласить'))
+      expect(addCollaborator).toHaveBeenCalledWith('anna', 'use', undefined)
     })
 
     it('сбой поиска не мешает приглашению по введённому имени', async () => {

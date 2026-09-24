@@ -22,6 +22,11 @@ import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archi
 import { filterEnabledResources, isResourceDisabled, readAdminConfig } from "./admin-config.js";
 import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
 import { installationChatModel, installationQuickModel, type OpenRouterInstallConfig } from "./code-router.js";
+import { MNEMOS_VENDOR_ID } from "./auth/login-policy.js";
+import { collectMnemosPeople, mnemosAccountOwner, type MnemosPeople, type MnemosPeopleUi } from "./mnemos-people.js";
+
+/** Сколько держать список людей Mnemos для подсказок «Поделиться». */
+const MNEMOS_PEOPLE_TTL_MS = 60_000;
 
 const logger = createWorkshopLogger("workshop.user");
 
@@ -406,12 +411,58 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async #recordInDirectory(): Promise<void> {
     if (!this.storage.created.get()) return;
     let profile = this.storage.profile.get();
-    let stamp = JSON.stringify([profile.id, profile.name]);
+    // Принципал Mnemos склеивает запись с человеком из списка Mnemos у того, кто делится.
+    let mnemos = this.#mnemosAccount()?.owner;
+    let stamp = JSON.stringify([profile.id, profile.name, mnemos?.tenant ?? "", mnemos?.principal ?? ""]);
     if (this.storage.directoryRecorded.get() === stamp) return;
     try {
-      await this.adminSettings.getByName("").recordDirectoryUser({ id: profile.id, name: profile.name });
+      await this.adminSettings.getByName("").recordDirectoryUser({ id: profile.id, name: profile.name, ...(mnemos ? { mnemos } : {}) });
       this.storage.directoryRecorded.put(stamp);
     } catch { /* повторится при следующем входе */ }
+  }
+
+  // Действующее подключение Mnemos этого человека и его принципал (из uniqueName подключения).
+  #mnemosAccount(): { record: ConnectedAccountRecord; owner: { tenant: string; principal: string } } | undefined {
+    for (let record of [...this.storage.connectedAccounts.list()]) {
+      if (record.vendorId !== MNEMOS_VENDOR_ID || !areCredentialsValid(record) || !record.description?.providesUi) continue;
+      let owner = mnemosAccountOwner(record.description.uniqueName);
+      if (owner) return { record, owner };
+    }
+    return undefined;
+  }
+
+  #mnemosPeople?: { at: number; value: Promise<MnemosPeople | null> };
+
+  /** Люди организации, которых Mnemos показывает этому человеку (подсказки «Поделиться»). null —
+   *  подключения Mnemos нет или оно не ответило. Список держится минуту: окно «Поделиться» спрашивает
+   *  на каждую букву, а сеанс управления Mnemos несёт с собой всю страницу приложения. */
+  async listMnemosPeople(): Promise<MnemosPeople | null> {
+    let cached = this.#mnemosPeople;
+    if (cached && Date.now() - cached.at < MNEMOS_PEOPLE_TTL_MS) return cached.value;
+    let value = this.#readMnemosPeople();
+    this.#mnemosPeople = { at: Date.now(), value };
+    let result = await value;
+    if (result === null && this.#mnemosPeople?.value === value) this.#mnemosPeople = undefined;  // сбой не запоминаем
+    return result;
+  }
+
+  async #readMnemosPeople(): Promise<MnemosPeople | null> {
+    let found = this.#mnemosAccount();
+    if (!found) return null;
+    // Отдельного метода «люди для приглашения» у подключения Mnemos пока нет: читаем тем же сеансом
+    // управления, что и экран «Люди и отделы», и только его списки.
+    let frame: Awaited<ReturnType<SingletonAccountStub["startAppUi"]>> | undefined;
+    try {
+      frame = await (found.record.account as unknown as SingletonAccountStub).startAppUi({ isAdmin: false });
+      let ui = (frame as unknown as { ui?: MnemosPeopleUi }).ui;
+      if (!ui) return null;
+      return await collectMnemosPeople(ui, found.owner);
+    } catch (err) {
+      logger.warn("mnemos people unavailable", { event: "share.people.mnemos.failed", error: err });
+      return null;
+    } finally {
+      try { (frame as unknown as Partial<Disposable> | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ }
+    }
   }
 
   // Returns true when this login created the account on first use. When the account doesn't yet

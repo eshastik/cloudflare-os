@@ -8,7 +8,8 @@ declare module "cloudflare:workers" {
 }
 import { createTypedStorage, collection } from "@gadgets/typed-storage";
 import { SharingManager, SharingStorage, CollaboratorRecord, ShareKeyRecord } from "../src/sharing.js";
-import { findInvitees, matchDirectory, MAX_INVITEES } from "../src/user-directory.js";
+import { findInvitees, matchDirectory, MAX_INVITEES, notYetSignedInProfile, rankInvitees } from "../src/user-directory.js";
+import { collectMnemosPeople, mnemosAccountOwner } from "../src/mnemos-people.js";
 import { makeMockStorage } from "./mock-storage.js";
 
 const PEOPLE = [
@@ -87,4 +88,140 @@ describe("вход вносит человека в справочник", () =>
     await user.setOwnDisplayName("Ольга Иванова");
     expect(await directory.findDirectoryUsers("иван", [])).toEqual([{ id: "olga", name: "Ольга Иванова" }]);
   }, 30_000); // первый запуск объектов в общем прогоне бывает дольше пяти секунд
+});
+
+// ---- Люди Mnemos как первый источник подсказок ----
+
+const TENANT = "t1";
+const OWNER = { tenant: TENANT, principal: "p-owner" };
+const UNITS = [
+  { org_unit_id: "u1", name: "Бухгалтерия", members: [
+    { principal_id: "p-olga", display_name: "Ольга Никонова", is_head: false },
+    { principal_id: "p-owner", display_name: "Александр Егоров", is_head: true },
+  ] },
+  { org_unit_id: "u2", name: "Продажи", members: [
+    { principal_id: "p-nina", display_name: "Нина Петрова", is_head: true },
+    { principal_id: "p-gone", display_name: "Уволенный", is_head: false },
+  ] },
+];
+const adminUi = {
+  listPeople: async () => ({ users: [
+    { userName: "p-owner", externalId: "x", displayName: "Александр Егоров", active: true },
+    { userName: "p-olga", externalId: "x", displayName: "Ольга Никонова", active: true },
+    { userName: "p-nina", externalId: "x", displayName: "Нина Петрова", active: true },
+    { userName: "p-nikita", externalId: "x", displayName: "Никита Орлов", active: true },
+    { userName: "p-gone", externalId: "x", displayName: "Уволенный", active: false },
+  ] }),
+  listOrgUnits: async () => UNITS,
+  listInvitations: async () => [
+    { status: "accepted", email: "Olga@Example.ru", accepted_by: "p-olga" },
+    { status: "accepted", email: "nina@example.ru", accepted_by: "p-nina" },
+    { status: "open", email: "new@example.ru" },
+  ],
+};
+// Сотрудник видит только свой отдел, перечень людей и почты Mnemos ему не отдаёт.
+const employeeUi = {
+  listPeople: async () => { throw new Error("403"); },
+  listOrgUnits: async () => [UNITS[0]],
+  listInvitations: async () => [],
+};
+
+describe("люди Mnemos для подсказок", () => {
+  it("администратору — все действующие люди с отделами и почтами из принятых приглашений, без него самого", async () => {
+    const people = await collectMnemosPeople(adminUi, OWNER);
+    expect(people.manager).toBe(true);
+    expect(people.people).toEqual([
+      { principal: "p-olga", name: "Ольга Никонова", departments: ["Бухгалтерия"], email: "olga@example.ru" },
+      { principal: "p-nina", name: "Нина Петрова", departments: ["Продажи"], email: "nina@example.ru" },
+      { principal: "p-nikita", name: "Никита Орлов", departments: [] },
+    ]);
+  });
+
+  it("сотруднику — люди его отделов без почт", async () => {
+    const people = await collectMnemosPeople(employeeUi, OWNER);
+    expect(people.manager).toBe(false);
+    expect(people.people).toEqual([{ principal: "p-olga", name: "Ольга Никонова", departments: ["Бухгалтерия"] }]);
+  });
+
+  it("принципал подключения берётся из его uniqueName", () => {
+    expect(mnemosAccountOwner(JSON.stringify(["t1", "p1"]))).toEqual({ tenant: "t1", principal: "p1" });
+    expect(mnemosAccountOwner(JSON.stringify(["https://m.example", "t1", "p1"]))).toEqual({ tenant: "t1", principal: "p1" });
+    expect(mnemosAccountOwner("owner@example.ru")).toBeNull();
+    expect(mnemosAccountOwner(undefined)).toBeNull();
+  });
+});
+
+describe("подсказки из Mnemos и справочника", () => {
+  const rank = (query: string, mnemos: Awaited<ReturnType<typeof collectMnemosPeople>> | null,
+    directory: { id: string; name: string; mnemos?: { tenant: string; principal: string } }[] = [], exclude: string[] = []) =>
+    rankInvitees({ query, directory, aliases: ALIASES, mnemos, exclude: new Set(exclude) });
+
+  it("при пустом справочнике подсказки приходят из людей Mnemos; не на что пригласить — не предлагается", async () => {
+    const mnemos = await collectMnemosPeople(adminUi, OWNER);
+    // Никита есть в Mnemos, но почты нет и в оболочку он не входил: пригласить его не на что.
+    expect(rank("ни", mnemos)).toEqual([
+      { id: "nina@example.ru", name: "Нина Петрова", email: "nina@example.ru", department: "Продажи" },
+      { id: "olga@example.ru", name: "Ольга Никонова", email: "olga@example.ru", department: "Бухгалтерия" },
+    ]);
+    expect(rank("оль", mnemos, [], ["olga@example.ru"])).toEqual([]);
+  });
+
+  it("запись справочника и человек Mnemos склеиваются по почте и по принципалу; id — имя входа", async () => {
+    const mnemos = await collectMnemosPeople(adminUi, OWNER);
+    const directory = [
+      { id: "olga@example.ru", name: "olga" },                                        // по почте
+      { id: "nikita_o", name: "nikita", mnemos: { tenant: TENANT, principal: "p-nikita" } },  // по принципалу
+      { id: "stranger", name: "Никифор", mnemos: { tenant: "other", principal: "p-nina" } },  // чужая организация
+    ];
+    const found = rank("ни", mnemos, directory);
+    // Сначала совпадения по началу имени (по алфавиту), затем по слову имени.
+    expect(found.map(p => p.id)).toEqual(["nikita_o", "stranger", "nina@example.ru", "olga@example.ru"]);
+    expect(found.find(p => p.id === "nikita_o")).toEqual({ id: "nikita_o", name: "Никита Орлов" });
+    expect(new Set(found.map(p => p.id)).size).toBe(found.length);
+    // Имя из справочника тоже находит склеенного человека.
+    expect(rank("olga", mnemos, directory).map(p => p.id)).toEqual(["olga@example.ru"]);
+  });
+
+  it("привязка LOGIN_ALIASES: подсказка ведёт в существующую учётную запись, дубля нет", async () => {
+    const mnemos = { tenant: TENANT, self: "p-x", manager: true, people: [{ principal: "p-owner", name: "Александр Егоров", departments: ["Бухгалтерия"], email: "owner@example.ru" }] };
+    expect(rank("алекс", mnemos, [{ id: "admin", name: "Администратор" }])).toEqual([
+      { id: "admin", name: "Александр Егоров", email: "owner@example.ru", department: "Бухгалтерия" },
+    ]);
+  });
+
+  it("обычный сотрудник не видит почт: ни из Mnemos, ни из справочника", async () => {
+    const mnemos = await collectMnemosPeople(employeeUi, OWNER);
+    const directory = [{ id: "olga@example.ru", name: "olga", mnemos: { tenant: TENANT, principal: "p-olga" } }, { id: "maria@example.ru", name: "Мария Соколова" }];
+    const found = [...rank("оль", mnemos, directory), ...rank("мар", mnemos, directory), ...rank("maria@", mnemos, directory)];
+    expect(found).toEqual([
+      { id: "olga@example.ru", name: "Ольга Никонова", department: "Бухгалтерия" },
+      { id: "maria@example.ru", name: "Мария Соколова" },
+      { id: "maria@example.ru", name: "Мария Соколова" },
+    ]);
+    expect(found.some(p => "email" in p)).toBe(false);
+    // Без подключения Mnemos почт в подсказках тоже нет.
+    expect(rank("мар", null, directory)).toEqual([{ id: "maria@example.ru", name: "Мария Соколова" }]);
+  });
+});
+
+describe("приглашение ещё не входившего", () => {
+  it("принимается только почта сотрудника, которую отдал Mnemos, и только как будущее имя входа", async () => {
+    const mnemos = await collectMnemosPeople(adminUi, OWNER);
+    expect(notYetSignedInProfile("olga@example.ru", mnemos, new Map())).toEqual({ type: "user", id: "olga@example.ru", name: "Ольга Никонова" });
+    expect(notYetSignedInProfile("Olga@example.ru", mnemos, new Map())).toBeNull();
+    expect(notYetSignedInProfile("new@example.ru", mnemos, new Map())).toBeNull();
+    expect(notYetSignedInProfile("olga@example.ru", mnemos, new Map([["olga@example.ru", "olga"]]))).toBeNull();
+    expect(notYetSignedInProfile("olga@example.ru", null, new Map())).toBeNull();
+    expect(notYetSignedInProfile("olga@example.ru", await collectMnemosPeople(employeeUi, OWNER), new Map())).toBeNull();
+  });
+
+  it("справочник хранит принципал Mnemos и отдаёт его вместе с привязками", async () => {
+    const directory = env.TEST_ADMIN_SETTINGS.getByName("");
+    await directory.recordDirectoryUser({ id: "vera@example.ru", name: "Вера", mnemos: { tenant: TENANT, principal: "p-vera" } });
+    await directory.recordDirectoryUser({ id: "bad@example.ru", name: "Плохой", mnemos: { tenant: "", principal: "p" } });
+    const snapshot = await directory.directorySnapshot();
+    expect(snapshot.entries.find(e => e.id === "vera@example.ru")).toEqual({ id: "vera@example.ru", name: "Вера", mnemos: { tenant: TENANT, principal: "p-vera" } });
+    expect(snapshot.entries.find(e => e.id === "bad@example.ru")).toEqual({ id: "bad@example.ru", name: "Плохой" });
+    expect(typeof snapshot.aliases).toBe("object");
+  }, 30_000);
 });
