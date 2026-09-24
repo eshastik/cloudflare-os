@@ -201,13 +201,16 @@ const GITHUB_FAILURES: Record<string, string> = {
   state: "Ссылка подключения устарела или уже использована. Нажмите «Подключить GitHub» ещё раз.",
   denied: "GitHub не подтвердил вход. Нажмите «Подключить GitHub» и разрешите доступ приложению Mnemos.",
   unconfirmed: "GitHub не подтвердил, что этот аккаунт доступен вам. Войдите в GitHub под нужным аккаунтом и повторите.",
-  none: "Приложение Mnemos не установлено ни на один ваш аккаунт GitHub. Нажмите «Подключить GitHub» и установите его.",
+  none: "GitHub не показал ни одной установки приложения Mnemos, доступной вам. Если установку в организацию должен одобрить её администратор, дождитесь одобрения и нажмите «Подключить GitHub» ещё раз.",
+  requested: "Запрос на установку приложения Mnemos отправлен администратору организации в GitHub. Когда он одобрит, нажмите «Подключить GitHub».",
   unconfigured: "GitHub-приложение не настроено до конца. Обратитесь к администратору сервера.",
 };
 
 function githubReturnNotice(r: GitHubReturn): { tone: "success" | "danger"; text: string } {
   if (r.result === "connected") return { tone: "success", text: "GitHub подключён. Его репозитории можно связывать с проектами." };
   if (r.result === "updated") return { tone: "success", text: "Доступ в GitHub изменён. Список репозиториев обновлён." };
+  // Приложение поставлено прямо на GitHub, не по кнопке: чья установка, Mnemos узнает при подключении.
+  if (r.reason === "installed") return { tone: "success", text: "Приложение Mnemos установлено в GitHub. Нажмите «Подключить GitHub», чтобы его репозитории стали доступны вам." };
   return { tone: "danger", text: GITHUB_FAILURES[r.reason] ?? "GitHub не ответил. Повторите через несколько минут." };
 }
 
@@ -280,7 +283,7 @@ function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitH
         {pending && <Pill tone="primary" onClick={() => void open(pending, "GitHub")}>Открыть GitHub</Pill>}
       </div>
       : <Notice>GitHub-приложение не настроено до конца: подключить свой GitHub пока нельзя. Обратитесь к администратору сервера.</Notice>}
-    {page.connectable && page.accounts.length > 0 && <p className="m-0 text-[12px] text-kumo-subtle">Чтобы подключить другой аккаунт, сначала выйдите из GitHub в этом браузере или откройте ссылку в другом профиле браузера: GitHub входит под последним аккаунтом.</p>}
+    {page.connectable && <p className="m-0 text-[12px] text-kumo-subtle">GitHub спросит, под каким аккаунтом войти, и покажет, какие установки приложения Mnemos вам доступны. Если приложение ещё не установлено, GitHub предложит установить его и выбрать репозитории.</p>}
   </div>;
 }
 

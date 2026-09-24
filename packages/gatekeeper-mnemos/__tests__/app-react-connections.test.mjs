@@ -63,7 +63,7 @@ test("«Подключения»: свои аккаунты GitHub — подк�
   const calls = [];
   const accounts = [
     { installation_id: "11", github_login: "alice", account_login: "alice", account_type: "User", repository_selection: "all", linked_at: "", repository_count: 1, manage_url: "https://github.com/settings/installations/11" },
-    { installation_id: "12", github_login: "alice-work", account_login: "acme", account_type: "Organization", repository_selection: "selected", linked_at: "", repository_count: 2, manage_url: "https://github.com/apps/mnemos/installations/new" },
+    { installation_id: "12", github_login: "alice-work", account_login: "acme", account_type: "Organization", repository_selection: "selected", linked_at: "", repository_count: 2, manage_url: "https://github.com/organizations/acme/settings/installations/12" },
   ];
   const app = await mountMemoryApp({ ...SOURCES,
     async listGitSyncLinks() { return { links: [] }; },
@@ -73,7 +73,7 @@ test("«Подключения»: свои аккаунты GitHub — подк�
       { installation_id: "11", id: "101", name: "alice/site", default_branch: "main", private: true },
       { installation_id: "12", id: "202", name: "acme/web", default_branch: "main", private: true },
     ] }; },
-    async startGitHubConnect() { calls.push(["startGitHubConnect"]); return { url: "https://github.com/apps/mnemos/installations/new?state=s1" }; },
+    async startGitHubConnect() { calls.push(["startGitHubConnect"]); return { url: "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=s1" }; },
     async disconnectGitHubAccount(id) { calls.push(["disconnectGitHubAccount", id]); return { disconnected: true }; },
   }, { section: "connections", githubReturn: { result: "connected", reason: "" } });
   try {
@@ -86,15 +86,17 @@ test("«Подключения»: свои аккаунты GitHub — подк�
     assert.ok(lines[0].includes("alice") && lines[0].includes("все репозитории"));
     assert.ok(lines[1].includes("организация") && lines[1].includes("2 выбранных репозитория") && lines[1].includes("через alice-work"));
     assert.doesNotMatch(block().textContent, /https?:\/\/|installation|\b1[12]\b/, "без адресов и номеров установок");
-    assert.ok(block().textContent.includes("выйдите из GitHub"), "подсказка про другой аккаунт");
+    assert.ok(block().textContent.includes("под каким аккаунтом войти"), "подсказка про выбор аккаунта");
 
     const inBlock = name => [...block().querySelectorAll("button")].filter(b => b.textContent === name);
     inBlock("Подключить ещё аккаунт GitHub")[0].click();
     await app.until(() => app.calls.some(([m]) => m === "openGitHubAppPage"), "GitHub открыт хостом");
-    assert.deepEqual(app.calls.find(([m]) => m === "openGitHubAppPage"), ["openGitHubAppPage", "https://github.com/apps/mnemos/installations/new?state=s1"]);
+    // Подключение начинается со входа в приложение: со страницы установки GitHub при уже
+    // стоящей установке уводит на её настройки и в Mnemos не возвращает.
+    assert.deepEqual(app.calls.find(([m]) => m === "openGitHubAppPage"), ["openGitHubAppPage", "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=s1"]);
     inBlock("Изменить доступ")[1].click();
     await app.until(() => app.calls.filter(([m]) => m === "openGitHubAppPage").length === 2, "настройки установки");
-    assert.equal(app.calls.filter(([m]) => m === "openGitHubAppPage")[1][1], "https://github.com/apps/mnemos/installations/new");
+    assert.equal(app.calls.filter(([m]) => m === "openGitHubAppPage")[1][1], "https://github.com/organizations/acme/settings/installations/12");
 
     inBlock("Отключить")[1].click();
     await app.until(() => inBlock("Да, отключить").length === 1, "подтверждение на месте");
@@ -128,4 +130,19 @@ test("«Подключения»: отказ чтения показан чес�
   try {
     await app.until(() => app.document.querySelector('#root section[aria-label="Почта"]')?.textContent.includes("Не удалось прочитать"), "отказ по почте");
   } finally { app.dispose(); }
+});
+
+test("«Подключения»: итоги возврата с GitHub для установки без кнопки и запроса в организацию", async () => {
+  for (const [reason, words] of [["installed", "Приложение Mnemos установлено в GitHub"], ["requested", "отправлен администратору организации"], ["none", "дождитесь одобрения"]]) {
+    const app = await mountMemoryApp({ ...SOURCES,
+      async listGitSyncLinks() { return { links: [] }; },
+      async listGitHubAccounts() { return { available: true, connectable: true, accounts: [] }; },
+    }, { section: "connections", githubReturn: { result: "failed", reason } });
+    try {
+      const row = () => app.document.querySelector('#root section[aria-label="Код"]');
+      await app.until(() => row()?.textContent.includes(words), `итог «${reason}» словами`);
+      await app.until(() => [...row().querySelectorAll("button")].some(b => b.textContent === "Подключить GitHub"), "кнопка подключения на месте");
+      assert.doesNotMatch(row().textContent, /https?:\/\//, "без адресов");
+    } finally { app.dispose(); }
+  }
 });

@@ -7,14 +7,14 @@ test("аккаунты GitHub: пути, разбор ответа и отказ
   const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
     const u = new URL(String(url));
     calls.push(`${init?.method} ${u.pathname}`);
-    if (u.pathname === "/v1/git/app/connect") return Response.json({ url: "https://github.com/apps/mnemos/installations/new?state=abc" });
+    if (u.pathname === "/v1/git/app/connect") return Response.json({ url: "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=abc" });
     if (u.pathname === "/v1/git/app/accounts") return Response.json({ available: true, connectable: true, accounts: [
       { installation_id: "11", github_login: "alice", account_login: "alice", account_type: "User", repository_selection: "all", linked_at: "2026-09-24T12:00:00Z", repository_count: 3, manage_url: "https://github.com/settings/installations/11" },
       { installation_id: "12", github_login: "alice-work", account_login: "acme", account_type: "Organization", repository_selection: "selected" },
     ] });
     return Response.json({ disconnected: true });
   });
-  assert.equal((await api.startGitHubConnect()).url, "https://github.com/apps/mnemos/installations/new?state=abc");
+  assert.equal((await api.startGitHubConnect()).url, "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=abc");
   const page = await api.listGitHubAccounts();
   assert.equal(page.accounts.length, 2);
   assert.equal(page.accounts[1].repository_count, -1);

@@ -6,6 +6,29 @@ describe("страницы GitHub, которые фрейм может откр
     expect(isGitHubAppPage("https://github.com/apps/mnemos-app/installations/new?state=abc_DEF-1")).toBe(true);
     expect(isGitHubAppPage("https://github.com/apps/mnemos-app/installations/new")).toBe(true);
     expect(isGitHubAppPage("https://github.com/settings/installations/123456")).toBe(true);
+    expect(isGitHubAppPage("https://github.com/organizations/acme-co/settings/installations/42")).toBe(true);
+  });
+
+  it("пускает вход в приложение GitHub с номером клиента и state", () => {
+    expect(isGitHubAppPage("https://github.com/login/oauth/authorize?client_id=Iv23liAbC.1&prompt=select_account&state=abcDEF0123456789_-xyz")).toBe(true);
+    expect(isGitHubAppPage("https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=abcDEF0123456789")).toBe(true);
+  });
+
+  it("не пускает вход без state, чужого вида клиента и с лишними параметрами", () => {
+    for (const url of [
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc",
+      "https://github.com/login/oauth/authorize?state=abcDEF0123456789",
+      "https://github.com/login/oauth/authorize?client_id=Ov23liAbC&state=abcDEF0123456789",
+      "https://github.com/login/oauth/authorize?client_id=0123456789abcdef0123&state=abcDEF0123456789",
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=abcDEF0123456789&redirect_uri=https://evil.ru/",
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=abcDEF0123456789&scope=repo",
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc&client_id=Iv1.def&state=abcDEF0123456789",
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=short",
+      "https://github.com/login/oauth/authorize?client_id=Iv1.abc&state=abcDEF0123456789&prompt=consent",
+      "https://github.com/login/oauth/access_token?client_id=Iv1.abc&state=abcDEF0123456789",
+      "https://github.com/organizations/acme/settings/installations/abc",
+      "https://github.com/organizations/acme/settings/profile",
+    ]) expect(isGitHubAppPage(url), url).toBe(false);
   });
 
   it("не пускает всё остальное", () => {
