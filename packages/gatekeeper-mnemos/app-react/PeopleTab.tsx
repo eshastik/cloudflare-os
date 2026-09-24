@@ -7,7 +7,8 @@ import { useUi } from "./host.ts";
 import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
 import { DepartmentsPanel, InvitationRows, InvitePanel, InviteForm, headedUnits, useInvitations, useOrgUnits } from "./Departments.tsx";
 import { AdminSwitch, CodeAgentSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
-import { Card, CardRow, Field, FieldSelect, Initials, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
+import PersonAvatar from "./PersonAvatar.tsx";
+import { Card, CardRow, Field, FieldSelect, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
   if (!data.identity?.capabilities?.includes("principal.manage")) return <DepartmentHead data={data} />;
@@ -22,7 +23,7 @@ function DepartmentHead({ data }: { data: MemoryData }) {
   return <section aria-label="Мой отдел" className="grid gap-6">
     {mine.map(unit => <section key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`}>
       <SectionHead title={`Отдел «${unit.name}»`} />
-      <Card>{unit.members.map(m => <CardRow key={m.principal_id}><Initials name={m.display_name || "Сотрудник"} /><RowTitle title={m.display_name || "Сотрудник"} note={m.is_head ? "руководитель" : undefined} /></CardRow>)}
+      <Card>{unit.members.map(m => <CardRow key={m.principal_id}><PersonAvatar name={m.display_name || "Сотрудник"} id={m.principal_id} size={34} /><RowTitle title={m.display_name || "Сотрудник"} note={m.is_head ? "руководитель" : undefined} /></CardRow>)}
         {!unit.members.length && <CardRow><Notice>В отделе пока никого нет.</Notice></CardRow>}</Card>
     </section>)}
     <InvitePanel units={mine} allowNoUnit={false} admin={false} />
@@ -80,7 +81,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
             return <div key={p.userName} className={`border-t border-kumo-fill first:border-t-0 ${open ? "bg-kumo-base" : ""}`}>
               <button type="button" aria-label={`Открыть карточку: ${p.displayName || "сотрудник без имени"}`} aria-expanded={open} onClick={() => setSelected(open ? "" : p.userName)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-kumo-tint">
-                <Initials name={name} />
+                <PersonAvatar name={name} id={p.userName} size={34} />
                 <RowTitle title={name} note={org.loading ? undefined : unitWords(org.units, p.userName)} />
                 {!p.active && <StatusBadge tone="neutral">Доступ приостановлен</StatusBadge>}
               </button>
@@ -166,7 +167,7 @@ function FormerPeople({people,onChanged}: {people:AdminPerson[];onChanged():void
   return <details aria-label="Бывшие сотрудники" className="mt-3 text-[13px]">
     <summary className="cursor-pointer text-kumo-subtle">Бывшие сотрудники: {people.length}</summary>
     <Card className="mt-2">{people.map(p => <CardRow key={p.userName}>
-      <Initials name={p.displayName || "Сотрудник"} />
+      <PersonAvatar name={p.displayName || "Сотрудник"} id={p.userName} size={34} />
       <RowTitle title={p.displayName || "Сотрудник без имени"} note="удалён из организации" />
       <Pill tone="ghost" aria-label={`Вернуть: ${p.displayName || "сотрудник без имени"}`} disabled={busy} onClick={() => void restore(p)}>Вернуть</Pill>
     </CardRow>)}</Card>

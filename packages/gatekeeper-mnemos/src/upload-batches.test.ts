@@ -68,3 +68,48 @@ test("отмена прерывает загрузку и ожидание по�
   setTimeout(() => controller.abort(new Error("Загрузка отменена")), 5);
   await assert.rejects(pending, /отменена/);
 });
+
+test("по умолчанию 6 файлов параллельно: меньше предела 32 незавершённых загрузок вместе с серией отказов", async () => {
+  let active = 0, peak = 0;
+  await uploadInBatches({
+    items: Array.from({length: 30}, (_, i) => i), wait: instant,
+    upload: async item => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 1)); active--; return item; },
+  });
+  assert.equal(peak, 6);
+});
+
+test("onStart и onSettled: каждый файл начат и завершён ровно раз, отказ — с ошибкой", async () => {
+  const started: number[] = [], settled: [number, boolean][] = [];
+  await uploadInBatches({
+    items: [1, 2, 3], retries: 1, wait: instant, concurrency: 1,
+    upload: async item => { if (item === 2) throw new Error("сеть"); return item; },
+    onStart: item => started.push(item), onSettled: (item, error) => settled.push([item, error !== undefined]),
+  });
+  // Упавший файл начинался дважды (повтор), завершён один раз.
+  assert.deepEqual(started, [1, 2, 2, 3]);
+  assert.deepEqual(settled, [[1, false], [2, true], [3, false]]);
+});
+
+test("остановка ждёт начатые файлы: принятый в момент остановки не теряется", async () => {
+  const controller = new AbortController();
+  const accepted: number[] = [];
+  let release: () => void = () => {};
+  const slow = new Promise<void>(resolve => { release = resolve; });
+  const pending = uploadInBatches({
+    items: [1, 2, 3, 4], concurrency: 2, signal: controller.signal, wait: instant,
+    upload: async (item, signal) => {
+      if (item === 1) { await slow; accepted.push(item); signal?.throwIfAborted(); return item; } // сервер уже принял
+      if (item === 2) { await new Promise((_, reject) => signal!.addEventListener("abort", () => reject(signal!.reason), {once: true})); }
+      accepted.push(item); return item;
+    },
+  });
+  await new Promise(r => setTimeout(r, 5));
+  controller.abort(new Error("Загрузка остановлена"));
+  let finished = false;
+  void pending.catch(() => {}).finally(() => { finished = true; });
+  await new Promise(r => setTimeout(r, 5));
+  assert.equal(finished, false, "отказ не раньше, чем закончится начатый файл");
+  release();
+  await assert.rejects(pending, /остановлена/);
+  assert.deepEqual(accepted, [1], "файлы 3 и 4 не начинались");
+});

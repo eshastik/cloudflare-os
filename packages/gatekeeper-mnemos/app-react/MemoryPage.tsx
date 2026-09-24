@@ -13,15 +13,24 @@ import JournalTab from "./JournalTab.tsx";
 import TeamTab from "./TeamTab.tsx";
 import { sections, resolveSection, type SectionId } from "./navigation.ts";
 import { PageHeader } from "./ui.tsx";
+import { UploadProvider } from "./UploadNotice.tsx";
 
 /** Разделы, которые сами рисуют заголовок: в нём живые числа и действия раздела. */
 const OWN_HEADER: ReadonlySet<SectionId> = new Set<SectionId>(["my-work", "projects", "team"]);
 const WIDTH: Partial<Record<SectionId, string>> = { "my-work": "max-w-[768px]", team: "max-w-[928px]" };
 
+/** Уведомление о загрузке живёт выше разделов: смена раздела его не снимает. */
 export default function MemoryPage() {
-  const ui = useUi();
   const host = useHost();
+  const ui = useUi();
   const data = useMemoryData(ui);
+  return <UploadProvider onFinished={() => void data.reloadProjects()} onOpenProject={project => void host.openSection("projects", project).catch(() => {})}>
+    <Sections data={data} />
+  </UploadProvider>;
+}
+
+function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
+  const host = useHost();
   const [section, setSection] = useState<SectionId | null | undefined>(undefined);
   // Панель приёма рядом с беседой: оболочка открывает её адресом intake в режиме panel.
   const [panelIntake, setPanelIntake] = useState(false);

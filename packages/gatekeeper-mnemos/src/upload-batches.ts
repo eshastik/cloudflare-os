@@ -3,7 +3,9 @@
 // Почему именно так:
 // - у сервера предел НЕЗАВЕРШЁННЫХ загрузок одного человека (pgstore.DefaultConcurrentUploads = 32),
 //   и билет, чей PUT сорвался, занимает место до уборки. Поэтому параллельно идёт немного файлов
-//   (по умолчанию 4), а не «сколько выдержит браузер»;
+//   (по умолчанию 6), а не «сколько выдержит браузер». 6 в полёте плюс 25 отказов подряд до
+//   остановки (каждый может оставить занятый билет) — 31, меньше предела 32. Каждый файл в полёте
+//   целиком читается в память ради контрольной суммы (до 64 МБ), это второй довод не поднимать выше;
 // - у сервера же предел запросов в минуту на человека (quota.DefaultRequestsPerMinute), а каждый
 //   файл — два запроса (билет и приём). Пакеты дают точку, где загрузку можно остановить, и
 //   ограничивают объём файлов, одновременно прочитанных в память для контрольной суммы;
@@ -23,6 +25,10 @@ export interface BatchUploadOptions<T, R> {
   /** Остановиться после стольких отказов подряд; оставшиеся файлы помечаются незагруженными. */
   stopAfterConsecutiveFailures?: number;
   onProgress?(done: number, total: number): void;
+  /** Файл пошёл в загрузку (каждая попытка). */
+  onStart?(item: T): void;
+  /** Файл обработан окончательно: принят (error не задан) или не принят после повторов. */
+  onSettled?(item: T, error?: unknown): void;
   /** Пауза перед повтором; в тестах подменяется мгновенной. */
   wait?(ms: number, signal?: AbortSignal): Promise<void>;
   backoffMs?: readonly number[];
@@ -36,7 +42,7 @@ export interface BatchUploadResult<T, R> {
 }
 
 export const DEFAULT_BATCH_SIZE = 50;
-export const DEFAULT_CONCURRENCY = 4;
+export const DEFAULT_CONCURRENCY = 6;
 
 /** Делит список на пакеты по size элементов, сохраняя порядок. */
 export function splitIntoBatches<T>(items: readonly T[], size = DEFAULT_BATCH_SIZE): T[][] {
@@ -69,13 +75,16 @@ export async function uploadInBatches<T, R>(options: BatchUploadOptions<T, R>): 
     for (let tryNo = 0; ; tryNo++) {
       signal?.throwIfAborted();
       try {
+        options.onStart?.(item);
         const result = await upload(item, signal);
         done.push({ item, result }); consecutive = 0;
+        options.onSettled?.(item);
         return;
       } catch (error) {
         signal?.throwIfAborted();
         if (tryNo >= retries || options.permanent?.(error) || stopped) {
           failed.push({ item, error });
+          options.onSettled?.(item, error);
           if (++consecutive >= stopAfter) stopped = true;
           return;
         }
@@ -89,12 +98,16 @@ export async function uploadInBatches<T, R>(options: BatchUploadOptions<T, R>): 
     const worker = async () => {
       while (next < batch.length) {
         const item = batch[next++];
-        if (stopped) failed.push({ item, error: new Error("Загрузка остановлена после серии отказов") });
+        if (stopped) { const error = new Error("Загрузка остановлена после серии отказов"); failed.push({ item, error }); options.onSettled?.(item, error); }
         else await attempt(item);
         onProgress?.(++finished, items.length);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(concurrency, batch.length) }, worker));
+    // При отмене ждём, пока закончатся уже начатые файлы: приём, подтверждённый сервером в момент
+    // остановки, должен попасть в итог, а не пропасть из него.
+    const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, batch.length) }, worker));
+    const rejected = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (rejected) throw rejected.reason;
   }
   return { done, failed, stopped };
 }

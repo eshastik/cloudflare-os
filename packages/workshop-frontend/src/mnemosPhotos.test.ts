@@ -3,7 +3,7 @@ import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber } from '@gadgets/workshop-shared/api'
 
 vi.mock('./avatarUtils', () => ({ compressAvatar: async () => new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]) }))
-import { photoMap, refreshPhotos, removeMyPhoto, uploadMyPhoto } from './mnemosPhotos'
+import { forgetMnemosPrincipals, mnemosPrincipal, photoMap, refreshPhotos, removeMyPhoto, uploadMyPhoto } from './mnemosPhotos'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -55,4 +55,15 @@ it('ссылка на фотографию годится только https и 
     { id: 'd', sha256: '', url: 'javascript:alert(1)', expiresAt: '' },
   ], 'https://objects.example')
   expect([...map.keys()]).toEqual(['a'])
+})
+
+it('склейка пользователей с принципалами: запросы одного прохода — один вызов, ответ кэшируется', async () => {
+  forgetMnemosPrincipals()
+  const lookup = vi.fn(async (ids: string[]) => Object.fromEntries(ids.filter(id => id !== 'nobody').map(id => [id, `p-${id}`])))
+  const api = { mnemosPrincipals: lookup }
+  expect(await Promise.all([mnemosPrincipal(api, 'anna'), mnemosPrincipal(api, 'ivan'), mnemosPrincipal(api, 'nobody'), mnemosPrincipal(api, 'anna')])).toEqual(['p-anna', 'p-ivan', null, 'p-anna'])
+  expect(lookup).toHaveBeenCalledTimes(1)
+  expect(await mnemosPrincipal(api, 'ivan')).toBe('p-ivan')
+  expect(lookup).toHaveBeenCalledTimes(1)
+  expect(await mnemosPrincipal({}, 'olga')).toBeNull()
 })

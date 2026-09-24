@@ -428,6 +428,10 @@ export interface AuthenticatedApi extends RpcTarget {
   // Accepts any user ID so that other users' avatars can be displayed (e.g. in chat).
   getAvatar(userId: string): Promise<Uint8Array | null>;
 
+  // Принципалы Mnemos пользователей оболочки (до 200 за вызов) в организации вызывающего: по ним
+  // аватар берёт фото человека из Mnemos. Пользователь без связи с Mnemos в ответе отсутствует.
+  mnemosPrincipals(userIds: string[]): Promise<Record<string, string>>;
+
   // Open an existing gadget.
   //
   // If `shareKey` is provided, the server redeems it before opening, adding the caller as a

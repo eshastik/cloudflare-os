@@ -1,18 +1,13 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 import { GearSix } from '@phosphor-icons/react'
 import { useAuthenticatedApi } from '../../AuthContext'
-import { useAvatar } from '../../useAvatar'
-import { personInitials } from './initials'
-import { useMnemosPhotos } from '../../mnemosPhotos'
+import { MyAvatar } from '../MnemosAvatar'
 
 
 // Низ панели по макету: одна строка «Настройки» — аватар, имя и шестерёнка. Тема, профиль и выход
 // живут на странице настроек, отдельного меню профиля здесь нет.
 export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?: boolean }) {
-  const { authenticatedApi, currentUser } = useAuthenticatedApi()
-  const platformAvatar = useAvatar(authenticatedApi, currentUser?.id)
-  const photos = useMnemosPhotos(authenticatedApi)
-  const avatarUrl = (photos.me && photos.photos.get(photos.me)) || platformAvatar
+  const { currentUser } = useAuthenticatedApi()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const active = pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/profile'
   const name = currentUser?.name?.trim() || 'Настройки'
@@ -30,9 +25,7 @@ export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?:
           active ? 'bg-kumo-fill' : 'hover:bg-kumo-tint',
         ].join(' ')}
       >
-        <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center overflow-hidden rounded-full bg-selection-bg text-[13px] font-semibold text-selection-text">
-          {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : personInitials(currentUser?.name)}
-        </span>
+        <MyAvatar size={30} />
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1 truncate text-[14px] text-kumo-default">{name}</span>

@@ -66,12 +66,6 @@ export function PillSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={`h-8 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-2.5 text-[13px] text-kumo-default outline-none focus:border-kumo-ring ${props.className ?? ""}`} />;
 }
 
-/** Кружок с инициалами сотрудника. */
-export function Initials({ name }: { name: string }) {
-  const letters = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]?.toLocaleUpperCase("ru-RU")).join("") || "?";
-  return <span aria-hidden="true" className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-kumo-warning-tint text-[12px] font-semibold text-kumo-warning">{letters}</span>;
-}
-
 /** Метка-чип (компетенция и т. п.). */
 export function Chip({ children }: { children: ReactNode }) {
   return <span className="inline-flex h-[26px] items-center gap-1 rounded-full bg-kumo-tint px-2.5 text-[13px] text-kumo-brand">{children}</span>;

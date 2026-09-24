@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import { useAvatar } from '../useAvatar'
+import { useUserMnemosPhoto } from '../mnemosPhotos'
 
 export function initials(name: string): string {
   return name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()
@@ -56,11 +57,17 @@ export function PersonAvatar({
     return () => observer.disconnect()
   }, [])
 
-  const url = useAvatar(api, visible ? userId : null)
+  // Фото из Mnemos (общий снимок, по склейке пользователя с принципалом) важнее фото платформы:
+  // его видит вся организация. Нет связи или фото не загрузилось — фото платформы, затем инициалы.
+  const mnemos = useUserMnemosPhoto(visible ? userId : null)
+  const platform = useAvatar(api, visible ? userId : null)
+  const [broken, setBroken] = useState<string[]>([])
+  const url = [mnemos, platform].find(candidate => !!candidate && !broken.includes(candidate)) ?? null
   const useColor = !url
   return (
     <div
       ref={elementRef}
+      data-avatar={url ? 'photo' : 'initials'}
       className={`relative grid shrink-0 place-items-center overflow-hidden rounded-full text-[10px] font-semibold ring-1 ring-inset ${
         useColor
           ? 'text-kumo-inverse ring-kumo-line/50'
@@ -69,7 +76,7 @@ export function PersonAvatar({
       style={{ width: size, height: size, ...(useColor ? { backgroundColor: colorFromId(userId) } : {}) }}
     >
       {url ? (
-        <img src={url} alt="" className="h-full w-full object-cover" />
+        <img src={url} alt="" referrerPolicy="no-referrer" onError={() => setBroken(list => [...list, url])} className="h-full w-full object-cover" />
       ) : (
         initials(name)
       )}

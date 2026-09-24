@@ -232,6 +232,9 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
       await this.env.AVATARS.delete(userId);
     }
   }
+  mnemosPrincipals(userIds: string[]): Promise<Record<string, string>> {
+    return this.user.mnemosPrincipals(userIds);
+  }
   async getAvatar(userId: string): Promise<Uint8Array | null> {
     let result = await this.env.AVATARS.get(userId, "arrayBuffer");
     if (!result) return null;

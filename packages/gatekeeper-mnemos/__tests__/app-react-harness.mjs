@@ -107,6 +107,13 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async selectView(view) { calls.push(["selectView",view]); selectedView = view; setTimeout(locationChanged, 0); }
     async getSelectedSection() { return selectedSection; }
     async getPresentationMode() { return options.presentationMode ?? "page"; }
+    // Ход загрузки: без options.uploads хост как старый — подписки не знает.
+    async subscribeUploads(receiver) { if (!options.uploads) throw new Error("нет подписки"); uploadReceiver = receiver.dup(); calls.push(["subscribeUploads"]); return options.uploads.initial ?? null; }
+    async answerUpload(id, choice) { calls.push(["answerUpload", id, choice]); }
+    async stopUpload(id) { calls.push(["stopUpload", id]); }
+    async retryUpload(id) { calls.push(["retryUpload", id]); }
+    async resumeUpload(id) { calls.push(["resumeUpload", id]); }
+    async dismissUpload(id) { calls.push(["dismissUpload", id]); }
     async pickInboxFiles(directory, project) { calls.push(project === undefined ? ["pickInboxFiles",directory] : ["pickInboxFiles",directory,project]); return options.pickedFiles ?? []; }
     // Как оболочка: адрес меняется, фрейм не перезагружается и получает сигнал перечитать выбор.
     async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; selectedView=""; if(project!==undefined) selectedProject=project; locationChanged(); },0); }
@@ -123,7 +130,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async openGitHubAppPage(url) { calls.push(["openGitHubAppPage", url]); return options.githubOpened ?? true; }
     async takeGitHubReturn() { const value = options.githubReturn ?? null; options.githubReturn = null; return value; }
   }
-  let frame; const ports = [];
+  let frame, uploadReceiver = null; const ports = [];
   const html = await readFile(new URL("../src/generated/app.txt", import.meta.url), "utf8");
   let dom, document;
   const locationChanged = () => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: { type: "gatekeeper-location" }, source: dom.window }));
@@ -187,5 +194,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     for (const port of ports.splice(0)) port.close();
   }
   await until(() => options.presentationMode === "panel" ? document.querySelector('[aria-label="Приём данных"]') : document.querySelector("#root h1"), "заголовок раздела");
-  return { get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, go, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
+  /** Оболочка присылает новое состояние загрузки. */
+  async function pushUpload(view) { assert.ok(uploadReceiver, "фрейм не подписался на загрузку"); await uploadReceiver.setUploadState(view); }
+  return { pushUpload, get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, go, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
 }

@@ -1,6 +1,7 @@
 // Собирает приложение «Память» (app-react) в один HTML-файл src/generated/app.txt.
 // Скрипт — единственный инлайн и классический (не module): jsdom в тестах выполняет только такие,
-// а CSP фрейма разрешает его по sha256 и запрещает сеть.
+// а CSP фрейма разрешает его по sha256 и запрещает сеть. Картинки — только blob:: фото людей скачивает
+// оболочка и передаёт байтами (app-react/photos.tsx), адрес хранилища фрейму не открывается.
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -18,7 +19,7 @@ function finalHtml(html) {
   if (scripts.length !== 1) throw new Error(`ожидался ровно один инлайн-скрипт, найдено ${scripts.length}`);
   const script = scripts[0][1].replaceAll("</script", "<\\/script");
   const hash = createHash("sha256").update(script).digest("base64");
-  const policy = `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; connect-src 'none'; media-src blob:; base-uri 'none'; form-action 'none'; object-src 'none'`;
+  const policy = `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; connect-src 'none'; img-src blob:; media-src blob:; base-uri 'none'; form-action 'none'; object-src 'none'`;
   // Скрипт остаётся в <head>, где его поставил Vite: тогда body.textContent в тестах — только разметка, без кода;
   // main.tsx ждёт DOMContentLoaded. Замены — функциями: в минифицированном коде встречаются «$'» и «$`»,
   // которые строковая замена трактует как шаблоны.

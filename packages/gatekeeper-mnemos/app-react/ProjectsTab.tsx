@@ -9,9 +9,11 @@ import { SharePanel, VisibilityBadge, VISIBILITY_NOTES } from "./ProjectSharing.
 import ProjectApproval from "./ProjectApproval.tsx";
 import { useReviewDecision } from "./ApprovalsTab.tsx";
 import { plural } from "./names.ts";
-import { ActionForm, Avatar, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput } from "./ui.tsx";
+import PersonAvatar from "./PersonAvatar.tsx";
+import { ActionForm, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
+import { uploadActive, useProjectUpload } from "./UploadNotice.tsx";
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
 import ProjectTasks from "./ProjectTasks.tsx";
 
@@ -193,6 +195,9 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<PickedIntakeFile[]>([]);
   const [all, setAll] = useState(false);
+  // Ход загрузки рисует уведомление (UploadNotice): здесь оно встаёт в блок «Файлы».
+  const upload = useProjectUpload(project.id);
+  const busy = uploading || uploadActive(upload.view);
   useEffect(() => {
     const refresh = (event: MessageEvent) => {
       if (event.source === window.parent && event.data?.type === "mnemos-inbox-updated") void data.reloadProjects();
@@ -200,8 +205,8 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
     window.addEventListener("message", refresh);
     return () => window.removeEventListener("message", refresh);
   }, [data.reloadProjects]);
-  async function upload(directory: boolean) {
-    if (uploading) return;
+  async function pick(directory: boolean) {
+    if (busy) return;
     setUploading(true); setActionError("");
     try {
       const result = await host.pickInboxFiles(directory, project.id);
@@ -226,12 +231,13 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
   return (
     <section id="project-materials" aria-label="Файлы" className="mb-7">
       <SectionTitle title="Файлы" count={materials.length} actions={<>
-        <Button variant="secondary" size="sm" disabled={uploading} icon={<UploadSimple size={15} aria-hidden="true" />} onClick={() => void upload(false)}>Загрузить файлы</Button>
-        <Button variant="ghost" size="sm" disabled={uploading} onClick={() => void upload(true)}>Выбрать папку</Button>
+        <Button variant="secondary" size="sm" disabled={busy} icon={<UploadSimple size={15} aria-hidden="true" />} onClick={() => void pick(false)}>Загрузить файлы</Button>
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void pick(true)}>Выбрать папку</Button>
       </>} />
-      {uploading && <p role="status" className="m-0 mb-2 text-[14px] text-kumo-subtle">Загружаем в проект…</p>}
+      {upload.card}
+      {uploading && !upload.live && <p role="status" className="m-0 mb-2 text-[14px] text-kumo-subtle">Загружаем в проект…</p>}
       {actionError && <div className="mb-2"><Notice tone="danger">{actionError}</Notice></div>}
-      {uploaded.length > 0 && <div className="mb-4 text-[14px]" role="status">
+      {uploaded.length > 0 && !upload.live && <div className="mb-4 text-[14px]" role="status">
         <p className="m-0 text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
         {uploaded.some(file => file.receipt?.placement_state === "personal") && <p className="m-0 mt-1">Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
         {/* Папка может дать тысячи файлов: подробности — по первым, полный итог и повтор показывает оболочка. */}
@@ -240,7 +246,7 @@ function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { projec
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
       {total === 0 && !shared.value?.length
-        ? <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
+        ? !busy && <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
         : <div>
           {shownFolders.map(folder => (
             <ListRow key={folder.node_id} icon={<Folder size={18} />}>
@@ -300,7 +306,7 @@ function ProjectPeople({ project, data, onOpenSources, onShare }: { project: Pro
         {members.length === 0 && agents.length === 0 && <Notice>{peopleError || "Участники не назначены."}</Notice>}
         {members.map(member => (
           <div key={member.id} className="flex items-center gap-3 border-b border-kumo-fill py-2.5">
-            <Avatar name={member.name} />
+            <PersonAvatar name={member.name} id={member.id} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[15px] text-kumo-default">{member.name}</div>
               <div className="text-[13px] text-kumo-subtle">{member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"}</div>

@@ -31,6 +31,11 @@ export function useHost(): HostStub {
   return useHostContext().host;
 }
 
+/** Хост или null вне дерева с хостом: общие элементы (аватар) не должны падать без него. */
+export function useOptionalHost(): HostStub | null {
+  return useContext(HostContext)?.host ?? null;
+}
+
 export function useUi(): Ui {
   return useHostContext().ui;
 }

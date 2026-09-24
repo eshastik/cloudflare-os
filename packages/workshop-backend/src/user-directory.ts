@@ -155,3 +155,35 @@ export function rankInvitees(input: {
   ranked.sort((a, b) => a.rank - b.rank || a.invitee.name.localeCompare(b.invitee.name, "ru"));
   return ranked.slice(0, input.limit ?? MAX_INVITEES).map(r => r.invitee);
 }
+
+/** Не больше стольких пользователей за один запрос принципалов (экран людей собирает их пакетом). */
+export const MAX_PRINCIPAL_LOOKUP = 200;
+
+/**
+ * Принципал Mnemos пользователя оболочки — чтобы показать у него фото из Mnemos. Та же склейка, что в
+ * rankInvitees: принципал, записанный при входе, или почта (имя входа, привязка LOGIN_ALIASES),
+ * совпавшая с почтой человека Mnemos. Только в организации вызывающего (tenant): чужие принципалы
+ * не отдаются. Нет связи — пользователя в ответе нет.
+ */
+export function principalsForUsers(ids: readonly string[], input: {
+  tenant: string
+  directory: Iterable<DirectoryEntry>
+  aliases: Map<string, string>
+  mnemos: MnemosPeople | null
+}): Record<string, string> {
+  const aliasEmail = new Map<string, string>();
+  for (const [email, name] of input.aliases) if (!aliasEmail.has(name)) aliasEmail.set(name, email);
+  const byId = new Map<string, DirectoryEntry>();
+  for (const entry of input.directory) byId.set(entry.id, entry);
+  const byEmail = new Map<string, string>();
+  if (input.mnemos?.tenant === input.tenant) for (const person of input.mnemos.people) if (person.email) byEmail.set(person.email, person.principal);
+  const out: Record<string, string> = {};
+  for (const id of ids) {
+    const entry = byId.get(id);
+    if (entry?.mnemos && entry.mnemos.tenant === input.tenant) { out[id] = entry.mnemos.principal; continue; }
+    const email = aliasEmail.get(id) ?? (id.includes("@") ? lower(id) : undefined);
+    const principal = email ? byEmail.get(email) : undefined;
+    if (principal) out[id] = principal;
+  }
+  return out;
+}

@@ -8,7 +8,7 @@ declare module "cloudflare:workers" {
 }
 import { createTypedStorage, collection } from "@gadgets/typed-storage";
 import { SharingManager, SharingStorage, CollaboratorRecord, ShareKeyRecord } from "../src/sharing.js";
-import { findInvitees, matchDirectory, MAX_INVITEES, notYetSignedInProfile, rankInvitees } from "../src/user-directory.js";
+import { findInvitees, matchDirectory, MAX_INVITEES, notYetSignedInProfile, principalsForUsers, rankInvitees } from "../src/user-directory.js";
 import { collectMnemosPeople, mnemosAccountOwner } from "../src/mnemos-people.js";
 import { makeMockStorage } from "./mock-storage.js";
 
@@ -224,4 +224,25 @@ describe("приглашение ещё не входившего", () => {
     expect(snapshot.entries.find(e => e.id === "bad@example.ru")).toEqual({ id: "bad@example.ru", name: "Плохой" });
     expect(typeof snapshot.aliases).toBe("object");
   }, 30_000);
+});
+
+describe("principalsForUsers: пользователь оболочки → принципал Mnemos для фото", () => {
+  const directory = [
+    { id: "anna", name: "Анна", mnemos: { tenant: "org", principal: "p-anna" } },
+    { id: "stranger", name: "Чужой", mnemos: { tenant: "other", principal: "p-other" } },
+    { id: "ivan", name: "Иван" },
+  ];
+  const mnemos = { tenant: "org", self: "p-owner", manager: false, people: [
+    { principal: "p-ivan", name: "Иван", email: "ivan@corp.example", departments: [] },
+    { principal: "p-olga", name: "Ольга", email: "olga@corp.example", departments: [] },
+  ] };
+  const aliases = new Map([["ivan@corp.example", "ivan"]]);
+  it("принципал из справочника входа, почта через LOGIN_ALIASES и почта как имя входа", () => {
+    expect(principalsForUsers(["anna", "ivan", "olga@corp.example", "nobody"], { tenant: "org", directory, aliases, mnemos }))
+      .toEqual({ anna: "p-anna", ivan: "p-ivan", "olga@corp.example": "p-olga" });
+  });
+  it("чужая организация не отдаёт принципалов", () => {
+    expect(principalsForUsers(["stranger"], { tenant: "org", directory, aliases, mnemos })).toEqual({});
+    expect(principalsForUsers(["ivan", "anna"], { tenant: "other", directory, aliases, mnemos })).toEqual({});
+  });
 });

@@ -8,7 +8,6 @@ import { plural } from './versionDiff'
 import { useAuthenticatedApi } from './AuthContext'
 import { listAccounts, storesDocuments } from './accountCapabilities'
 import MnemosAvatar from './components/MnemosAvatar'
-import { photoMap } from './mnemosPhotos'
 
 /** Отделы организации для выбора людей (метод моста `departments`). */
 export type ShareUnit = { id: string; name: string; members: { id: string; name: string }[] }
@@ -143,7 +142,6 @@ export default function DocumentSharePanel({ selector, binding, format, document
   const [owner, setOwner] = useState<boolean | null>(null)
   const [documentOnly, setDocumentOnly] = useState(false)
   const [level, setLevel] = useState<{ name: string; level: Level; pending: Level | null; unit?: string } | null>(null)
-  const [photos, setPhotos] = useState<Map<string, string>>(new Map())
   const [projectHref, setProjectHref] = useState('')
   const { authenticatedApi, currentUser } = useAuthenticatedApi()
   const [query, setQuery] = useState(''), [right, setRight] = useState<Right>('write'), [picked, setPicked] = useState<string[]>([])
@@ -174,16 +172,14 @@ export default function DocumentSharePanel({ selector, binding, format, document
     }
     if (!alive.current) return
     setOwner(true); setPeople(all)
-    const [project, departments, identity, sharedWithMe, pictures] = await Promise.all([
+    const [project, departments, identity, sharedWithMe] = await Promise.all([
       Promise.resolve(selector.projectLevel(scope)).catch(() => null),
       Promise.resolve(selector.departments()).catch(() => null),
       Promise.resolve(selector.reviewerIdentity()).catch(() => ''),
       Promise.resolve(selector.sharedDocuments()).catch(() => null),
-      Promise.resolve(selector.peoplePhotos()).catch(() => null),
     ])
     if (!alive.current) return
     setLevel(project ?? null); setUnits(Array.isArray(departments?.units) ? departments.units : []); setMe(typeof identity === 'string' ? identity : '')
-    setPhotos(photoMap(Array.isArray(pictures?.photos) ? pictures.photos : [], ''))
     // «Недавние»: кого вы приглашали в этом браузере и кто делился документами с вами.
     const owners = sharedWithMe?.documents.map(d => d.owner) ?? []
     setRecent(old => [...new Set([...old, ...owners])])
@@ -256,7 +252,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
         title={!c.person ? 'Учётная запись человека отключена.' : only ? 'У человека нет такого права на папку документа: приглашение откроет ему только этот документ.' : undefined}
         onClick={() => toggle(c)}
         className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border-0 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-default ${on ? 'bg-kumo-tint' : 'bg-transparent enabled:hover:bg-kumo-tint/60'}`}>
-        <MnemosAvatar name={c.name} id={c.id} photo={photos.get(c.id)} />
+        <MnemosAvatar name={c.name} id={c.id} />
         <span className="min-w-0 flex-1">
           <span className={`block truncate text-[15px] leading-5 ${ok ? 'text-kumo-default' : 'text-kumo-subtle'}`}>{c.name}</span>
           {sub && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">{sub}</span>}
@@ -286,9 +282,9 @@ export default function DocumentSharePanel({ selector, binding, format, document
 
         <section aria-label="Имеют доступ" className="flex flex-col">
           <h3 className="m-0 pb-1 text-[15px] leading-5 font-semibold">Имеют доступ</h3>
-          <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><MnemosAvatar name={myName || 'Вы'} id={me || 'me'} photo={photos.get(me)} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
+          <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><MnemosAvatar name={myName || 'Вы'} id={me || 'me'} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
           {withAccess.map(p => <div key={p.id} data-share-person="" className="group flex items-center gap-3 border-b border-kumo-fill py-2.5 last:border-b-0">
-            <MnemosAvatar name={p.name || 'Коллега'} id={p.id} photo={photos.get(p.id)} />
+            <MnemosAvatar name={p.name || 'Коллега'} id={p.id} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[15px]">{p.name || 'Коллега'}</span>
               {documentOnlyWith(p, p.mode === 'write' ? 'write' : 'read') && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">только этот документ</span>}

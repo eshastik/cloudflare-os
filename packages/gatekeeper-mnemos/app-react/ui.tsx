@@ -96,12 +96,6 @@ export function IconTile({ tone = "neutral", children }: { tone?: "neutral" | "w
   return <span aria-hidden="true" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] ${color}`}>{children}</span>;
 }
 
-/** Кружок с инициалами. */
-export function Avatar({ name, size = 32 }: { name: string; size?: 32 | 34 }) {
-  const letters = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]?.toLocaleUpperCase("ru-RU")).join("") || "?";
-  return <span aria-hidden="true" className={`flex shrink-0 items-center justify-center rounded-full bg-kumo-tint text-[12px] font-semibold text-kumo-default ${size === 34 ? "h-[34px] w-[34px]" : "h-8 w-8"}`}>{letters}</span>;
-}
-
 /**
  * Карточка решения: кто и что в заголовке, подробность строкой ниже, кнопки решения на месте.
  * Заголовок — кнопка, если у карточки есть подробности; тогда они раскрываются внутри неё.

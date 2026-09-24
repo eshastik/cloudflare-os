@@ -1,10 +1,11 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentWriteSelector, GatekeeperPersonPhoto } from '@gadgets/workshop-shared/gatekeeper'
 import { listAccounts, storesDocuments } from './accountCapabilities'
 import { compressAvatar } from './avatarUtils'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
+import { useAuthenticatedApi } from './AuthContext'
 
 // Фотографии людей Mnemos: человек сам ставит свою, видят все люди организации. Тело идёт
 // браузер ↔ хранилище напрямую (presigned PUT и GET); через RPC — только размер, сумма и ссылка.
@@ -64,6 +65,74 @@ export function useMnemosPhotos(api: Api | null | undefined): PhotoBook {
     if (api && Date.now() - loadedAt > FRESH_MS) void refreshPhotos(api)
   }, [api])
   return current
+}
+
+/** Ссылка на фото человека из общего снимка или null. Один снимок на вкладку: экраны своих чтений фото не делают. */
+export function useMnemosPhoto(id: string | undefined): string | null {
+  const { authenticatedApi } = useAuthenticatedApi()
+  const current = useMnemosPhotos(authenticatedApi)
+  return id ? current.photos.get(id) ?? null : null
+}
+
+// Пользователь оболочки → принципал Mnemos (склейка на сервере: принципал из справочника входа или
+// почта). Нужен, чтобы аватар пользователя платформы брал фото из того же снимка. Запросы одного
+// прохода отрисовки идут одним вызовом; ответ держится 10 минут, как и снимок фото.
+type PrincipalApi = { mnemosPrincipals?(ids: string[]): Promise<Record<string, string>> }
+const principals = new Map<string, { at: number; principal: string | null }>()
+const principalWaiters = new Map<string, ((principal: string | null) => void)[]>()
+let principalBatch: { api: PrincipalApi; ids: Set<string> } | null = null
+
+async function flushPrincipals() {
+  const batch = principalBatch
+  principalBatch = null
+  if (!batch) return
+  const ids = [...batch.ids]
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200)
+    let found: Record<string, string> | null = null
+    try { found = await batch.api.mnemosPrincipals!(part) } catch { found = null }
+    for (const id of part) {
+      const principal = typeof found?.[id] === 'string' ? found[id]! : null
+      // Сбой не запоминаем надолго: пустой ответ живёт столько же, сколько удачный, а сбой — до следующего запроса.
+      if (found) principals.set(id, { at: Date.now(), principal })
+      for (const done of principalWaiters.get(id) ?? []) done(principal)
+      principalWaiters.delete(id)
+    }
+  }
+}
+
+/** Принципал Mnemos пользователя оболочки или null, пока связи нет. */
+export function mnemosPrincipal(api: PrincipalApi, userId: string): Promise<string | null> {
+  const known = principals.get(userId)
+  if (known && Date.now() - known.at < FRESH_MS) return Promise.resolve(known.principal)
+  if (typeof api.mnemosPrincipals !== 'function') return Promise.resolve(null)
+  return new Promise(resolve => {
+    const waiting = principalWaiters.get(userId)
+    if (waiting) { waiting.push(resolve); return }
+    principalWaiters.set(userId, [resolve])
+    if (!principalBatch || principalBatch.api !== api) {
+      void flushPrincipals()
+      principalBatch = { api, ids: new Set() }
+      setTimeout(() => void flushPrincipals(), 0)
+    }
+    principalBatch.ids.add(userId)
+  })
+}
+
+/** Для тестов: забыть склейку пользователей с принципалами. */
+export function forgetMnemosPrincipals() { principals.clear(); principalWaiters.clear(); principalBatch = null }
+
+/** Фото из Mnemos для пользователя оболочки (по склейке с принципалом) или null. */
+export function useUserMnemosPhoto(userId: string | null | undefined): string | null {
+  const { authenticatedApi } = useAuthenticatedApi()
+  const [principal, setPrincipal] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    setPrincipal(null)
+    if (userId) void mnemosPrincipal(authenticatedApi as unknown as PrincipalApi, userId).then(p => { if (current) setPrincipal(p) })
+    return () => { current = false }
+  }, [authenticatedApi, userId])
+  return useMnemosPhoto(principal ?? undefined)
 }
 
 /** Сумма SHA-256 в base64 — так её подписывает хранилище в x-amz-checksum-sha256. */

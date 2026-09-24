@@ -56,6 +56,7 @@ import { reportIssue } from './errorReporting'
 import GadgetExportMenu from './GadgetExportMenu'
 import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT } from './DocumentStatus'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
+import { isGadgetRestartLog } from './gadgetRestartLog'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
 
@@ -76,8 +77,9 @@ class ConsoleLogSubscriberImpl extends RpcTarget implements ConsoleLogSubscriber
     // If the logs are not associated with any chat, deliver to the current chat. If they are
     // associated with a chat, this implies that the logs come from a version of the gadget that
     // has proposed changes from that chat; only deliver if it matches the current chat.
-    if (chatId === null || chatId === this.selectedChatIdRef.current) {
-      this.logBufferRef.current.push(...logs.map(l => ({ ...l, source: 'server' as const })))
+    const kept = logs.filter(l => !isGadgetRestartLog(l))
+    if (kept.length && (chatId === null || chatId === this.selectedChatIdRef.current)) {
+      this.logBufferRef.current.push(...kept.map(l => ({ ...l, source: 'server' as const })))
       this.onBufferUpdated()
     }
   }
@@ -838,7 +840,7 @@ export default function GadgetEditor() {
   const handleClientConsoleLog = useCallback((log: ConsoleLogEvent) => {
     const method = (console as any)[log.level] ?? console.log
     method('client:', ...log.message)
-    if (selectedChatIdRef.current !== null) {
+    if (selectedChatIdRef.current !== null && !isGadgetRestartLog(log)) {
       consoleLogBufferRef.current.push({ ...log, source: 'client' as const })
       setConsoleLogCount(consoleLogBufferRef.current.length)
     }

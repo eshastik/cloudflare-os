@@ -5,7 +5,8 @@ import { personName, useLoad, type MemoryData } from "./data.ts";
 import { headedUnits, useOrgUnits } from "./Departments.tsx";
 import { shareAudience } from "./MyWorkTab.tsx";
 import { plural } from "./names.ts";
-import { Avatar, Button, Chip, Notice, PageHeader } from "./ui.tsx";
+import PersonAvatar from "./PersonAvatar.tsx";
+import { Button, Chip, Notice, PageHeader } from "./ui.tsx";
 
 /** «Мой отдел» — руководителю отдела и ответственному за проект: запросы «Поделиться», которые ждут
  * его решения, сотрудники и проекты. Права проверяет сервер при каждом действии. */
@@ -74,7 +75,7 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
           {unit.members.map(m => {
             const name = m.display_name || personName(m.principal_id);
             return <div key={m.principal_id} className="flex items-center gap-3 border-b border-kumo-fill py-[11px]">
-              <Avatar name={name} />
+              <PersonAvatar name={name} id={m.principal_id} />
               <span className="min-w-0 flex-1 truncate text-[15px] text-kumo-default">{name}</span>
               {m.is_head && <Chip tone="brand">Руководитель</Chip>}
             </div>;

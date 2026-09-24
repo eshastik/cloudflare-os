@@ -4,7 +4,8 @@ import type { InvitationRole, OrganizationInvitation, OrgUnit, OrgUnitDeletion }
 import type { AdminPerson } from "../src/admin-people.ts";
 import { useUi } from "./host.ts";
 import { ActionForm, Notice } from "./ui.tsx";
-import { Card, CardRow, Field, FieldInput, FieldSelect, Initials, Pill, PillInput, PillSelect, RowTitle, SectionHead, plural } from "./admin-ui.tsx";
+import PersonAvatar from "./PersonAvatar.tsx";
+import { Card, CardRow, Field, FieldInput, FieldSelect, Pill, PillInput, PillSelect, RowTitle, SectionHead, plural } from "./admin-ui.tsx";
 
 export type OrgUnits = { units: OrgUnit[]; loading: boolean; failed: boolean; reload(): void };
 
@@ -74,7 +75,7 @@ export function InvitationRows({ list, onChanged }: { list: OrganizationInvitati
     {open.map(i => {
       const who = i.display_name || i.email;
       return <CardRow key={i.invitation_id} data-invitation="">
-        <Initials name={who} />
+        <PersonAvatar name={who} size={34} />
         <RowTitle title={who} note={invitationNote(i)} />
         <Pill tone="ghost" aria-label={`Отозвать приглашение: ${who}`} disabled={busy} onClick={() => void revoke(i)}>Отозвать</Pill>
       </CardRow>;
@@ -245,6 +246,7 @@ export function DepartmentsPanel({ people, org }: { people: AdminPerson[]; org: 
               {unit.members.map(m => {
                 const who = nameOf(m.principal_id, m.display_name);
                 return <div key={m.principal_id} className="flex flex-wrap items-center gap-2 rounded-xl px-1 py-1 text-[14px]">
+                  <PersonAvatar name={who} id={m.principal_id} size={26} />
                   <span className="min-w-0 flex-1 break-words">{who}</span>
                   {m.is_head && <span className="rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] text-kumo-brand">Руководитель</span>}
                   <Pill tone="ghost" disabled={busy} onClick={() => void run(() => ui.setOrgUnitMember(unit.org_unit_id, m.principal_id, true, !m.is_head), "Изменение не сохранено.")}>{m.is_head ? "Снять руководство" : "Сделать руководителем"}</Pill>

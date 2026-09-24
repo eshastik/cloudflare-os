@@ -306,6 +306,16 @@ export interface Host extends RpcTarget {
   /** Представление рядом с беседой без изменения прав. */
   getPresentationMode(): Promise<string>;
   pickInboxFiles(directory: boolean, project?: string): Promise<import("../src/intake.ts").PickedIntakeFile[]>;
+  /** Подписка на ход загрузки файлов; отдаёт текущее состояние. Старый хост без неё отвечает отказом. */
+  subscribeUploads(frame: RpcTarget): Promise<import("../src/upload-progress.ts").UploadView | null>;
+  /** Ответ на сводку перед загрузкой папки. */
+  answerUpload(id: number, choice: "upload" | "cancel"): Promise<void>;
+  stopUpload(id: number): Promise<void>;
+  /** Повтор только не принятых файлов. */
+  retryUpload(id: number): Promise<void>;
+  /** Загрузка файлов, не начатых из-за остановки. */
+  resumeUpload(id: number): Promise<void>;
+  dismissUpload(id: number): Promise<void>;
   openSection(section: string, project?: string): void;
   openApprovals(): Promise<void>;
   getSelectedProject(): Promise<string>;
@@ -326,4 +336,7 @@ export interface Host extends RpcTarget {
   /** Открывает страницу установки или настроек приложения GitHub в новой вкладке; false — не открылась. */
   openGitHubAppPage(url: string): Promise<boolean>;
   /** Итог возврата с GitHub (?github=…), отдаётся один раз; null — возврата не было. */
-  takeGitHubReturn(): Promise<{ result: "connected" | "updated" | "failed"; reason: string } | null> }
+  takeGitHubReturn(): Promise<{ result: "connected" | "updated" | "failed"; reason: string } | null>
+  /** Фото людей байтами, по одному ответу на каждый id (до 200 за вызов): оболочка скачивает их из хранилища,
+   *  фрейм без сети показывает через blob:. null — фото нет или оно не скачалось. */
+  personPhotos(ids: string[]): Promise<({ sha256: string; type: string; bytes: Uint8Array } | null)[]> }

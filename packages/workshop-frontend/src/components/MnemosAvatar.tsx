@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import { personInitials } from './AppShell/initials'
+import { useMnemosPhoto, useMnemosPhotos } from '../mnemosPhotos'
+import { useAuthenticatedApi } from '../AuthContext'
+import { useAvatar } from '../useAvatar'
 
 const tones = ['bg-selection-bg text-selection-text', 'bg-kumo-warning-tint text-kumo-warning', 'bg-kumo-info-tint text-kumo-default', 'bg-kumo-tint text-kumo-default']
 
@@ -9,14 +12,27 @@ export function avatarTone(id: string): string {
 }
 
 /**
- * Круглый аватар человека Mnemos: фотография, если человек её поставил, иначе инициалы имени
- * («Александр Егоров» → «АЕ»). Не загрузившаяся фотография тоже заменяется инициалами.
+ * Единственный кружок человека Mnemos в оболочке: фотография, если человек её поставил, иначе инициалы
+ * имени («Александр Егоров» → «АЕ»). Не загрузившаяся фотография тоже заменяется инициалами.
+ * Фото берётся из общего снимка по id; photo передаётся, только когда картинка своя (профиль с фото
+ * платформы). Сторож personAvatarGuard.test.ts не даёт экранам рисовать инициалы самим.
  */
 export default function MnemosAvatar({ name, id, photo, size = 36, className = '' }: { name: string; id: string; photo?: string | null; size?: number; className?: string }) {
+  const shared = useMnemosPhoto(photo === undefined ? id : undefined)
+  const src = photo === undefined ? shared : photo
   const [broken, setBroken] = useState('')
-  const show = !!photo && broken !== photo
+  const show = !!src && broken !== src
   return <span aria-hidden="true" data-avatar={show ? 'photo' : 'initials'} style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}
     className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold ${show ? 'bg-kumo-tint' : avatarTone(id)} ${className}`}>
-    {show ? <img src={photo} alt="" referrerPolicy="no-referrer" onError={() => setBroken(photo)} className="h-full w-full object-cover" /> : personInitials(name)}
+    {show ? <img src={src} alt="" referrerPolicy="no-referrer" onError={() => setBroken(src)} className="h-full w-full object-cover" /> : personInitials(name)}
   </span>
+}
+
+/** Свой аватар (меню, низ панели, настройки): фото в Mnemos, иначе фото платформы, иначе инициалы. */
+export function MyAvatar({ size, className }: { size: number; className?: string }) {
+  const { authenticatedApi, currentUser } = useAuthenticatedApi()
+  const platform = useAvatar(authenticatedApi, currentUser?.id)
+  const book = useMnemosPhotos(authenticatedApi)
+  const mine = book.me ? book.photos.get(book.me) ?? null : null
+  return <MnemosAvatar name={currentUser?.name || ''} id={book.me || currentUser?.id || 'me'} photo={mine || platform || null} size={size} className={className} />
 }

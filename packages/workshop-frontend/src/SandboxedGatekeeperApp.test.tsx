@@ -297,20 +297,76 @@ describe("SandboxedGatekeeperApp navigation", () => {
     // Обновления состояния внутри act применяются только по его завершении: ждём, отпуская act.
     const until=(check:()=>void)=>vi.waitFor(async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5))});check();},{timeout:3000});
     await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);});
-    await until(()=>expect(container!.textContent).toContain("Будет загружено"));
-    expect(container.querySelector('[data-testid="intake-upload-summary"]')!.textContent).toBe("Будет загружено 3 файла (меньше 0,1 МБ). Пропущено 4 служебных файла: node_modules, .venv, по .gitignore.");
+    await until(()=>expect(container!.textContent).toContain("Загрузить папку «Проект»?"));
+    expect(container.querySelector('[data-testid="intake-upload-summary"]')!.textContent).toBe("3 файла · 7 Б. Пропущено 4 служебных: node_modules, .venv, по .gitignore");
     // Файлы служебных каталогов не открывались: для сводки хватает их имён.
     expect(opened.sort()).toEqual([".gitignore","договор.txt","смета.txt"].sort());
     const button=(text:string)=>[...container!.querySelectorAll("button")].find(b=>b.textContent?.startsWith(text))!;
     expect(button("Загрузить всё").textContent).toBe("Загрузить всё, включая служебные (7)");
     await act(async()=>{button("Загрузить").click();});
     await until(()=>expect(container!.textContent).toContain("Не загрузилось 1 файл: Проект/смета.txt"));
-    expect(container.textContent).toContain("Загружено 2 из 3.");
+    expect(container.textContent).toContain("Загружено 2 файла · 6 Б из 3");
     expect(submitted.sort()).toEqual(["Проект/.gitignore","Проект/договор.txt"]);
     await act(async()=>{button("Повторить").click();});
-    await until(()=>expect(container!.textContent).toContain("Загружено 3 из 3."));
+    await until(()=>expect(container!.textContent).toContain("Загружено 3 файла · 7 Б"));
     expect(submitted).toContain("Проект/смета.txt");
     expect(container.textContent).not.toContain("Не загрузилось");
+  });
+  it("фрейм рисует загрузку сам: сводка без «загрузить всё», ход по байтам, остановка и догрузка остального", async()=>{
+    const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
+    const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
+    const submitted:string[]=[];let count=0,blocked=0;let stuck:AbortSignal|undefined;
+    class Issuer extends RpcTarget {
+      issue(size:number,checksum:string,project?:string){expect(project).toBe("p1");return {upload_id:String(++count),url:"https://storage.example/file",method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
+      submit(_id:string,path:string){submitted.push(path);return {outcome:"placed",enqueued:false,placement_state:"personal"};}
+    }
+    // Крупный файл при первой попытке висит, пока его не прервут.
+    vi.stubGlobal("fetch",vi.fn(async(_url:string,init:RequestInit)=>{
+      if((init.body as File).name==="крупный.pdf"&&blocked++===0){stuck=init.signal as AbortSignal;return new Promise<Response>((_,reject)=>stuck!.addEventListener("abort",()=>reject(Error("abort")),{once:true}));}
+      return new Response(null,{status:200});
+    }));
+    window.history.replaceState(null,"","/?section=projects&project=p1");
+    const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const {port1,port2}=new MessageChannel();
+    type View={phase:string;id:number;project:string;[key:string]:unknown}|null
+    const views:View[]=[];
+    class Receiver extends RpcTarget {setUploadState(view:View){views.push(view)}}
+    const frameHost=newMessagePortRpcSession<TestHost&{subscribeUploads(r:Receiver):Promise<View>;answerUpload(id:number,choice:string):Promise<void>;stopUpload(id:number):Promise<void>;resumeUpload(id:number):Promise<void>}>(port1,new Receiver());
+    host=frameHost;
+    window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
+    expect(await frameHost.subscribeUploads(new Receiver())).toBeNull();
+    const until=(check:()=>void)=>vi.waitFor(async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5))});check();},{timeout:3000});
+    const last=()=>views[views.length-1];
+    const file=(name:string,size:number)=>({name,isFile:true,isDirectory:false,file:(done:(file:File)=>void)=>done(new RealFile(["x".repeat(size)],name) as unknown as File)});
+    const dir=(name:string,children:unknown[])=>({name,isFile:false,isDirectory:true,createReader:()=>{let read=false;return {readEntries:(done:(items:unknown[])=>void)=>{done(read?[]:children);read=true;}}}});
+    const folder=dir("Лев",[file("договор.txt",1000),file("крупный.pdf",3000),file("смета.txt",2000),dir(".git",[file("HEAD",10),file("config",10)])]);
+    const event=new Event("drop",{bubbles:true,cancelable:true});Object.defineProperty(event,"dataTransfer",{value:{items:[{kind:"file",getAsFile:()=>null,webkitGetAsEntry:()=>folder}]}});
+    await act(async()=>dragFiles("dragenter"));
+    await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);});
+    await until(()=>expect(last()?.phase).toBe("confirm"));
+    expect(last()).toMatchObject({phase:"confirm",project:"p1",folder:"Лев",files:3,bytes:6000,skipped:2,skippedMore:false,groups:[{label:".git",files:2}]});
+    // Панель оболочки не рисуется: уведомление показывает фрейм.
+    expect(container.textContent).not.toContain("Загрузить");
+    const id=last()!.id;
+    // «Загрузить всё, включая служебные» фрейму не доступно; чужой id не действует.
+    await frameHost.answerUpload(id,"all");await frameHost.answerUpload(id+1,"upload");
+    await act(async()=>{await new Promise(resolve=>setTimeout(resolve,20))});
+    expect(last()?.phase).toBe("confirm");
+    await frameHost.answerUpload(id,"upload");
+    await until(()=>expect(last()).toMatchObject({phase:"uploading",files:3,bytes:6000,doneFiles:2,doneBytes:3000,failed:0,current:"Лев/крупный.pdf"}));
+    await frameHost.stopUpload(id);
+    await until(()=>expect(last()?.phase).toBe("done"));
+    expect(stuck?.aborted).toBe(true);
+    expect(last()).toMatchObject({files:3,accepted:2,acceptedBytes:3000,failedCount:0,stopped:1,personal:true});
+    expect(submitted.sort()).toEqual(["Лев/договор.txt","Лев/смета.txt"]);
+    await frameHost.resumeUpload(id);
+    await until(()=>expect(last()).toMatchObject({phase:"done",accepted:3,acceptedBytes:6000,stopped:0,failedCount:0}));
+    expect(submitted).toContain("Лев/крупный.pdf");
+    expect(views.filter(view=>view?.phase==="uploading").map(view=>view!.files)).toContain(1);
+    window.history.replaceState(null,"","/");
   });
   it("uploads through the real host port and cancels transfer when the frame closes", async () => {
     const { webcrypto } = await vi.importActual<{ webcrypto: Crypto }>("node:crypto");

@@ -24,6 +24,7 @@ import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
 import { installationChatModel, installationQuickModel, type OpenRouterInstallConfig } from "./code-router.js";
 import { MNEMOS_VENDOR_ID } from "./auth/login-policy.js";
 import { collectMnemosPeople, mnemosAccountOwner, type MnemosPeople, type MnemosPeopleUi } from "./mnemos-people.js";
+import { MAX_PRINCIPAL_LOOKUP, principalsForUsers } from "./user-directory.js";
 
 /** Сколько держать список людей Mnemos для подсказок «Поделиться». */
 const MNEMOS_PEOPLE_TTL_MS = 60_000;
@@ -444,6 +445,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let result = await value;
     if (result === null && this.#mnemosPeople?.value === value) this.#mnemosPeople = undefined;  // сбой не запоминаем
     return result;
+  }
+
+  /** Принципалы Mnemos пользователей оболочки в организации этого человека (для фото в аватарах).
+   *  Без подключения Mnemos — пусто. Список людей Mnemos читается, только если справочника не хватило. */
+  async mnemosPrincipals(ids: string[]): Promise<Record<string, string>> {
+    if (!Array.isArray(ids) || ids.length > MAX_PRINCIPAL_LOOKUP || ids.some(id => typeof id !== "string" || !id || id.length > 320)) throw new Error("Invalid user ids.");
+    let owner = this.#mnemosAccount()?.owner;
+    if (!owner || !ids.length) return {};
+    let snapshot = await this.adminSettings.getByName("").directorySnapshot();
+    let input = { tenant: owner.tenant, directory: snapshot.entries, aliases: new Map(Object.entries(snapshot.aliases)), mnemos: null as MnemosPeople | null };
+    let found = principalsForUsers(ids, input);
+    if (Object.keys(found).length < ids.length) found = principalsForUsers(ids, { ...input, mnemos: await this.listMnemosPeople() });
+    return found;
   }
 
   async #readMnemosPeople(): Promise<MnemosPeople | null> {

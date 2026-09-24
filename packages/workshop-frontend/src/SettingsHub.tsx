@@ -3,11 +3,10 @@ import { Link } from '@tanstack/react-router'
 import { CaretRight } from '@phosphor-icons/react'
 import AppearanceSettings from './components/AppearanceSettings'
 import { useAuthenticatedApi } from './AuthContext'
-import { useAvatar } from './useAvatar'
 import { useTheme } from './ThemeContext'
 import type { ThemeMode } from './theme'
 import { useDocumentTitle } from './useDocumentTitle'
-import { personInitials } from './components/AppShell/initials'
+import { MyAvatar } from './components/MnemosAvatar'
 import { GROUP_CARD, SECONDARY_PILL, SECTION_TITLE } from './components/AppShell/pageStyles'
 import { removeMyPhoto, uploadMyPhoto, useMnemosPhotos } from './mnemosPhotos'
 
@@ -21,11 +20,9 @@ const THEMES: [ThemeMode, string][] = [['light', 'Светлая'], ['dark', 'Т
 export default function SettingsHub() {
   useDocumentTitle('Настройки')
   const { authenticatedApi, currentUser, isAdmin, logout } = useAuthenticatedApi()
-  const platformAvatar = useAvatar(authenticatedApi, currentUser?.id)
   // Фотография в Mnemos видна всей организации; её и показываем, пока она есть.
   const photos = useMnemosPhotos(authenticatedApi)
   const myPhoto = photos.me ? photos.photos.get(photos.me) ?? null : null
-  const avatarUrl = myPhoto || platformAvatar
   const [photoBusy, setPhotoBusy] = useState<'' | 'upload' | 'remove'>('')
   const [photoError, setPhotoError] = useState('')
   async function changePhoto(action: 'upload' | 'remove', file?: File) {
@@ -46,9 +43,7 @@ export default function SettingsHub() {
       <h1 className="m-0 text-[34px] leading-10 font-semibold tracking-[-1px] text-kumo-default">Настройки</h1>
 
       <section aria-label="Профиль" className="flex items-center gap-4 rounded-[18px] border border-kumo-fill bg-kumo-overlay px-[22px] py-5">
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-selection-bg text-[20px] font-semibold text-selection-text">
-          {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : personInitials(currentUser?.name)}
-        </span>
+        <MyAvatar size={56} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[17px] leading-6 font-semibold text-kumo-default">{currentUser?.name || 'Профиль'}</div>
           <div className="mt-[3px] text-[14px] text-kumo-subtle">{isAdmin ? 'Администратор' : 'Имя, фотография и пароль'}</div>

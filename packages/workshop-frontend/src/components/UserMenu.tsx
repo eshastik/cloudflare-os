@@ -3,19 +3,14 @@ import AppearanceSettings from "./AppearanceSettings"
 import { useNavigate } from '@tanstack/react-router'
 import { DropdownMenu } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../AuthContext'
-import { useAvatar } from '../useAvatar'
+import { MyAvatar } from './MnemosAvatar'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from './menuStyles'
 
 export default function UserMenu() {
-  const { authenticatedApi, logout, currentUser, isAdmin } = useAuthenticatedApi()
+  const { logout, isAdmin } = useAuthenticatedApi()
   const navigate = useNavigate()
   const [appearanceOpen, setAppearanceOpen] = useState(false)
 
-  const avatarUrl = useAvatar(authenticatedApi, currentUser?.id)
-
-  const initials = currentUser?.name
-    ? currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-    : 'U'
 
   return (
     <>
@@ -23,15 +18,11 @@ export default function UserMenu() {
       <DropdownMenu.Trigger
         render={
           <button
-            className="w-8 h-8 cursor-pointer rounded-full flex items-center justify-center bg-selection-bg hover:opacity-90 transition-opacity overflow-hidden"
+            className="w-8 h-8 cursor-pointer rounded-full flex items-center justify-center hover:opacity-90 transition-opacity overflow-hidden"
             title="Открыть меню профиля"
             aria-label="Открыть меню профиля"
           >
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-[13px] font-semibold text-selection-text">{initials}</span>
-            )}
+            <MyAvatar size={32} />
           </button>
         }
       />
