@@ -48,6 +48,7 @@ import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
+import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
 import type { PrivateParticipantMode } from "./mnemos-api.ts";
 import { documentResourceUrl, parseDocumentResource, publicationIdentifier } from "./document-resource.ts";
 import { MnemosAPIError, type PolicyDomain } from "./mnemos-api.ts";
@@ -122,6 +123,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   /** Forward diagnostic samples through the connected human account. */
   async recordWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> { await this.#account().recordWorkspaceActivity(stream, sequence, active); }
   async recordUIReadiness(sample: UIReadinessSample): Promise<void> { await this.#account().recordUIReadiness(sample); }
+  /** Траты оболочки на модели — в единый учёт через подключение человека. */
+  async recordSpending(entries: SpendingEntry[]): Promise<void> { await this.#account().recordSpending(entries); }
   async startAppUi(_context: AppUiContext) { return this.#account().startAppUi(); }
   /** Trusted host receiver; not exposed by the human management iframe. */
   async captureDriveImport(project:string,request:string,sourceKey:string,fileId:string,source:Fetcher<DriveImportSource>) {
@@ -438,6 +441,11 @@ export class UserAccount extends DurableObject<Env> {
   async recordWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> {
     const session = this.#account().session();
     try { await session.recordWorkspaceActivity(stream, sequence, active); } finally { session.dispose(); }
+  }
+  /** Траты пишутся свежей сессией человека: Mnemos берёт человека из её ключа. */
+  async recordSpending(entries: SpendingEntry[]): Promise<void> {
+    const session = this.#account().session();
+    try { await session.recordSpending(entries); } finally { session.dispose(); }
   }
   /** Save an account-owned source copy through a fresh human session. */
   async captureDriveImport(project:string,request:string,sourceKey:string,fileId:string,source:Fetcher<DriveImportSource>) {
@@ -1486,6 +1494,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async decideTeamBudget(project: string, id: string, input: Parameters<MnemosAccountSession["decideTeamBudget"]>[2]) {return this.#session.decideTeamBudget(project, id, input);}
   async listBudgetProjects(cursor = "") {return this.#session.listBudgetProjects(cursor);}
   async readProjectBudget(project: string) {return this.#session.readProjectBudget(project);}
+  async readSpending(period: Parameters<MnemosAccountSession["readSpending"]>[0], timeZone = "") {return this.#session.readSpending(period, timeZone);}
   async setProjectBudget(project: string, policy: Parameters<MnemosAccountSession["setProjectBudget"]>[1]) {return this.#session.setProjectBudget(project, policy);}
   async listCollaborations(cursor = "") { return this.#session.listCollaborations(cursor); }
   async readCollaboration(id: string) { return this.#session.readCollaboration(id); }

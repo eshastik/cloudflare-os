@@ -135,3 +135,58 @@ test("«Агенты и расходы»: показаны только дейс
     assert.doesNotMatch(agents.textContent.replace(off.textContent, ""), /Ожидает|№/, "ни «Ожидает», ни номеров");
   } finally { app.dispose(); }
 });
+
+test("«Агенты и расходы»: итог за период, разбивки словами, рубли по курсу; без идентификаторов", async () => {
+  const periods = [];
+  const group = (key, name, micro_usd, count = 1, estimated_count = 0) => ({ key, name, micro_usd, count, estimated_count });
+  const app = await mountMemoryApp({
+    async readSpending(period) {
+      periods.push(period);
+      if (period === "today") return { period, all_visible: true, micro_usd: "0", count: 0, estimated_count: 0, kinds: [], operations: [], projects: [], people: [], agents: [], models: [] };
+      return { period, all_visible: true, micro_usd: "1234567", count: 5, estimated_count: 1, usd_rub_rate: 80,
+        kinds: [group("code_agent", "code_agent", "1200000"), group("chat", "chat", "30000", 2), group("ingest", "ingest", "4500", 1, 1), group("service", "service", "67")],
+        operations: [group("code_agent.model", "", "1200000"), group("chat.reply", "", "30000", 2), group("router", "", "67")],
+        projects: [group("proj-7f3a", "Сайт компании", "1230000", 3), group("", "", "4567", 2)],
+        people: [group("u-7f3a", "Борис Петров", "1230000", 3), group("", "", "4567", 2)],
+        agents: [group("agent-9c", "Агент беседы Бориса", "1200000"), group("", "", "34567", 4)],
+        models: [group("openrouter/deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-flash-0731", "1230000", 4)] };
+    },
+  }, { section: "agents" });
+  try {
+    await app.until(() => app.document.querySelector("[data-spending-total]")?.textContent === "1.23 $", "итог");
+    const text = app.text();
+    for (const words of ["98,77 ₽", "потрачено в организации", "Беседы", "Агент кода", "Приём документов", "Служебное", "Ответы агента беседы", "Выбор «код или беседа»", "Сайт компании", "Без проекта", "Борис Петров", "Служба Mnemos", "Агент беседы Бориса", "deepseek/deepseek-v4-flash-0731", "из них 1 по оценке", "0.0045 $"]) {
+      assert.ok(text.includes(words), `нет «${words}»`);
+    }
+    assert.doesNotMatch(text, /proj-7f3a|u-7f3a|agent-9c|code_agent\.model|openrouter\//, "идентификаторы и коды не показаны");
+    assert.equal(periods[0], "30d", "по умолчанию — 30 дней");
+    app.button("Сегодня").click();
+    await app.until(() => app.document.querySelector("[data-spending-total]")?.textContent === "0 $", "сегодня");
+    assert.deepEqual(periods.slice(-1), ["today"]);
+  } finally { app.dispose(); }
+});
+
+test("«Агенты и расходы»: у проекта без лимита — «Без ограничения» и «Задать лимит»; лимит снимается", async () => {
+  const saved = [];
+  let policy = { project_id: "one", revision: 1, owner_id: "alice", limit_usd_micros: "0", automatic_usd_micros: "0", automatic_team_size: 1 };
+  const app = await mountMemoryApp({
+    async listPeople() { return { users: [{ userName: "alice", displayName: "Алиса", active: true }] }; },
+    async readProjectBudget() { return policy; },
+    async setProjectBudget(project, next) { saved.push([project, next]); policy = { project_id: project, ...next, revision: next.revision + 1 }; return policy; },
+  }, { section: "agents" });
+  try {
+    app.type(app.document.querySelector('select[aria-label="Проект бюджета"]'), "one");
+    await app.until(() => app.text().includes("Без ограничения"), "без ограничения");
+    assert.equal(app.document.querySelector('input[aria-label="Общий бюджет"]'), null, "поля лимита скрыты, пока лимит не задают");
+    app.button("Задать лимит").click();
+    await app.until(() => app.document.querySelector('input[aria-label="Общий бюджет"]'), "форма лимита");
+    app.type(app.document.querySelector('input[aria-label="Общий бюджет"]'), "5");
+    app.button("Сохранить бюджет").click();
+    await app.until(() => app.text().includes("Бюджет сохранён."), "лимит сохранён");
+    assert.deepEqual(saved[0], ["one", { revision: 1, owner_id: "alice", limit_usd_micros: "5000000", automatic_usd_micros: "0", automatic_team_size: 1 }]);
+    app.button("Снять лимит").click();
+    await app.until(() => app.text().includes("Лимит снят"), "лимит снят");
+    assert.deepEqual(saved[1], ["one", { revision: 2, owner_id: "alice", limit_usd_micros: "0", automatic_usd_micros: "0", automatic_team_size: 1 }]);
+    await app.until(() => app.text().includes("Без ограничения"), "снова без ограничения");
+  } finally { app.dispose(); }
+});

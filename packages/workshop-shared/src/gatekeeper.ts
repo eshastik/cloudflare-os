@@ -3,6 +3,7 @@ import type {CalendarDraftContent,CalendarDraftExecution} from './calendar-draft
 export type {CalendarDraftExecution} from './calendar-draft';
 import type {DriveImportSnapshot,DriveImportSource,DriveImportReceipt} from "./drive-import.js";
 import type { UIReadinessSample } from "./ui-readiness.js";
+import type { SpendingEntry } from "./spending.js";
 // This file defines the API that the AI Gadgets Workshop uses to talk to Adapters. Each Adapter
 // provides connectivity to some external service which AI Gadgets can then manipulate. Each
 // installation of the Gadgets Workshop may have access to different adapters, typically based on
@@ -1191,6 +1192,8 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   recordWorkspaceActivity?(stream: string, sequence: number, active: boolean): Promise<void>;
   /** Receive UI load timings through the explicitly selected workspace diagnostic account. */
   recordUIReadiness?(sample: UIReadinessSample): Promise<void>;
+  /** Записать траты оболочки на модели в единый учёт от имени этого подключения. */
+  recordSpending?(entries: SpendingEntry[]): Promise<void>;
   /** Mint a persistent source for an explicit human import of one immutable native document publication.
    * This grants no agent session; the Workshop must retain the source for future observer checks. */
   getNativeDocumentSource?(resourceUrl: string, publication: string): Promise<{

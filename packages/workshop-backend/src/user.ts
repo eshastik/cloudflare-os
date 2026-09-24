@@ -1,3 +1,4 @@
+import { MAX_SPENDING_BATCH, isSpendingEntry, type SpendingEntry } from "@gadgets/workshop-shared/spending";
 import { displayWorkspaceTitle } from "./workspace-title.js";
 import { refreshAccountUiDescription } from "./account-ui-description";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
@@ -326,6 +327,22 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       }
     } catch { /* Missing telemetry stays unavailable; local work remains usable. */ }
     if (this.storage.workspaceActivityAccount.get() === accountId) this.storage.workspaceActivityDelivery.put(delivery);
+  }
+
+  /** Записать траты оболочки в единый учёт Mnemos через подключение этого человека. Подключение —
+   *  то, из которого беседа брала проекты (accountId), иначе первое действующее подключение Mnemos.
+   *  "unavailable" — подключения нет: трата остаётся в очереди беседы. Сбой сети — исключение. */
+  async recordOwnSpending(entries: SpendingEntry[], accountId: number | null): Promise<"sent" | "unavailable"> {
+    if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_SPENDING_BATCH || !entries.every(isSpendingEntry)) {
+      throw new Error("Invalid spending entries");
+    }
+    const valid = (record: ReturnType<typeof this.storage.connectedAccounts.get>) =>
+      !!record && areCredentialsValid(record) && typeof record.account.recordSpending === "function";
+    let record = accountId !== null && Number.isSafeInteger(accountId) ? this.storage.connectedAccounts.get(accountId) : undefined;
+    if (!valid(record)) record = [...this.storage.connectedAccounts.list()].find(r => valid(r) && r.description?.providesUi);
+    if (!record || !valid(record)) return "unavailable";
+    await (record.account as unknown as {recordSpending(e: SpendingEntry[]): Promise<void>}).recordSpending(entries);
+    return "sent";
   }
 
   /** Never move a load's completion to a newly selected account or infer its identity from the frame. */

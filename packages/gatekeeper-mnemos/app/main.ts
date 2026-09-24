@@ -183,6 +183,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  assessProjectSignals: MnemosAccountSession["assessProjectSignals"];
  listBudgetProjects: MnemosAccountSession["listBudgetProjects"];
   readProjectBudget: MnemosAccountSession["readProjectBudget"];
+  readSpending: MnemosAccountSession["readSpending"];
   setProjectBudget: MnemosAccountSession["setProjectBudget"];
 
  finishedAgentTasks: MnemosAccountSession["finishedAgentTasks"];

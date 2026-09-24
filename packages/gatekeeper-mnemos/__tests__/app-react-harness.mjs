@@ -63,6 +63,7 @@ export function defaultMethods(calls) {
     async readCollaborationProgress(id) { return { state: id === "r-1" ? "awaiting_result" : "awaiting_result", result_sequence: 0, review_revision: 0 }; },
     async readAgentAbsence(project) { return { project_id: project, local_binding_id: "", managed_binding_id: "", starts_at: "", ends_at: "", revision: 0, enabled: false }; },
     async readTeamBudgetUsage() { throw new Error("no budget"); },
+    async readSpending(period) { return { period, all_visible: true, micro_usd: "0", count: 0, estimated_count: 0, kinds: [], operations: [], projects: [], people: [], agents: [], models: [] }; },
     async externalAgentSetup() { return {resource:"https://memory.example/mcp",clientId:"mnemos-cli"}; },
     async readPersonalMemory() { return { revision: 0, project_id: "", node_id: "", head: "" }; },
     async listTelegram() { return { connections: [], unavailable: 0 }; },

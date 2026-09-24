@@ -1,6 +1,7 @@
 import { captureBlueprintTemplate, readBlueprintTemplate } from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE } from "./workspace-title.js";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "./chat-voice";
+import { spendingEntry, type ModelSpend } from "./spend-ledger.js";
 export {MailSourceLease,MailSendLease,MailDraftSendUI} from "./mail-source-lease";
 export {DriveImportLease} from "./drive-import-lease";
 export {CalendarSourceLease,CalendarWriteLease,CalendarDraftCreateUI} from "./calendar-source-lease";
@@ -138,8 +139,23 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   async transcribeChatVoice(bytes: Uint8Array, mediaType: string): Promise<string> {
     if (this.voiceInFlight) throw new Error("Предыдущая запись ещё распознаётся.");
     this.voiceInFlight = true;
-    try { return await transcribeChatVoice(this.env, bytes, mediaType); }
-    finally { this.voiceInFlight = false; }
+    let spend: ModelSpend | undefined;
+    try { return await transcribeChatVoice(this.env, bytes, mediaType, fetch, s => { spend = s; }); }
+    finally {
+      this.voiceInFlight = false;
+      if (spend) await this.#recordVoiceSpend(spend);
+    }
+  }
+
+  /** Распознавание речи — в единый учёт Mnemos через подключение человека; две попытки, потом журнал. */
+  async #recordVoiceSpend(spend: ModelSpend): Promise<void> {
+    const entry = spendingEntry(`voice:${crypto.randomUUID()}`, "service", "voice.transcribe", spend);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (await this.user.recordOwnSpending([entry], null) === "sent") return;
+      } catch { /* повтор ниже */ }
+    }
+    logger.error("voice spend not recorded", {event: "spend.record.lost", spendEntry: JSON.stringify(entry)});
   }
 
   whoami(): Promise<AiChatAuthorInfo> {

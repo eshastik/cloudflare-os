@@ -32,6 +32,10 @@ export type WorkshopObservabilityFields = {
   resourceTitle: string;
   sequence: number;
   size: number;
+  // Единый учёт расходов: трата целиком (без текста беседы), число трат в пачке, исход записи.
+  spendEntry: string;
+  spendCount: number;
+  spendOutcome: string;
   status: number;
   statusCode: number;
   statusText: string;

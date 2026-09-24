@@ -1,5 +1,6 @@
 import type { Message, Usage } from "@earendil-works/pi-ai";
 import type { ModelHandle } from "./ai-models.js";
+import { modelSpend, type ModelSpend } from "./spend-ledger.js";
 
 /**
  * An all-zeros pi Usage record, for synthesizing assistant messages that were never actually
@@ -56,6 +57,8 @@ export async function completeText(handle: ModelHandle, args: {
   messages?: Message[];
   maxTokens?: number;
   signal?: AbortSignal;
+  /** Цена обращения для единого учёта; зовётся и при отказе, если поставщик успел её назвать. */
+  onSpend?: (spend: ModelSpend) => void;
 }): Promise<string> {
   const messages: Message[] = args.messages ??
       [{ role: "user", content: args.prompt ?? "", timestamp: Date.now() }];
@@ -68,6 +71,12 @@ export async function completeText(handle: ModelHandle, args: {
     thinking: false,
   });
   const message = await stream.result();
+  if (args.onSpend) {
+    const spend = modelSpend(handle, message.usage);
+    if (spend.usd > 0 || spend.inputTokens > 0 || spend.outputTokens > 0) {
+      try { args.onSpend(spend); } catch { /* учёт не ломает ответ модели */ }
+    }
+  }
   if (message.stopReason === "error" || message.stopReason === "aborted") {
     // Surface a cancellation as the abort reason, like a directly-aborted request would.
     args.signal?.throwIfAborted();

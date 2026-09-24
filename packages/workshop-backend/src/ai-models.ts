@@ -1,5 +1,6 @@
 import { DurableObject, RpcStub, RpcTarget } from "cloudflare:workers";
 import { validateRpc } from "capnweb-validate";
+import { isOpenRouterUrl, providerCostFetch, spendingEntry, type ModelSpend } from "./spend-ledger.js";
 import type {
   AnthropicMessagesCompat, Api, AssistantMessageEventStream, Context, Model, ModelCost,
   OpenAICompletionsCompat, ProviderHeaders, SimpleStreamOptions, StreamFunction,
@@ -91,6 +92,10 @@ export type ModelHandle = {
   // right after the request they care about completes. Turns run requests sequentially, so this
   // is safe.
   lastResponse?: { status: number; aiGatewayLogId?: string };
+
+  // Цена последнего запроса, названная самим поставщиком (usage.cost у OpenRouter), в долларах.
+  // Сбрасывается в начале каждого запроса; без неё трата считается оценкой по каталогу.
+  lastProviderCostUsd?: number;
 };
 
 function buildMetadata(initiator: AiChatAuthorInfo, context?: GatewayMetadataContext): GatewayMetadata {
@@ -284,12 +289,15 @@ function makeHandle(args: HandleArgs): ModelHandle {
           ? (anthropicCompat?.forceAdaptiveThinking === true ? { thinkingEnabled: true } : {}) :
       args.model.api === "openai-responses" ? { reasoningEffort: args.reasoningEffort ?? "medium" } : {};
 
+  // OpenRouter называет цену запроса в ответе: её читаем по пути, не меняя поток.
+  const openRouter = isOpenRouterUrl(args.model.baseUrl);
   const handle: ModelHandle = {
     model: args.model,
     aiGatewayLogRoute: args.aiGatewayLogRoute,
     stream: (model, context, { thinking = true, ...options } = {}) => {
       // Never let a failed request read a previous request's response metadata.
       handle.lastResponse = undefined;
+      handle.lastProviderCostUsd = undefined;
       const headers: ProviderHeaders = {
         ...args.headers,
         ...options.headers,
@@ -322,8 +330,16 @@ function makeHandle(args: HandleArgs): ModelHandle {
         // document blocks (no-op for payloads without one; see chat-attachment-pdf.ts).
         onPayload: async (payload, payloadModel) => {
           const replaced = await options.onPayload?.(payload, payloadModel);
-          return bridgePdfAttachments(args.model.api, replaced ?? payload) ?? replaced;
+          const bridged = bridgePdfAttachments(args.model.api, replaced ?? payload) ?? replaced;
+          if (openRouter && args.model.api === "openai-completions") {
+            const body = (bridged ?? payload) as Record<string, unknown>;
+            if (body && typeof body === "object") return {...body, usage: {include: true}};
+          }
+          return bridged;
         },
+        ...(openRouter ? {fetch: providerCostFetch((options as {fetch?: typeof fetch}).fetch ?? fetch, usd => {
+          handle.lastProviderCostUsd = (handle.lastProviderCostUsd ?? 0) + usd;
+        })} : {}),
         // NOTE(binding-transport): pi passes `options.fetch` into its SDK clients on all paths.
         // If Workers-binding-backed inference returns (upstream ask filed), inject a
         // fetch-to-binding shim here and relax the token requirements in ai-gateway.ts.
@@ -623,6 +639,9 @@ export type LanguageModelGatekeeperProps = {
   config: AiModelConfig,
   initiator: AiChatAuthorInfo,
   metadata?: GatewayMetadataContext,
+  // Объект человека, через чьё подключение трата модели уходит в единый учёт Mnemos. У модели,
+  // подключённой к приложению до учёта, его нет — такие траты видны только в журнале.
+  spendUserObjectId?: string,
 };
 
 export class LanguageModelGatekeeper
@@ -658,7 +677,15 @@ export class LanguageModelGatekeeper
     let model = getModel(this.env, this.ctx.props.config, this.ctx.props.initiator, {
       metadata: this.ctx.props.metadata,
     });
-    return new LanguageModelBindingImpl(model);
+    let userObjectId = this.ctx.props.spendUserObjectId;
+    let users = (this.ctx as unknown as {exports: {UserDurableObject: DurableObjectNamespace<import("./user.js").UserDurableObject>}}).exports.UserDurableObject;
+    return new LanguageModelBindingImpl(model, async spend => {
+      let entry = spendingEntry(`app-model:${crypto.randomUUID()}`, "service", "app.model", spend);
+      try {
+        if (userObjectId && await users.get(users.idFromString(userObjectId)).recordOwnSpending([entry], null) === "sent") return;
+      } catch { /* ниже — журнал */ }
+      console.error(JSON.stringify({event: "spend.record.lost", spendEntry: entry}));
+    });
   }
 
   applyAction(action: number): Promise<void> {
@@ -684,17 +711,22 @@ export class LanguageModelGatekeeper
 
 @validateRpc()
 class LanguageModelBindingImpl extends RpcTarget implements LanguageModelBinding {
-  constructor(private model: ModelHandle) {
+  constructor(private model: ModelHandle, private recordSpend?: (spend: ModelSpend) => Promise<void>) {
     super();
   }
 
   async run(options: {prompt: string, systemPrompt?: string}): Promise<string> {
     // TODO: Should we be calling authorizeObservation() here? It's not really observing anything,
     //   but you might want the audit logs?
-    // TODO: Account LLM costs back to the calling gadget.
-    return await completeText(this.model, {
-      prompt: options.prompt,
-      systemPrompt: options.systemPrompt,
-    });
+    let spent: ModelSpend | undefined;
+    try {
+      return await completeText(this.model, {
+        prompt: options.prompt,
+        systemPrompt: options.systemPrompt,
+        onSpend: spend => { spent = spend; },
+      });
+    } finally {
+      if (spent) await this.recordSpend?.(spent);
+    }
   }
 }

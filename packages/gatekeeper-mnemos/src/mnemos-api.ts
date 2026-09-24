@@ -26,6 +26,7 @@ import { checkedSharingSettings, isProjectVisibility, validShareRequest, validSh
 import type { ReviewDecisions } from "./review-decisions.ts";
 import type { ReviewTiming } from "./review-timing.ts";
 import { UI_READINESS_SURFACES, isUIReadinessSample, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
+import { MAX_SPENDING_BATCH, isSpendingEntry, type SpendingEntry } from "@gadgets/workshop-shared/spending";
 export { UI_READINESS_SURFACES, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 /** Aggregated browser load outcomes, separated by interface. */
 export interface UIReadinessUsage { surface:typeof UI_READINESS_SURFACES[number];outcome:UIReadinessSample["outcome"]|"unconfirmed";samples:number;p50_ms:number|null;p95_ms:number|null;p99_ms:number|null;last_observed_at:string }
@@ -60,6 +61,15 @@ export interface PlatformSignalInbox {items:PlatformSignalNotification[];unread:
 export interface PlatformSignalOwner {signal_key:PlatformSignal["key"];owner_id:string;owner_name:string;owner_active:boolean;revision:number}
 export interface PlatformSignalOwnerPage {generation:number;owners:PlatformSignalOwner[]}
 export interface PlatformUsage { signal_owners?:PlatformSignalOwner[]|null; signals?:PlatformSignal[]|null; ui_readiness_versions?:UIReadinessVersions|null; deployment?:PlatformDeployment|null; ui_readiness?:UIReadinessUsage[]|null; organization_work?:OrganizationWork|null; activity_windows?: ActivityWindows | null; external?: ExternalSnapshot | null; workflow_attempts?: WorkflowAttemptUsage[] | null; workflow?: { first_observed_at: string | null; opened:number; saved:number; reviewed:number; published:number; opening_unobserved:number } | null; review_stages?: {decisions?:ReviewDecisions;timing?:ReviewTiming;submitted:number;awaiting_decisions:number;rejected:number;approved:number;published:number;historical_completion_unknown:number} | null; readiness?: { ready: boolean; reasons: string[]; checked_at: string } | null; service?: ServiceSnapshot | null; workspace_activity: WorkspaceActivityUsage | null; recorded_at: string; shared_publications: number; human_logins_24h: number; authenticated_users_24h: number }
+export const SPENDING_PERIODS = ["today", "7d", "30d", "all"] as const;
+export type SpendingPeriod = typeof SPENDING_PERIODS[number];
+/** Сумма по одному значению разбивки: name — для показа, key — только для связи строк. */
+export interface SpendingGroup { key: string; name: string; micro_usd: string; count: number; estimated_count: number }
+export interface SpendingSummary {
+  period: SpendingPeriod; since?: string; all_visible: boolean; micro_usd: string; count: number; estimated_count: number;
+  usd_rub_rate?: number;
+  kinds: SpendingGroup[]; operations: SpendingGroup[]; projects: SpendingGroup[]; people: SpendingGroup[]; agents: SpendingGroup[]; models: SpendingGroup[];
+}
 export interface AgentTaskOutcome { request_id: string; state: "completed" | "unconfirmed" | "budget_blocked"; result: { content: string } | null }
 import type { PublicationReview } from "@gadgets/workshop-shared/publication-review";
 
@@ -209,6 +219,16 @@ export class MnemosAPI {
   listBudgetProjects(cursor = "", signal?: AbortSignal): Promise<{projects: {project_id: string; name: string}[]; next_cursor?: string}> {
     if (typeof cursor !== "string" || cursor.length > 255) throw new MnemosAPIError(400);
     return this.#request(`/v1/project-budgets?cursor=${encodeURIComponent(cursor)}`, "GET", signal);
+  }
+  /** Записать траты оболочки; человек и агент — из этого ключа, не из записей. */
+  recordSpending(entries: SpendingEntry[], signal?: AbortSignal): Promise<{recorded: number}> {
+    if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_SPENDING_BATCH || !entries.every(isSpendingEntry)) throw new MnemosAPIError(400);
+    return this.#request("/v1/spending", "POST", signal, {records: entries});
+  }
+  /** Сводка трат за период; администратор видит организацию, остальные — свои траты. */
+  readSpending(period: SpendingPeriod, timeZone = "", signal?: AbortSignal): Promise<SpendingSummary> {
+    if (!SPENDING_PERIODS.includes(period) || typeof timeZone !== "string" || timeZone.length > 64 || !/^[A-Za-z0-9_+\-/]*$/.test(timeZone)) throw new MnemosAPIError(400);
+    return this.#request(`/v1/spending?period=${period}${timeZone ? `&tz=${encodeURIComponent(timeZone)}` : ""}`, "GET", signal);
   }
   readProjectBudget(project: string, signal?: AbortSignal): Promise<ProjectBudgetPolicy> {
     return this.#request(`/v1/projects/${segment(project)}/budget-policy`, "GET", signal);

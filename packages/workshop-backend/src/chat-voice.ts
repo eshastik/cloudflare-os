@@ -1,3 +1,4 @@
+import { usageCostOf, type ModelSpend } from "./spend-ledger.js";
 /** Серверные настройки распознавания; клиент не выбирает адрес или модель. */
 export interface ChatVoiceConfig {
   MNEMOS_STT_API_KEY?: string;
@@ -14,7 +15,8 @@ export function chatVoiceAvailable(config: ChatVoiceConfig): boolean {
 }
 /** Расшифровка возвращается только как редактируемый текст, без выполнения поручения. */
 export async function transcribeChatVoice(config: ChatVoiceConfig, bytes: Uint8Array, mediaType: string,
-  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch): Promise<string> {
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+  onSpend?: (spend: ModelSpend) => void): Promise<string> {
   if (!chatVoiceAvailable(config)) throw new Error("Голосовой ввод пока не настроен. Напишите сообщение текстом.");
   const mime = mediaType.split(";")[0].trim().toLowerCase(), format = formats[mime];
   if (!(bytes instanceof Uint8Array) || bytes.length < 1 || bytes.length > 8_000_000 || !format) {
@@ -40,6 +42,15 @@ export async function transcribeChatVoice(config: ChatVoiceConfig, bytes: Uint8A
   if (!response.ok) throw new Error("Не удалось распознать запись. Попробуйте ещё раз.");
   let result: unknown;
   try { result = await response.json(); } catch { throw new Error("Не удалось распознать запись. Попробуйте ещё раз."); }
+  // Распознавание оплачено, даже если текст пуст: трата уходит в учёт до проверки ответа.
+  if (onSpend) {
+    const cost = usageCostOf(result);
+    const host = new URL(config.MNEMOS_STT_URL!).hostname;
+    try {
+      onSpend({usd: cost ?? 0, estimated: cost === undefined, provider: host === "openrouter.ai" ? "openrouter" : host,
+        model: config.MNEMOS_STT_MODEL!, inputTokens: 0, outputTokens: 0});
+    } catch { /* учёт не ломает распознавание */ }
+  }
   const text = result && typeof result === "object" && "text" in result ? result.text : undefined;
   if (typeof text !== "string" || !text.trim()) throw new Error("Речь не распознана. Попробуйте говорить ближе к микрофону.");
   if (text.length > 40_000) throw new Error("Запись слишком длинная. Разделите сообщение на части.");

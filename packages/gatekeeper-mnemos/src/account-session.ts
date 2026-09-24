@@ -11,7 +11,8 @@ import {validSignalInbox} from "./platform-signal-inbox.ts";
 import { validSignalOwners, validSignalOwnerPage } from "./platform-signal-owners.ts";
 import { validPlatformSignals } from "./platform-signals.ts";
 import {validateOfficeUpdateComparison} from "./office-update-validation.ts";
-import type {OfficeUpdateInput,OfficeUpdateDecision} from "./mnemos-api.ts";
+import type {OfficeUpdateInput,OfficeUpdateDecision,SpendingPeriod} from "./mnemos-api.ts";
+import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
 import type {CalendarGrantDecision} from "./calendar-connections.ts";
 import type {MailGrantDecision} from "./mail-connections.ts";
 import type {BitrixTaskMapping} from "./corporate-import.ts";
@@ -1223,6 +1224,9 @@ export class MnemosAccountSession {
   async createTeamBudget(project: string, input: Parameters<MnemosAPI["createTeamBudget"]>[1]) {this.#check(); const out = await this.#client.createTeamBudget(project, input, this.#lifetime.signal); this.#check(); return out;}
   async decideTeamBudget(project: string, id: string, input: Parameters<MnemosAPI["decideTeamBudget"]>[2]) {this.#check(); const out = await this.#client.decideTeamBudget(project, id, input, this.#lifetime.signal); this.#check(); return out;}
   async listBudgetProjects(cursor = "") {this.#check(); const out = await this.#client.listBudgetProjects(cursor, this.#lifetime.signal); this.#check(); return out;}
+  /** Траты оболочки уходят в учёт под этим подключением: Mnemos берёт человека из ключа. */
+  async recordSpending(entries: SpendingEntry[]) {this.#check(); await this.#client.recordSpending(entries, this.#lifetime.signal); this.#check();}
+  async readSpending(period: SpendingPeriod, timeZone = "") {this.#check(); const out = await this.#client.readSpending(period, timeZone, this.#lifetime.signal); this.#check(); return out;}
   async readProjectBudget(project: string) {this.#check(); const out = await this.#client.readProjectBudget(project, this.#lifetime.signal); this.#check(); return out;}
   async setProjectBudget(project: string, policy: Parameters<MnemosAPI["setProjectBudget"]>[1]) {this.#check(); const out = await this.#client.setProjectBudget(project, policy, this.#lifetime.signal); this.#check(); return out;}
   async listCollaborations(cursor = "") { this.#check(); const out = await this.#client.listCollaborations(cursor, this.#lifetime.signal); this.#check(); return out; }

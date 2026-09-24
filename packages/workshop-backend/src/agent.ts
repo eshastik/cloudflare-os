@@ -18,6 +18,7 @@ import { AgentCatalogSnapshot, formatAlwaysAvailableResourcesPrompt } from "./ag
 import { formatInstanceInstructions } from "./admin-config";
 import type { AiGatewayLogRoute } from "./ai-gateway";
 import { AgentTurnError, completeText, httpStatusFromError, zeroUsage } from "./ai-invoke";
+import { modelSpend, type ModelSpend } from "./spend-ledger.js";
 import { findMnemosBinding, formatMnemosWorkPrompt } from "./mnemos-agent-guide";
 import { nativeEditorCodeLock } from "./native-editor-guard";
 import { nativeFormatForOutput } from "@gadgets/workshop-shared/native-document";
@@ -300,7 +301,9 @@ export interface AgentHooks {
   addChatMessages(chatId: number, author: AiChatAuthorInfo,
       msgs: AiChatMessageBodyWithModelData[],
       totalTokens?: number, aiGatewayLogId?: string, aiGatewayLogRoute?: AiGatewayLogRoute,
-      estimatedCost?: number): void;
+      estimatedCost?: number, spend?: ModelSpend): void;
+  // Записать в единый учёт трату служебного обращения беседы (например, сжатия контекста).
+  recordModelSpend?(chatId: number, operation: string, spend: ModelSpend): void;
   emitChatStreamEvent(chatId: number, event: AiChatStreamEvent): void;
 
   // Fetch the model-facing snapshot persisted for an agent step's "message" record, if any (see
@@ -2363,14 +2366,15 @@ export async function runAgent(
           content: "Create the context handoff now. Do not continue the conversation.",
           timestamp: Date.now(),
         });
-        // Like title generation, this call's usage is deliberately not billed to the chat. It
-        // carries the turn's largest prompt, so it needs the response cap most: without it a model
-        // that charges the response to the same window would reject the request outright.
+        // Счётчик беседы эту трату не показывает, но в единый учёт Mnemos она уходит. Вызов
+        // несёт самый большой запрос хода, поэтому ему нужен предел ответа: без него модель,
+        // считающая ответ в том же окне, отвергла бы запрос сразу.
         let summary = (await completeText(handle, {
           systemPrompt: COMPACTION_SYSTEM_PROMPT,
           messages: summaryMessages,
           maxTokens: maxOutputTokens,
           signal: abortSignal,
+          onSpend: spend => hooks.recordModelSpend?.(chatId, "chat.compaction", spend),
         })).trim();
         // An empty summary would discard the compacted history, so keep the history instead.
         if (!summary) throw new Error("Compaction produced an empty summary.");
@@ -3190,9 +3194,11 @@ export async function runAgent(
           msgs.push(cr);
         }
 
+        // Цена хода — из ответа поставщика, если он её назвал (OpenRouter), иначе по каталогу.
+        let spend = modelSpend(handle, message.usage);
         hooks.addChatMessages(chatId, author, msgs, message.usage.totalTokens,
             handle.lastResponse?.aiGatewayLogId, handle.aiGatewayLogRoute,
-            message.usage.cost.total);
+            spend.usd, spend);
 
         // Reset per-step streaming state.
         toolCallNotes.clear();

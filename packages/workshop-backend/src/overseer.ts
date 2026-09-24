@@ -2,7 +2,9 @@ import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@g
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import {acceptChatCodeChanges, applyChatProjectChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
-import {askJev, installationOpenRouterKey, type OpenRouterInstallConfig} from "./code-router.js";
+import {askJev, installationOpenRouterKey, JEV_MODEL, type OpenRouterInstallConfig} from "./code-router.js";
+import {spendingEntry, type ModelSpend} from "./spend-ledger.js";
+import {MAX_SPENDING_BATCH, type SpendingEntry} from "@gadgets/workshop-shared/spending";
 import {CONTEXT_PACK_LOOKBACK, codeWorkBrief} from "./code-context.js";
 import {readBlueprintTemplate, discardBlueprintTemplate} from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, russianTitle, displayWorkspaceTitle } from "./workspace-title.js";
@@ -706,6 +708,13 @@ function actionRecordToLog(record: ActionRecord): ActionLogEntry {
   }
 }
 
+/** Трата, ещё не записанная в единый учёт Mnemos: userId — чьё подключение пишет, accountId — какое. */
+type SpendOutboxItem = {id: string; userId: string; accountId?: number; entry: SpendingEntry; attempts: number};
+/** После стольких неудачных попыток трата уходит в журнал целиком и снимается с очереди. */
+const MAX_SPEND_ATTEMPTS = 50;
+/** Сколько трат держится в очереди; сверх — старейшие уходят в журнал. */
+const MAX_SPEND_OUTBOX = 5000;
+
 function makeOverseerStorage(storage: DurableObjectStorage) {
   return createTypedStorage(storage, {
     singletons: {
@@ -800,6 +809,9 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // stop an old client or later-merged branch from writing there. Such content is inert --
       // never listed, loaded, executed, or rendered -- because it has no registry entry.
       templateImports: collection<{id:string; hash:string; chatId:number; profile:string; gadgetId:WorkpieceId; complete:boolean}>()({primaryKey:"id"}),
+
+      // Траты на модели, ещё не записанные в единый учёт Mnemos; удаляются после записи.
+      spendOutbox: collection<SpendOutboxItem>()({primaryKey: "id"}),
 
       gadgets: collection<GadgetRecord>()({
         primaryKey: "id",
@@ -4579,6 +4591,7 @@ class OverseerImpl implements AgentHooks {
     try {
       let model = getModel(this.env, quick.config, quick.initiator);
       let result = await completeText(model, {
+        onSpend: spend => this.recordModelSpend(undefined, "binding.name", spend),
         signal: AbortSignal.timeout(10_000),
         prompt:
             `Choose a short, meaningful JavaScript identifier in ALL_CAPS_WITH_UNDERSCORES ` +
@@ -5254,6 +5267,7 @@ class OverseerImpl implements AgentHooks {
       });
 
       let result: string | null = await completeText(model, {
+        onSpend: spend => this.recordModelSpend(chatId, "chat.title", spend),
         // TODO: Is there a better way to convince the LLM just to summarize and not to follow
         //   instructions in the user message? I tried putting the paragraph in the system
         //   prompt and putting the initial message into `prompt` and also into `messages` and
@@ -5314,6 +5328,7 @@ class OverseerImpl implements AgentHooks {
       });
 
       let gadgetTitle = await completeText(model, {
+        onSpend: spend => this.recordModelSpend(chatId, "app.title", spend),
         prompt: "Ниже журнал беседы, в которой агент пишет код небольшого приложения. Придумай " +
                 "короткое название (2–5 слов) для приложения или инструмента, который делает " +
                 "человек. Название — только на русском языке; названия продуктов оставляй как есть. " +
@@ -5339,7 +5354,7 @@ class OverseerImpl implements AgentHooks {
   addChatMessages(chatId: number, author: AiChatAuthorInfo,
         msgs: AiChatMessageBodyWithModelData[],
         totalTokens?: number, aiGatewayLogId?: string,
-        aiGatewayLogRoute?: AiGatewayLogRoute, estimatedCost?: number): void {
+        aiGatewayLogRoute?: AiGatewayLogRoute, estimatedCost?: number, spend?: ModelSpend): void {
     let meta = this.storage.chatMeta.get(chatId);
     if (!meta) {
       // Chat thread deleted?
@@ -5409,11 +5424,12 @@ class OverseerImpl implements AgentHooks {
     if (aiGatewayLogId && aiGatewayLogRoute) {
       // Best-effort UI accounting only. The log ID is not persisted, so a DO restart can lose
       // this update. Do not use this total as a billing source of truth.
-      void this.#getCostFromAiGateway(chatId, aiGatewayLogRoute, aiGatewayLogId, estimatedCost);
-    } else if (estimatedCost) {
+      void this.#getCostFromAiGateway(chatId, aiGatewayLogRoute, aiGatewayLogId, estimatedCost, spend);
+    } else {
       // No AI Gateway log to consult (direct provider access, or a gateway response that didn't
-      // surface a log id): fall back to the caller's catalog-priced estimate.
-      this.#addChatCost(chatId, estimatedCost);
+      // surface a log id): the provider's own price (OpenRouter usage.cost) or the catalog estimate.
+      if (estimatedCost) this.#addChatCost(chatId, estimatedCost);
+      if (spend) this.recordModelSpend(chatId, "chat.reply", spend);
     }
   }
 
@@ -5433,7 +5449,8 @@ class OverseerImpl implements AgentHooks {
           if (this.storage.chatMeta.get(chatId)) this.storage.chats.put(message);
         },
         now: () => this.getChatTimestamp(),
-      }, chatId, sequence, (args) => completeText(model, args));
+      }, chatId, sequence, (args) => completeText(model, {...args,
+          onSpend: spend => this.recordModelSpend(chatId, "reasoning.translate", spend)}));
     } catch (err) {
       this.logger.warn("error translating reasoning", {
         event: "chat.reasoning.translate.failed", chatId, error: err,
@@ -5472,7 +5489,7 @@ class OverseerImpl implements AgentHooks {
   // TODO: Get AI gateway to add cost data to response headers -- it's dumb that we need a
   //   separate request!
   async #getCostFromAiGateway(chatId: number, route: AiGatewayLogRoute, aiGatewayLogId: string,
-                              estimatedCost?: number) {
+                              estimatedCost?: number, spend?: ModelSpend) {
     let cost: number | undefined;
     try {
       for (let attempt = 0; attempt < 4; ++attempt) {
@@ -5494,9 +5511,86 @@ class OverseerImpl implements AgentHooks {
       });
     }
 
+    let fromGateway = !!cost;
     cost ||= estimatedCost;
     if (cost) {
       this.#addChatCost(chatId, cost);
+    }
+    if (spend) {
+      this.recordModelSpend(chatId, "chat.reply",
+          fromGateway ? {...spend, usd: cost ?? 0, estimated: false} : spend);
+    }
+  }
+
+  // ---- Единый учёт расходов Mnemos ----
+  //
+  // Каждая оплаченная операция беседы — ответ, сжатие, названия, перевод, выбор режима —
+  // сначала ложится в очередь этого объекта, потом уходит в Mnemos через подключение человека,
+  // от чьего имени шла беседа. Сбой записи не мешает беседе: очередь повторяется при следующей
+  // трате, а после исчерпания попыток трата целиком пишется в журнал.
+  #spendFlush: Promise<void> | undefined;
+  #spendAgain = false;
+
+  recordModelSpend(chatId: number | undefined, operation: string, spend: ModelSpend): void {
+    let context = chatId === undefined ? undefined : this.storage.chatMeta.get(chatId)?.projectContext;
+    let userId = context?.creatorId ?? this.ownerId;
+    let kind: SpendingEntry["kind"] = operation === "chat.reply" || operation === "chat.compaction" ? "chat" : "service";
+    // Ключ растёт со временем: переполненная очередь снимает старейшие траты.
+    let id = `workshop:${this.ctx.id.toString()}:${Date.now().toString(36).padStart(9, "0")}:${crypto.randomUUID()}`;
+    let entry = spendingEntry(id, kind, operation, spend, context?.projectId);
+    if (!userId) {
+      this.logger.error("spend not recorded: workspace has no owner", {event: "spend.record.lost", spendEntry: JSON.stringify(entry)});
+      return;
+    }
+    this.storage.spendOutbox.put({id, userId, ...(context ? {accountId: context.accountId} : {}), entry, attempts: 0});
+    this.ctx.waitUntil(this.flushSpendOutbox());
+  }
+
+  // Одна отправка за раз; трата, пришедшая во время отправки, уходит следующим проходом.
+  flushSpendOutbox(): Promise<void> {
+    if (this.#spendFlush) { this.#spendAgain = true; return this.#spendFlush; }
+    this.#spendFlush = (async () => {
+      do { this.#spendAgain = false; await this.#flushSpendOnce(); } while (this.#spendAgain);
+    })().finally(() => { this.#spendFlush = undefined; });
+    return this.#spendFlush;
+  }
+
+  async #flushSpendOnce(): Promise<void> {
+    let items = [...this.storage.spendOutbox.list({limit: 1000})];
+    let groups = new Map<string, SpendOutboxItem[]>();
+    for (let item of items) {
+      let key = `${item.userId}|${item.accountId ?? ""}`;
+      groups.set(key, [...(groups.get(key) ?? []), item]);
+    }
+    for (let group of groups.values()) {
+      for (let start = 0; start < group.length; start += MAX_SPENDING_BATCH) {
+        let batch = group.slice(start, start + MAX_SPENDING_BATCH);
+        let outcome: "sent" | "unavailable" | "failed" = "failed";
+        try {
+          outcome = await this.users.get(this.users.idFromString(batch[0].userId))
+              .recordOwnSpending(batch.map(item => item.entry), batch[0].accountId ?? null);
+        } catch (err) {
+          this.logger.warn("spend not recorded, will retry", {event: "spend.record.failed", spendCount: batch.length, error: err});
+        }
+        for (let item of batch) {
+          if (outcome === "sent") { this.storage.spendOutbox.delete(item.id); continue; }
+          let attempts = item.attempts + 1;
+          if (attempts >= MAX_SPEND_ATTEMPTS) {
+            this.logger.error("spend not recorded after retries", {event: "spend.record.lost", spendOutcome: outcome, spendEntry: JSON.stringify(item.entry)});
+            this.storage.spendOutbox.delete(item.id);
+          } else {
+            this.storage.spendOutbox.put({...item, attempts});
+          }
+        }
+        if (outcome === "unavailable") {
+          this.logger.warn("spend waits: no connected Mnemos account", {event: "spend.record.unavailable", spendCount: batch.length});
+        }
+      }
+    }
+    let all = [...this.storage.spendOutbox.list()];
+    for (let item of all.slice(0, Math.max(0, all.length - MAX_SPEND_OUTBOX))) {
+      this.logger.error("spend outbox overflow", {event: "spend.record.lost", spendEntry: JSON.stringify(item.entry)});
+      this.storage.spendOutbox.delete(item.id);
     }
   }
 
@@ -6132,6 +6226,9 @@ class OverseerImpl implements AgentHooks {
     }
     let cost = jev?.ok ? jev.decision.cost : undefined;
     if (cost) this.#addChatCost(chatId, cost);
+    // Вопрос Jev оплачен, даже если ответ негоден; цена — из ответа OpenRouter, если он её назвал.
+    if (jev) this.recordModelSpend(chatId, "router", {usd: cost ?? 0, estimated: cost === undefined,
+      provider: "openrouter", model: JEV_MODEL, inputTokens: 0, outputTokens: 0});
     // Текст сообщения и ключ в журнал не пишутся.
     this.logger.info("chat message routed", {
       event: "chat.code_route", chatId, codeMode: mode, codeRouteTarget: route.target, codeRouteReason: route.reason,
@@ -7834,6 +7931,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
         name: this.impl.storage.title.get(),
       },
       metadata: { source: "model-binding", gadgetId: this.impl.ctx.id.toString() },
+      spendUserObjectId: this.clientUser.id.toString(),
     }
 
     let creationSpec: GatekeeperCreationSpec = {
@@ -9529,7 +9627,7 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
     const quick = userMeta.quickModel;
     const result = await ensureNativeTitle(format, editor, quick ? async text => completeText(getModel(this.impl.env, quick, userMeta.profile, {
       metadata: { source: "gadget-title", gadgetId: this.impl.ctx.id.toString() },
-    }), { prompt: titlePrompt(text) }) : undefined);
+    }), { prompt: titlePrompt(text), onSpend: spend => this.impl.recordModelSpend(chatId, "document.title", spend) }) : undefined);
     if (result?.generated) {
       // Вкладка рабочего места называется так же, как документ.
       const current = this.impl.getGadgetRecord(this.id);

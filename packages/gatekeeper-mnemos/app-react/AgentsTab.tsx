@@ -1,14 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { formatBudgetUSD, parseBudgetUSD } from "../app/budget-money.ts";
 import { projectExpenses, type ProjectExpenses } from "../app/budget-overview.ts";
+import { PERIOD_LABELS, SPENDING_PERIODS, formatRUB, formatUSD, groupName, kindLabel, operationLabel } from "../app/spending-view.ts";
 import type { AdminPerson } from "../src/admin-people.ts";
-import type { ProjectBudgetPolicy } from "../src/mnemos-api.ts";
+import type { ProjectBudgetPolicy, SpendingGroup, SpendingPeriod } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
 import { agentKind, agentNames, isAdministrator, personName, projectName, UNNAMED_DOCUMENT, useLoad, type AgentConnection, type MemoryData } from "./data.ts";
 import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
 import { Card, CardRow, Field, FieldInput, FieldSelect, Pill, PillSelect, RowTitle } from "./admin-ui.tsx";
 
-/** Сколько проектов считать в расходах за раз: каждый проект — несколько запросов к серверу. */
+/** Сколько проектов обходить за задачами команд агентов: каждый проект — несколько запросов к серверу. */
 const EXPENSE_PROJECTS = 10;
 /** Экран моделей — страница оболочки, а не этого приложения. */
 
@@ -243,18 +244,20 @@ function ExternalAgentSetup({data}: {data: MemoryData}) {
   </section>;
 }
 
-/** Бюджет проекта: общий предел, порог без согласования, размер команды и владелец — по имени, из списка сотрудников. */
+/** Бюджет проекта: по умолчанию без ограничения; лимит — необязательная настройка, которую задаёт администратор. */
 function BudgetPanel({ data }: { data: MemoryData }) {
   const ui = useUi();
   const [project, setProject] = useState("");
   const [policy, setPolicy] = useState<ProjectBudgetPolicy | null>(null);
   const [form, setForm] = useState({ owner: "", limit: "0", automatic: "0", team: "1" });
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const people = useLoad(async () => (await ui.listPeople()).users as AdminPerson[], "", [ui]);
+  const unlimited = !policy || policy.revision === 0 || policy.limit_usd_micros === "0";
   useEffect(() => {
     let current = true;
-    setPolicy(null); setNotice(null);
+    setPolicy(null); setNotice(null); setEditing(false);
     if (!project) return;
     setBusy(true);
     void ui.readProjectBudget(project).then(p => {
@@ -265,31 +268,37 @@ function BudgetPanel({ data }: { data: MemoryData }) {
     return () => { current = false; };
   }, [ui, project]);
 
-  async function save() {
+  async function save(values: typeof form, done: string) {
     if (!policy || busy) return;
     setBusy(true); setNotice(null);
     try {
-      const saved = await ui.setProjectBudget(project, { revision: policy.revision, owner_id: form.owner, limit_usd_micros: parseBudgetUSD(form.limit), automatic_usd_micros: parseBudgetUSD(form.automatic), automatic_team_size: Number(form.team) });
+      const saved = await ui.setProjectBudget(project, { revision: policy.revision, owner_id: values.owner, limit_usd_micros: parseBudgetUSD(values.limit), automatic_usd_micros: parseBudgetUSD(values.automatic), automatic_team_size: Number(values.team) });
       setPolicy(saved);
-      setNotice({ tone: "success", text: "Бюджет сохранён." });
+      setForm({ owner: saved.owner_id, limit: formatBudgetUSD(saved.limit_usd_micros), automatic: formatBudgetUSD(saved.automatic_usd_micros), team: String(saved.automatic_team_size || 1) });
+      setEditing(false);
+      setNotice({ tone: "success", text: done });
     } catch {
-      setNotice({ tone: "danger", text: "Бюджет не сохранён. Проверьте суммы: порог без согласования не больше общего бюджета." });
+      setNotice({ tone: "danger", text: "Бюджет не сохранён. Проверьте суммы: порог без согласования не больше лимита, согласующий выбран." });
     } finally { setBusy(false); }
   }
   const owners = people.value ?? [];
   const ownerKnown = owners.some(p => p.userName === form.owner);
-  return <ActionForm aria-label="Бюджет проекта" onAction={() => void save()} className="grid gap-3 rounded-2xl border border-kumo-fill bg-kumo-overlay p-5 text-[14px]">
-    <p className="m-0 text-[13px] text-kumo-subtle">Бюджет ограничивает расходы агентов в проекте. Суммы в долларах США.</p>
+  const showForm = !!policy && (!unlimited || editing);
+  return <ActionForm aria-label="Бюджет проекта" onAction={() => void save(form, "Бюджет сохранён.")} className="grid gap-3 rounded-2xl border border-kumo-fill bg-kumo-overlay p-5 text-[14px]">
+    <p className="m-0 text-[13px] text-kumo-subtle">По умолчанию у проекта нет денежного лимита: агенты работают без остановки и без согласования. Лимит администратор задаёт сам. Суммы в долларах США.</p>
     <Field label="Проект" className="max-w-[360px]">
       <FieldSelect aria-label="Проект бюджета" value={project} disabled={busy} onChange={e => setProject(e.target.value)}>
         <option value="">Выберите проект</option>
         {data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </FieldSelect>
     </Field>
-    {policy && <>
-      {!policy.revision && <Notice>Бюджет ещё не задан: расходы не ограничены этим правилом.</Notice>}
+    {policy && unlimited && !editing && <div className="flex flex-wrap items-center gap-3">
+      <span className="font-medium text-kumo-default">Без ограничения</span>
+      <Pill tone="primary" disabled={busy} onClick={() => { setEditing(true); setNotice(null); setForm(f => ({ ...f, limit: f.limit === "0" ? "" : f.limit, automatic: "0", team: f.team || "1" })); }}>Задать лимит</Pill>
+    </div>}
+    {showForm && <>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Общий бюджет, $"><FieldInput aria-label="Общий бюджет" inputMode="decimal" value={form.limit} disabled={busy} onChange={e => setForm({ ...form, limit: e.target.value })} /></Field>
+        <Field label="Лимит проекта, $"><FieldInput aria-label="Общий бюджет" inputMode="decimal" value={form.limit} disabled={busy} onChange={e => setForm({ ...form, limit: e.target.value })} /></Field>
         <Field label="Без согласования — до, $"><FieldInput aria-label="Порог без согласования" inputMode="decimal" value={form.automatic} disabled={busy} onChange={e => setForm({ ...form, automatic: e.target.value })} /></Field>
         <Field label="Без согласования — агентов в команде до"><FieldInput aria-label="Размер команды без согласования" inputMode="numeric" value={form.team} disabled={busy} onChange={e => setForm({ ...form, team: e.target.value })} /></Field>
         <Field label="Кто согласует расходы сверх порога">
@@ -300,56 +309,76 @@ function BudgetPanel({ data }: { data: MemoryData }) {
           </FieldSelect>
         </Field>
       </div>
-      <div><Pill tone="primary" disabled={busy} onClick={() => void save()}>Сохранить бюджет</Pill></div>
+      <div className="flex flex-wrap gap-2">
+        <Pill tone="primary" disabled={busy} onClick={() => void save(form, "Бюджет сохранён.")}>Сохранить бюджет</Pill>
+        {!unlimited && <Pill disabled={busy} onClick={() => void save({ ...form, limit: "0", automatic: "0", team: "1" }, "Лимит снят: проект работает без ограничения.")}>Снять лимит</Pill>}
+        {unlimited && editing && <Pill tone="ghost" disabled={busy} onClick={() => setEditing(false)}>Отмена</Pill>}
+      </div>
     </>}
     {busy && !policy && project && <Notice>Загрузка…</Notice>}
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
   </ActionForm>;
 }
 
-/** limit: сумма лимита; "" — бюджет не задан; null — бюджет не виден смотрящему. */
-type ExpenseRow = ProjectExpenses & { limit: string | null };
+/** Строка разбивки: имя словами, сумма, рубли и пометка об оценке. */
+function SpendRow({ title, group, rate }: { title: string; group: SpendingGroup; rate?: number }) {
+  const rub = formatRUB(group.micro_usd, rate);
+  const note = `операций ${group.count}${group.estimated_count ? ` · из них по оценке ${group.estimated_count}` : ""}`;
+  return <CardRow><RowTitle title={title} note={note} /><span className="shrink-0 text-right text-[13px] text-kumo-default">{formatUSD(group.micro_usd)}{rub && <span className="block text-kumo-subtle">{rub}</span>}</span></CardRow>;
+}
 
-/** Сумма в долларах словами для строки: «11.2 $». */
-const usd = (micros: string) => `${formatBudgetUSD(micros)} $`;
+type SpendKey = "kinds" | "operations" | "projects" | "people" | "agents" | "models";
 
-/** Сколько потрачено всего и по проектам — из учёта вызовов агентов; лимит — из бюджета проекта, если он виден.
- * Неполные данные честно помечены. */
+/** Сколько потрачено на модели и платные службы: итог за период и разбивки по видам, проектам, людям, агентам и моделям. */
 function ExpensesPanel({ data }: { data: MemoryData }) {
   const ui = useUi();
+  const [period, setPeriod] = useState<SpendingPeriod>("30d");
+  const timeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ""; } catch { return ""; } })();
+  const summary = useLoad(() => ui.readSpending(period, timeZone), "Расходы не прочитаны. Обновите страницу.", [ui, period]);
   const projects = data.projects.slice(0, EXPENSE_PROJECTS);
-  const expenses = useLoad(async () => {
+  // Задачи команд на платформе агентов считает сама платформа: их суммы показаны отдельно, за всё время.
+  const teams = useLoad(async () => {
     const api = ui as unknown as Parameters<typeof projectExpenses>[0];
-    const rows: ExpenseRow[] = [];
-    for (let i = 0; i < projects.length; i += 4) rows.push(...await Promise.all(projects.slice(i, i + 4).map(async p => {
-      const spent = await projectExpenses(api, p.id, p.name);
-      // Лимит читается только у проектов с расходами; отказ — не ошибка: бюджет видит его владелец или администратор.
-      const limit = spent.proposals > 0 || spent.known !== "0" ? await ui.readProjectBudget(p.id).then(b => b.revision && b.limit_usd_micros !== "0" ? b.limit_usd_micros : "", () => null) : null;
-      return { ...spent, limit };
-    })));
-    return rows;
-  }, "Расходы не прочитаны. Обновите страницу.", [ui, projects.map(p => p.id).join(",")]);
-  const rows = (expenses.value ?? []).filter(r => r.proposals > 0 || r.known !== "0");
-  const total = rows.reduce((sum, r) => sum + BigInt(r.known), 0n).toString();
-  const limits = rows.every(r => r.limit) && rows.length ? rows.reduce((sum, r) => sum + BigInt(r.limit!), 0n) : null;
-  const share = limits ? Math.min(100, Number(BigInt(total) * 100n / (limits || 1n))) : null;
-  return <section aria-label="Расходы по проектам" className="grid gap-5">
+    const rows: ProjectExpenses[] = [];
+    for (let i = 0; i < projects.length; i += 4) rows.push(...await Promise.all(projects.slice(i, i + 4).map(p => projectExpenses(api, p.id, p.name))));
+    return rows.filter(r => r.proposals > 0 || r.known !== "0");
+  }, "", [ui, projects.map(p => p.id).join(",")]);
+  const s = summary.value;
+  const rate = s?.usd_rub_rate;
+  const section = (title: string, key: SpendKey, name: (g: SpendingGroup) => string, skipEmptyKey = false) => {
+    const rows = (s?.[key] ?? []).filter(g => !(skipEmptyKey && !g.key));
+    return <section aria-label={title} key={key}>
+      <Head title={title} />
+      {rows.length ? <Card>{rows.map(g => <SpendRow key={g.key || "-"} title={name(g)} group={g} rate={rate} />)}</Card> : <Notice>{s ? "Трат нет." : "…"}</Notice>}
+    </section>;
+  };
+  return <section aria-label="Расходы" className="grid gap-5">
+    <div className="flex flex-wrap gap-2" aria-label="Период расходов">
+      {SPENDING_PERIODS.map(p => <Pill key={p} tone={p === period ? "secondary" : "ghost"} aria-pressed={p === period} onClick={() => setPeriod(p)}>{PERIOD_LABELS[p]}</Pill>)}
+    </div>
     <Card className="p-5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-[34px] font-semibold tracking-[-1px] text-kumo-default">{expenses.value ? usd(total) : "—"}</span>
-        <span className="text-[14px] text-kumo-subtle">{limits ? `потрачено агентами из ${usd(limits.toString())} бюджетов проектов` : "потрачено агентами в ваших проектах"}</span>
+        <span className="text-[34px] font-semibold tracking-[-1px] text-kumo-default" data-spending-total>{s ? formatUSD(s.micro_usd) : "—"}</span>
+        {s && rate ? <span className="text-[17px] text-kumo-default">{formatRUB(s.micro_usd, rate)}</span> : null}
+        <span className="text-[14px] text-kumo-subtle">{s ? `${s.all_visible ? "потрачено в организации" : "потрачено от вашего имени"} · ${PERIOD_LABELS[period].toLowerCase()}` : ""}</span>
       </div>
-      {share !== null && <div aria-hidden="true" className="mt-3 h-2 overflow-hidden rounded-full bg-kumo-tint"><div className="h-full rounded-full bg-kumo-brand" style={{ width: `${share}%` }} /></div>}
-      <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Расчёт по учтённым вызовам агентов, в долларах США. Это не счёт поставщика.</p>
+      {summary.loading && !s && <div className="mt-2"><Notice>Считаем расходы…</Notice></div>}
+      {summary.error && <div className="mt-2"><Notice tone="danger">{summary.error}</Notice></div>}
+      {s && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Операций {s.count}{s.estimated_count ? `, из них ${s.estimated_count} по оценке: поставщик не назвал цену, она посчитана по каталогу` : ""}. Цена берётся из ответа поставщика моделей, в долларах США{rate ? `; рубли — по курсу установки ${rate}` : ""}.</p>}
     </Card>
-    <div>
-      <Head title="Расходы по проектам" />
-      {expenses.loading && !expenses.value ? <Notice>Считаем расходы…</Notice> : expenses.error ? <Notice tone="danger">{expenses.error}</Notice> : !rows.length ? <Notice>Агенты пока ничего не потратили в ваших проектах.</Notice> :
-        <Card>{rows.map(r => <CardRow key={r.project}>
-          <RowTitle title={r.name} note={`потрачено ${formatBudgetUSD(r.known)} $ · зарезервировано ${formatBudgetUSD(r.reserved)} $ · заявок ${r.proposals}${r.complete ? "" : " · данные неполные"}`} />
-          <span className="shrink-0 text-right text-[13px] text-kumo-subtle">{r.limit ? `лимит ${usd(r.limit)}` : r.limit === "" ? "без лимита" : ""}</span>
-        </CardRow>)}</Card>}
+    {section("По видам", "kinds", g => kindLabel(g.key))}
+    {section("По операциям", "operations", g => operationLabel(g.key))}
+    {section("Расходы по проектам", "projects", g => groupName("projects", g.key, g.name))}
+    {section("По людям", "people", g => groupName("people", g.key, g.name))}
+    {section("По агентам", "agents", g => groupName("agents", g.key, g.name), true)}
+    {section("По моделям", "models", g => groupName("models", g.key, g.name))}
+    {(teams.value ?? []).length > 0 && <section aria-label="Задачи команд агентов">
+      <Head title="Задачи команд агентов" />
+      <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Эти задачи считает платформа агентов; суммы за всё время, в итог выше не входят.</p>
+      <Card>{(teams.value ?? []).map(r => <CardRow key={r.project}>
+        <RowTitle title={r.name} note={`потрачено ${formatBudgetUSD(r.known)} $ · зарезервировано ${formatBudgetUSD(r.reserved)} $ · заявок ${r.proposals}${r.complete ? "" : " · данные неполные"}`} />
+      </CardRow>)}</Card>
       {data.projects.length > EXPENSE_PROJECTS && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показаны первые {EXPENSE_PROJECTS} проектов.</p>}
-    </div>
+    </section>}
   </section>;
 }

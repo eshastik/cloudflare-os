@@ -157,6 +157,25 @@ test("workspace activity carries no user or time and refreshes credentials witho
   assert.equal(calls.length,2);
 });
 
+test("траты уходят в /v1/spending без человека и агента в теле; сводка читается за период", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "credential", async (url, init) => {
+    calls.push({ url: String(url), init });
+    return init?.method === "POST" ? Response.json({ recorded: 1 }) : Response.json({ period: "7d", micro_usd: "5", count: 1 });
+  });
+  const entry = { record_id: "chat:1", occurred_at: "2026-09-24T10:00:00.000Z", kind: "chat" as const, operation: "chat.reply", provider: "openrouter", model: "deepseek/deepseek-v4-flash-0731", project_id: "p1", micro_usd: "110292", estimated: false, input_tokens: 900, output_tokens: 20 };
+  assert.deepEqual(await api.recordSpending([entry]), { recorded: 1 });
+  assert.equal(calls[0].url, "https://memory.example/v1/spending");
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { records: [entry] });
+  for (const bad of [[], [{ ...entry, micro_usd: 1 }], [{ ...entry, kind: "ingest" }], [{ ...entry, operation: "Chat Reply" }], Array(101).fill(entry)]) {
+    assert.throws(() => api.recordSpending(bad as never), MnemosAPIError);
+  }
+  await api.readSpending("7d", "Europe/Moscow");
+  assert.equal(calls[1].url, "https://memory.example/v1/spending?period=7d&tz=Europe%2FMoscow");
+  assert.throws(() => api.readSpending("year" as never), MnemosAPIError);
+  assert.equal(calls.length, 2);
+});
+
 test("corporate JSON card creation sends the original receipt and request",async()=>{
  const version="a".repeat(64);
  const request={request_id:"request",expected_head:version,parent_id:"",name:"Bitrix company 1",content_type:"application/json",upload_id:"upload",corporate_preview_id:"receipt",message:"Copy"};

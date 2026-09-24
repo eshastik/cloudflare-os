@@ -65,6 +65,10 @@
       "types": "./src/ui-readiness.ts",
       "import": "./src/ui-readiness.ts"
     },
+    "./spending": {
+      "types": "./src/spending.ts",
+      "import": "./src/spending.ts"
+    },
     "./drive-import": {
       "types": "./src/drive-import.ts",
       "import": "./src/drive-import.ts"
