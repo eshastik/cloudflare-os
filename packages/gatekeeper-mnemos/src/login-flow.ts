@@ -11,7 +11,9 @@ export interface LoginConfig {
   iamClientSecret: string;
   callbackUrl: string;
 }
-interface PendingLogin { generation: string; phase: "starting" | "waiting" | "consuming" | "finished"; deadline: number; state?: string; verifier?: string }
+interface PendingLogin { generation: string; phase: "starting" | "waiting" | "consuming" | "finished"; deadline: number; state?: string; verifier?: string; invitation?: string }
+/** Код одноразовой ссылки-приглашения: 32 случайных байта в base64url. */
+export const INVITATION_CODE = /^[A-Za-z0-9_-]{43}$/;
 const KEY = "mnemosLogin";
 const failure = () => new Error("Mnemos login failed");
 function https(value: string): URL {
@@ -52,7 +54,9 @@ export class LoginFlow {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
     } catch { throw failure(); }
   }
-  async begin(): Promise<string> {
+  /** invitation — код ссылки-приглашения; при первом входе он заводит человека в организации. */
+  async begin(invitation?: string): Promise<string> {
+    if (invitation !== undefined && !INVITATION_CODE.test(invitation)) throw failure();
     const old = this.#storage.get<PendingLogin>(KEY);
     if (old && old.phase !== "finished" && old.deadline > Date.now()) throw failure();
     const generation = crypto.randomUUID(); const started = Date.now();
@@ -64,7 +68,7 @@ export class LoginFlow {
       const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
       const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
       this.#check(generation, "starting");
-      const pending: PendingLogin = { generation, phase: "waiting", deadline: started + issued.expires_in_ms, state: issued.state, verifier };
+      const pending: PendingLogin = { generation, phase: "waiting", deadline: started + issued.expires_in_ms, state: issued.state, verifier, ...(invitation ? { invitation } : {}) };
       if (pending.deadline <= Date.now()) throw failure();
       this.#storage.put(KEY, pending);
       const url = new URL(this.#config.authorizationEndpoint);
@@ -82,7 +86,7 @@ export class LoginFlow {
       this.#check(pending.generation, "consuming");
       if (typeof provider.id_token !== "string" || !provider.id_token || provider.id_token.length > 65536) throw failure();
       const started = Date.now();
-      const credential = await this.#json(this.#config.iamOrigin + "/v1/session/credential", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.#config.iamClientSecret }, body: JSON.stringify({ state: pending.state, id_token: provider.id_token }) });
+      const credential = await this.#json(this.#config.iamOrigin + "/v1/session/credential", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.#config.iamClientSecret }, body: JSON.stringify({ state: pending.state, id_token: provider.id_token, ...(pending.invitation ? { invitation: pending.invitation } : {}) }) });
       this.#check(pending.generation, "consuming");
       if (typeof credential.access_token !== "string" || !credential.access_token || /\s/.test(credential.access_token) || credential.token_type !== "Bearer" || !Number.isInteger(credential.expires_in) || credential.expires_in <= 0 || credential.expires_in > HUMAN_SESSION_MS / 1000) throw failure();
       return { token: credential.access_token, expiresAt: started + credential.expires_in * 1000 };

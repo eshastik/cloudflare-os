@@ -25,7 +25,7 @@ function formatExpiry(value: string): string {
 }
 
 /** Диалог подтверждения внешнего агента поверх «Подключений». Фрейм аккаунта открывается и закрывается здесь; в iframe ничего не передаётся. */
-export default function AgentConsentDialog({ requestIds, api, onClose }: { requestIds: string[]; api: Api; onClose: () => void }) {
+export default function AgentConsentDialog({ requestIds, api, onClose, returnTo = href => window.location.assign(href) }: { requestIds: string[]; api: Api; onClose: () => void; returnTo?: (href: string) => void }) {
   const request = requestIds.length === 1 && REQUEST_ID.test(requestIds[0]) ? requestIds[0] : null
   const [opened, setOpened] = useState<Opened | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -33,6 +33,7 @@ export default function AgentConsentDialog({ requestIds, api, onClose }: { reque
   const [notice, setNotice] = useState(request === null ? INVALID_LINK : '')
   const [callback, setCallback] = useState<string | null>(null)
   const [settled, setSettled] = useState(false)
+  const [chosen, setChosen] = useState<Set<string>>(new Set())
   const deciding = useRef(false)
   const revision = useRef(0)
 
@@ -47,7 +48,7 @@ export default function AgentConsentDialog({ requestIds, api, onClose }: { reque
       acquired = value
       setOpened(value)
       const shown = await value.frame.agentConsent.preview(request)
-      if (revision.current === current) setPreview(shown)
+      if (revision.current === current) { setPreview(shown); setChosen(new Set((shown.projects ?? []).map(p => p.project_id))) }
     }).catch(() => {
       if (revision.current === current) setNotice(acquired ? EXPIRED : NO_ACCOUNT)
     }).finally(() => { if (revision.current === current) setBusy(false) })
@@ -60,14 +61,17 @@ export default function AgentConsentDialog({ requestIds, api, onClose }: { reque
     const selection = preview.selection, current = revision.current
     setBusy(true); setPreview(null); setNotice('')
     try {
-      const result = await opened.frame.agentConsent.decide(selection, approved)
+      const projectIds = preview.projects ? preview.projects.map(p => p.project_id).filter(id => chosen.has(id)) : undefined
+      const result = await opened.frame.agentConsent.decide(selection, approved, projectIds)
       if (revision.current !== current) return
       const target = new URL(result.redirect_uri)
       const loopback = ['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)
       if (target.username || target.password || target.hash ||
           (target.protocol !== 'https:' && !(target.protocol === 'http:' && loopback))) throw new Error('Invalid callback')
       setCallback(target.href)
-      setNotice(approved ? 'Подключение подтверждено. Вернитесь в клиент агента, чтобы завершить вход.' : 'Подключение отклонено. Вернитесь в клиент агента.')
+      setNotice(approved ? 'Подключение подтверждено. Возвращаем вас в клиент агента…' : 'Подключение отклонено. Возвращаем вас в клиент агента…')
+      // Клиент агента ждёт этот адрес: переход без лишнего клика; ссылка ниже — на случай, если браузер его не выполнил.
+      returnTo(target.href)
     } catch {
       if (revision.current === current) setNotice(UNCONFIRMED)
     } finally { if (revision.current === current) { setSettled(true); setBusy(false) } }
@@ -118,6 +122,26 @@ export default function AgentConsentDialog({ requestIds, api, onClose }: { reque
                 </div>
               </div>
             </div>
+
+            {preview.projects && (
+              <div>
+                <h3 className="mb-2 text-[13px] leading-[18px] font-medium text-kumo-default">Проекты, с которыми агент сможет работать</h3>
+                {preview.projects.length === 0
+                  ? <p className="m-0 text-[12px] leading-4 text-kumo-subtle">У вас пока нет проектов. Агент подключится без доступа к документам.</p>
+                  : <ul className="m-0 list-none overflow-hidden rounded-xl border border-kumo-line p-0">
+                      {preview.projects.map(project => (
+                        <li key={project.project_id} className="border-t border-kumo-line first:border-t-0">
+                          <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-[13px] leading-[18px] text-kumo-default">
+                            <input type="checkbox" data-consent-project={project.project_id} disabled={busy}
+                              checked={chosen.has(project.project_id)}
+                              onChange={event => setChosen(prev => { const next = new Set(prev); if (event.target.checked) next.add(project.project_id); else next.delete(project.project_id); return next })} />
+                            <span className="min-w-0 flex-1 truncate">{project.name || 'Проект без названия'}</span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>}
+              </div>
+            )}
 
             <div>
               <h3 className="mb-2 text-[12px] leading-4 font-semibold uppercase tracking-[0.6px] text-kumo-subtle">Запрошенные операции и область</h3>

@@ -703,9 +703,11 @@ export interface GatekeeperAgentConsent extends RpcTarget {
     scopes: string[];
     /** Server expiry in ISO 8601 format. */
     expires_at: string;
+    /** Projects the person can see; the agent gets only the ones chosen on the screen. */
+    projects?: { project_id: string; name: string }[];
   }>;
   /** Decide only the previously displayed request, using the account's current authority. */
-  decide(selection: string, approved: boolean): Promise<{
+  decide(selection: string, approved: boolean, projectIds?: string[]): Promise<{
     /** Registered callback with saved state and code or denial; never log or persist it. */
     redirect_uri: string;
   }>;

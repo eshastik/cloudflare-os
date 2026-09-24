@@ -248,7 +248,9 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
     button("Проверить состояние задачи").click();
     await until(() => button("Новая задача") && !button("Новая задача").disabled);
     button("Новая задача").click(); await until(() => button("Сохранить задачу") && !button("Сохранить задачу").disabled);
-    assert.ok(dom.window.document.body.textContent.includes("Example team · alice"));
+    // Идентификатор человека на экране не показывается — только организация.
+    assert.ok(dom.window.document.body.textContent.includes("Example team"));
+    assert.ok(!dom.window.document.body.textContent.includes("Example team · alice"));
     assert.ok(dom.window.document.body.textContent.includes("Shared project"));
     button("Согласования").click();
     await until(() => button("Следующая страница согласований"));
@@ -345,7 +347,7 @@ test("built iframe uses MessagePort capability and requires explicit revocation"
     button("История: Team note").click();
     await until(() => button("Следующая страница истории"));
     assert.ok(dom.window.document.body.textContent.includes("Документ удалён из общей версии"));
-    assert.ok(dom.window.document.body.textContent.includes("От имени: alice"));
+    assert.ok(dom.window.document.body.textContent.includes("От имени: вы"));
     assert.equal(dom.window.document.querySelector("section b"), null);
     button("Выбрать для сравнения").click();
     button("Следующая страница истории").click();

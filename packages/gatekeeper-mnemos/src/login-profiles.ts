@@ -30,6 +30,8 @@ export class LoginProfiles {
     this.#storage.put(KEY,selected);
   }
   origins(apiOrigin:string,storageOrigin?:string){const id=this.#pinned()??'default';const p=this.#profiles.find(p=>p.id===id);if(!p)throw Error('Organization unavailable');return {apiOrigin:p.apiOrigin??apiOrigin,storageOrigin:p.storageOrigin??storageOrigin}}
+  /** Организация этого аккаунта: закреплённая или основная. */
+  current(){return this.#pinned()??'default'}
   config(){const id=this.#pinned()??'default';const profile=this.#profiles.find(p=>p.id===id);if(!profile)throw Error('Organization unavailable');return profile.config}
 }
 

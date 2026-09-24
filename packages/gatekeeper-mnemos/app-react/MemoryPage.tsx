@@ -62,7 +62,8 @@ export default function MemoryPage({ legacy }: { legacy: HTMLElement }) {
   const managePeople = capabilities.includes("principal.manage");
   const organizationVisible = managePeople || capabilities.includes("platform.metrics.read");
   const page = section && sections[section];
-  const denied = section === "people" && !managePeople || section === "organization" && !organizationVisible;
+  // «Люди и доступ» решают сами: руководителю отдела без полномочия там доступно приглашение в свой отдел.
+  const denied = section === "organization" && !organizationVisible;
 
   if (section === undefined) return <p role="status" className="p-8">Загрузка раздела…</p>;
 

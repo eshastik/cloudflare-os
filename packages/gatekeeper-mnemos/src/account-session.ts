@@ -724,6 +724,12 @@ export class MnemosAccountSession {
   async decideShareRequest(request: string, approve: boolean) {
     await this.whoAmI(); const out = await this.#client.decideShareRequest(request, approve, this.#lifetime.signal); this.#check(); return out;
   }
+  async listOrgUnits() { this.#check(); const out = await this.#client.listOrgUnits(this.#lifetime.signal); this.#check(); return out; }
+  async createOrgUnit(name: string) { this.#check(); const out = await this.#client.createOrgUnit(name, this.#lifetime.signal); this.#check(); return out; }
+  async setOrgUnitMember(unit: string, principal: string, member: boolean, head: boolean) { this.#check(); await this.#client.setOrgUnitMember(unit, principal, member, head, this.#lifetime.signal); this.#check(); }
+  async listInvitations() { this.#check(); const out = await this.#client.listInvitations(this.#lifetime.signal); this.#check(); return out; }
+  async createInvitation(email: string, displayName: string, orgUnit: string) { this.#check(); const out = await this.#client.createInvitation(email, displayName, orgUnit, this.#lifetime.signal); this.#check(); return out; }
+  async revokeInvitation(id: string) { this.#check(); const out = await this.#client.revokeInvitation(id, this.#lifetime.signal); this.#check(); return out; }
   async readProjectSharingSettings() {
     this.#check(); const out = await this.#client.readProjectSharingSettings(this.#lifetime.signal); this.#check(); return out;
   }
@@ -794,21 +800,27 @@ export class MnemosAccountSession {
     if (!preview || typeof preview.client_id !== "string" || !preview.client_id ||
         typeof preview.resource !== "string" || !preview.resource ||
         !Array.isArray(preview.scopes) || !preview.scopes.every(scope => typeof scope === "string" && scope.length > 0) ||
-        typeof preview.expires_at !== "string" || !(Date.parse(preview.expires_at) > Date.now())) throw new MnemosAPIError(502);
+        typeof preview.expires_at !== "string" || !(Date.parse(preview.expires_at) > Date.now()) ||
+        (preview.projects !== undefined && preview.projects !== null && (!Array.isArray(preview.projects) || preview.projects.length > 10000 ||
+          !preview.projects.every(p => !!p && typeof p.project_id === "string" && !!p.project_id && p.project_id.length <= 255 && typeof p.name === "string" && p.name.length <= 255)))) throw new MnemosAPIError(502);
+    if (!preview.projects) preview.projects = [];
     const selection = crypto.randomUUID();
     this.#consent = { selection, request, preview: structuredClone(preview) };
     return { selection, ...preview };
   }
-  async decideAgentConsent(selection: string, approved: boolean) {
+  /** projectIds — выбор человека из показанных проектов; не передан — все показанные. */
+  async decideAgentConsent(selection: string, approved: boolean, projectIds?: string[]) {
     this.#check();
     const consent = this.#consent;
     if (!consent || selection !== consent.selection || typeof approved !== "boolean" ||
         !(Date.parse(consent.preview.expires_at) > Date.now())) throw new MnemosAPIError(409);
+    const shown = new Set((consent.preview.projects ?? []).map(p => p.project_id));
+    if (projectIds !== undefined && (!Array.isArray(projectIds) || projectIds.length > 100 || !projectIds.every(id => typeof id === "string" && shown.has(id)))) throw new MnemosAPIError(400);
     // Consume locally before sending: an ambiguous response must never silently
     // retry issuance, and a later preview cannot change this decision's target.
     this.#consent = undefined;
     ++this.#consentRevision;
-    const result = await this.#client.decideAgentConsent(consent.request, consent.preview, approved, this.#lifetime.signal);
+    const result = await this.#client.decideAgentConsent(consent.request, consent.preview, approved, this.#lifetime.signal, projectIds === undefined ? undefined : [...new Set(projectIds)]);
     this.#check();
     return result;
   }

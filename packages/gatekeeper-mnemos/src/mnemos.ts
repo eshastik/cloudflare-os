@@ -804,11 +804,19 @@ export class UserAccount extends DurableObject<Env> {
   async nativeStorageOrigin() { return this.#origins().storageOrigin; }
   #profiles() { return new LoginProfiles(this.ctx.storage.kv,this.env.MNEMOS_LOGIN_CONFIG??'',this.env.MNEMOS_LOGIN_PROFILES); }
   async loginOrganizations(nonce:string) { this.#browser().check(nonce);return this.#profiles().choices(); }
-  async startBrowserLogin(nonce: string, profile?:string): Promise<{ url: string; browserNonce: string }> {
+  async startBrowserLogin(nonce: string, profile?:string, invitation?: string): Promise<{ url: string; browserNonce: string }> {
     this.#browser().check(nonce);
     this.#profiles().select(profile);
     const browserNonce = this.#browser().start(nonce);
-    return { url: await this.beginLogin(), browserNonce };
+    return { url: await this.beginLogin(invitation), browserNonce };
+  }
+  /** Ссылка-приглашение: адрес входа этого подключения и организация, в которую приглашают. */
+  async invitationLink(code: string): Promise<string> {
+    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(code)) throw new Error("Invalid invitation");
+    const callback = new URL(this.#profiles().config().callbackUrl);
+    const link = new URL(callback.pathname.replace(/\/$/, "") + "/invite/" + code, callback.origin);
+    if (this.env.MNEMOS_LOGIN_PROFILES) link.searchParams.set("organization", this.#profiles().current());
+    return link.href;
   }
   async completeBrowserLogin(nonce: string, state: string, code: string): Promise<void> {
     this.#browser().complete(nonce);
@@ -866,7 +874,7 @@ export class UserAccount extends DurableObject<Env> {
     return new LoginFlow(this.ctx.storage.kv, config);
   }
   /** Trusted connector entry only; the human iframe receives no login methods. */
-  async beginLogin(): Promise<string> { return this.#login().begin(); }
+  async beginLogin(invitation?: string): Promise<string> { return this.#login().begin(invitation); }
   /** Consume the provider proof and install its short-lived human credential.
    * No bearer credential crosses the return boundary. */
   async completeLogin(state: string, code: string): Promise<number> {
@@ -1225,9 +1233,11 @@ class MnemosAgentConsent extends RpcTarget {
   async preview(request: string) {
     const identity = await this.#session.whoAmI();
     const preview = await this.#session.previewAgentConsent(request);
-    return { ...preview, account: `${identity.subject.tenant_id} / ${identity.subject.user_id}` };
+    // Человеку показывается организация, а не внутренние идентификаторы.
+    return { ...preview, account: identity.tenant_name || "Mnemos" };
   }
-  async decide(selection: string, approved: boolean) { return this.#session.decideAgentConsent(selection, approved); }
+  /** projectIds — отмеченные человеком проекты; без него агент получает все показанные. */
+  async decide(selection: string, approved: boolean, projectIds?: string[]) { return this.#session.decideAgentConsent(selection, approved, projectIds); }
   [Symbol.dispose](): void { this.#session.dispose(); }
 }
 
@@ -1364,6 +1374,17 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async listShareRequests(...args: Parameters<MnemosAccountSession["listShareRequests"]>) { return this.#session.listShareRequests(...args); }
   async decideShareRequest(...args: Parameters<MnemosAccountSession["decideShareRequest"]>) { return this.#session.decideShareRequest(...args); }
   async readProjectSharingSettings() { return this.#session.readProjectSharingSettings(); }
+  async listOrgUnits() { return this.#session.listOrgUnits(); }
+  async createOrgUnit(name: string) { return this.#session.createOrgUnit(name); }
+  async setOrgUnitMember(unit: string, principal: string, member: boolean, head: boolean) { return this.#session.setOrgUnitMember(unit, principal, member, head); }
+  async listInvitations() { return this.#session.listInvitations(); }
+  /** Ссылка собирается здесь: адрес входа знает только подключение, а не фрейм. */
+  async createInvitation(email: string, displayName: string, orgUnit: string) {
+    if (!this.#telegram) throw new Error("Invitation link unavailable");
+    const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit);
+    return { invitation, link: await this.#telegram.invitationLink(code) };
+  }
+  async revokeInvitation(id: string) { return this.#session.revokeInvitation(id); }
   async updateProjectSharingSettings(...args: Parameters<MnemosAccountSession["updateProjectSharingSettings"]>) { return this.#session.updateProjectSharingSettings(...args); }
   async nodeHistory(projectId: string, nodeId: string, cursor: string) { return this.#session.nodeHistory(projectId, nodeId, cursor, 50); }
   async searchProject(projectId: string, query: string) { return this.#session.searchProject(projectId, query); }

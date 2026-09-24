@@ -31,10 +31,22 @@ export class BrowserLoginBinding {
 const COOKIE = "__Host-mnemos-login";
 const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'", "X-Content-Type-Options": "nosniff" };
 const clearCookie = `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+/** Код ссылки-приглашения живёт в браузере сутки: человек может сначала войти в оболочку, а потом подключить Mnemos. */
+const INVITE_COOKIE = "__Host-mnemos-invite";
+const clearInvite = `${INVITE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+const INVITE = /^[A-Za-z0-9_-]{43}$/;
+const PROFILE = /^[a-z][a-z0-9_-]{0,63}$/;
+function readInvite(request: Request): { code: string; profile?: string } | undefined {
+  const values = (request.headers.get("Cookie") ?? "").split(";").map(item => item.trim()).filter(item => item.startsWith(INVITE_COOKIE + "="));
+  if (values.length !== 1) return undefined;
+  const [code, profile, ...rest] = values[0].slice(INVITE_COOKIE.length + 1).split(".");
+  if (rest.length || !INVITE.test(code) || (profile !== undefined && !PROFILE.test(profile))) return undefined;
+  return { code, profile };
+}
 /** Minimal trusted account port; the HTTP boundary never accepts credentials or identity. */
 export interface BrowserLoginAccount {
   loginOrganizations?(nonce: string): Promise<{id:string;name:string}[]>;
-  startBrowserLogin(nonce: string, profile?: string): Promise<{ url: string; browserNonce: string }>;
+  startBrowserLogin(nonce: string, profile?: string, invitation?: string): Promise<{ url: string; browserNonce: string }>;
   completeBrowserLogin(nonce: string, state: string, code: string): Promise<void>;
 }
 
@@ -47,13 +59,24 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
   if (callback.protocol !== "https:" || callback.username || callback.password || callback.hash || callback.search || url.origin !== callback.origin) return reject(404);
   if (request.method !== "GET") return reject(405);
   try {
+    const invitePrefix = callback.pathname + "/invite/";
+    if (url.pathname.startsWith(invitePrefix)) {
+      if ([...url.searchParams.keys()].some(k => k !== "organization") || url.searchParams.getAll("organization").length > 1) return reject(400);
+      const code = url.pathname.slice(invitePrefix.length);
+      const organization = url.searchParams.get("organization");
+      if (!INVITE.test(code) || (organization !== null && !PROFILE.test(organization))) return reject(404);
+      const value = organization ? `${code}.${organization}` : code;
+      return new Response(null, { status: 303, headers: { ...headers, Location: callback.origin + "/gatekeepers/mnemos",
+        "Set-Cookie": `${INVITE_COOKIE}=${value}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Lax` } });
+    }
     const prefix = callback.pathname + "/start/";
     if (url.pathname.startsWith(prefix)) {
       if ([...url.searchParams.keys()].some(k=>k!=="organization") || url.searchParams.getAll("organization").length>1) return reject(400);
       const parts = url.pathname.slice(prefix.length).split("/");
       if (parts.length !== 2 || parts.some(part => !/^[a-f0-9]{64}$/.test(part))) return reject(404);
       const target=account(parts[0]);
-      const profile=url.searchParams.get('organization')??undefined;
+      const invite=readInvite(request);
+      const profile=url.searchParams.get('organization')??invite?.profile;
       if(profile!==undefined&&!/^[a-z][a-z0-9_-]{0,63}$/.test(profile))return reject(400);
       if(profile===undefined && target.loginOrganizations){
         const choices=await target.loginOrganizations(parts[1]);
@@ -64,7 +87,7 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
           return new Response(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>Организация Mnemos</title><h1>Выберите организацию</h1><ul>${links}</ul></html>`,{headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
         }
       }
-      const result = await target.startBrowserLogin(parts[1],profile);
+      const result = invite ? await target.startBrowserLogin(parts[1],profile,invite.code) : await target.startBrowserLogin(parts[1],profile);
       if (!/^[a-f0-9]{64}$/.test(result.browserNonce)) return reject(403);
       const destination = new URL(result.url);
       if (destination.protocol !== "https:" || destination.username || destination.password) return reject(403);
@@ -80,6 +103,10 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
     const state = url.searchParams.get("state")!, code = url.searchParams.get("code")!;
     if (!state || state.length > 512 || !code || code.length > 8192) return reject(400);
     await account(binding[0]).completeBrowserLogin(binding[1], state, code);
-    return new Response(null, { status: 303, headers: { ...headers, Location: callback.origin + "/gatekeepers/mnemos", "Set-Cookie": clearCookie } });
+    const done = new Headers({ ...headers, Location: callback.origin + "/gatekeepers/mnemos" });
+    done.append("Set-Cookie", clearCookie);
+    // Ссылка одноразовая: после входа код в браузере больше не нужен.
+    if (readInvite(request)) done.append("Set-Cookie", clearInvite);
+    return new Response(null, { status: 303, headers: done });
   } catch { return reject(403); }
 }

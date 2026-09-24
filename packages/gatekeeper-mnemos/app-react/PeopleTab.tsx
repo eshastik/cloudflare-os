@@ -1,16 +1,31 @@
 import { useEffect, useState } from "react";
 import { Button } from "@cloudflare/kumo";
-import { ArrowLeft, Plus, Trash, Users } from "@phosphor-icons/react";
+import { ArrowLeft, Plus, Trash, UserPlus, Users } from "@phosphor-icons/react";
 import type { MemoryData } from "./data.ts";
 import type { AdminPerson, AdminRight, AdminRights } from "../src/admin-people.ts";
 import type { OrganizationRole } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
 import { Notice, Select, StatusBadge, TextInput } from "./ui.tsx";
 import { LegacySwitch, useLegacySection } from "./legacy.tsx";
+import { DepartmentsPanel, InvitePanel, headedUnits, useOrgUnits } from "./Departments.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
-  if (!data.identity?.capabilities?.includes("principal.manage")) return <Notice>Управление людьми недоступно для вашей учётной записи.</Notice>;
+  if (!data.identity?.capabilities?.includes("principal.manage")) return <DepartmentHead data={data} />;
   return <PeopleManager data={data} />;
+}
+/** Руководитель отдела без полномочия управления людьми приглашает сотрудников в свой отдел. */
+function DepartmentHead({ data }: { data: MemoryData }) {
+  const { units, loading } = useOrgUnits();
+  const mine = headedUnits(units, data.identity?.subject?.user_id ?? "");
+  if (loading) return <Notice>Проверка доступа…</Notice>;
+  if (!mine.length) return <Notice>Управление людьми недоступно для вашей учётной записи.</Notice>;
+  return <section aria-label="Мой отдел" className="grid gap-6">
+    {mine.map(unit => <div key={unit.org_unit_id}>
+      <h2 className="m-0 mb-2 text-base font-semibold">Отдел «{unit.name}»</h2>
+      <p className="m-0 text-sm text-kumo-subtle">{unit.members.map(m => m.display_name || "Сотрудник").join(", ")}</p>
+    </div>)}
+    <InvitePanel units={mine} allowNoUnit={false} admin={false} />
+  </section>;
 }
 function PeopleManager({ data }: { data: MemoryData }) {
   const ui = useUi();
@@ -20,7 +35,9 @@ function PeopleManager({ data }: { data: MemoryData }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [view, setView] = useState<"people" | "manual" | "invite" | "units">("people");
+  const adding = view === "manual";
+  const setAdding = (on: boolean) => setView(on ? "manual" : "people");
   const [revision, setRevision] = useState(0);
   useEffect(() => { let current = true; setLoading(true); setError("");
     void ui.listPeople().then(p => { if (current) setPeople(p.users); }, () => { if (current) {setPeople([]);setSelected("");setError("Не удалось получить людей. Проверьте подключение и полномочия.");} }).finally(() => { if (current) setLoading(false); });
@@ -32,13 +49,19 @@ function PeopleManager({ data }: { data: MemoryData }) {
     <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
       <p className="m-0 text-sm text-kumo-subtle">Сотрудников: {people.length}</p>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="ghost" onClick={() => legacy.open({kind:"roleMembership"}, "Группы и компетенции")}>Группы и компетенции</Button>
-        <Button size="sm" variant={adding?"ghost":"primary"} onClick={() => setAdding(!adding)}>{adding?<ArrowLeft size={16}/>:<Plus size={16}/>}{adding?"К сотрудникам":"Добавить человека"}</Button>
+        {view !== "people" ? <Button size="sm" variant="ghost" onClick={() => setView("people")}><ArrowLeft size={16}/>К сотрудникам</Button> : <>
+          <Button size="sm" variant="primary" onClick={() => setView("invite")}><UserPlus size={16}/>Пригласить</Button>
+          <Button size="sm" variant="secondary" onClick={() => setView("units")}>Отделы</Button>
+          <Button size="sm" variant="ghost" onClick={() => legacy.open({kind:"roleMembership"}, "Группы и компетенции")}>Группы и компетенции</Button>
+          <Button size="sm" variant="ghost" onClick={() => setAdding(true)}><Plus size={16}/>Добавить человека</Button>
+        </>}
       </div>
     </div>
+    {view === "invite" && <AdminInvite />}
+    {view === "units" && <DepartmentsPanel people={people} />}
     {adding && <div className="mb-5 rounded-xl border border-kumo-line bg-kumo-elevated p-5"><CreatePerson onCreated={userName => {setAdding(false); setSelected(userName); setRevision(v => v+1);}} /></div>}
     {error && <Notice tone="danger">{error}</Notice>}
-    {!adding&&<div className="grid items-start gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
+    {view==="people"&&<div className="grid items-start gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
       <aside aria-label="Сотрудники" className={`${person ? "hidden md:block" : ""} min-w-0`}>
         <TextInput className="w-full" type="search" aria-label="Найти сотрудника" placeholder="Найти сотрудника…" value={query} onChange={e => setQuery(e.target.value)} />
         <div className="mt-3 flex max-h-[60vh] flex-col gap-1 overflow-y-auto">
@@ -55,11 +78,16 @@ function PeopleManager({ data }: { data: MemoryData }) {
     </div>}
   </section></LegacySwitch>;
 }
+function AdminInvite() {
+  const { units, loading } = useOrgUnits();
+  if (loading) return <Notice>Загрузка отделов…</Notice>;
+  return <InvitePanel units={units} allowNoUnit admin />;
+}
 function CreatePerson({onCreated}: {onCreated(userName: string): void}) {
   const ui = useUi(); const [name,setName]=useState(""); const [id,setId]=useState<string>(() => crypto.randomUUID()); const [issuer,setIssuer]=useState(""); const [subject,setSubject]=useState(""); const [busy,setBusy]=useState(false); const [error,setError]=useState("");
   return <form className="grid gap-3 my-4" onSubmit={e => { e.preventDefault();setBusy(true);setError("");void ui.createPerson({issuer:issuer.trim(),user:{userName:id.trim(),externalId:subject.trim(),displayName:name.trim()}}).then(()=>onCreated(id.trim()),()=>setError("Не удалось добавить человека. Проверьте идентификаторы провайдера и полномочия.")).finally(()=>setBusy(false)); }}>
     <h2 className="m-0 text-base font-semibold">Новый сотрудник</h2>
-    <p className="m-0 text-sm text-kumo-subtle">Подключите существующую учётную запись корпоративного входа.</p>
+    <p className="m-0 text-sm text-kumo-subtle">Проще пригласить сотрудника ссылкой. Здесь — ручное подключение учётной записи корпоративного входа, если её данные уже известны.</p>
     <div className="grid max-w-lg gap-4">
       <label className="grid gap-1.5 text-sm">Имя<TextInput required value={name} onChange={e=>setName(e.target.value)} /></label>
       <label className="grid gap-1.5 text-sm">Сервер входа<TextInput type="url" required placeholder="https://login.example.ru" value={issuer} onChange={e=>setIssuer(e.target.value)} /></label>

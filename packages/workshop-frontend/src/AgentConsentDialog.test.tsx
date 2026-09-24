@@ -35,11 +35,11 @@ function subscribeAccounts(consentFrame: object | null) {
 
 function buttons() { return [...document.body.querySelectorAll('button')].filter(b => b.textContent === 'Подключить агента' || b.textContent === 'Отклонить') }
 
-async function mount(requestIds: string[]) {
+async function mount(requestIds: string[], returnTo = vi.fn<(href: string) => void>()) {
   const onClose = vi.fn<() => void>()
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  await act(async () => root.render(<AgentConsentDialog requestIds={requestIds} api={api} onClose={onClose} />))
+  await act(async () => root.render(<AgentConsentDialog requestIds={requestIds} api={api} onClose={onClose} returnTo={returnTo} />))
   return { onClose, unmount: async () => { await act(async () => root.unmount()); container.remove() } }
 }
 
@@ -81,7 +81,7 @@ for (const host of ['127.0.0.1', 'localhost']) for (const approved of [true, fal
     expect(new URL(callback.href).searchParams.get('state')).toBe('saved')
     expect(new URL(callback.href).searchParams.has('code')).toBe(approved)
     expect(callback.getAttribute('referrerpolicy')).toBe('no-referrer')
-    expect(document.body.textContent).toContain('Вернитесь в клиент агента')
+    expect(document.body.textContent).toContain('Возвращаем вас в клиент агента')
     expect(links.find(a => a.getAttribute('href') === '/gatekeepers/memory')).toBeDefined()
     expect(buttons()).toHaveLength(0)
   } finally {
@@ -132,4 +132,30 @@ it('reports when no connected account offers agent consent and releases every op
     expect(document.body.textContent).toContain('Ни одно подключение не принимает агентов')
     expect(buttons()).toHaveLength(0)
   } finally { await unmount() }
+})
+
+it('lets the person choose projects for the agent and returns to the client without an extra click', async () => {
+  const projects = [{ project_id: 'p1', name: 'Склад' }, { project_id: 'p2', name: 'Продажи' }, { project_id: 'p3', name: '' }]
+  class Consent extends RpcTarget {
+    decideCall = vi.fn(async (_selection: string, _approved: boolean, _ids?: string[]) => ({ redirect_uri: 'http://127.0.0.1:4321/callback?state=saved&code=issued' }))
+    async preview() { return { ...previewValue, projects } }
+    async decide(selection: string, approved: boolean, ids?: string[]) { return this.decideCall(selection, approved, ids) }
+  }
+  const target = new Consent(), capability = new RpcStub(target)
+  subscribeAccounts({ iframeHtml: '', ui: {}, agentConsent: capability })
+  const returnTo = vi.fn<(href: string) => void>()
+  const { unmount } = await mount([REQUEST], returnTo)
+  try {
+    const boxes = [...document.body.querySelectorAll<HTMLInputElement>('input[data-consent-project]')]
+    expect(boxes.map(b => [b.dataset.consentProject, b.checked])).toEqual([['p1', true], ['p2', true], ['p3', true]])
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Склад')
+    expect(text).toContain('Проект без названия')
+    expect(text).not.toContain('p2')
+    await act(async () => boxes[1].click())
+    expect(boxes[1].checked).toBe(false)
+    await act(async () => buttons().find(b => b.textContent === 'Подключить агента')!.click())
+    expect(target.decideCall).toHaveBeenCalledExactlyOnceWith('selection', true, ['p1', 'p3'])
+    expect(returnTo).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4321/callback?state=saved&code=issued')
+  } finally { await unmount(); capability[Symbol.dispose]() }
 })

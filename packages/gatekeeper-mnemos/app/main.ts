@@ -48,6 +48,7 @@ import type {TeamDocumentManagement} from "../src/team-document-creation.ts";
 import {TeamBudgetView} from "./team-budget.ts";
 import {parseBudgetUSD, formatBudgetUSD} from "./budget-money.ts";
 import { startUIReadinessAttempt } from "./ui-readiness.ts";
+import { agentNames, looksLikeId, personName } from "../app-react/names.ts";
 import { histogramPercentileBound } from "./latency.ts";
 import type { MnemosAccountSession, ManagedAgentRequest, ManagedTaskRequest } from "../src/account-session.ts";
 import type { RpcTarget, RpcStub } from "capnweb";
@@ -70,6 +71,13 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  decideShareRequest:MnemosAccountSession["decideShareRequest"];
  readProjectSharingSettings:MnemosAccountSession["readProjectSharingSettings"];
  updateProjectSharingSettings:MnemosAccountSession["updateProjectSharingSettings"];
+ listOrgUnits:MnemosAccountSession["listOrgUnits"];
+ createOrgUnit:MnemosAccountSession["createOrgUnit"];
+ setOrgUnitMember:MnemosAccountSession["setOrgUnitMember"];
+ listInvitations:MnemosAccountSession["listInvitations"];
+ /** Ссылку собирает подключение: код приглашения во фрейм отдельно не попадает. */
+ createInvitation(email:string,displayName:string,orgUnit:string):Promise<{invitation:import("../src/mnemos-api.ts").OrganizationInvitation;link:string}>;
+ revokeInvitation:MnemosAccountSession["revokeInvitation"];
  readWorkshopAgentScope:MnemosAccountSession["readWorkshopAgentScope"];
  updateWorkshopAgentScope:MnemosAccountSession["updateWorkshopAgentScope"];
  readCalendarConnection:MnemosAccountSession["readCalendarConnection"];
@@ -383,6 +391,44 @@ export function confirmLegacyNavigation(): boolean {
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ""): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag); el.textContent = text; return el;
 }
+// Имена вместо идентификаторов: имена людей знает только администратор (список
+// сотрудников), остальным длинный идентификатор заменяется словом.
+let peopleNames = new Map<string, string>();
+function isAdmin(): boolean { return !!identity?.capabilities?.includes("principal.manage"); }
+function person(id: string): string {
+  if (id && id === identity?.subject.user_id) return "вы";
+  return personName(id, peopleNames);
+}
+function agentLabel(id: string): string {
+  const known = agentNames(rows).get(id);
+  if (known) return known;
+  return !id ? "агент" : looksLikeId(id) ? "агент" : id;
+}
+/** Агент — по имени подключения, человек — по имени. */
+function actorLabel(agentId: string | undefined, userId: string): string {
+  return agentId ? `${agentLabel(agentId)} (за ${person(userId)})` : person(userId);
+}
+/** Служебные идентификаторы — только администратору и свёрнуто под «Подробнее». */
+function adminDetails(items: [string, string | undefined][]): HTMLElement[] {
+  const shown = items.filter((item): item is [string, string] => !!item[1]);
+  if (!isAdmin() || !shown.length) return [];
+  const details = element("details"), summary = element("summary", "Подробнее");
+  details.setAttribute("data-admin-details", "");
+  details.append(summary, ...shown.map(([label, value]) => element("p", `${label}: ${value}`)));
+  return [details];
+}
+async function loadPeopleNames(): Promise<void> {
+  if (!isAdmin()) { peopleNames = new Map(); return; }
+  try {
+    const page = await host.ui.listPeople();
+    peopleNames = new Map(page.users.filter(u => u.displayName).map(u => [u.userName, u.displayName]));
+    if (!closed) render();
+  } catch { peopleNames = new Map(); }
+}
+function dateLabel(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+}
 function button(text: string, action: () => void): HTMLButtonElement {
   const b = element("button", text); b.type = "button"; b.disabled = busy; b.addEventListener("click", action); return b;
 }
@@ -578,7 +624,7 @@ function render() {
   if (policyEditor) { renderPolicyEditor(policyEditor); return; }
   if (embedded) { renderEmbeddedTail(); return; }
   if (inboxOpen) { renderInbox(); return; }
-  if (identity) root.append(element("p", `${identity.tenant_name} · ${identity.subject.user_id}`));
+  if (identity) root.append(element("p", identity.tenant_name || "Mnemos"));
   if (identity) {
     root.append(button("Обзор проектов",()=>{signalsOverview=new SignalsOverview(root,host.ui,()=>{signalsOverview=null;render();},project=>{signalsOverview=null;projectSignals=new ProjectSignalsView(root,host.ui,projects,()=>{projectSignals=null;render();},project,task=>{projectSignals=null;void openTaskTracker(task.project,"",task);});void projectSignals.published();});void signalsOverview.load();}));
     root.append(button("Оценка данных проекта",()=>{projectSignals=new ProjectSignalsView(root,host.ui,projects,()=>{projectSignals=null;render();},"",task=>{projectSignals=null;void openTaskTracker(task.project,"",task);});projectSignals.render();}));
@@ -656,8 +702,8 @@ function render() {
   if (!busy && !notice && !rows.length) root.append(element("p", "Подключений пока нет."));
   const list = element("ul");
   for (const row of rows) {
-    const item = element("li"); item.append(element("strong", row.agent_principal_id), element("p", `${row.runtime_id} · ${row.runtime_agent_id}`), element("p", row.revoked ? "Доступ отозван" : "Доступ не отозван"));
-    item.append(button("Разрешения на привлечение", () => void openEngagementEditor(row.binding_id, row.agent_principal_id)));
+    const item = element("li"); item.append(element("strong", agentLabel(row.binding_id)), element("p", row.revoked ? "Доступ отозван" : "Доступ действует"), ...adminDetails([["Подключение", row.binding_id], ["Агент", row.agent_principal_id], ["Среда", row.runtime_id], ["Идентификатор в среде", row.runtime_agent_id]]));
+    item.append(button("Разрешения на привлечение", () => void openEngagementEditor(row.binding_id, agentLabel(row.binding_id))));
     if (row.revoked === false) {
       if (selected === row.binding_id) {
         item.append(element("p", "Отозвать доступ этого агента к Mnemos?"), button("Подтвердить отзыв", () => void revoke(row.binding_id)), button("Отмена", () => { selected = ""; render(); }));
@@ -681,6 +727,7 @@ async function load(more: boolean) {
       const [person, visible, request, task] = await Promise.all([host.ui.whoAmI(), host.ui.listProjects(), host.ui.managedAgentRequest(), host.ui.managedTaskRequest()]);
       if (closed) return;
       identity = person; projects = visible.projects; managedRequest = request; taskRequest = task;
+      void loadPeopleNames();
     }
     const page = await host.ui.listAgentConnections(more ? cursor : "");
     if (closed) return;
@@ -814,9 +861,10 @@ function renderHistory(current: NonNullable<typeof history>) {
     const row = element("li"), date = new Date(event.recorded_at);
     row.append(element("p", event.observed ? "Состояние на момент подключения истории" : event.exists ? "Опубликована версия" : "Документ удалён из общей версии"));
     row.append(element("p", Number.isNaN(date.getTime()) ? "Время не указано" : date.toLocaleString("ru-RU")));
-    if (event.actor) row.append(element("p", `Автор действия: ${event.actor}`));
+    if (event.actor) row.append(element("p", `Автор действия: ${event.on_behalf_of ? agentLabel(event.actor) : person(event.actor)}`));
     else row.append(element("p", "Автор действия не указан"));
-    if (event.on_behalf_of) row.append(element("p", `От имени: ${event.on_behalf_of}`));
+    if (event.on_behalf_of) row.append(element("p", `От имени: ${person(event.on_behalf_of)}`));
+    row.append(...adminDetails([["Исполнитель", event.actor], ["От имени", event.on_behalf_of]]));
     if (event.exists && event.content_type === "text/plain") row.append(button("Открыть эту версию", () => void openHistoryVersion(current, event.event_id)));
     else if (event.exists) row.append(element("p", "Просмотр этого формата пока недоступен."));
     if (!event.exists || event.content_type === "text/plain") {
@@ -1010,8 +1058,8 @@ function renderInbox() {
   if (notice || busy) { const status = element("p", busy ? "Загрузка…" : notice); status.setAttribute("role", "status"); root.append(status); }
   if (!busy && !inboxRows.length) root.append(element("p", inboxCursor ? "На этой странице нет доступных предложений. Можно перейти дальше." : "Доступных предложений нет."));
   for (const review of inboxRows) {
-    const project = projects.find(p => p.id === review.project_id)?.name ?? review.project_id;
-    const role = review.author_id === identity?.subject.user_id ? "Отправлено вами" : `Автор: ${review.author_id}`;
+    const project = projects.find(p => p.id === review.project_id)?.name ?? "Проект недоступен";
+    const role = review.author_id === identity?.subject.user_id ? "Отправлено вами" : `Автор: ${person(review.author_id)}`;
     const item = element("section");
     item.append(element("h3", project), element("p", role), element("p", review.domains.map(d => d.domain_id).join(", ")),
       button("Открыть согласование", () => void openInboxReview(review.candidate_id)));
@@ -1189,7 +1237,7 @@ async function savePolicy() {
 function renderManagedAgent() {
   root.append(element("h2", "Выдать агента AgenticOS"));
   if (managedRequest) {
-    root.append(element("p", `Шаблон: ${managedRequest.template_id}`));
+    root.append(element("p", "Заявка на агента AgenticOS отправлена."), ...adminDetails([["Шаблон", managedRequest.template_id]]));
     if (managedRequest.result) {
       root.append(element("p", "Агент подготовлен. Права на документы назначаются отдельно."));
       root.append(button("Новая заявка", () => void managedAction("finish")));
@@ -1227,13 +1275,13 @@ async function openTaskTracker(project="",node="",gapTask?:SignalGapTask) {
 function renderAgentTask() {
   root.append(element("h2", "Задача агенту"));
   if (taskRequest) {
-    if(taskRequest.voice)root.append(element("p", `Источник: аудиозапись ${taskRequest.voice.source_request_id}, версия ${taskRequest.voice.revision}. Подтверждение: ${taskRequest.voice.confirmation_id}.`));
-    root.append(element("p", `Агент: ${taskRequest.binding_id}`), element("pre", taskRequest.message), element("h3", "Критерии приёмки"), element("p", taskRequest.criteria ?? "У прежней задачи критерии не сохранены."));
+    if(taskRequest.voice)root.append(element("p", `Источник: аудиозапись, версия текста ${taskRequest.voice.revision}.`), ...adminDetails([["Аудиозапись", taskRequest.voice.source_request_id], ["Подтверждение", taskRequest.voice.confirmation_id]]));
+    root.append(element("p", `Агент: ${agentLabel(taskRequest.binding_id)}`), ...adminDetails([["Подключение", taskRequest.binding_id], ["Задача", taskRequest.request_id]]), element("pre", taskRequest.message), element("h3", "Критерии приёмки"), element("p", taskRequest.criteria ?? "У прежней задачи критерии не сохранены."));
     if(taskRequest.tracker){const {project_id,node_id}=taskRequest.tracker;root.append(button("Открыть выбранный трекер",()=>void openTaskTracker(project_id,node_id)));}
     if (taskRequest.outcome?.state === "completed") {
       root.append(element("p", "Запуск завершён. Проверьте результат по критериям."), element("pre", taskRequest.outcome.result?.content ?? ""));
       if (taskRequest.legacy_review) root.append(element("p", "Прежнее личное решение (не общая приёмка): " + taskRequest.legacy_review.decision), element("p", taskRequest.legacy_review.comment));
-      if (taskRequest.review) root.append(element("p", `${taskRequest.review.decision === "accepted" ? "Принято" : "Требуется доработка"} · ${taskRequest.review.reviewer_id} · ${taskRequest.review.reviewed_at}`), element("p", taskRequest.review.comment));
+      if (taskRequest.review) root.append(element("p", `${taskRequest.review.decision === "accepted" ? "Принято" : "Требуется доработка"} · ${person(taskRequest.review.reviewer_id)} · ${dateLabel(taskRequest.review.reviewed_at) || taskRequest.review.reviewed_at}`), element("p", taskRequest.review.comment));
       const comment = element("textarea"); comment.setAttribute("aria-label", "Комментарий приёмки"); comment.value = taskReviewComment; comment.disabled = busy; comment.maxLength = 3000; comment.addEventListener("input", () => {taskReviewComment = comment.value;});
       root.append(comment, button("Принять результат", () => void reviewAgentTask("accepted")), button("Вернуть на доработку", () => void reviewAgentTask("changes_requested")));
       if (taskRequest.review || !taskRequest.criteria) root.append(button("Новая задача", () => void taskAction("finish")));
@@ -1265,7 +1313,7 @@ function renderAgentTask() {
       root.append(button(budgetStopped?"Перенести остановленную задачу в историю":taskRequest.cancel_requested?"Повторить отмену задачи":"Отменить задачу",()=>void taskAction("cancel")));
       if(!budgetStopped) root.append(element("p","Отмена останавливает дальнейшие вызовы и переносит задачу в историю. Уже начатый вызов может завершиться."));
     }
-    if(taskRequest.team_budget) root.append(element("p",`Бюджетная заявка: ${taskRequest.team_budget.proposal_id}. Запуск требует действующего согласования.`),button("Открыть бюджет задачи",()=>void openTaskBudget()));
+    if(taskRequest.team_budget) root.append(element("p","Задача идёт по бюджетной заявке. Запуск требует действующего согласования."),...adminDetails([["Заявка", taskRequest.team_budget.proposal_id]]),button("Открыть бюджет задачи",()=>void openTaskBudget()));
     if (!taskRequest.submitted && !taskRequest.team_budget && !taskRequest.budget_request) root.append(button("Удалить неотправленную задачу", () => void taskAction("discard")));
     if (taskRequest.submitted || taskRequest.team_budget) root.append(button("Проверить состояние задачи", () => void taskAction("refresh")));
     return;
@@ -1415,7 +1463,7 @@ function renderEngagementEditor() {
     void saveEngagementRule({requester_id: state.requester.trim(), project_id: state.project, purpose: state.purpose, revision: current?.revision ?? 0, enabled: true});
   }));
   for (const rule of state.page.rules) {
-    const item = element("section"); item.append(element("p", `${rule.requester_id} · ${projects.find(p => p.id === rule.project_id)?.name ?? "Проект недоступен"} · ${engagementPurposes[rule.purpose]} · ${rule.enabled ? "Разрешено" : "Отозвано"}`));
+    const item = element("section"); item.append(element("p", `${agentNames(rows).get(rule.requester_id) ?? person(rule.requester_id)} · ${projects.find(p => p.id === rule.project_id)?.name ?? "Проект недоступен"} · ${engagementPurposes[rule.purpose]} · ${rule.enabled ? "Разрешено" : "Отозвано"}`), ...adminDetails([["Участник", rule.requester_id]]));
     item.append(button(rule.enabled ? "Отозвать разрешение" : "Разрешить снова", () => void saveEngagementRule({...rule, enabled: !rule.enabled}))); root.append(item);
   }
   if (!state.page.rules.length) root.append(element("p", "Другим участникам привлечение не разрешено."));
@@ -1525,7 +1573,7 @@ function renderCollaborations() {
   if (state.progress) {
     root.append(element("h3", collaborationStates[state.progress.state]));
     const review = state.progress.review;
-    if (review) root.append(element("p", `${review.agent_id || review.user_id} · ${review.created_at}`), element("p", review.comment));
+    if (review) root.append(element("p", `${actorLabel(review.agent_id, review.user_id)} · ${dateLabel(review.created_at) || review.created_at}`), element("p", review.comment));
     if (state.progress.result_sequence && detail.requester_user_id === identity?.subject.user_id) {
       const comment = element("textarea"); comment.setAttribute("aria-label", "Обоснование приёмки обращения"); comment.value = state.reviewComment ?? ""; comment.disabled = busy || !!state.pendingReview; comment.addEventListener("input", () => {state.reviewComment = comment.value;});
       root.append(comment);
@@ -1534,9 +1582,9 @@ function renderCollaborations() {
     }
   }
   root.append(element("h3", detail.title), element("p", detail.description), element("h4", "Критерии результата"), element("p", detail.criteria));
-  root.append(element("p", `Отправитель: ${detail.requester_agent_id || detail.requester_user_id} · владелец ${detail.requester_user_id}`), element("p", `Получатель: ${detail.target_agent_id || detail.target_user_id} · владелец ${detail.target_user_id} · ${detail.role === "observer" ? "Наблюдатель" : "Соисполнитель"}`));
-  root.append(element("p", `Источник: ${detail.node_id} · версия ${detail.source_head}`));
-  for (const message of state.messages.messages) root.append(element("p", `${message.kind === "result" ? "Результат проверки" : "Комментарий"} · ${message.agent_id || message.user_id} · ${message.created_at}`), element("p", message.body));
+  root.append(element("p", `Отправитель: ${actorLabel(detail.requester_agent_id, detail.requester_user_id)}`), element("p", `Получатель: ${actorLabel(detail.target_agent_id, detail.target_user_id)} · ${detail.role === "observer" ? "Наблюдатель" : "Соисполнитель"}`));
+  root.append(element("p", `Проект: ${projects.find(p => p.id === detail.project_id)?.name ?? "проект недоступен"}`), ...adminDetails([["Обращение", detail.request_id], ["Документ", detail.node_id], ["Версия", detail.source_head], ["Отправитель", detail.requester_agent_id || detail.requester_user_id], ["Получатель", detail.target_agent_id || detail.target_user_id]]));
+  for (const message of state.messages.messages) root.append(element("p", `${message.kind === "result" ? "Результат проверки" : "Комментарий"} · ${actorLabel(message.agent_id, message.user_id)} · ${dateLabel(message.created_at) || message.created_at}`), element("p", message.body));
   if (!state.messages.messages.length) root.append(element("p", "На этой странице сообщений нет."));
   const kind = element("select"); kind.setAttribute("aria-label", "Тип сообщения"); kind.append(new Option("Комментарий", "comment"), new Option("Результат проверки", "result")); kind.value = state.kind; kind.disabled = busy || !!state.pendingMessage; kind.addEventListener("change", () => {state.kind = kind.value as "comment" | "result";});
   const text = element("textarea"); text.setAttribute("aria-label", "Сообщение участникам"); text.value = state.text; text.disabled = busy || !!state.pendingMessage; text.addEventListener("input", () => {state.text = text.value;}); root.append(kind, text, button(state.pendingMessage ? "Повторить отправку сообщения" : "Отправить сообщение", () => void sendCollaborationMessage()));
@@ -1590,10 +1638,10 @@ function renderTaskHistory() {
  const state = taskHistory!; root.append(element("h2", "История задач агента"));
  if (notice) root.append(element("p", notice));
  if (state.selected) {
-  const task = state.selected; root.append(element("p", `Агент: ${task.binding_id}`), element("pre", task.message), element("h3", "Критерии приёмки"), element("p", task.criteria ?? "У прежней задачи критерии не сохранены."));
-  if (task.team_budget) root.append(element("p", `Заявка команды: ${task.team_budget.proposal_id}. Роль: ${task.team_budget.role}. Доработка требует новой согласованной заявки команды.`));
+  const task = state.selected; root.append(element("p", `Агент: ${agentLabel(task.binding_id)}`), ...adminDetails([["Подключение", task.binding_id], ["Задача", task.request_id]]), element("pre", task.message), element("h3", "Критерии приёмки"), element("p", task.criteria ?? "У прежней задачи критерии не сохранены."));
+  if (task.team_budget) root.append(element("p", `Задача команды, роль: ${task.team_budget.role}. Доработка требует новой согласованной заявки команды.`), ...adminDetails([["Заявка команды", task.team_budget.proposal_id]]));
   if (task.cancelled) root.append(element("p","Дальнейшие вызовы отменены. Уже начатый вызов мог завершиться; результат проверяется отдельно."));
-  if (task.parent_request_id) root.append(element("p", `Доработка задачи: ${task.parent_request_id}`));
+  if (task.parent_request_id) root.append(element("p", "Это доработка прежней задачи."), ...adminDetails([["Прежняя задача", task.parent_request_id]]));
   if(task.deferred) {
     root.append(element("p",task.resumed?"Этот черновик уже возвращён в работу.":"Отложенный бюджетный черновик. Сохранение заявки на сервере не подтверждено; отмена не выполнялась."));
     if(!task.resumed)root.append(button("Вернуть бюджетный черновик",()=>{void(async()=>{
@@ -1612,7 +1660,7 @@ function renderTaskHistory() {
     busy=false;if(!closed)render();
   })();}));
   if (task.legacy_review) root.append(element("p", "Прежнее личное решение (не общая приёмка): " + task.legacy_review.decision), element("p", task.legacy_review.comment));
-  if (task.review) root.append(element("p", `${task.review.decision === "accepted" ? "Принято" : "Требуется доработка"} · ${task.review.reviewer_id}`), element("p", task.review.comment));
+  if (task.review) root.append(element("p", `${task.review.decision === "accepted" ? "Принято" : "Требуется доработка"} · ${person(task.review.reviewer_id)}`), element("p", task.review.comment));
   if(task.review?.decision === "changes_requested" && task.team_budget) root.append(button("Подготовить бюджет доработки",()=>{void(async()=>{
    if(busy||closed)return;busy=true;notice="";render();
    try {const draft=await host.ui.prepareTeamBudgetRework(task.request_id);if(closed)return;taskHistory=null;budgetEditor=null;teamBudgetView=new TeamBudgetView(root,host.ui,draft.project_id,(review)=>{teamBudgetView=null;if(review)taskRequest=review;render();});await teamBudgetView.load();teamBudgetView.prepareRework(draft.proposal);}
@@ -1721,7 +1769,7 @@ function renderAbsenceEditor() {
   if (state.saved) root.append(element("p", state.saved.enabled ? `Разрешено: ${new Date(state.saved.starts_at).toLocaleString()} — ${new Date(state.saved.ends_at).toLocaleString()}` : "Замещение отключено"));
   for (const [key,label,managed] of [["local","Локальный Claude Code / Codex",false],["managed","Корпоративный агент",true]] as const) {
     const select = element("select"); select.setAttribute("aria-label",label); select.append(new Option("Выберите агента", ""));
-    for (const row of rows.filter(row => !row.revoked && (managed ? row.managed_runtime === true : row.managed_runtime === false))) select.append(new Option(`${row.agent_principal_id} · ${row.runtime_id}`,row.binding_id));
+    for (const row of rows.filter(row => !row.revoked && (managed ? row.managed_runtime === true : row.managed_runtime === false))) select.append(new Option(agentLabel(row.binding_id),row.binding_id));
     if (state[key] && !Array.from(select.options).some(option => option.value === state[key])) select.append(new Option("Сохранённое подключение (проверьте доступность)",state[key]));
     select.value = state[key]; select.disabled = busy || state.uncertain; select.addEventListener("change",()=>{state[key]=select.value;}); root.append(element("label",label),select);
   }
