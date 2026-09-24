@@ -22,8 +22,10 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { GatekeeperConnectCallback, GatekeeperUser } from "@gadgets/workshop-shared/gatekeeper";
 import { createWorkshopLogger } from "../observability";
-import { CLOUDFLARE_VENDOR_ID } from "../user.js";
+import { gatekeeperLoginPolicy } from "./login-policy.js";
 import { readAdminConfig } from "../admin-config.js";
+import { shellLoginTarget } from "./login-aliases.js";
+import type { UserDurableObject } from "../user.js";
 
 const logger = createWorkshopLogger("workshop.auth");
 
@@ -77,6 +79,31 @@ export class PendingLogin extends DurableObject<Cloudflare.Env> {
 
 type LoginCallbackProps = { pendingId: string; vendorId: string };
 
+// Находит (или заводит) пользователя оболочки по подтверждённой почте и выдаёт токен сессии
+// "<имя объекта>:<секрет>". null — заводить нового нельзя.
+export async function signInViaGatekeeper(
+    users: DurableObjectNamespace<UserDurableObject>, env: { LOGIN_ALIASES?: string }, email: string,
+    vendorId: string, signupsEnabled: boolean,
+    link: (stub: DurableObjectStub<UserDurableObject>) => Promise<void>): Promise<string | null> {
+  // Почта может быть привязана к существующей учётной записи (login-aliases.ts).
+  const target = shellLoginTarget(env, email);
+  const userStub = users.get(users.idFromName(target.name));
+  // Closed signups block first-time account creation here too (not just password signup); an
+  // existing user signing in is unaffected. Исключение — Mnemos, см. login-policy.ts.
+  const policy = gatekeeperLoginPolicy(vendorId, signupsEnabled);
+  // Привязанная учётная запись обязана уже существовать: вместо неё пустую не заводим.
+  const secret = await userStub.loginOrCreateViaGatekeeper(email, policy.allowCreate && !target.aliased);
+  if (secret === null) return null;
+  // For Cloudflare, signing in also links the account for AI Gateway billing: startGatekeeperLogin
+  // requested full (non-transient) scopes, so persist the grant as a connected account before
+  // handing back the session. Other providers use minimal, transient sign-in grants (no persist).
+  // Mnemos тоже: вход в оболочку через него сразу даёт подключённый Mnemos без второго входа.
+  if (policy.persistConnection) await link(userStub);
+  // Session tokens are "<doName>:<secret>"; PublicApi.authenticate() routes via idFromName of
+  // the first part: почта или привязанное имя.
+  return `${target.name}:${secret}`;
+}
+
 export class LoginConnectCallbackImpl
     extends WorkerEntrypoint<Cloudflare.Env, LoginCallbackProps>
     implements GatekeeperConnectCallback {
@@ -103,28 +130,18 @@ export class LoginConnectCallbackImpl
         await pending.fail("This account has no verified email, so it can't be used to sign in.");
         return;
       }
-      const userStub = this.ctx.exports.UserDurableObject.get(
-          this.ctx.exports.UserDurableObject.idFromName(email));
-      // Closed signups block first-time account creation here too (not just password signup); an
-      // existing user signing in is unaffected.
       const signupsEnabled = (await readAdminConfig(this.env)).signupsEnabled;
-      const secret = await userStub.loginOrCreateViaGatekeeper(email, signupsEnabled);
-      if (secret === null) {
+      const token = await signInViaGatekeeper(this.ctx.exports.UserDurableObject, this.env, email,
+          this.ctx.props.vendorId, signupsEnabled,
+          stub => stub.linkConnectedAccountFromLogin(account, this.ctx.props.vendorId, expiresAt));
+      if (token === null) {
         loginLogger.info("gatekeeper login finished", {
           event: "gatekeeper.login.finished", outcome: "signups_disabled",
         });
         await pending.fail("New sign-ups are currently disabled on this deployment.");
         return;
       }
-      // For Cloudflare, signing in also links the account for AI Gateway billing: startGatekeeperLogin
-      // requested full (non-transient) scopes, so persist the grant as a connected account before
-      // handing back the session. Other providers use minimal, transient sign-in grants (no persist).
-      if (this.ctx.props.vendorId === CLOUDFLARE_VENDOR_ID) {
-        await userStub.linkConnectedAccountFromLogin(account, this.ctx.props.vendorId, expiresAt);
-      }
-      // Session tokens are "<doName>:<secret>"; PublicApi.authenticate() routes via idFromName of
-      // the first part. The user DO is keyed by email, so the prefix must be the email.
-      await pending.deliver(`${email}:${secret}`);
+      await pending.deliver(token);
       loginLogger.info("gatekeeper login finished", {
         event: "gatekeeper.login.finished", outcome: "ok",
       });

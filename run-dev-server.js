@@ -295,13 +295,22 @@ for (const gk of gatekeepers) {
   // For local testing, create an account named "admin" to test admin features.
   config.vars = config.vars || {};
   config.vars.ADMINS = ["admin"];
+  // Установка добавляет администраторов оболочки по почте (вход через Mnemos
+  // заводит пользователя с именем, равным почте): ADMINS='["owner@example.ru"]'.
+  if (process.env.ADMINS) {
+    const extra = JSON.parse(process.env.ADMINS);
+    if (!Array.isArray(extra) || extra.some(name => typeof name !== "string")) {
+      throw new TypeError("ADMINS должен быть JSON-массивом строк");
+    }
+    config.vars.ADMINS = [...new Set([...config.vars.ADMINS, ...extra])];
+  }
 
   // Pass through the optional OAuth sign-in / AI Gateway billing env vars from the shell
   // environment, so you can run e.g.
   //   ENABLE_CLOUDFLARE_LIMITS=true DAILY_LLM_CALL_LIMIT=1 pnpm dev-server
   // without editing any config files.
   const OPTIONAL_FEATURE_VARS = [
-    "DISABLE_PASSWORD_AUTH", "AUTH_GATEKEEPERS", "ENABLE_CLOUDFLARE_LIMITS", "PUBLIC_BASE_URL",
+    "DISABLE_PASSWORD_AUTH", "AUTH_GATEKEEPERS", "LOGIN_ALIASES", "SHELL_SERVICE_TOKEN", "ENABLE_CLOUDFLARE_LIMITS", "PUBLIC_BASE_URL",
     "DAILY_LLM_CALL_LIMIT", "MINIMUM_CLOUDFLARE_BALANCE",
     // Platform AI Gateway — makes the cross-provider model catalog available. The
     // ACCOUNT_ID/API_TOKEN pair is required whenever CF_AI_GATEWAY is set (all inference goes
@@ -342,7 +351,7 @@ for (const gk of gatekeepers) {
     config.assets = {
       directory: "../workshop-frontend/dist",
       not_found_handling: "single-page-application",
-      run_worker_first: ["/api", "/api/*", "/blueprint-screenshot/*"],
+      run_worker_first: ["/api", "/api/*", "/blueprint-screenshot/*", "/__service/*"],
     };
   }
 

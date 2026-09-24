@@ -22,6 +22,18 @@ function https(value: string): URL {
   return url;
 }
 function base64url(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, ""); }
+const EMAIL = /^[^\s@]{1,64}@[^\s@]+\.[^\s@]+$/;
+/** Подтверждённая почта из полезной нагрузки ID-токена или undefined. */
+export function verifiedEmail(idToken: string): string | undefined {
+  try {
+    const part = idToken.split(".")[1] ?? "";
+    const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(Uint8Array.from(atob(part.replaceAll("-", "+").replaceAll("_", "/")), c => c.charCodeAt(0)));
+    const claims = JSON.parse(text);
+    if (claims?.email_verified !== true || typeof claims.email !== "string") return undefined;
+    const email = claims.email.trim().toLowerCase();
+    return email.length <= 254 && EMAIL.test(email) ? email : undefined;
+  } catch { return undefined; }
+}
 function formComponent(value: string): string { return new URLSearchParams({ v: value }).toString().slice(2); }
 
 /** Internal DO controller. The owning account retains its trusted Workshop callback
@@ -72,11 +84,14 @@ export class LoginFlow {
       if (pending.deadline <= Date.now()) throw failure();
       this.#storage.put(KEY, pending);
       const url = new URL(this.#config.authorizationEndpoint);
-      url.search = new URLSearchParams({ response_type: "code", client_id: this.#config.clientId, redirect_uri: this.#config.callbackUrl, scope: "openid", state: issued.state, nonce: issued.nonce, code_challenge: challenge, code_challenge_method: "S256" }).toString();
+      // Провайдер входа — сам Mnemos: код приглашения нужен его странице входа, чтобы показать,
+      // кто и куда приглашает, и подставить почту из приглашения.
+      url.search = new URLSearchParams({ response_type: "code", client_id: this.#config.clientId, redirect_uri: this.#config.callbackUrl, scope: "openid email", state: issued.state, nonce: issued.nonce, code_challenge: challenge, code_challenge_method: "S256", ...(invitation ? { invitation } : {}) }).toString();
       return url.href;
     } catch { this.#finish(generation); throw failure(); }
   }
-  async complete(state: string, code: string): Promise<{ token: string; expiresAt: number }> {
+  /** email — подтверждённая почта из ID-токена; есть, только если провайдер её выдал. */
+  async complete(state: string, code: string): Promise<{ token: string; expiresAt: number; email?: string }> {
     const pending = this.#storage.get<PendingLogin>(KEY);
     if (!pending || typeof state !== "string" || state !== pending.state || typeof code !== "string" || !code || code.length > 8192) throw failure();
     this.#check(pending.generation, "waiting");
@@ -89,7 +104,10 @@ export class LoginFlow {
       const credential = await this.#json(this.#config.iamOrigin + "/v1/session/credential", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.#config.iamClientSecret }, body: JSON.stringify({ state: pending.state, id_token: provider.id_token, ...(pending.invitation ? { invitation: pending.invitation } : {}) }) });
       this.#check(pending.generation, "consuming");
       if (typeof credential.access_token !== "string" || !credential.access_token || /\s/.test(credential.access_token) || credential.token_type !== "Bearer" || !Number.isInteger(credential.expires_in) || credential.expires_in <= 0 || credential.expires_in > HUMAN_SESSION_MS / 1000) throw failure();
-      return { token: credential.access_token, expiresAt: started + credential.expires_in * 1000 };
+      // Почту читаем только после того, как IAM принял этот же токен (подпись, издатель, nonce):
+      // сам мост подпись не проверяет, а токен получен им напрямую с адреса выдачи по TLS.
+      const email = verifiedEmail(provider.id_token);
+      return { token: credential.access_token, expiresAt: started + credential.expires_in * 1000, ...(email ? { email } : {}) };
     } finally { this.#finish(pending.generation); }
   }
   #finish(generation: string): void {

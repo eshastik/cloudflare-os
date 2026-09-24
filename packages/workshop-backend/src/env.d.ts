@@ -71,6 +71,9 @@ declare global {
       // on to avoid locking everyone out).
       DISABLE_PASSWORD_AUTH?: string;
 
+      LOGIN_ALIASES?: string;        // {"почта": "имя"} — вход через гейткипер в существующую учётную запись
+      SHELL_SERVICE_TOKEN?: string;  // токен служебного маршрута /__service/* для скрипта настройки
+
       // Enables the Cloudflare free-tier limits + top-up flow when set to "true".
       ENABLE_CLOUDFLARE_LIMITS?: string;
 

@@ -82,7 +82,7 @@ const AVATAR = { url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/s
 export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Vendor {
   async describe(): Promise<VendorDescription> {
     return { displayName: "Mnemos", url: new URL(callbackUrl(this.env)).origin, logo: AVATAR,
-      tagline: "Документы и знания команды", providesAuth: false, providesAccountUi: true };
+      tagline: "Документы и знания команды", providesAuth: true, providesAccountUi: true };
   }
   async connectAccount(callback: Fetcher<GatekeeperConnectCallback>, options?: GatekeeperConnectOptions): Promise<{ url: string }> {
     if (options?.resourceUrlPatterns?.some(pattern=>![CALDAV_RESOURCE.urlPattern,IMAP_RESOURCE.urlPattern,WEBDAV_RESOURCE.urlPattern].includes(pattern))) throw new Error("Mnemos agent resources are not configured");
@@ -171,7 +171,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
     const nonce = await this.#account().prepareReconnect();
     return { url: `${callbackUrl(this.env)}/start/${this.ctx.props.userObjectId}/${nonce}` };
   }
-  async getAuthenticatedEmail(): Promise<string | null> { return null; }
+  /** Почта, подтверждённая входом в Mnemos этого подключения; оболочка по ней заводит сеанс. */
+  async getAuthenticatedEmail(): Promise<string | null> { return this.#account().authenticatedEmail(); }
   async getSupportedResources(): Promise<SupportedResource[]> { return [CALDAV_RESOURCE,IMAP_RESOURCE,WEBDAV_RESOURCE]; }
   async getGatekeeperClassFor(_url: string): Promise<{ class: DurableObjectClass<Gatekeeper<any>>; resource: SupportedResource }> { throw new Error("Mnemos agent resources are not configured"); }
   async startResourceConfigurator(_pattern: string): Promise<ResourceConfiguratorFrame> { throw new Error("Mnemos agent resources are not configured"); }
@@ -208,6 +209,8 @@ export class MnemosVerifier extends WorkerEntrypoint<Env, { userObjectId: string
 }
 
 /** Per-account storage; HTTP exposes only the nonce-bound login boundary. */
+/** Ключ хранилища подключения: почта из последнего успешного входа в Mnemos. */
+const AUTHENTICATED_EMAIL = "authenticatedEmail";
 export class UserAccount extends DurableObject<Env> {
  constructor(ctx:DurableObjectState,env:Env){
   super(ctx,env);
@@ -851,7 +854,9 @@ export class UserAccount extends DurableObject<Env> {
     }
     await this.#alarms().clear('login');
   }
+  async authenticatedEmail(): Promise<string | null> { return this.ctx.storage.kv.get<string>(AUTHENTICATED_EMAIL) ?? null; }
   #disconnectAccount(){
+    this.ctx.storage.kv.delete(AUTHENTICATED_EMAIL);
     this.#account().disconnect();
     for(const prefix of ['caldavAccount','imapAccount']){
       for(const [key] of [...this.ctx.storage.kv.list({prefix})])this.ctx.storage.kv.delete(key);
@@ -895,6 +900,8 @@ export class UserAccount extends DurableObject<Env> {
     const epoch = this.ctx.storage.kv.get<string>("loginRevocationEpoch");
     const credential = await this.#login().complete(state, code);
     if (this.ctx.storage.kv.get<string>("loginRevocationEpoch") !== epoch) throw new Error("Mnemos login cancelled");
+    if (credential.email) this.ctx.storage.kv.put(AUTHENTICATED_EMAIL, credential.email);
+    else this.ctx.storage.kv.delete(AUTHENTICATED_EMAIL);
     // connect also fences revocation during its identity verification request.
     await this.#account().connect(credential.token, credential.expiresAt);
     return credential.expiresAt;

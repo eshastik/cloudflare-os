@@ -7,12 +7,18 @@ interface OAuthButtonsProps {
   rpcStub: RpcStub<PublicApi>
   vendors: AuthVendorInfo[]
   onSuccess?: () => void
+  /** Основной способ входа: одна крупная кнопка вместо «Войти через …». */
+  primary?: { vendorId: string; label: string }
 }
+
+/** Сколько ждать результата после закрытия окна входа: окно Mnemos закрывается само сразу после
+ * выдачи сеанса, и ответ по RPC может прийти на мгновение позже. */
+export const POPUP_CLOSE_GRACE_MS = 3000
 
 // Renders a sign-in button per auth-capable gatekeeper vendor. Clicking opens the gatekeeper's
 // OAuth popup (which self-closes) and waits for the result over RPC; on success the session token is
 // stored and the app re-authenticates.
-export default function OAuthButtons({ rpcStub, vendors, onSuccess }: OAuthButtonsProps) {
+export default function OAuthButtons({ rpcStub, vendors, onSuccess, primary }: OAuthButtonsProps) {
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<string | null>(null)
 
@@ -73,8 +79,11 @@ export default function OAuthButtons({ rpcStub, vendors, onSuccess }: OAuthButto
           loginRpcRef.current = null
           fn()
         }
+        let closedAt: number | null = null
         pollRef.current = window.setInterval(() => {
-          if (popup.closed) finish(() => reject(new Error('Вход отменён.')))
+          if (!popup.closed) return
+          closedAt ??= Date.now()
+          if (Date.now() - closedAt >= POPUP_CLOSE_GRACE_MS) finish(() => reject(new Error('Вход отменён.')))
         }, 500)
         attempt.wait()
           .then(t => finish(() => resolve(t)))
@@ -94,7 +103,17 @@ export default function OAuthButtons({ rpcStub, vendors, onSuccess }: OAuthButto
   return (
     <div className="space-y-3">
       {error && <Banner variant="error" title={error} />}
-      {vendors.map((vendor) => (
+      {vendors.map((vendor) => vendor.vendorId === primary?.vendorId ? (
+        <button
+          key={vendor.vendorId}
+          type="button"
+          onClick={() => start(vendor.vendorId)}
+          disabled={pending !== null}
+          className="flex h-[50px] w-full cursor-pointer items-center justify-center gap-2 rounded-[14px] border-0 bg-kumo-brand text-[15px] font-semibold text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {pending === vendor.vendorId ? 'Завершите вход в открывшемся окне…' : primary.label}
+        </button>
+      ) : (
         <Button
           key={vendor.vendorId}
           variant="secondary"

@@ -11,6 +11,9 @@ import { useConnectionLost } from './RpcContext'
 import OAuthButtons from './components/auth/OAuthButtons'
 import SiteLogo from './components/SiteLogo'
 
+/** Идентификатор гейткипера Mnemos: суффикс привязки GATEKEEPER_MNEMOS. */
+export const MNEMOS_VENDOR_ID = 'mnemos'
+
 
 interface LoginPageProps {
   rpcStub: RpcStub<PublicApi>
@@ -26,7 +29,11 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
   const serverConfigError = useServerConfigError()
   const siteName = useSiteName()
   const connectionLost = useConnectionLost()
-  useDocumentTitle('Войти')
+  const [emergencyOpen, setEmergencyOpen] = useState(false)
+  // Ссылка из письма-приглашения приводит сюда с меткой #invite; сам код лежит в HttpOnly-cookie
+  // и читается только мостом Mnemos при входе.
+  const [invited] = useState(() => typeof window !== 'undefined' && window.location.hash === '#invite')
+  useDocumentTitle(invited ? 'Приглашение' : 'Войти')
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -84,36 +91,47 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
 
   const authVendors = serverConfig.authVendors ?? []
   const passwordAuthEnabled = serverConfig.passwordAuthEnabled
+  const mnemos = authVendors.some(vendor => vendor.vendorId === MNEMOS_VENDOR_ID)
+  // Вход через Mnemos — основной: почта и код или пароль вводятся на странице Mnemos. Пароль
+  // оболочки при этом — только аварийный доступ, и он спрятан за ссылкой.
+  const showPasswordForm = passwordAuthEnabled && (!mnemos || emergencyOpen)
 
   const field = 'h-[50px] w-full rounded-[14px] border border-kumo-fill-hover bg-kumo-overlay px-4 text-[15px] text-kumo-default placeholder:text-kumo-inactive outline-none transition-[border-color,box-shadow] focus:border-kumo-ring focus:ring-[3px] focus:ring-kumo-ring/15 disabled:opacity-60'
 
-  // Макет Login: знак и заголовок по центру, сначала вход через внешние службы, под чертой «или» —
-  // рабочая учётная запись с паролем.
+  // Макет Login: знак и заголовок по центру, сначала вход через Mnemos или внешние службы, под
+  // чертой «или» — учётная запись с паролем, если установка её оставила.
   return (
     <div className="flex min-h-screen items-center justify-center bg-kumo-base px-4">
       <div className="flex w-full max-w-[400px] flex-col items-center gap-[18px]">
         <SiteLogo size={44}>
           <Hexagon size={44} className="text-kumo-brand" />
         </SiteLogo>
-        <h1 className="m-0 text-center text-[30px] leading-9 font-semibold tracking-[-0.8px] text-kumo-default">Вход в {siteName}</h1>
-        <p className="m-0 mb-2 text-center text-[15px] text-kumo-subtle">Память вашей компании и агент, который с ней работает.</p>
+        <h1 className="m-0 text-center text-[30px] leading-9 font-semibold tracking-[-0.8px] text-kumo-default">
+          {invited ? 'Вас пригласили в Mnemos' : `Вход в ${siteName}`}
+        </h1>
+        <p className="m-0 mb-2 text-center text-[15px] text-kumo-subtle">
+          {invited
+            ? 'Нажмите «Принять приглашение»: откроется окно Mnemos, где вы получите код на почту или зададите пароль.'
+            : 'Память вашей компании и агент, который с ней работает.'}
+        </p>
 
         {authVendors.length > 0 && (
           <div className="w-full">
             {!passwordAuthEnabled && error && (
               <Banner variant="error" title={error} className="mb-4" />
             )}
-            <OAuthButtons rpcStub={rpcStub} vendors={authVendors} onSuccess={onLoginSuccess} />
+            <OAuthButtons rpcStub={rpcStub} vendors={authVendors} onSuccess={onLoginSuccess}
+              primary={mnemos ? { vendorId: MNEMOS_VENDOR_ID, label: invited ? 'Принять приглашение' : 'Войти' } : undefined} />
           </div>
         )}
 
-        {passwordAuthEnabled && authVendors.length > 0 && (
+        {showPasswordForm && authVendors.length > 0 && (
           <div className="flex w-full items-center gap-3 text-[13px] text-kumo-inactive">
             <span className="h-px flex-1 bg-kumo-fill" />или<span className="h-px flex-1 bg-kumo-fill" />
           </div>
         )}
 
-        {passwordAuthEnabled && (
+        {showPasswordForm && (
           <form onSubmit={handleSubmit} className="flex w-full flex-col gap-3">
             <label htmlFor="login-username" className="sr-only">Рабочая почта или логин</label>
             <input
@@ -151,8 +169,15 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
           </form>
         )}
 
+        {passwordAuthEnabled && mnemos && !emergencyOpen && (
+          <button type="button" onClick={() => setEmergencyOpen(true)}
+            className="cursor-pointer border-0 bg-transparent p-0 text-[13px] text-kumo-subtle hover:underline">
+            Аварийный вход по паролю
+          </button>
+        )}
+
         <p className="m-0 mt-1.5 text-center text-[13px] text-kumo-subtle">
-          {passwordAuthEnabled && serverConfig.signupsEnabled ? (
+          {passwordAuthEnabled && !mnemos && serverConfig.signupsEnabled ? (
             <>Нет учётной записи?{' '}<Link to="/signup" className="text-kumo-link hover:underline">Создать</Link></>
           ) : 'Нет доступа? Попросите руководителя прислать приглашение.'}
         </p>

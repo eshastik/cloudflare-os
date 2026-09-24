@@ -25,7 +25,9 @@ import { LanguageModelGatekeeper } from "./ai-models";
 import { getAiGatewayConfig } from "./ai-gateway.js";
 import { AdminSettings, AdminApiImpl } from "./admin-settings.js";
 import { BlueprintKvRecord, buildBlueprintArchiveStream, sanitizeBlueprintOutput, listFeaturedBlueprintsFromKv, parseBlueprintArchive, randomBlueprintId, readBlueprintContent, readBlueprintKvRecord } from "./blueprint-archive.js";
-import { GatekeeperConnectCallbackImpl, normalizeUsername, UserDurableObject, CLOUDFLARE_VENDOR_ID } from "./user";
+import { GatekeeperConnectCallbackImpl, normalizeUsername, UserDurableObject } from "./user";
+import { gatekeeperLoginPolicy } from "./auth/login-policy.js";
+import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
@@ -746,9 +748,9 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
         { props: { pendingId: pendingId.toString(), vendorId } });
     // For most providers, sign-in needs only minimal scopes to verify the user's email (the grant is
     // transient); capability scopes are requested later via an explicit connectAccount. Cloudflare is
-    // the exception: signing in with Cloudflare also links AI Gateway billing, so it requests the
+    // the exception (and Mnemos, see auth/login-policy.ts): signing in with Cloudflare also links AI Gateway billing, so it requests the
     // full (persistent) scope set up front and LoginConnectCallbackImpl persists the connection.
-    const scopes = vendorId === CLOUDFLARE_VENDOR_ID ? "full" : "auth";
+    const { scopes } = gatekeeperLoginPolicy(vendorId, false);
     const { url } = await vendor.connectAccount(callback, { scopes });
     // @ts-expect-error Cap'n Web RPC stubs and native RPC targets are compatible but the type
     //     system doesn't know this.
@@ -889,6 +891,14 @@ export default {
     // OAuth redirect lands on `/gatekeeper/<name>/oauth`); the result is bridged back to the waiting
     // browser via the `attempt` stub from PublicApi.startGatekeeperLogin(). So the backend no longer
     // hosts /auth/* callbacks.
+
+    if (url.pathname === SERVICE_ROUTE) {
+      return handleServiceRoute(req, {
+        token: env.SHELL_SERVICE_TOKEN,
+        aliases: env.LOGIN_ALIASES,
+        summary: name => ctx.exports.UserDurableObject.get(ctx.exports.UserDurableObject.idFromName(name)).accountSummary(),
+      });
+    }
 
     if (url.pathname === "/api/client-errors") {
       return handleClientErrorRequest(req, env, ctx);

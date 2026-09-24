@@ -509,6 +509,21 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return this.storage.profile.get();
   }
 
+  // Сводка для проверки перед привязкой почты (auth/service-route.ts): есть ли учётная запись и
+  // сколько в ней рабочих мест и подключений. Ничего из содержимого наружу не отдаётся.
+  async accountSummary(): Promise<{ exists: boolean; gadgets: number; connectedAccounts: number }> {
+    if (!this.storage.created.get()) return { exists: false, gadgets: 0, connectedAccounts: 0 };
+    let connected = 0;
+    for (let id = 0; id < this.storage.nextAccountId.get(); id++) {
+      try {
+        if (this.storage.connectedAccounts.get(id)) connected++;
+      } catch {
+        connected++; // запись есть, но не загружается (ссылается на исчезнувшую привязку)
+      }
+    }
+    return { exists: true, gadgets: Array.from(this.storage.gadgets.list()).length, connectedAccounts: connected };
+  }
+
   // Like whoami(), but returns null if the account was never initialized.
   async whoamiIfExists(): Promise<AiChatAuthorInfo | null> {
     if (!this.storage.created.get()) {

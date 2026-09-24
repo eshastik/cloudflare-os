@@ -43,6 +43,17 @@ function readInvite(request: Request): { code: string; profile?: string } | unde
   if (rest.length || !INVITE.test(code) || (profile !== undefined && !PROFILE.test(profile))) return undefined;
   return { code, profile };
 }
+// Вход в оболочку идёт во всплывающем окне (у него есть opener): окно закрывается само, а сеанс
+// получает исходная вкладка. Подключение из настроек открывается без opener и, как прежде,
+// переходит на страницу Mnemos в оболочке.
+export const FINISH_SCRIPT = `if(window.opener){window.close()}else{location.replace("/gatekeepers/mnemos")}`;
+const FINISH_PAGE = `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Вход выполнен</title><p style="font-family:system-ui,sans-serif;color:#18201C;text-align:center;margin-top:40px">Вход выполнен. <a href="/gatekeepers/mnemos" style="color:#1D6A50">Перейти в Mnemos</a></p><script>${FINISH_SCRIPT}</script></html>`;
+let finishHash: Promise<string> | undefined;
+export function finishScriptHash(): Promise<string> {
+  return finishHash ??= crypto.subtle.digest("SHA-256", new TextEncoder().encode(FINISH_SCRIPT))
+    .then(sum => "sha256-" + btoa(String.fromCharCode(...new Uint8Array(sum))));
+}
+
 /** Minimal trusted account port; the HTTP boundary never accepts credentials or identity. */
 export interface BrowserLoginAccount {
   loginOrganizations?(nonce: string): Promise<{id:string;name:string}[]>;
@@ -66,7 +77,9 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
       const organization = url.searchParams.get("organization");
       if (!INVITE.test(code) || (organization !== null && !PROFILE.test(organization))) return reject(404);
       const value = organization ? `${code}.${organization}` : code;
-      return new Response(null, { status: 303, headers: { ...headers, Location: callback.origin + "/gatekeepers/mnemos",
+      // Метка #invite не уходит на сервер и в Referer: по ней экран входа оболочки показывает
+      // «Принять приглашение». Сам код остаётся только в HttpOnly-cookie.
+      return new Response(null, { status: 303, headers: { ...headers, Location: callback.origin + "/gatekeepers/mnemos#invite",
         "Set-Cookie": `${INVITE_COOKIE}=${value}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Lax` } });
     }
     const prefix = callback.pathname + "/start/";
@@ -103,10 +116,11 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
     const state = url.searchParams.get("state")!, code = url.searchParams.get("code")!;
     if (!state || state.length > 512 || !code || code.length > 8192) return reject(400);
     await account(binding[0]).completeBrowserLogin(binding[1], state, code);
-    const done = new Headers({ ...headers, Location: callback.origin + "/gatekeepers/mnemos" });
+    const done = new Headers({ ...headers, "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": `default-src 'none'; script-src '${await finishScriptHash()}'; frame-ancestors 'none'; base-uri 'none'` });
     done.append("Set-Cookie", clearCookie);
     // Ссылка одноразовая: после входа код в браузере больше не нужен.
     if (readInvite(request)) done.append("Set-Cookie", clearInvite);
-    return new Response(null, { status: 303, headers: done });
+    return new Response(FINISH_PAGE, { status: 200, headers: done });
   } catch { return reject(403); }
 }

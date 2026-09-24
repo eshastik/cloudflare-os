@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BrowserLoginBinding, handleBrowserLogin } from "./browser-login.ts";
+import { BrowserLoginBinding, FINISH_SCRIPT, finishScriptHash, handleBrowserLogin } from "./browser-login.ts";
 import type { AccountStorage } from "./account-session.ts";
 
 function storage(): AccountStorage {
@@ -46,7 +46,14 @@ test("HTTP callback requires the browser cookie and rejects ambiguous inputs bef
   assert.equal((await run(`${callback}?state=state&code=code`, stored, "POST")).status, 405);
   assert.equal(completions, 0);
   const done = await run(`${callback}?state=state&code=code`, stored);
-  assert.equal(done.status, 303); assert.equal(done.headers.get("Location"), "https://connector.example/gatekeepers/mnemos"); assert.equal(completions, 1); assert.equal(starts, 1);
+  // Завершение — страница, которая закрывает окно входа (или ведёт в Mnemos, если окно открыто без opener);
+  // её единственный скрипт разрешён только по хешу.
+  assert.equal(done.status, 200); assert.equal(completions, 1); assert.equal(starts, 1);
+  const page = await done.text();
+  assert.ok(page.includes(`<script>${FINISH_SCRIPT}</script>`) && page.includes('href="/gatekeepers/mnemos"'));
+  const hash = "sha256-" + Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(FINISH_SCRIPT))).toString("base64");
+  assert.equal(await finishScriptHash(), hash);
+  assert.ok(done.headers.get("Content-Security-Policy")!.startsWith(`default-src 'none'; script-src '${hash}';`));
   assert.ok(done.headers.get("Set-Cookie")!.includes("Max-Age=0"));
   assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
 });
