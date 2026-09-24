@@ -6034,6 +6034,7 @@ class OverseerImpl implements AgentHooks {
       chatMessages: (chatId, afterSequence) => [...this.storage.chats.list({
         prefix: `${keyString(chatId)}.`, reverse: true, limit: CONTEXT_PACK_LOOKBACK,
       })].filter(m => m.sequence > afterSequence).reverse(),
+      attachmentContent: (chatId, attachmentId) => this.getChatAttachmentData(chatId, attachmentId),
     };
   }
 

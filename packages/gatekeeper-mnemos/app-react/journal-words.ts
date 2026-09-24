@@ -6,7 +6,14 @@
 // людей, и собственные технические шаги: попытки записи в хранилище, продление
 // сессий, чтения, пересборку индекса. Человеку показываются только значимые дела;
 // всё, чего нет в перечне значимых, считается технической записью.
+//
+// Журнал действий собирается из двух видов источников: журнал операций
+// организации (GET /v1/admin/audit — туда же пишутся отделы, приглашения, права,
+// видимость проектов) и журналы работ проектов (GET /v1/projects/{p}/work-journal —
+// итоги принятых работ агентов и публикаций). Одно действие может оставить след в
+// обоих; такие пары склеиваются в одну строку (см. mergeJournal).
 import type { OperationAuditEvent } from "../src/operation-audit.ts";
+import type { WorkJournalEntry } from "../src/mnemos-api.ts";
 
 export interface JournalNames {
   /** Имя человека или агента по идентификатору; пустая строка — имя неизвестно. */
@@ -62,7 +69,11 @@ const CAPABILITIES: Record<string, string> = {
   "platform.metrics.read": "смотреть состояние системы",
 };
 
-const VISIBILITY: Record<string, string> = { private: "только себе", department: "своему отделу", organization: "всей организации" };
+/** Кому виден проект после смены видимости. */
+const AUDIENCE: Record<string, string> = { private: "только автор", department: "свой отдел", organization: "вся организация" };
+
+/** Группа администраторов организации: членство в ней — назначение администратором. */
+const ADMINS_GROUP = "system:organization-admins";
 
 interface Say {
   /** Глагол прошедшего времени в роде исполнителя: основа мужского рода. */
@@ -101,7 +112,9 @@ const MEANINGFUL: Record<string, (s: Say) => string> = {
   // Проекты.
   "project.create": s => { const name = s.names.project(s.p[0]); return `${s.v("создал")} проект${name ? ` «${name}»` : ""}`; },
   "project.description.set": s => { const name = s.names.project(s.p[0]); return `${s.v("изменил")} описание проекта${name ? ` «${name}»` : ""}`; },
-  "project.visibility.request": s => { const name = s.names.project(s.p[0]); return `${s.v("попросил")} открыть проект${name ? ` «${name}»` : ""} ${VISIBILITY[s.p[1]] ?? "шире"}`; },
+  // Сервер пишет эту запись и когда видимость применена сразу, и когда нужен ответ
+  // руководителя или администратора; по записи их не различить.
+  "project.visibility.request": s => { const name = s.names.project(s.p[0]); return `${s.v("изменил")} видимость проекта${name ? ` «${name}»` : ""}: ${AUDIENCE[s.p[1]] ?? "шире прежнего"}`; },
   "project.visibility.approve": s => `${s.v("одобрил")} просьбу открыть проект`,
   "project.visibility.reject": s => `${s.v("отклонил")} просьбу открыть проект`,
   "project.visibility.private": s => { const name = s.names.project(s.p[0]); return `${s.v("сделал")} проект${name ? ` «${name}»` : ""} личным: его отдел удалён`; },
@@ -124,8 +137,9 @@ const MEANINGFUL: Record<string, (s: Say) => string> = {
   "user.reactivate": s => `${s.v("вернул")} доступ сотруднику: ${s.person(s.e.subject)}`,
   "principal.revoke": s => `${s.v("заблокировал")} учётную запись: ${s.person(s.e.subject)}`,
   "principal.restore": s => `${s.v("снял")} блокировку: ${s.person(s.e.subject)}`,
-  "principal.member.add": s => `${s.v("добавил")} в группу: ${s.person(s.e.subject)}`,
-  "principal.member.remove": s => `${s.v("убрал")} из группы: ${s.person(s.e.subject)}`,
+  "principal.member.add": s => s.p[0] === ADMINS_GROUP ? `${s.v("назначил")} администратором: ${s.person(s.e.subject)}` : `${s.v("добавил")} в группу: ${s.person(s.e.subject)}`,
+  "principal.member.remove": s => s.p[0] === ADMINS_GROUP ? `${s.v("снял")} права администратора: ${s.person(s.e.subject)}` : `${s.v("убрал")} из группы: ${s.person(s.e.subject)}`,
+  "principal.save": s => `${s.v("сохранил")} учётную запись: ${s.person(s.e.subject || s.e.resource)}`,
   "principal.role.create": s => `${s.v("создал")} роль`,
   "rights.grant": s => `${s.v("выдал")} ${rightWords(s)}: ${s.person(s.e.subject)}`,
   "rights.remove": s => `${s.v("снял")} ${rightWords(s)}: ${s.person(s.e.subject)}`,
@@ -238,7 +252,7 @@ export function describeEvent(e: OperationAuditEvent, names: JournalNames): Jour
   return { text, technical, projectId };
 }
 
-function actorWords(e: OperationAuditEvent, names: JournalNames): string {
+function actorWords(e: Pick<OperationAuditEvent, "actor" | "on_behalf_of">, names: JournalNames): string {
   if (e.actor === "system:agenticos") return "Платформа агентов";
   if (e.actor.startsWith("system:")) return "Система";
   const name = names.actor(e.actor);
@@ -253,3 +267,96 @@ function projectOf(action: string, p: string[], names: JournalNames): string {
 
 /** Операции, которые журнал называет словами; для тестов и сверки с сервером. */
 export const MEANINGFUL_ACTIONS = Object.keys(MEANINGFUL);
+
+// ---------------------------------------------------------------------------
+// Журналы работ проектов и слияние источников.
+
+/** Первая строка итога работы, без лишней длины: подробности — в самом журнале работ. */
+function gist(summary: string): string {
+  const first = summary.trim().split(/\r?\n/).find(l => l.trim())?.trim() ?? "";
+  return first.length > 160 ? `${first.slice(0, 159)}…` : first;
+}
+
+/** Запись журнала работ проекта словами. */
+export function describeWorkEntry(w: WorkJournalEntry, names: JournalNames): JournalLine {
+  const actor = actorWords({ actor: w.actor, on_behalf_of: w.on_behalf_of ?? "" }, names);
+  const woman = feminine(actor);
+  const v = (stem: string) => woman ? `${stem}а` : stem;
+  const name = names.project(w.project_id);
+  const inProject = name ? ` в проекте «${name}»` : "";
+  const what = gist(w.summary);
+  const tail = what ? `: ${what}` : "";
+  const behalf = w.on_behalf_of && w.on_behalf_of !== w.actor ? ` (по поручению: ${names.actor(w.on_behalf_of) || "сотрудник"})` : "";
+  let text: string;
+  if (w.source === "publication") {
+    const one = w.changed.length === 1 ? names.document(w.project_id, w.changed[0]) : null;
+    text = `${actor} ${v("опубликовал")} ${one ? `${one.dir ? "папку" : "документ"} «${one.name}»` : "изменения документов"}${inProject}${tail}`;
+  } else if (w.source === "merge_request") {
+    const state = w.outcome === "accepted" ? "изменения кода приняты" : w.outcome === "awaiting_approval" ? "изменения кода ждут одобрения" : "работа возвращена на доработку";
+    text = `${actor} ${v("сдал")} работу${inProject}, ${state}${tail}`;
+  } else {
+    text = `${actor} ${v("записал")} итог работы${inProject}${tail}`;
+  }
+  return { text: `${text}${behalf}`, technical: false, projectId: w.project_id };
+}
+
+/** Одна строка журнала действий: событие журнала операций, запись журнала работ или их склейка. */
+export interface JournalItem {
+  key: string;
+  at: string;
+  line: JournalLine;
+  /** Все, кто упомянут в склеенных записях: по ним работает фильтр «Кто». */
+  people: string[];
+  /** События журнала операций, попавшие в строку (у склейки — несколько). */
+  audit: OperationAuditEvent[];
+  work?: WorkJournalEntry;
+}
+
+/** Окно, в котором запись журнала работ и событие журнала операций считаются одним действием.
+ * Сервер пишет их одной операцией, но разными транзакциями: разница — секунды. */
+export const SAME_ACTION_MS = 2 * 60 * 1000;
+
+/** Операции кода, итог которых дублирует запись журнала работ с источником merge_request. */
+const MERGE_ACTIONS = new Set(["git.merge_request.submit", "git.merge_request.decide", "git.merge_request.accept", "git.merge_request.merge", "git.merge_request.revert"]);
+
+function time(at: string): number { const t = Date.parse(at); return Number.isNaN(t) ? 0 : t; }
+
+/** Совпадает ли событие журнала операций с записью журнала работ (одно действие, два следа). */
+function sameAction(w: WorkJournalEntry, e: OperationAuditEvent): boolean {
+  if (e.reason === "requested" || Math.abs(time(e.at) - time(w.recorded_at)) > SAME_ACTION_MS) return false;
+  const p = parts(e.resource);
+  if (w.source === "merge_request") return MERGE_ACTIONS.has(e.action) && p[0] === w.project_id;
+  if (w.source === "publication") {
+    if (e.action === "publication.apply.intent") return e.resource === w.project_id;
+    return e.action === "content.publish.observation" && p[0] === w.project_id && (!w.changed.length || w.changed.includes(p[1]));
+  }
+  return false;
+}
+
+/** Названия отделов из записей об удалении: создание уже удалённого отдела иначе осталось бы без имени. */
+export function unitNamesFrom(events: OperationAuditEvent[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const e of events) if (e.action === "org_unit.delete") { const p = parts(e.resource); if (p[0] && p[1]) out.set(p[0], p[1]); }
+  return out;
+}
+
+/** Сливает источники в одну ленту: новые сверху, одно действие из разных источников — одной строкой. */
+export function mergeJournal(audit: OperationAuditEvent[], work: WorkJournalEntry[], names: JournalNames): JournalItem[] {
+  const absorbed = new Set<OperationAuditEvent>();
+  const items: JournalItem[] = [];
+  for (const w of work) {
+    const twins = audit.filter(e => !absorbed.has(e) && sameAction(w, e));
+    // У кода итог один на действие: берём ближайшее по времени событие, остальные остаются своими строками.
+    const taken = w.source === "merge_request" && twins.length > 1
+      ? [twins.reduce((a, b) => Math.abs(time(a.at) - time(w.recorded_at)) <= Math.abs(time(b.at) - time(w.recorded_at)) ? a : b)]
+      : twins;
+    taken.forEach(e => absorbed.add(e));
+    const people = [w.actor, w.on_behalf_of ?? "", w.recorded_by, ...taken.flatMap(e => [e.actor, e.on_behalf_of])].filter(Boolean);
+    items.push({ key: `work:${w.project_id}:${w.entry_id}`, at: w.recorded_at, line: describeWorkEntry(w, names), people: [...new Set(people)], audit: taken, work: w });
+  }
+  for (const e of audit) {
+    if (absorbed.has(e)) continue;
+    items.push({ key: `audit:${e.id}`, at: e.at, line: describeEvent(e, names), people: [...new Set([e.actor, e.on_behalf_of].filter(Boolean))], audit: [e] });
+  }
+  return items.sort((a, b) => time(b.at) - time(a.at) || (a.key < b.key ? 1 : -1));
+}

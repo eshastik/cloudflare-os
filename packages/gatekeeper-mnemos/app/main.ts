@@ -247,6 +247,8 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   registerDatabaseConnection:MnemosAccountSession["registerDatabaseConnection"];
   removeDatabaseConnection:MnemosAccountSession["removeDatabaseConnection"];
   readOperationAudit:MnemosAccountSession["readOperationAudit"];
+  readOperationAuditPage:MnemosAccountSession["readOperationAuditPage"];
+  listWorkJournal:MnemosAccountSession["listWorkJournal"];
   readGitFile:MnemosAccountSession["readGitFile"];
   readGitCommit:MnemosAccountSession["readGitCommit"];
   readGitTree:MnemosAccountSession["readGitTree"];

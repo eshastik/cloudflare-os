@@ -2038,7 +2038,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   /** Работа с кодом беседы через подключение человека: только его собственное действующее подключение. */
   #codeWorkAccount(accountId: number): Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser,
-      "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkInterrupt" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert">> {
+      "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkInterrupt" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert" | "codeWorkPutFile">> {
     const record = this.storage.connectedAccounts.get(accountId);
     if (!Number.isSafeInteger(accountId) || !record || !areCredentialsValid(record)) throw new Error("Подключение проекта недоступно.");
     return record.account as never;
@@ -2056,6 +2056,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async codeWorkChanges(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkChanges(project, task); }
   async codeWorkAccept(accountId: number, project: string, task: string, summary: string) { return this.#codeWorkAccount(accountId).codeWorkAccept(project, task, summary); }
   async codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number) { return this.#codeWorkAccount(accountId).codeWorkRevert(project, task, mergeRequest); }
+  async codeWorkPutFile(accountId: number, project: string, task: string, path: string, contentBase64: string) { return this.#codeWorkAccount(accountId).codeWorkPutFile(project, task, path, contentBase64); }
 
   // Describe one of the user's connected accounts so a caller can name it in a message. Returns null
   // if it no longer exists.

@@ -3,9 +3,12 @@
 import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
 import {chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
-import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend} from "./code-work.js";
+import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend, type CodeWorkFiles} from "./code-work.js";
 import {JEV_CONFIDENCE_THRESHOLD, type CodeRouteContext, type JevResult} from "./code-router.js";
-import {buildCodeContextPack, codeWorkBrief, withContextPack} from "./code-context.js";
+import {
+  ATTACHMENT_MAX_BYTES, ATTACHMENTS_DIR, CONTEXT_FILE, CONTEXT_FILE_MAX_BYTES, buildCodeContextPack, bytesToBase64, codeWorkBrief,
+  planAttachments, textBytes, withContextFile, withContextPack, type PlannedAttachment,
+} from "./code-context.js";
 
 /** Подключение человека, через которое идёт работа с кодом (методы пользовательского DO). */
 export interface CodeWorkUser {
@@ -19,6 +22,8 @@ export interface CodeWorkUser {
   codeWorkChanges(accountId: number, project: string, task: string): ReturnType<CodeWorkBackend["changes"]>;
   codeWorkAccept(accountId: number, project: string, task: string, summary: string): Promise<CodeWorkReview>;
   codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number): Promise<CodeWorkReview>;
+  /** Файл в /workspace/.mnemos рабочего места; нет — подключение этого не умеет. */
+  codeWorkPutFile?(accountId: number, project: string, task: string, path: string, contentBase64: string): Promise<void>;
 }
 
 export interface ChatCodeWorkHost {
@@ -30,10 +35,13 @@ export interface ChatCodeWorkHost {
   /** Сообщения беседы с номером больше afterSequence, по возрастанию (не больше последних
    *  CONTEXT_PACK_LOOKBACK). */
   chatMessages(chatId: number, afterSequence: number): AiChatMessage[];
+  /** Байты файла, приложенного к сообщению беседы; нет — файлы в рабочее место не копируются. */
+  attachmentContent?(chatId: number, attachmentId: string): Promise<Uint8Array>;
 }
 
 const MAX_SUMMARY = 4000;
 const MAX_STORED_FILES = 50;
+const MAX_STORED_ATTACHMENT_NAMES = 200;
 
 function backendFor(user: CodeWorkUser, accountId: number): CodeWorkBackend {
   return {
@@ -43,7 +51,25 @@ function backendFor(user: CodeWorkUser, accountId: number): CodeWorkBackend {
     abort: (project, task) => user.codeWorkAbort(accountId, project, task),
     interrupt: (project, task) => user.codeWorkInterrupt(accountId, project, task),
     changes: (project, task) => user.codeWorkChanges(accountId, project, task),
+    ...(user.codeWorkPutFile ? {putFile: (project: string, task: string, path: string, contentBase64: string) => user.codeWorkPutFile!(accountId, project, task, path, contentBase64)} : {}),
   };
+}
+
+/** Скопировать файлы беседы в attachments; статус каждого файла меняется на месте. */
+async function copyAttachments(host: ChatCodeWorkHost, chatId: number, backend: CodeWorkBackend, projectId: string, taskId: string,
+    files: PlannedAttachment[]): Promise<void> {
+  for (let file of files) {
+    if (file.status !== "pending") continue;
+    if (!host.attachmentContent || !backend.putFile) { file.status = "failed"; continue; }
+    try {
+      let data = await host.attachmentContent(chatId, file.id);
+      if (data.byteLength > ATTACHMENT_MAX_BYTES) { file.status = "too_large"; continue; }
+      await backend.putFile(projectId, taskId, ATTACHMENTS_DIR + file.fileName, bytesToBase64(data));
+      file.status = "copied";
+    } catch {
+      file.status = "failed";
+    }
+  }
 }
 
 function metaOrThrow(host: ChatCodeWorkHost, chatId: number): AiChatMetadata {
@@ -228,33 +254,66 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let after = continuing ? work!.contextSeq ?? -1 : -1;
   let seen = host.chatMessages(request.chatId, after);
   let contextSeq = Math.max(after, request.promptSequence ?? -1, ...seen.map(m => m.sequence));
-  let pack = buildCodeContextPack({
-    messages: seen.filter(m => m.sequence !== request.promptSequence),
-    projects: chatProjects(metaOrThrow(host, request.chatId).projectContext),
-  });
+  let messages = seen.filter(m => m.sequence !== request.promptSequence);
+  let projects = chatProjects(metaOrThrow(host, request.chatId).projectContext);
+  // Файлы берутся и из сообщения, которое стало текстом хода: его текст в пакет не идёт, а файлы — да.
+  let usedNames = continuing ? work!.attachmentNames ?? [] : [];
+  let usedBytes = continuing ? work!.attachmentBytes ?? 0 : 0;
+  let attachments = planAttachments(seen, {names: usedNames, bytes: usedBytes});
+  let backend = backendFor(user, accountId);
+  let textPack = (pendingAsFailed: boolean) => buildCodeContextPack({messages, projects,
+    attachments: pendingAsFailed ? attachments.map(f => f.status === "pending" ? {...f, status: "failed" as const} : f) : attachments});
+  let putContext = async (taskId: string) => {
+    let pack = buildCodeContextPack({messages, projects, attachments, target: "file", maxBytes: CONTEXT_FILE_MAX_BYTES});
+    await backend.putFile!(projectId, taskId, CONTEXT_FILE, bytesToBase64(textBytes(pack)));
+  };
+  let files: CodeWorkFiles = {
+    // Продолжение: файлы до сообщения; не легли — пакет текстом, файлы перечислены по факту.
+    beforeMessage: async taskId => {
+      if (!backend.putFile) return withContextPack(textPack(true), request.prompt);
+      await copyAttachments(host, request.chatId, backend, projectId, taskId, attachments);
+      try { await putContext(taskId); } catch { return withContextPack(textPack(true), request.prompt); }
+      return withContextFile(request.prompt);
+    },
+    // Новая работа: пакет уже ушёл текстом при запуске; файл — для перечитывания, вложения — для работы.
+    afterStart: async taskId => {
+      await copyAttachments(host, request.chatId, backend, projectId, taskId, attachments);
+      if (backend.putFile) await putContext(taskId);
+    },
+  };
+  // Для новой работы вложения ещё не скопированы: пакет говорит, что они копируются.
+  let prompt = continuing ? withContextPack(textPack(true), request.prompt)
+    : withContextPack(textPack(!backend.putFile || !host.attachmentContent), request.prompt);
 
   let cursor = continuing ? work!.cursor : 0;
   let {output, cursor: next} = await runCodeWorkTurn({
-    backend: backendFor(user, accountId), projectId, projectTitle, target,
-    taskId: continuing ? work!.taskId : undefined, cursor, prompt: withContextPack(pack, request.prompt), signal: request.signal,
+    backend, projectId, projectTitle, target, files,
+    taskId: continuing ? work!.taskId : undefined, cursor, prompt, signal: request.signal,
     onStep: emitStep,
     onText: delta => host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta}),
     onStarted: taskId => {
       let current = metaOrThrow(host, request.chatId);
       let same = continuing && current.codeWork?.taskId === taskId;
       current.codeWork = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor, contextSeq,
-        ...(same ? {summary: current.codeWork!.summary, review: current.codeWork!.review, changedFiles: current.codeWork!.changedFiles} : {})};
+        ...(same ? {summary: current.codeWork!.summary, review: current.codeWork!.review, changedFiles: current.codeWork!.changedFiles,
+          attachmentNames: current.codeWork!.attachmentNames, attachmentBytes: current.codeWork!.attachmentBytes} : {})};
       host.putChatMeta(current);
     },
   });
 
   if (pinStep) output.steps.unshift(pinStep);
+  let copied = attachments.filter(f => f.status === "copied");
+  // Задача могла смениться (прежняя закончилась): тогда прежние имена к ней не относятся.
+  let sameTask = continuing && work!.taskId === output.taskId;
+  let attachmentNames = [...(sameTask ? usedNames : []), ...copied.map(f => f.fileName)].slice(-MAX_STORED_ATTACHMENT_NAMES);
+  let attachmentBytes = (sameTask ? usedBytes : 0) + copied.reduce((sum, f) => sum + f.size, 0);
   let current = metaOrThrow(host, request.chatId);
   let review: ChatCodeWork["review"] = output.changedFiles.length ? {outcome: "draft"} : current.codeWork?.review;
   current.codeWork = {accountId, projectId, projectTitle, taskId: output.taskId, state: output.state,
     foreground: codeWorkAlive(output.state), cursor: next,
     summary: (output.answer || current.codeWork?.summary || "").slice(0, MAX_SUMMARY),
     contextSeq,
+    ...(attachmentNames.length ? {attachmentNames, attachmentBytes} : {}),
     changedFiles: output.changedFiles.slice(0, MAX_STORED_FILES).map(f => ({path: f.path, status: f.status})),
     ...(review ? {review} : {})};
   host.putChatMeta(current);

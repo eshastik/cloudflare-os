@@ -165,6 +165,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async codeWorkChanges(project:string,task:string,since?:'accepted'|'start'){return this.#account().codeWorkChanges(project,task,since);}
   async codeWorkAccept(project:string,task:string,summary:string){return this.#account().codeWorkAccept(project,task,summary);}
   async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#account().codeWorkRevert(project,task,mergeRequest);}
+  async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#account().codeWorkPutFile(project,task,path,contentBase64);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
     const nonce = await this.#account().prepareReconnect();
@@ -253,6 +254,8 @@ export class UserAccount extends DurableObject<Env> {
  async codeWorkChanges(project:string,task:string,since?:'accepted'|'start'){return this.#workspace().changes(project,task,since);}
  async codeWorkAccept(project:string,task:string,summary:string){return this.#workspace().accept(project,task,summary);}
  async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#workspace().revert(project,task,mergeRequest);}
+ /** Файл в /workspace/.mnemos задачи: контекст беседы или приложенный файл; задача должна принадлежать проекту. */
+ async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#workspace().putFile(project,task,path,contentBase64);}
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];
   if(this.env.MNEMOS_LOGIN_PROFILES){
@@ -1554,6 +1557,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async registerDatabaseConnection(project:string,input:DatabaseRegistration){return this.#session.registerDatabaseConnection(project,input);}
   async removeDatabaseConnection(project:string,name:string){return this.#session.removeDatabaseConnection(project,name);}
   async readOperationAudit(after:number){return this.#session.readOperationAudit(after);}
+  async readOperationAuditPage(after:number,limit:number){return this.#session.readOperationAuditPage(after,limit);}
+  async listWorkJournal(project:string,cursor=""){return this.#session.listWorkJournal(project,cursor);}
   async readGitFile(project:string,connection:string,repository:string,commit:string,path:string){return this.#session.readGitFile(project,connection,repository,commit,path);}
   async readGitCommit(project:string,connection:string,repository:string,ref:string){return this.#session.readGitCommit(project,connection,repository,ref);}
   async readGitTree(project:string,connection:string,repository:string,commit:string,path=""){return this.#session.readGitTree(project,connection,repository,commit,path);}

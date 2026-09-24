@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeEvent, feminine, MEANINGFUL_ACTIONS, type JournalNames } from "../app-react/journal-words.ts";
+import { describeEvent, describeWorkEntry, feminine, mergeJournal, MEANINGFUL_ACTIONS, unitNamesFrom, type JournalNames } from "../app-react/journal-words.ts";
 import { agentNames } from "../app-react/names.ts";
 import type { OperationAuditEvent } from "./operation-audit.ts";
+import type { WorkJournalEntry } from "./mnemos-api.ts";
 
 const NAMES: JournalNames = {
   actor: id => ({ alex: "Александр", anna: "Анна Смирнова", nikita: "Никита", "agent-chat": "Агент беседы", bob: "Борис" } as Record<string, string>)[id] ?? "",
@@ -70,4 +71,57 @@ test("имена агентов: номер только при одинаков
   const two = agentNames([external("a", true), external("c"), external("d")]);
   assert.equal(two.get("c"), "Свой агент (Claude Code или Codex)");
   assert.equal(two.get("d"), "Свой агент (Claude Code или Codex) № 2");
+});
+
+test("журнал: действия администратора из аудита организации — словами", () => {
+  const say = (action: string, patch: Partial<OperationAuditEvent> = {}) => describeEvent(event(action, patch), NAMES);
+  assert.equal(say("org_unit.create", { resource: "unit-1", subject: "alex" }).text, "Александр создал отдел «Бухгалтерия»");
+  assert.equal(say("org_unit.create", { resource: "unit-1" }).technical, false);
+  assert.equal(say("org_unit.delete", { resource: '["unit-1","Бухгалтерия","projects_made_private=0"]' }).text, "Александр удалил отдел «Бухгалтерия»");
+  assert.equal(say("org_invitation.create", { resource: "inv-1", actor: "anna" }).text, "Анна Смирнова пригласила в организацию: Ольга (olga@example.test)");
+  assert.equal(say("org_invitation.revoke", { resource: "inv-1" }).text, "Александр отменил приглашение для Ольга");
+  assert.equal(say("project.visibility.request", { resource: '["sklad","organization"]' }).text, "Александр изменил видимость проекта «Склад»: вся организация");
+  assert.equal(say("project.visibility.private", { resource: '["sklad","private","org_unit.delete","unit-1"]' }).text, "Александр сделал проект «Склад» личным: его отдел удалён");
+  assert.equal(say("principal.member.add", { resource: "system:organization-admins", subject: "bob" }).text, "Александр назначил администратором: Борис");
+  assert.equal(say("principal.member.remove", { resource: "system:organization-admins", subject: "bob" }).text, "Александр снял права администратора: Борис");
+  assert.equal(say("rights.remove", { resource: "sklad:filesystem:read", subject: "bob" }).text, "Александр снял право читать проект «Склад»: Борис");
+  assert.equal(say("user.deactivate", { resource: "bob", subject: "bob" }).text, "Александр отключил сотрудника: Борис");
+  // Название удалённого отдела берётся из записи об удалении.
+  const names = unitNamesFrom([event("org_unit.delete", { resource: '["unit-9","Снабжение","projects_made_private=0"]' })]);
+  assert.equal(describeEvent(event("org_unit.create", { resource: "unit-9" }), { ...NAMES, unit: id => names.get(id) ?? "" }).text, "Александр создал отдел «Снабжение»");
+});
+
+function entry(patch: Partial<WorkJournalEntry> = {}): WorkJournalEntry {
+  return { entry_id: 1, project_id: "sklad", recorded_at: "2026-09-24T10:00:00Z", recorded_by: "alex", actor: "agent-chat", on_behalf_of: "alex", source: "merge_request", summary: "Исправлен расчёт остатков\n\nподробности", changed: ["a.go"], result: { kind: "code", repository: "sklad", reference: "запрос на слияние №3" }, outcome: "accepted", ...patch };
+}
+
+test("журнал работ проекта: итог работы — предложением", () => {
+  assert.equal(describeWorkEntry(entry(), NAMES).text, "Агент беседы сдал работу в проекте «Склад», изменения кода приняты: Исправлен расчёт остатков (по поручению: Александр)");
+  assert.equal(describeWorkEntry(entry({ source: "publication", actor: "anna", on_behalf_of: "", changed: ["dog"], summary: "Правки договора" }), NAMES).text, "Анна Смирнова опубликовала документ «Договор» в проекте «Склад»: Правки договора");
+  assert.equal(describeWorkEntry(entry({ source: "manual", actor: "bob", on_behalf_of: "", summary: "Собрал отчёт" }), NAMES).text, "Борис записал итог работы в проекте «Склад»: Собрал отчёт");
+  assert.equal(describeWorkEntry(entry(), NAMES).projectId, "sklad");
+});
+
+test("слияние: новые сверху из всех источников; одно действие из двух источников — одной строкой", () => {
+  const audit = [
+    event("org_unit.create", { id: "10", resource: "unit-1", at: "2026-09-24T09:00:00Z" }),
+    event("git.merge_request.merge", { id: "11", actor: "alex", resource: '["sklad","g-1","r-1"]', reason: "requested", at: "2026-09-24T09:59:58Z" }),
+    event("git.merge_request.merge", { id: "12", actor: "alex", resource: '["sklad","g-1","r-1"]', reason: "result_verified", at: "2026-09-24T09:59:59Z" }),
+    event("org_invitation.create", { id: "13", resource: "inv-1", at: "2026-09-24T11:00:00Z" }),
+    // То же действие, но в другом проекте и через час — не дубль.
+    event("git.merge_request.merge", { id: "14", resource: '["other","g-1","r-1"]', reason: "result_verified", at: "2026-09-24T10:00:30Z" }),
+    event("git.merge_request.merge", { id: "15", resource: '["sklad","g-1","r-1"]', reason: "result_verified", at: "2026-09-24T12:00:00Z" }),
+  ];
+  const items = mergeJournal(audit, [entry()], NAMES);
+  assert.deepEqual(items.map(i => i.key), ["audit:15", "audit:13", "audit:14", "work:sklad:1", "audit:11", "audit:10"]);
+  const merged = items.find(i => i.work)!;
+  assert.deepEqual(merged.audit.map(e => e.id), ["12"], "итог слияния из журнала операций склеен с записью журнала работ");
+  assert.ok(merged.people.includes("agent-chat") && merged.people.includes("alex"), "фильтр «кто» видит и агента, и человека");
+  // Публикация: изменения каждого документа и намерение публикации — в одну строку с записью журнала работ.
+  const published = mergeJournal([
+    event("content.publish.observation", { id: "20", actor: "anna", resource: '["sklad","dog","ab"]', reason: "reference_committed", at: "2026-09-24T10:00:01Z" }),
+    event("publication.apply.intent", { id: "21", actor: "anna", resource: "sklad", at: "2026-09-24T09:59:59Z" }),
+  ], [entry({ source: "publication", actor: "anna", on_behalf_of: "", changed: ["dog"] })], NAMES);
+  assert.equal(published.length, 1);
+  assert.equal(published[0].audit.length, 2);
 });

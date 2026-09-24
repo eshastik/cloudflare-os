@@ -1315,6 +1315,8 @@ export class MnemosAccountSession {
   async registerDatabaseConnection(project:string,input:DatabaseRegistration){this.#check();const out=await this.#client.registerDatabaseConnection(project,input,this.#lifetime.signal);this.#check();return out;}
   async removeDatabaseConnection(project:string,name:string){this.#check();const out=await this.#client.removeDatabaseConnection(project,name,this.#lifetime.signal);this.#check();return out;}
   async readOperationAudit(after:number){this.#check();const out=await this.#client.readOperationAudit(after,this.#lifetime.signal);this.#check();return out;}
+  async readOperationAuditPage(after:number,limit:number){this.#check();const out=await this.#client.readOperationAuditPage(after,limit,this.#lifetime.signal);this.#check();return out;}
+  async listWorkJournal(project:string,cursor=""){this.#check();const out=await this.#client.listWorkJournal(project,cursor,0,this.#lifetime.signal);this.#check();return out;}
   async readGitFile(project:string,connection:string,repository:string,commit:string,path:string){this.#check();const out=await this.#client.readGitFile(project,connection,repository,commit,path,this.#lifetime.signal);this.#check();return out;}
   async readGitCommit(project:string,connection:string,repository:string,ref:string){this.#check();const out=await this.#client.readGitCommit(project,connection,repository,ref,this.#lifetime.signal);this.#check();return out;}
   async readGitTree(project:string,connection:string,repository:string,commit:string,path=""){this.#check();const out=await this.#client.readGitTree(project,connection,repository,commit,path,this.#lifetime.signal);this.#check();return out;}

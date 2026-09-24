@@ -34,7 +34,44 @@ export interface WorkspaceTaskView {
 }
 export interface WorkspaceTaskDetails extends WorkspaceProgress { task: WorkspaceTaskView }
 export class WorkspaceError extends Error {
-  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped", message: string) { super(message); }
+  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready", message: string) { super(message); }
+}
+
+/** Файл контекста беседы в рабочем месте (путь от /workspace). */
+export const WORKSPACE_CONTEXT_FILE = ".mnemos/context.md";
+/** Папка файлов, приложенных к беседе (путь от /workspace). */
+export const WORKSPACE_ATTACHMENTS_DIR = ".mnemos/attachments/";
+/** Пределы службы: один файл и все файлы задачи вместе. */
+export const WORKSPACE_FILE_MAX_BYTES = 10 << 20;
+export const WORKSPACE_TASK_FILES_MAX_BYTES = 50 << 20;
+const MAX_ATTACHMENT_NAME_BYTES = 200;
+
+/** Те же правила пути, что у службы: context.md или attachments/<имя> без «/», «..» и управляющих символов. */
+export function validWorkspaceFilePath(path: unknown): path is string {
+  if (path === WORKSPACE_CONTEXT_FILE) return true;
+  if (typeof path !== "string" || !path.startsWith(WORKSPACE_ATTACHMENTS_DIR)) return false;
+  const name = path.slice(WORKSPACE_ATTACHMENTS_DIR.length);
+  if (!name || name === "." || name.includes("/") || name.includes("..") || /\p{Cc}/u.test(name)) return false;
+  // Одиночный суррогат не кодируется в UTF-8 без замены: служба такое имя не примет.
+  if (!name.isWellFormed()) return false;
+  return new TextEncoder().encode(name).length <= MAX_ATTACHMENT_NAME_BYTES;
+}
+
+function toBase64(data: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < data.length; i += 0x8000) binary += String.fromCharCode(...data.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+/** Строгий разбор base64; null — строка не base64 или больше maxBytes после разбора. */
+function fromBase64(text: unknown, maxBytes: number): Uint8Array | null {
+  if (typeof text !== "string" || text.length % 4 !== 0 || text.length / 4 * 3 > maxBytes + 2 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) return null;
+  let binary: string;
+  try { binary = atob(text); } catch { return null; }
+  if (binary.length > maxBytes) return null;
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
 }
 export type WorkspaceChangedFile = { path: string; status: "added" | "modified" | "deleted" | "renamed"; additions: number; deletions: number };
 /** Изменения одного репозитория задачи; name — имя репозитория для человека. */
@@ -94,6 +131,8 @@ export interface WorkspaceControl {
   accept(id: string): Promise<WorkspaceAccepted>;
   /** Сохранить работу: коммит рабочей копии и отправка ветки агента. */
   publish(id: string, message: string): Promise<WorkspacePublished>;
+  /** Положить файл в /workspace/.mnemos задачи (вне репозиториев). not_ready — задача ещё запускается или уже остановлена. */
+  putFile(id: string, path: string, content: Uint8Array): Promise<void>;
 }
 
 function remoteTask(value: unknown): RemoteTask {
@@ -118,8 +157,9 @@ export class WorkspaceClient implements WorkspaceControl {
     // Рантайм Workers бросает «Illegal invocation», если fetch вызвать с this клиента.
     this.#origin = url.origin; this.#token = token; this.#fetch = fetcher.bind(globalThis); this.#window = eventsWindowMs;
   }
-  /** conflict — чем заменить ответ 409; функция получает код ошибки службы из тела ответа. */
-  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError | ((code: string) => WorkspaceError), failure?: WorkspaceError): Promise<Response> {
+  /** conflict — чем заменить ответ 409; функция получает код ошибки службы из тела ответа.
+   * failure — чем заменить 502, invalid — 400. */
+  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError | ((code: string) => WorkspaceError), failure?: WorkspaceError, invalid?: WorkspaceError): Promise<Response> {
     let response: Response;
     try {
       response = await this.#fetch(this.#origin + path, { method, signal, headers: { Authorization: `Bearer ${this.#token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -128,6 +168,7 @@ export class WorkspaceClient implements WorkspaceControl {
       throw new WorkspaceError("unavailable", "Служба рабочих мест недоступна.");
     }
     if (response.status === 404) throw new WorkspaceError("not_found", "Задача не найдена в службе рабочих мест.");
+    if (response.status === 400 && invalid) throw invalid;
     if (response.status === 409 && conflict) {
       if (conflict instanceof WorkspaceError) throw conflict;
       let code = "";
@@ -144,6 +185,14 @@ export class WorkspaceClient implements WorkspaceControl {
   async credential(id: string, token: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/credential`, "PUT", { agent_credential: token }); }
   async message(id: string, text: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/messages`, "POST", { text }); }
   async abort(id: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/abort`, "POST"); }
+  async putFile(id: string, path: string, content: Uint8Array) {
+    if (!validWorkspaceFilePath(path)) throw new WorkspaceError("invalid", "Недопустимое имя файла для рабочего места.");
+    if (!(content instanceof Uint8Array) || content.byteLength > WORKSPACE_FILE_MAX_BYTES) throw new WorkspaceError("invalid", "Файл больше 10 МиБ.");
+    await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/files`, "PUT", { path, content_base64: toBase64(content) }, undefined,
+      new WorkspaceError("not_ready", "Рабочее место сейчас не принимает файлы."),
+      new WorkspaceError("unavailable", "Файл не записан в рабочее место."),
+      new WorkspaceError("invalid", "Служба рабочих мест не приняла файл: путь или размер."));
+  }
   async interrupt(id: string) {
     await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/interrupt`, "POST", undefined, undefined,
       new WorkspaceError("stopped", "Агент сейчас не работает — останавливать нечего."),
@@ -541,6 +590,16 @@ export class WorkspaceTasks {
     await control.message(id, body);
     this.#save({ ...task, state: "running" });
     await this.#arm();
+  }
+
+  /** Положить файл в /workspace/.mnemos задачи: контекст беседы или приложенный к беседе файл. */
+  async putFile(project: string, id: string, path: string, contentBase64: string): Promise<void> {
+    const task = this.#own(project, id);
+    if (!validWorkspaceFilePath(path)) throw new WorkspaceError("invalid", "Недопустимое имя файла для рабочего места.");
+    const content = fromBase64(contentBase64, WORKSPACE_FILE_MAX_BYTES);
+    if (!content) throw new WorkspaceError("invalid", "Файл повреждён или больше 10 МиБ.");
+    if (finished(task.state)) throw new WorkspaceError("stopped", "Работа с кодом уже завершена.");
+    await this.#control().putFile(id, path, content);
   }
 
   async abort(project: string, id: string): Promise<void> {

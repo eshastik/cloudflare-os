@@ -1112,6 +1112,9 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   codeWorkAccept?(project: string, taskId: string, summary: string): Promise<CodeWorkReview>;
   /** «Вернуть как было» для принятых изменений задачи. */
   codeWorkRevert?(project: string, taskId: string, mergeRequest: number): Promise<CodeWorkReview>;
+  /** Положить файл в /workspace/.mnemos рабочего места: path — ".mnemos/context.md" или ".mnemos/attachments/<имя>";
+   * до 10 МиБ на файл. Отказ, если задача ещё запускается или уже остановлена. */
+  codeWorkPutFile?(project: string, taskId: string, path: string, contentBase64: string): Promise<void>;
 
   /** List safe identifiers for this human's enabled WebDAV connections. */
   listDriveImportAccounts?(): Promise<Array<{

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WorkspaceClient, WorkspaceError, WorkspaceTasks, type RemoteTask, type WorkspaceControl, type WorkspaceHuman } from "./workspace-tasks.ts";
+import { WorkspaceClient, WorkspaceError, WorkspaceTasks, validWorkspaceFilePath, type RemoteTask, type WorkspaceControl, type WorkspaceHuman } from "./workspace-tasks.ts";
 import { workspaceProgress } from "./workspace-steps.ts";
 import type { AccountStorage } from "./account-session.ts";
 
@@ -31,6 +31,7 @@ class FakeControl implements WorkspaceControl {
   noChanges = false;
   published: Awaited<ReturnType<WorkspaceControl["publish"]>> = { branch: "agents/binding/" + TASK, head_sha: "abc123" };
   async publish(id: string, message: string) { this.calls.push(["publish", id, message]); if (this.noChanges) throw new WorkspaceError("no_changes", "Изменений нет."); return this.published; }
+  async putFile(id: string, path: string, content: Uint8Array) { this.calls.push(["putFile", id, path, new TextDecoder().decode(content)]); }
 }
 function human(log: string[], overrides: Partial<WorkspaceHuman> = {}): () => WorkspaceHuman {
   let n = 0;
@@ -467,4 +468,51 @@ test("Шаги: путь без каталога контейнера, папк�
     { seq: 3, type: "message.part.updated", data: { part: { id: "k3", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "/workspace/repository/c.md" } } } } },
   ]);
   assert.deepEqual(progress.steps.slice(1).map(s => s.text), ["Читаю site/docs/a.md", "Читаю b.md", "Читаю repository/c.md"]);
+});
+
+test("Клиент: файл кладётся PUT-запросом в base64; ответы службы становятся понятными ошибками", async () => {
+  const requests: { url: string; method: string; body: string }[] = [];
+  let status = 204;
+  const fetcher: typeof fetch = async (input, init) => {
+    requests.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+    return new Response(null, { status });
+  };
+  const client = new WorkspaceClient("https://localhost:9452", "t", fetcher);
+  await client.putFile(TASK, ".mnemos/context.md", new TextEncoder().encode("Контекст"));
+  assert.equal(requests[0].method, "PUT");
+  assert.match(requests[0].url, new RegExp(`/v1/workspace/tasks/${TASK}/files$`));
+  const body = JSON.parse(requests[0].body);
+  assert.equal(body.path, ".mnemos/context.md");
+  assert.equal(new TextDecoder().decode(Uint8Array.from(atob(body.content_base64), c => c.charCodeAt(0))), "Контекст");
+  await client.putFile(TASK, ".mnemos/attachments/отчёт (2).pdf", new Uint8Array([0, 255, 7]));
+  assert.equal(JSON.parse(requests[1].body).content_base64, "AP8H");
+
+  for (const [code, check] of [[400, (e: WorkspaceError) => e.code === "invalid"], [409, (e: WorkspaceError) => e.code === "not_ready"],
+    [502, (e: WorkspaceError) => e.code === "unavailable" && /не записан/.test(e.message)], [404, (e: WorkspaceError) => e.code === "not_found"]] as const) {
+    status = code;
+    await assert.rejects(client.putFile(TASK, ".mnemos/context.md", new Uint8Array(1)), check, `ответ ${code}`);
+  }
+
+  const before = requests.length;
+  for (const path of ["repo/a.txt", ".mnemos/attachments/", ".mnemos/attachments/a/b", ".mnemos/attachments/..", ".mnemos/attachments/a..b", ".mnemos/attachments/a\nb", ".mnemos/attachments/.", ".mnemos/attachments/" + "я".repeat(101), "/workspace/.mnemos/context.md"]) {
+    await assert.rejects(client.putFile(TASK, path, new Uint8Array(1)), (e: WorkspaceError) => e.code === "invalid", path);
+  }
+  await assert.rejects(client.putFile(TASK, ".mnemos/context.md", new Uint8Array((10 << 20) + 1)), (e: WorkspaceError) => e.code === "invalid", "больше 10 МиБ");
+  assert.equal(requests.length, before, "недопустимое до службы не доходит");
+  assert.equal(validWorkspaceFilePath(".mnemos/attachments/" + "я".repeat(100)), true, "200 байт — можно");
+});
+
+test("Файл в рабочее место: только своя задача, только живая, base64 разбирается строго", async () => {
+  const { control, tasks } = setup();
+  await tasks.start("p", "c", "1", "задача");
+  await tasks.putFile("p", TASK, ".mnemos/context.md", Buffer.from("Контекст беседы").toString("base64"));
+  assert.deepEqual(control.calls.at(-1), ["putFile", TASK, ".mnemos/context.md", "Контекст беседы"]);
+  await assert.rejects(tasks.putFile("other", TASK, ".mnemos/context.md", "YQ=="), (e: WorkspaceError) => e.code === "not_found", "чужой проект");
+  await assert.rejects(tasks.putFile("p", TASK, ".mnemos/context.md", "не base64"), (e: WorkspaceError) => e.code === "invalid");
+  await assert.rejects(tasks.putFile("p", TASK, "../etc/passwd", "YQ=="), (e: WorkspaceError) => e.code === "invalid");
+  await assert.rejects(tasks.putFile("p", TASK, ".mnemos/context.md", "A".repeat(Math.ceil((10 << 20) / 3) * 4 + 4)), (e: WorkspaceError) => e.code === "invalid", "больше 10 МиБ");
+  await tasks.abort("p", TASK);
+  const calls = control.calls.length;
+  await assert.rejects(tasks.putFile("p", TASK, ".mnemos/context.md", "YQ=="), (e: WorkspaceError) => e.code === "stopped");
+  assert.equal(control.calls.length, calls, "остановленной задаче файл не отправляется");
 });

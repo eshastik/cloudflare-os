@@ -880,6 +880,10 @@ export class MnemosAPI {
   registerDatabaseConnection(project:string,input:DatabaseRegistration,signal?:AbortSignal):Promise<{database:DatabaseConnection}>{return this.#request(`/v1/projects/${segment(project)}/databases`,"POST",signal,input);}
   removeDatabaseConnection(project:string,name:string,signal?:AbortSignal):Promise<{removed:boolean}>{return this.#request(`/v1/projects/${segment(project)}/databases?${new URLSearchParams({name})}`,"DELETE",signal);}
   readOperationAudit(after:number,signal?:AbortSignal):Promise<OperationAuditPage>{if(!Number.isSafeInteger(after)||after<0)throw Error("Invalid audit cursor");return this.#request(`/v1/admin/audit?${new URLSearchParams({after:String(after),limit:"100"})}`,"GET",signal);}
+  /** Страница журнала операций с выбранным размером (сервер допускает до 1000 записей). */
+  readOperationAuditPage(after:number,limit:number,signal?:AbortSignal):Promise<OperationAuditPage>{if(!Number.isSafeInteger(after)||after<0)throw Error("Invalid audit cursor");if(!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error("Invalid audit limit");return this.#request(`/v1/admin/audit?${new URLSearchParams({after:String(after),limit:String(limit)})}`,"GET",signal);}
+  /** Журнал работ проекта: итоги принятых работ, от новых к старым; курсор — из прошлой страницы. */
+  listWorkJournal(project:string,cursor="",limit=0,signal?:AbortSignal):Promise<WorkJournalPage>{const q=new URLSearchParams();if(cursor)q.set("cursor",cursor);if(limit)q.set("limit",String(limit));const query=q.toString();return this.#request(`/v1/projects/${segment(project)}/work-journal${query?`?${query}`:""}`,"GET",signal);}
   readGitFile(project:string,connection:string,repository:string,commit:string,path:string,signal?:AbortSignal):Promise<GitFile>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/file?${new URLSearchParams({commit,path})}`,"GET",signal);}
   readGitCommit(project:string,connection:string,repository:string,ref:string,signal?:AbortSignal):Promise<GitCommit>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/commit?${new URLSearchParams({ref})}`,"GET",signal);}
   async readGitTree(project:string,connection:string,repository:string,commit:string,path="",signal?:AbortSignal):Promise<GitTree>{const q=new URLSearchParams({commit});if(path)q.set("path",path);return checkedGitTree(await this.#request(`${gitRepositoryPath(project,connection,repository)}/tree?${q}`,"GET",signal));}
@@ -1301,3 +1305,6 @@ function gitRepositoryPath(project:string,connection:string,repository:string):s
 
 export interface ProjectOverviewChild {node_id:string;name:string;is_dir:boolean;l0:string}
 export interface ProjectOverview {project_id:string;node_id:string;l0?:string;l1?:string;pending:boolean;children:ProjectOverviewChild[]}
+/** Запись журнала работ проекта (services/internal/domain/work_journal.go). */
+export interface WorkJournalEntry {entry_id:number;project_id:string;recorded_at:string;recorded_by:string;actor:string;on_behalf_of?:string;source:"manual"|"merge_request"|"publication"|string;summary:string;purpose?:string;changed:string[];result:{kind?:string;repository?:string;reference?:string;document?:string;version?:string};outcome:"accepted"|"awaiting_approval"|"returned"|string}
+export interface WorkJournalPage {entries:WorkJournalEntry[];next_cursor?:string;truncated:boolean}

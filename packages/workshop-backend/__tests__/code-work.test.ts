@@ -8,6 +8,7 @@ import {
   acceptChatCodeChanges, codeWorkForeground, markChatAnswering, routeChatMessage, setChatCodeMode, readChatCodeChanges, revertChatCodeChanges, runChatCodeWork, setChatProjects,
   type ChatCodeWorkHost, type CodeWorkUser,
 } from "../src/chat-code-work";
+import { safeAttachmentName } from "../src/code-context";
 
 const part = (seq: number, p: Record<string, unknown>): CodeWorkEvent => ({ seq, type: "message.part.updated", data: { part: p } });
 const role = (seq: number, id: string, r: string): CodeWorkEvent => ({ seq, type: "message.updated", data: { info: { id, role: r } } });
@@ -406,5 +407,136 @@ describe("контекст беседы для агента кода", () => {
     expect(second).not.toContain("Старая просьба про отчёт");
     expect(second).not.toContain("почини заголовок");
     expect(meta().codeWork?.contextSeq).toBe(6);
+  });
+});
+
+describe("контекст беседы файлом в рабочем месте", () => {
+  const decode = (b64: string) => new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+  const file = (id: string, name: string, size: number, mimeType = "application/pdf") => ({id, name, size, mimeType});
+  function setupFiles(opts: {failPut?: (path: string) => boolean; messages?: AiChatMessage[]; work?: Partial<NonNullable<AiChatMetadata["codeWork"]>> | null} = {}) {
+    const backend = new FakeBackend();
+    const puts: {task: string; path: string; content: string}[] = [];
+    const fetched: string[] = [];
+    const user: Partial<CodeWorkUser> = {
+      async codeWorkTarget() { return {title: "Продажи", code: TARGET}; },
+      codeWorkStart: (_a, p, t, prompt) => backend.start(p, t, prompt),
+      codeWorkMessage: (_a, p, t, text) => backend.message(p, t, text),
+      codeWorkEvents: (_a, p, t, after) => backend.events(p, t, after),
+      codeWorkChanges: () => backend.changes(),
+      async codeWorkPutFile(_a, _p, task, path, contentBase64) {
+        backend.calls.push(["putFile", path]);
+        if (opts.failPut?.(path)) throw new Error("Рабочее место сейчас не принимает файлы.");
+        puts.push({task, path, content: decode(contentBase64)});
+      },
+    };
+    const messages = opts.messages ?? [];
+    const meta = baseMeta({projectContext: PROJECTS, ...(opts.work === null ? {} : {codeWork: liveWork({contextSeq: 0, ...opts.work})})});
+    const fake = fakeHost(meta, user, messages);
+    fake.host.attachmentContent = async (_chat, id) => { fetched.push(id); return new TextEncoder().encode(`содержимое ${id}`); };
+    return {...fake, backend, puts, fetched};
+  }
+  const signal = new AbortController().signal;
+
+  it("продолжение: пакет ложится в context.md до сообщения, текст хода короткий", async () => {
+    const {host, backend, puts} = setupFiles({messages: [msg(1, "user", "Кнопка должна быть синей"), msg(2, "agent", "Понял, поправлю."), msg(3, "user", "Поменяй цвет")]});
+    backend.pages = [{events: [role(4, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "Поменяй цвет", promptSequence: 3, userId: "u1", profileId: "pr", signal});
+    expect(puts.map(p => p.path)).toEqual([".mnemos/context.md"]);
+    expect(puts[0].task).toBe("t1");
+    expect(puts[0].content).toMatch(/^Контекст беседы:/);
+    expect(puts[0].content).toContain("Кнопка должна быть синей");
+    expect(puts[0].content).not.toContain("Поменяй цвет");
+    const order = backend.calls.map(c => c[0]);
+    expect(order.indexOf("putFile")).toBeLessThan(order.indexOf("message"));
+    const text = String(backend.calls.find(c => c[0] === "message")![3]);
+    expect(text).toBe("Контекст беседы — в /workspace/.mnemos/context.md (прочитай перед работой).\n\nЗадача:\nПоменяй цвет");
+  });
+
+  it("запасной путь: служба не приняла файл (409/502) — пакет текстом в начале хода, контекст не теряется", async () => {
+    const attached = msg(1, "user", "Вот макет", {attachments: [file("a1", "макет.pdf", 2048)]} as Partial<AiChatMessage>);
+    const {host, backend, meta} = setupFiles({failPut: () => true, messages: [attached]});
+    backend.pages = [{events: [role(4, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "Сверстай", userId: "u1", profileId: "pr", signal});
+    const text = String(backend.calls.find(c => c[0] === "message")![3]);
+    expect(text).toMatch(/^Контекст беседы:/);
+    expect(text).toContain("Вот макет");
+    expect(text).toContain("макет.pdf (application/pdf, 2 КБ) — не скопирован, содержимое в беседе");
+    expect(text).not.toContain("/workspace/.mnemos/context.md");
+    expect(text).toMatch(/Задача:\nСверстай$/);
+    expect(meta().codeWork?.attachmentNames).toBeUndefined();
+  });
+
+  it("только context.md не лёг — скопированные файлы названы по месту, пакет текстом", async () => {
+    const attached = msg(1, "user", "Лог", {attachments: [file("a1", "build.log", 100, "text/plain")]} as Partial<AiChatMessage>);
+    const {host, backend, puts} = setupFiles({failPut: path => path.endsWith("context.md"), messages: [attached]});
+    backend.pages = [{events: [role(4, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "Разбери лог", userId: "u1", profileId: "pr", signal});
+    expect(puts.map(p => p.path)).toEqual([".mnemos/attachments/build.log"]);
+    const text = String(backend.calls.find(c => c[0] === "message")![3]);
+    expect(text).toMatch(/^Контекст беседы:/);
+    expect(text).toContain("лежат в /workspace/.mnemos/attachments/\n- build.log (text/plain, 1 КБ)");
+  });
+
+  it("вложения копируются под безопасными именами, большие и не влезшие перечисляются именами", async () => {
+    const MiB = 1024 * 1024;
+    const messages = [
+      msg(1, "user", "Файлы", {attachments: [file("a1", "отчёт.pdf", 1000), file("a2", "отчёт.pdf", 2000), file("a3", "../../etc/passwd", 10), file("a4", "огромный.zip", 10 * MiB + 1)]} as Partial<AiChatMessage>),
+      msg(2, "user", "Ещё", {attachments: [file("b1", "one.bin", 9 * MiB), file("b2", "two.bin", 9 * MiB), file("b3", "three.bin", 9 * MiB), file("b4", "four.bin", 9 * MiB)]} as Partial<AiChatMessage>),
+      msg(3, "user", "Сделай", {attachments: [file("c1", "a\u0000b‮.txt", 5, "text/plain")]} as Partial<AiChatMessage>),
+    ];
+    const {host, backend, puts, fetched, meta} = setupFiles({messages, work: {attachmentNames: ["one.bin"], attachmentBytes: 4 * MiB}});
+    backend.pages = [{events: [role(4, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "Сделай", promptSequence: 3, userId: "u1", profileId: "pr", signal});
+    expect(puts.filter(p => p.path !== ".mnemos/context.md").map(p => p.path)).toEqual([
+      ".mnemos/attachments/отчёт.pdf", ".mnemos/attachments/отчёт (2).pdf", ".mnemos/attachments/etc_passwd",
+      ".mnemos/attachments/one (2).bin", ".mnemos/attachments/two.bin", ".mnemos/attachments/three.bin", ".mnemos/attachments/a_b_.txt",
+    ]);
+    expect(puts.find(p => p.path.endsWith("отчёт (2).pdf"))!.content).toBe("содержимое a2");
+    expect(fetched).not.toContain("a4");
+    expect(fetched).not.toContain("b4");
+    const pack = puts.find(p => p.path === ".mnemos/context.md")!.content;
+    expect(pack).toContain("лежат в /workspace/.mnemos/attachments/");
+    expect(pack).toContain("- отчёт (2).pdf (исходное имя «отчёт.pdf», application/pdf, 2 КБ)");
+    expect(pack).toContain("- огромный.zip (application/pdf, 10.0 МБ) — слишком большой, содержимое в беседе");
+    expect(pack).toContain("- four.bin (application/pdf, 9.0 МБ) — слишком большой, содержимое в беседе");
+    expect(meta().codeWork?.attachmentNames).toEqual(["one.bin", "отчёт.pdf", "отчёт (2).pdf", "etc_passwd", "one (2).bin", "two.bin", "three.bin", "a_b_.txt"]);
+    expect(meta().codeWork?.attachmentBytes).toBe(4 * MiB + 1000 + 2000 + 10 + 27 * MiB + 5);
+  });
+
+  it("новая работа: пакет текстом при запуске, файлы — как только рабочее место заработало", async () => {
+    const attached = msg(1, "user", "Макет", {attachments: [file("a1", "макет.pdf", 2048)]} as Partial<AiChatMessage>);
+    const {host, backend, puts, meta} = setupFiles({work: null, messages: [attached, msg(2, "user", "Сверстай")]});
+    backend.pages = [{events: [], state: "starting"}, {events: [], state: "running"}, {events: [role(1, "a", "assistant")], state: "idle"}];
+    await runChatCodeWork(host, {chatId: 1, toolCallId: "c", prompt: "Сверстай", promptSequence: 2, userId: "u1", profileId: "pr", signal});
+    const start = String(backend.calls.find(c => c[0] === "start")![2]);
+    expect(start).toMatch(/^Контекст беседы:/);
+    expect(start).toContain("копируются в /workspace/.mnemos/attachments/");
+    expect(start).toContain("- макет.pdf (application/pdf, 2 КБ)");
+    const order = backend.calls.map(c => c[0]);
+    // Файлы кладутся после опроса, который увидел running, а не в состоянии starting.
+    expect(order.slice(0, 3)).toEqual(["start", "events", "events"]);
+    expect(order.filter(c => c === "putFile")).toHaveLength(2);
+    expect(puts.map(p => p.path)).toEqual([".mnemos/attachments/макет.pdf", ".mnemos/context.md"]);
+    expect(puts[1].content).toContain("лежат в /workspace/.mnemos/attachments/");
+    expect(meta().codeWork?.attachmentNames).toEqual(["макет.pdf"]);
+  });
+
+  it("безопасное имя вложения: правила службы и номер для дубликата", () => {
+    const taken = new Set<string>();
+    expect(safeAttachmentName("отчёт.pdf", taken)).toBe("отчёт.pdf");
+    expect(safeAttachmentName("отчёт.pdf", taken)).toBe("отчёт (2).pdf");
+    expect(safeAttachmentName("отчёт.pdf", taken)).toBe("отчёт (3).pdf");
+    expect(safeAttachmentName("..", taken)).toBe("файл");
+    expect(safeAttachmentName("", taken)).toBe("файл (2)");
+    expect(safeAttachmentName(".env", taken)).toBe("env");
+    expect(safeAttachmentName("a\\b/c..d", taken)).toBe("a_b_c.d");
+    expect(safeAttachmentName("\ud800x.txt", taken)).toBe("�x.txt");
+    const long = safeAttachmentName("я".repeat(300) + ".docx", taken);
+    expect(new TextEncoder().encode(long).length).toBeLessThanOrEqual(200);
+    expect(long.endsWith(".docx")).toBe(true);
+    const again = safeAttachmentName("я".repeat(300) + ".docx", taken);
+    expect(again.endsWith(" (2).docx")).toBe(true);
+    expect(new TextEncoder().encode(again).length).toBeLessThanOrEqual(200);
+    for (const name of taken) expect(name.includes("..") || name.includes("/") || /\p{Cc}/u.test(name)).toBe(false);
   });
 });

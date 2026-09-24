@@ -16,7 +16,18 @@ export interface CodeWorkBackend {
   /** Изменения с последнего «Принять»; repositories — по репозиториям, когда их несколько. */
   changes(project: string, taskId: string): Promise<{files: ChangedFile[]; diff: string; truncated: boolean;
     repositories?: (CodeChangesRepository & {dir?: string})[]}>;
+  /** Положить файл в /workspace/.mnemos задачи; нет — подключение этого не умеет. */
+  putFile?(project: string, taskId: string, path: string, contentBase64: string): Promise<void>;
 }
+
+/** Файлы контекста в рабочем месте на этом ходе. */
+export type CodeWorkFiles = {
+  /** Продолжение: положить файлы до сообщения и вернуть текст хода. Ошибка — уходит prompt хода. */
+  beforeMessage(taskId: string): Promise<string>;
+  /** Новая работа: задача уже передана при запуске; файлы кладутся, как только рабочее место
+   *  становится running или idle (раньше служба их не примет). */
+  afterStart(taskId: string): Promise<void>;
+};
 
 export type CodeWorkTurn = {
   backend: CodeWorkBackend;
@@ -28,6 +39,8 @@ export type CodeWorkTurn = {
   taskId?: string;
   cursor: number;
   prompt: string;
+  /** Контекст файлами; нет — prompt уходит как есть. */
+  files?: CodeWorkFiles;
   signal: AbortSignal;
   onStep(step: AgentStep): void;
   onText?(delta: string): void;
@@ -54,13 +67,25 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
   let extra: AgentStep[] = [];
   turn.signal.throwIfAborted();
 
+  // Файлы новой работы кладутся в фоне, чтобы не задерживать показ шагов; ход ждёт их в конце.
+  let placing: Promise<void> | undefined;
+  let place = (id: string, now: CodeWorkState) => {
+    if (placing || !turn.files || (now !== "running" && now !== "idle")) return;
+    placing = turn.files.afterStart(id).catch(() => { /* пакет уже ушёл текстом при запуске */ });
+  };
+
   if (taskId) {
-    await turn.backend.message(turn.projectId, taskId, turn.prompt);
+    let text = turn.prompt;
+    if (turn.files) {
+      try { text = await turn.files.beforeMessage(taskId); } catch { /* запасной путь: пакет текстом */ }
+    }
+    await turn.backend.message(turn.projectId, taskId, text);
   } else {
     if (!turn.target) throw new Error("У проекта нет подключённого кода.");
     let started = await turn.backend.start(turn.projectId, turn.target, turn.prompt);
     taskId = started.taskId;
     state = started.state;
+    place(taskId, state);
     if (started.scopeExtended) {
       extra.push({id: "project-scope", kind: "project", status: "done", title: `Подключил проект «${turn.projectTitle}»`,
         detail: "Проект добавлен в область агента; права агента не шире ваших.", resource: {kind: "project", name: turn.projectTitle}});
@@ -105,6 +130,7 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
     if (batch === "aborted") continue;
     apply(batch.events);
     state = batch.state;
+    if (!turn.taskId) place(taskId, state);
     if (state === "starting" || state === "running" || timeline.sawWork()) sawBusy = true;
     if (state === "stopped" || state === "failed") break;
     if (state === "idle") {
@@ -114,6 +140,7 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
     }
   }
 
+  await placing;
   let changedFiles: ChangedFile[] = [];
   if (!stopped && state !== "failed") {
     try { changedFiles = (await turn.backend.changes(turn.projectId, taskId)).files; } catch { /* список изменений не обязателен для итога */ }
