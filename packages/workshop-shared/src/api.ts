@@ -1065,6 +1065,9 @@ export type AiModelConfig = {
   // Только для OpenRouter (провайдер "openai" с apiUrl на openrouter.ai): запрос идёт в чат
   // OpenRouter, а не в Responses API, и несёт выбор провайдеров. Рассуждение выключено.
   openRouter?: {order: string[]; allowFallbacks: boolean};
+
+  // Уровень рассуждения для OpenAI Responses; нет — medium.
+  reasoningEffort?: "low" | "medium" | "high";
 };
 
 // Workers AI adds the response cap to the prompt and rejects a request whose total exceeds the

@@ -292,6 +292,16 @@ describe("getModel direct routing (no gateway)", () => {
     expect(installationChatModel({MNEMOS_CHAT_MODEL: "openai/gpt-5.4-nano"})).toBeUndefined();
   });
 
+  it("модель бесед установки несёт заданный уровень рассуждения в запрос Responses", async () => {
+    const shared = installationChatModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter", MNEMOS_CHAT_MODEL: "openai/gpt-6-luna", MNEMOS_CHAT_REASONING: "high"})!;
+    expect(shared.config.reasoningEffort).toBe("high");
+    const request = await captureRequest(getModel(env({ CF_AI_GATEWAY: undefined }), shared.config, INITIATOR));
+    expect(request.url).toBe("https://openrouter.ai/api/v1/responses");
+    expect(JSON.parse(request.body).reasoning?.effort).toBe("high");
+    const plain = installationChatModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter", MNEMOS_CHAT_MODEL: "openai/gpt-6-luna"})!;
+    expect(plain.config.reasoningEffort).toBeUndefined();
+  }, 15000);
+
   it("быстрая модель установки: чат OpenRouter, провайдеры владельца без запасных, без рассуждения", async () => {
     const quick = installationQuickModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter"})!;
     expect(installationQuickModel({MNEMOS_STT_API_KEY: "sk-other", MNEMOS_STT_URL: "https://api.openai.com/v1"})).toBeUndefined();

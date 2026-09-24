@@ -258,6 +258,7 @@ type HandleArgs = {
   gatewayMetadata?: GatewayMetadata;
   sessionAffinity?: string;
   aiGatewayLogRoute?: AiGatewayLogRoute;
+  reasoningEffort?: "low" | "medium" | "high";
 };
 
 function makeHandle(args: HandleArgs): ModelHandle {
@@ -281,7 +282,7 @@ function makeHandle(args: HandleArgs): ModelHandle {
   const apiExtras: Record<string, unknown> =
       args.model.api === "anthropic-messages"
           ? (anthropicCompat?.forceAdaptiveThinking === true ? { thinkingEnabled: true } : {}) :
-      args.model.api === "openai-responses" ? { reasoningEffort: "medium" } : {};
+      args.model.api === "openai-responses" ? { reasoningEffort: args.reasoningEffort ?? "medium" } : {};
 
   const handle: ModelHandle = {
     model: args.model,
@@ -607,6 +608,7 @@ function getModelDirect(config: AiModelConfig, sessionAffinity?: string): ModelH
         },
         apiKey: config.apiToken,
         sessionAffinity,
+        ...(config.reasoningEffort ? { reasoningEffort: config.reasoningEffort } : {}),
       });
     default:
       config.provider satisfies never;

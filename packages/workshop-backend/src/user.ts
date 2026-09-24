@@ -607,13 +607,13 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     }
 
     // Also include user-configured models, skipping any that duplicate a gateway model.
+    let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
     for (let model of this.storage.aiModels.list()) {
-      if (!gwModelIds.has(model.profile.id)) {
+      if (!gwModelIds.has(model.profile.id) && model.profile.id !== shared?.profile.id) {
         result.push(model.profile);
       }
     }
-    let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
-    if (shared && !result.some(model => model.id === shared.profile.id)) result.push(shared.profile);
+    if (shared) result.push(shared.profile);
     return result;
   }
 
@@ -763,16 +763,16 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       profile: this.storage.profile.get()
     };
     if (modelId) {
+      // Модель бесед установки главнее одноимённой модели человека: её меняет администратор
+      // установки для всех сразу.
+      let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
+      if (shared && shared.profile.id === modelId) result.aiModel = shared;
       // In AI Gateway mode, resolve gateway models first.
-      if (gwConfig) {
+      if (gwConfig && !result.aiModel) {
         result.aiModel = gwConfig.resolveModel(modelId);
       }
       if (!result.aiModel) {
         result.aiModel = this.storage.aiModels.get(modelId);
-      }
-      if (!result.aiModel) {
-        let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
-        if (shared && shared.profile.id === modelId) result.aiModel = shared;
       }
       if (!result.aiModel) throw new Error(`No such model: ${modelId}`);
     }

@@ -176,18 +176,20 @@ export function installationQuickModel(env: OpenRouterInstallConfig): AiModelCon
 }
 
 /** Модель бесед установки: есть у каждого человека без настройки (решение владельца — «сел и
- *  поехал»). Имя модели OpenRouter — MNEMOS_CHAT_MODEL, ключ — ключ OpenRouter установки. Своя
- *  модель человека с тем же id главнее. */
+ *  поехал»). Имя модели OpenRouter — MNEMOS_CHAT_MODEL, ключ — ключ OpenRouter установки. Она
+ *  главнее одноимённой модели человека. */
 export const INSTALLATION_CHAT_MODEL_ID = "mnemos-assistant";
 
 export function installationChatModel(env: OpenRouterInstallConfig):
     {profile: {type: "agent"; id: string; name: string}; config: AiModelConfig} | undefined {
   let model = env.MNEMOS_CHAT_MODEL?.trim();
+  let effort = env.MNEMOS_CHAT_REASONING?.trim();
   let apiToken = installationOpenRouterKey(env);
   if (!model || !apiToken) return undefined;
   return {
     profile: {type: "agent", id: INSTALLATION_CHAT_MODEL_ID, name: "Mnemos Assistant"},
-    config: {provider: "openai", model, apiToken, apiUrl: "https://openrouter.ai/api/v1"},
+    config: {provider: "openai", model, apiToken, apiUrl: "https://openrouter.ai/api/v1",
+      ...(effort === "low" || effort === "medium" || effort === "high" ? {reasoningEffort: effort} : {})},
   };
 }
 
@@ -197,6 +199,8 @@ export interface OpenRouterInstallConfig {
   MNEMOS_STT_URL?: string;
   MNEMOS_STT_PROTOCOL?: string;
   MNEMOS_CHAT_MODEL?: string;
+  /** Уровень рассуждения модели бесед установки: low, medium или high. */
+  MNEMOS_CHAT_REASONING?: string;
 }
 
 /** Ключ OpenRouter установки. Отдельной переменной ключа OpenRouter для моделей нет (модели
