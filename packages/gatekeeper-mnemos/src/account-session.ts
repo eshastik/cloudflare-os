@@ -322,6 +322,8 @@ export class MnemosAccountSession {
   }
   async connectInvitedTracker(project:string,node:string,source:string){
     await this.validateInvitedTracker(project,node,source);
+    // Приглашение «только к документу» копии к себе не даёт; сервер тоже откажет.
+    if((await this.listInvitedDocuments(project,"",node)).documents.some(d=>d.node_id===node&&d.document_only===true))throw new Error("Document-only invitation cannot be copied");
     const head=(await this.openDraft(project)).head;
     // The core adoption operation rejects existing nodes and stale heads.
     // Reading an absent private node can return 403, so it cannot test absence.
@@ -334,7 +336,8 @@ export class MnemosAccountSession {
     if (!Array.isArray(page.documents) || page.documents.length > 100 || typeof page.next_cursor !== "string" || page.next_cursor.length > 2048 || page.documents.some(d =>
       !d || typeof d.node_id !== "string" || !d.node_id || d.node_id.length > 255 || (node && d.node_id !== node) ||
       typeof d.head !== "string" || !/^[a-f0-9]{64}$/.test(d.head) || typeof d.owner_id !== "string" || !d.owner_id || d.owner_id.length > 255 ||
-      typeof d.name !== "string" || !d.name || d.name.length > 255 || typeof d.content_type !== "string" || d.content_type.length > 255)) throw new MnemosAPIError(502);
+      typeof d.name !== "string" || !d.name || d.name.length > 255 || typeof d.content_type !== "string" || d.content_type.length > 255 ||
+      (d.document_only !== undefined && typeof d.document_only !== "boolean"))) throw new MnemosAPIError(502);
     return page;
   }
   async listSharedDocuments() {
@@ -345,7 +348,8 @@ export class MnemosAccountSession {
     if (!page || !Array.isArray(page.documents) || page.documents.length > 100 || page.documents.some(d => !d ||
       !text(d.project_id) || !d.project_id || !text(d.node_id) || !d.node_id || !text(d.owner_id) || !d.owner_id || !text(d.name) || !d.name ||
       !text(d.project_name) || !text(d.owner_name) || !text(d.granted_by_name) || !text(d.content_type) || typeof d.head !== "string" || !/^[a-f0-9]{64}$/.test(d.head) ||
-      (d.mode !== "read" && d.mode !== "write") || typeof d.granted_at !== "string" || typeof d.seen !== "boolean")) throw new MnemosAPIError(502);
+      (d.mode !== "read" && d.mode !== "write") || typeof d.granted_at !== "string" || typeof d.seen !== "boolean" ||
+      (d.document_only !== undefined && typeof d.document_only !== "boolean"))) throw new MnemosAPIError(502);
     return page.documents;
   }
   async markSharedDocumentSeen(project: string, owner: string, node: string) {

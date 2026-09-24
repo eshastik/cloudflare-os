@@ -577,6 +577,8 @@ export interface GatekeeperNativeDocumentEditor extends GatekeeperNativeDocument
 export interface GatekeeperSharedDocument {
   scope: string; resource: string; owner: string; name: string; format: NativeDocumentFormat | null
   projectName: string; ownerName: string; grantedByName: string; mode: 'read' | 'write'; grantedAt: string; seen: boolean
+  /** Приглашение открывает только этот документ, без папки проекта. */
+  documentOnly?: boolean
 }
 
 /** A new-document writer whose frozen request can survive a browser reload. */
@@ -695,7 +697,8 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
     /** Current shared deletion state, omitted when unknown or for a private-only choice. */
     sharedDeleted?: boolean }[]; nextCursor: string; truncated: boolean }>;
   /** List invitation choices and current modes for an owned private document at this head. */
-  participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean }[] }>;
+  /** documentOnlyRead/documentOnlyWrite — приглашение с этим правом откроет человеку только этот документ, без папки. */
+  participants(scope: string, resource: string, head: string, cursor: string): Promise<{ head: string; nextCursor: string; participants: { id: string; name: string; mode: '' | 'read' | 'write'; canRead: boolean; canWrite: boolean; documentOnlyRead?: boolean; documentOnlyWrite?: boolean }[] }>;
   /** Change one invitation using the displayed mode; current ownership, folder rights and head are rechecked. */
   setParticipant(scope: string, resource: string, head: string, participant: string, expected: '' | 'read' | 'write', mode: '' | 'read' | 'write'): Promise<void>;
   /** Документы других людей, открытые этому человеку («Поделились с вами»), новые сверху. */

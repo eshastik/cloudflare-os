@@ -179,9 +179,12 @@ it('смена документа — из меню «…»: «Привязат�
 
 it('«Поделиться»: люди списком по отделам, выбор щелчком, одна кнопка «Пригласить N»; право в строке сохраняется сразу; «Убрать»', async () => {
   const people = [
-    { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов', mode: '' as string, canRead: true, canWrite: true },
-    { id: 'reader-1', name: 'Ольга Кузнецова', mode: 'read' as string, canRead: true, canWrite: false },
-    { id: 'viewer-2', name: 'Анна Смирнова', mode: '' as string, canRead: true, canWrite: false },
+    { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов', mode: '' as string, canRead: true, canWrite: true, documentOnlyRead: false, documentOnlyWrite: false },
+    { id: 'reader-1', name: 'Ольга Кузнецова', mode: 'read' as string, canRead: true, canWrite: false, documentOnlyRead: false, documentOnlyWrite: true },
+    // Читает папку, но не пишет: «только документ» лишь при приглашении на правку.
+    { id: 'viewer-2', name: 'Анна Смирнова', mode: '' as string, canRead: true, canWrite: false, documentOnlyRead: false, documentOnlyWrite: true },
+    // Не видит папку документа: приглашение откроет ему только этот документ.
+    { id: 'guest-3', name: 'Вера Гостева', mode: '' as string, canRead: false, canWrite: false, documentOnlyRead: true, documentOnlyWrite: true },
   ]
   const calls: unknown[][] = []
   class Writer extends RpcTarget { async head() { return head } async access() { return 'owner' } }
@@ -200,7 +203,7 @@ it('«Поделиться»: люди списком по отделам, вы�
     async projectLevel() { return { name: 'Mnemos', level: 'private', canEdit: false, pending: null } }
     async orgUnits() { return [
       { id: 'dev', name: 'Разработка', members: [{ id: 'owner', name: 'Владелец' }, { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов' }, { id: 'outsider', name: 'Пётр Сидоров' }] },
-      { id: 'law', name: 'Юристы', members: [{ id: 'reader-1', name: 'Ольга Кузнецова' }, { id: 'viewer-2', name: 'Анна Смирнова' }] },
+      { id: 'law', name: 'Юристы', members: [{ id: 'reader-1', name: 'Ольга Кузнецова' }, { id: 'viewer-2', name: 'Анна Смирнова' }, { id: 'guest-3', name: 'Вера Гостева' }] },
     ] }
     async sharedDocuments() { return { documents: [] } }
     async reviewerIdentity() { return 'owner' }
@@ -225,13 +228,17 @@ it('«Поделиться»: люди списком по отделам, вы�
     expect([...panel().querySelectorAll('[data-group]')].map(g => g.getAttribute('data-group'))).toEqual(['unit:dev', 'unit:law'])
     expect(panel().querySelector('[data-group="unit:dev"]')?.textContent).toContain('Мой отдел · Разработка')
     expect(candidate('Анна Смирнова')).toBeUndefined()
-    // Человек без доступа к проекту виден с пометкой, но не выбирается.
-    expect(candidate('Пётр Сидоров')?.textContent).toContain('нет доступа к проекту')
+    // Человек, которого сервер не предложил (отключён), виден с пометкой, но не выбирается.
+    expect(candidate('Пётр Сидоров')?.textContent).toContain('нельзя пригласить')
     expect(candidate('Пётр Сидоров')?.disabled).toBe(true)
     // Кнопки «Пригласить» нет, пока никто не выбран.
     expect(panel().querySelector('[data-share-invite]')).toBeNull()
     await act(async () => { ([...panel().querySelectorAll('[data-group="unit:law"] button')][0] as HTMLButtonElement).click() })
-    expect(candidate('Анна Смирнова')?.textContent).toContain('может только смотреть')
+    // Право не понижается; пометка — по выбранному праву (по умолчанию «может править»).
+    expect(candidate('Анна Смирнова')?.textContent).not.toContain('может только смотреть')
+    expect(candidate('Анна Смирнова')?.textContent).toContain('получит доступ только к этому документу')
+    expect(candidate('Вера Гостева')?.textContent).toContain('получит доступ только к этому документу')
+    expect(candidate('Вера Гостева')?.disabled).toBe(false)
     expect(candidate('Ольга Кузнецова')).toBeUndefined()
     // Поиск только фильтрует список.
     const input = panel().querySelector('input#share-person') as HTMLInputElement
@@ -241,12 +248,21 @@ it('«Поделиться»: люди списком по отделам, вы�
     await act(async () => candidate('Николай Деревцов')!.click())
     await act(async () => { setter.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true })) })
     await act(async () => candidate('Анна Смирнова')!.click())
-    expect(panel().querySelector('[data-share-invite]')?.textContent).toBe('Пригласить 2')
+    await act(async () => candidate('Вера Гостева')!.click())
+    // При выборе «может смотреть» пометка остаётся только у того, кто не видит папку.
+    const rightRadio = (title: string) => [...panel().querySelectorAll('[aria-label="Право приглашённых"] [role="radio"]')].find(b => b.textContent === title) as HTMLButtonElement
+    await act(async () => rightRadio('может смотреть').click())
+    expect(candidate('Анна Смирнова')?.textContent).not.toContain('получит доступ только к этому документу')
+    expect(candidate('Вера Гостева')?.textContent).toContain('получит доступ только к этому документу')
+    await act(async () => rightRadio('может править').click())
+    expect(panel().querySelector('[data-share-invite]')?.textContent).toBe('Пригласить 3')
     await act(async () => (panel().querySelector('[data-share-invite]') as HTMLButtonElement).click())
-    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(2)) })
+    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(3)) })
     expect(calls[0]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', '', 'write'])
-    expect(calls[1]).toEqual(['project', 'doc', head, 'viewer-2', '', 'read'])
+    expect(calls[1]).toEqual(['project', 'doc', head, 'viewer-2', '', 'write'])
+    expect(calls[2]).toEqual(['project', 'doc', head, 'guest-3', '', 'write'])
     await act(async () => { await vi.waitFor(() => expect(panel().textContent).toContain('получат уведомление во «Входящих» и письмо')) })
+    expect(panel().textContent).toContain('Только этот документ, без папки проекта: Анна Смирнова, Вера Гостева')
     expect(panel().querySelector('[data-share-invite]')).toBeNull()
     // Право меняется в строке и сохраняется сразу.
     const row = () => [...panel().querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Николай Деревцов'))!
@@ -254,12 +270,15 @@ it('«Поделиться»: люди списком по отделам, вы�
     expect(row().textContent).toContain('может править')
     await act(async () => { (row().querySelector('button[aria-label="Право: Николай Деревцов"]') as HTMLButtonElement).click() })
     await act(async () => { ([...row().querySelectorAll('[role="menuitemradio"]')].find(b => b.textContent === 'может смотреть') as HTMLButtonElement).click() })
-    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(3)) })
-    expect(calls[2]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'write', 'read'])
+    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(4)) })
+    expect(calls[3]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'write', 'read'])
     await act(async () => { await vi.waitFor(() => expect(row().textContent).toContain('может смотреть')) })
     await act(async () => { ([...row().querySelectorAll('button')].find(b => b.textContent === 'Убрать') as HTMLButtonElement).click() })
-    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(4)) })
-    expect(calls[3]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'read', ''])
+    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(5)) })
+    expect(calls[4]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'read', ''])
+    // У приглашённого без папки в списке «Имеют доступ» — пометка.
+    const guestRow = [...panel().querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Вера Гостева'))
+    expect(guestRow?.textContent).toContain('только этот документ')
     await act(async () => { await vi.waitFor(() => expect(panel().textContent).toContain('больше не видит документ')) })
     // Недавние: приглашённые в этом браузере наверху.
     await act(async () => { await vi.waitFor(() => expect(panel().querySelector('[data-group="recent"]')?.textContent).toContain('Николай Деревцов')) })
@@ -272,7 +291,7 @@ it('приглашённому «Поделиться» объясняет, чт
     async publicationState() { return { personal_head: 'e'.repeat(64), shared_head: shared, personal_exists: true } }
     async select() { return new RpcStub(new Writer()) }
     async selectConflict() { throw new Error('No conflict') }
-    async sharedDocuments() { return { documents: [{ scope: 'project', resource: 'doc', owner: 'owner', name: 'Дорожная карта', format: 'cloudflareos.document', projectName: 'Mnemos', ownerName: 'Николай Деревцов', grantedByName: 'Николай Деревцов', mode: 'write', grantedAt: '2026-09-24T10:00:00Z', seen: false }] } }
+    async sharedDocuments() { return { documents: [{ scope: 'project', resource: 'doc', owner: 'owner', name: 'Дорожная карта', format: 'cloudflareos.document', projectName: 'Mnemos', ownerName: 'Николай Деревцов', grantedByName: 'Николай Деревцов', mode: 'write', grantedAt: '2026-09-24T10:00:00Z', seen: false, documentOnly: true }] } }
     async participants() { throw new Error('owner only') }
     async reviewerIdentity() { return 'mnemos-owner' }
   }
@@ -284,6 +303,8 @@ it('приглашённому «Поделиться» объясняет, чт
     expect(document.querySelector('button[data-primary-action]')).toBeNull()
     await act(async () => { window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT)) })
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('[data-share-panel]')?.textContent).toContain('Приглашать других может его владелец')) })
+    await act(async () => { await vi.waitFor(() => expect(document.querySelector('[data-share-panel]')?.textContent).toContain('Вам открыт только он, без папки проекта.')) })
     expect(document.querySelector('[data-share-panel] h2')?.textContent).toBe('Поделиться')
+    expect(document.querySelector('[data-share-invite]')).toBeNull()
   } finally { await view.unmount() }
 })

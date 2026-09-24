@@ -262,7 +262,7 @@ export async function prepareAgentAction(session: AgentActionSession, scope: Rea
       return { kind: request.kind, icon: "share", ownerOnly: true,
         // Имя не склоняется: «с Николай Деревцов» звучит хуже, чем имя после двоеточия.
         title: request.mode === "none" ? `Закрыть доступ к «${document.name}»: ${person.display_name}` : `Поделиться документом «${document.name}»: ${person.display_name} — ${MODE_WORDS[request.mode]}`,
-        details: [`Проект «${p.name}»`, before],
+        details: [`Проект «${p.name}»`, before, ...((request.mode === "read" && person.document_only_read) || (request.mode === "write" && person.document_only_write) ? ["Получит доступ только к этому документу, без папки проекта"] : [])],
         resolved: { project: p.id, projectName: p.name, node: document.node_id, name: document.name, person: person.principal_id, personName: person.display_name, expected: person.mode, mode } };
     }
     case "request_review": {

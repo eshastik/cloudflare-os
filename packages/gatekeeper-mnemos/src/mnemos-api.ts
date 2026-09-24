@@ -1174,7 +1174,8 @@ export interface PrivateDocumentPage {
 /** Empty mode revokes an explicit invitation; folder rights remain independently required. */
 export type PrivateParticipantMode = "" | "read" | "write";
 
-export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean }[] }
+/** document_only_read/_write — приглашение с этим правом откроет человеку только этот документ (у него нет такого права на папку). Старый сервер полей не присылает. */
+export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; document_only_read?: boolean; document_only_write?: boolean }[] }
 
 /** projects — проекты человека, которые можно отдать агенту; старый сервер их не присылает. */
 export interface AgentConsentPreview { client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }
@@ -1209,11 +1210,13 @@ function validInvitation(value: unknown): value is OrganizationInvitation {
 export interface SharedDocument {
   project_id: string; project_name: string; node_id: string; owner_id: string; owner_name: string; granted_by_name: string;
   name: string; content_type: string; head: string; mode: "read" | "write"; granted_at: string; seen: boolean;
+  /** Приглашение открывает только этот документ: пригласить дальше, перенести и забрать копию нельзя. */
+  document_only?: boolean;
 }
 
 /** Authorized immutable versions explicitly invited by their owners. */
 export interface InvitedDocumentPage {
-  documents: {node_id: string; name: string; content_type: string; head: string; owner_id: string}[];
+  documents: {node_id: string; name: string; content_type: string; head: string; owner_id: string; document_only?: boolean}[];
   next_cursor: string;
 }
 

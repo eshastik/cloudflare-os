@@ -35,8 +35,8 @@ export type CandidateGroup = { id: string; title: string; people: Candidate[]; m
 
 /**
  * Кого можно пригласить, по группам: «Недавние», затем отделы (свой первым), затем остальные коллеги.
- * Уже имеющие доступ сюда не попадают. Человек из отдела, которого нет среди людей проекта, остаётся в
- * списке с person=null: у него нет доступа к проекту, и молча его не прячем.
+ * Уже имеющие доступ сюда не попадают. Сервер отдаёт всех активных людей организации; человек из отдела,
+ * которого среди них нет (отключён), остаётся в списке с person=null и не выбирается — молча его не прячем.
  */
 export function shareCandidates(people: SharePerson[], units: ShareUnit[], me: string, recent: string[]): CandidateGroup[] {
   const byId = new Map(people.map(p => [p.id, p]))
@@ -76,6 +76,14 @@ function Avatar({ name, id }: { name: string; id: string }) {
 
 const RIGHTS: { id: Right; title: string }[] = [{ id: 'write', title: 'может править' }, { id: 'read', title: 'может смотреть' }]
 
+/** Пометка человека без доступа к папке документа: приглашение откроет ему только этот документ. */
+export const DOCUMENT_ONLY_NOTE = 'получит доступ только к этому документу'
+
+/** Откроет ли приглашение с этим правом человеку только документ (без папки). */
+export function documentOnlyWith(p: SharePerson, right: Right): boolean {
+  return right === 'write' ? !!p.documentOnlyWrite : !!p.documentOnlyRead
+}
+
 /** Право приглашённого в строке: «может править ▾» раскрывает два варианта; выбор сохраняется сразу. */
 function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabled: boolean; onChange(mode: Right): void }) {
   const [open, setOpen] = useState(false)
@@ -93,8 +101,8 @@ function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabl
       {RIGHTS.find(r => r.id === value)!.title}<CaretDown size={12} aria-hidden="true" /></button>
     {open && <div role="menu" className="absolute top-9 right-0 z-10 flex w-48 flex-col rounded-xl border border-kumo-fill bg-kumo-overlay p-1 shadow-[0_8px_24px_rgba(24,32,28,0.12)]">
       {RIGHTS.map(r => {
-        const off = r.id === 'write' && !person.canWrite
-        return <button key={r.id} type="button" role="menuitemradio" aria-checked={value === r.id} disabled={off} title={off ? 'У человека нет права записи в папку документа' : undefined}
+        // Право правки даёт само приглашение: своё право записи в папку не требуется.
+        return <button key={r.id} type="button" role="menuitemradio" aria-checked={value === r.id}
           onClick={() => { setOpen(false); if (r.id !== value) onChange(r.id) }}
           className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 text-left text-[14px] text-kumo-default hover:bg-kumo-tint disabled:cursor-not-allowed disabled:text-kumo-inactive disabled:hover:bg-transparent">
           <span className="w-4">{value === r.id && <Check size={14} aria-hidden="true" />}</span>{r.title}</button>
@@ -114,6 +122,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
   const [people, setPeople] = useState<SharePerson[] | null>(null)
   const [units, setUnits] = useState<ShareUnit[]>([]), [me, setMe] = useState(''), [recent, setRecent] = useState<string[]>(() => readRecent())
   const [owner, setOwner] = useState<boolean | null>(null)
+  const [documentOnly, setDocumentOnly] = useState(false)
   const [level, setLevel] = useState<{ name: string; level: Level; canEdit: boolean; pending: Level | null } | null>(null)
   const [query, setQuery] = useState(''), [right, setRight] = useState<Right>('write'), [picked, setPicked] = useState<string[]>([])
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -127,7 +136,12 @@ export default function DocumentSharePanel({ selector, binding, format, document
     const head = await writer.head()
     const access = (await Promise.resolve(writer.access()).catch(() => undefined)) ?? 'owner'
     if (!alive.current) return
-    if (access !== 'owner') { setOwner(false); setPeople([]); return }
+    if (access !== 'owner') {
+      setOwner(false); setPeople([])
+      const mine = await Promise.resolve(selector.sharedDocuments()).catch(() => null)
+      if (alive.current) setDocumentOnly(!!mine?.documents.find(d => d.scope === scope && d.resource === resource)?.documentOnly)
+      return
+    }
     const all: SharePerson[] = []
     let cursor = ''
     for (let page = 0; page < PEOPLE_PAGES; page++) {
@@ -177,11 +191,11 @@ export default function DocumentSharePanel({ selector, binding, format, document
   async function invite() {
     const chosen = picked.map(id => people?.find(p => p.id === id)).filter((p): p is SharePerson => !!p && p.mode === '')
     if (!chosen.length) return
-    const readOnly = right === 'write' ? chosen.filter(p => !p.canWrite) : []
+    const only = chosen.filter(p => documentOnlyWith(p, right))
     const names = chosen.map(p => p.name || 'Коллега')
     const who = names.length === 1 ? names[0]! : names.length === 2 ? `${names[0]} и ${names[1]}` : `${names[0]} и ещё ${plural(names.length - 1, 'человек', 'человека', 'человек')}`
-    const ok = await change(chosen.map(person => ({ person, mode: right === 'write' && person.canWrite ? 'write' : 'read' })),
-      `${who} ${chosen.length === 1 ? 'получит' : 'получат'} уведомление во «Входящих» и письмо.${readOnly.length ? ` Смотреть, но не править: ${readOnly.map(p => p.name || 'коллега').join(', ')} — нет права записи в папку документа.` : ''}`)
+    const ok = await change(chosen.map(person => ({ person, mode: right })),
+      `${who} ${chosen.length === 1 ? 'получит' : 'получат'} уведомление во «Входящих» и письмо.${only.length ? ` Только этот документ, без папки проекта: ${only.map(p => p.name || 'коллега').join(', ')}.` : ''}`)
     if (ok && alive.current) { rememberRecent(chosen.map(p => p.id)); setRecent(readRecent()); setPicked([]); setQuery('') }
   }
   async function changeLevel(next: Level) {
@@ -199,18 +213,21 @@ export default function DocumentSharePanel({ selector, binding, format, document
   const groups = useMemo(() => shareCandidates(people ?? [], units, me, recent), [people, units, me, recent])
   const q = query.trim().toLocaleLowerCase('ru-RU')
   const found = q ? [...new Map(groups.flatMap(g => g.people).filter(c => c.name.toLocaleLowerCase('ru-RU').includes(q)).map(c => [c.id, c])).values()] : null
-  const selectable = (c: Candidate) => !!c.person && c.person.canRead
+  const selectable = (c: Candidate) => !!c.person
   const toggle = (c: Candidate) => { if (selectable(c)) setPicked(old => old.includes(c.id) ? old.filter(id => id !== c.id) : [...old, c.id]) }
   const isOpen = (g: CandidateGroup) => open[g.id] ?? (g.id === 'recent' || g.mine)
   const pickedPeople = picked.map(id => people?.find(p => p.id === id)).filter((p): p is SharePerson => !!p)
 
   const row = (c: Candidate, withUnit: boolean) => {
     const on = picked.includes(c.id), ok = selectable(c)
-    const note = !c.person ? 'нет доступа к проекту' : !c.person.canWrite ? 'может только смотреть' : ''
+    // Пометка — по выбранному праву: сервер даёт основание «только документ»,
+    // если у человека нет этого права на папку.
+    const only = !!c.person && documentOnlyWith(c.person, right)
+    const note = !c.person ? 'нельзя пригласить' : only ? DOCUMENT_ONLY_NOTE : ''
     const sub = [withUnit ? c.unit : '', note].filter(Boolean).join(' · ')
     return <li key={c.id}>
       <button type="button" data-candidate="" aria-pressed={on} disabled={busy || !ok}
-        title={!c.person ? 'Пригласить можно, когда у человека есть доступ к проекту: откройте проект отделу или попросите администратора.' : undefined}
+        title={!c.person ? 'Учётная запись человека отключена.' : only ? 'У человека нет такого права на папку документа: приглашение откроет ему только этот документ.' : undefined}
         onClick={() => toggle(c)}
         className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border-0 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-default ${on ? 'bg-kumo-tint' : 'bg-transparent enabled:hover:bg-kumo-tint/60'}`}>
         <Avatar name={c.name} id={c.id} />
@@ -234,7 +251,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
     </header>
     <div className="flex min-h-0 flex-col gap-6 overflow-y-auto px-7 pb-[26px] text-[14px] text-kumo-default">
       {!binding && <p className="m-0 text-kumo-subtle">Документ ещё не сохранён в проект. Поделиться можно, когда он сохранится.</p>}
-      {binding && owner === false && <p className="m-0 text-kumo-subtle">С вами поделились этим документом. Приглашать других может его владелец.</p>}
+      {binding && owner === false && <p className="m-0 text-kumo-subtle">С вами поделились этим документом.{documentOnly ? ' Вам открыт только он, без папки проекта.' : ''} Приглашать других может его владелец.</p>}
       {binding && owner && <>
         {level && <div className="flex flex-col gap-2">
           <div role="radiogroup" aria-label="Доступ" className="grid grid-cols-3 gap-0.5 rounded-full bg-kumo-tint p-1">
@@ -251,7 +268,10 @@ export default function DocumentSharePanel({ selector, binding, format, document
           <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><Avatar name="Вы" id={me || 'me'} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
           {withAccess.map(p => <div key={p.id} data-share-person="" className="group flex items-center gap-3 border-b border-kumo-fill py-2.5 last:border-b-0">
             <Avatar name={p.name || 'Коллега'} id={p.id} />
-            <span className="min-w-0 flex-1 truncate text-[15px]">{p.name || 'Коллега'}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[15px]">{p.name || 'Коллега'}</span>
+              {documentOnlyWith(p, p.mode === 'write' ? 'write' : 'read') && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">только этот документ</span>}
+            </span>
             <button type="button" disabled={busy} onClick={() => { void change([{ person: p, mode: '' }], `${p.name || 'Коллега'} больше не видит документ.`) }}
               className="h-8 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-kumo-danger focus-visible:opacity-100 disabled:cursor-not-allowed">Убрать</button>
             <RightMenu person={p} disabled={busy} onChange={mode => { void change([{ person: p, mode }], `${p.name || 'Коллега'} теперь ${mode === 'write' ? 'может править' : 'может смотреть'}.`) }} />
@@ -285,7 +305,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
               {isOpen(g) && <ul aria-label={g.title} className="m-0 flex list-none flex-col p-0">{g.people.map(c => row(c, !g.unit))}</ul>}
             </div>
           })}
-          {people !== null && !groups.length && !found && <p className="m-0 px-1 text-[13px] text-kumo-subtle">Все коллеги с доступом к проекту уже приглашены.</p>}
+          {people !== null && !groups.length && !found && <p className="m-0 px-1 text-[13px] text-kumo-subtle">Все коллеги уже приглашены.</p>}
         </section>
       </>}
       {people === null && !error && <p role="status" className="m-0 text-kumo-subtle">Загрузка…</p>}

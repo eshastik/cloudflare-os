@@ -142,7 +142,7 @@ export class NativeWriteSelector extends RpcTarget {
   async documents(project: string, cursor: string) { return listNativeDocuments(this.#session, project, cursor); }
   async participants(project: string, node: string, head: string, cursor: string) {
     const page = await this.#session.listPrivateDraftParticipants(project,node,head,cursor);
-    return { head: page.head, nextCursor: page.next_cursor, participants: page.participants.map(p => ({id:p.principal_id,name:p.display_name,mode:p.mode,canRead:p.can_read,canWrite:p.can_write})) };
+    return { head: page.head, nextCursor: page.next_cursor, participants: page.participants.map(p => ({id:p.principal_id,name:p.display_name,mode:p.mode,canRead:p.can_read,canWrite:p.can_write,documentOnlyRead:p.document_only_read===true,documentOnlyWrite:p.document_only_write===true})) };
   }
   async setParticipant(project: string, node: string, head: string, participant: string, expected: PrivateParticipantMode, mode: PrivateParticipantMode) {
     await this.#session.setPrivateDraftParticipant(project,node,head,participant,expected,mode);
@@ -157,7 +157,7 @@ export class NativeWriteSelector extends RpcTarget {
     const documents = await this.#session.listSharedDocuments();
     return { documents: documents.map(d => ({ scope: d.project_id, resource: d.node_id, owner: d.owner_id, name: d.name,
       format: nativeFormatOf(d.content_type), projectName: d.project_name, ownerName: d.owner_name, grantedByName: d.granted_by_name,
-      mode: d.mode, grantedAt: d.granted_at, seen: d.seen })) };
+      mode: d.mode, grantedAt: d.granted_at, seen: d.seen, documentOnly: d.document_only === true })) };
   }
   /** Уровень доступа проекта документа: только приглашённые, отдел или вся организация. */
   async projectLevel(scope: string) {
@@ -174,7 +174,10 @@ export class NativeWriteSelector extends RpcTarget {
   async sharedDocumentSeen(scope: string, owner: string, resource: string) { await this.#session.markSharedDocumentSeen(scope, owner, resource); }
   async select(project: string, node: string, format: NativeDocumentFormat) {
     if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
-    await this.#session.openDraft(project);
+    // Приглашённому «только к документу» работать в проекте нельзя (403): свой
+    // черновик ему не нужен, документ открывается из ветки владельца.
+    try { await this.#session.openDraft(project); }
+    catch (error) { if (!(error instanceof MnemosAPIError && error.status === 403)) throw error; }
     let owner = "";
     let own;
     try { own = await this.#session.readDraftDocument(project, node); }
