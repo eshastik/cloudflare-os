@@ -100,6 +100,10 @@ describe("SandboxedGatekeeperApp navigation", () => {
 
     const iframe = container.querySelector("iframe");
     if (!iframe) throw new Error("Missing gatekeeper iframe");
+    // Без allow-forms браузер гасит отправку форм приложения, и кнопки вроде «Создать отдел» молчат.
+    const sandbox = (iframe.getAttribute("sandbox") ?? "").split(/\s+/);
+    expect(sandbox).toContain("allow-forms");
+    expect(sandbox).not.toContain("allow-same-origin");
     const { port1, port2 } = new MessageChannel();
     host = newMessagePortRpcSession<TestHost>(port1);
     window.dispatchEvent(

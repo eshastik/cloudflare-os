@@ -776,9 +776,12 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     <div className="min-h-0 flex-1"><iframe
       ref={iframeRef}
       srcDoc={frame.iframeHtml}
-      // allow-scripts: run the app's JS. allow-modals: its beforeunload unsaved-changes guard. Not
-      // allow-same-origin (the frame stays an opaque origin), and the app's CSP keeps connect-src 'none'.
-      sandbox="allow-scripts allow-modals"
+      // allow-scripts: run the app's JS. allow-modals: its beforeunload unsaved-changes guard.
+      // allow-forms: without it the browser drops every form submit and its onSubmit never runs, so
+      // «Создать отдел», «Пригласить» and the like silently did nothing. Nothing leaves the frame by a
+      // form: the app's CSP has form-action 'none'. Not allow-same-origin (the frame stays an opaque
+      // origin), and the app's CSP keeps connect-src 'none'.
+      sandbox="allow-scripts allow-modals allow-forms"
       allow="clipboard-write"
       title="Gatekeeper app"
       style={iframeStyleForOverlay(overlay)}
