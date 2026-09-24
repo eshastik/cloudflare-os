@@ -30,26 +30,23 @@ export default function Header() {
 
   const closeMobileMenu = () => setMobileMenuOpen(false)
 
-  const navLinkClass = "text-sm px-3 py-1.5 rounded-md transition-colors text-kumo-subtle"
-  const navLinkActiveClass = "text-sm font-medium px-3 py-1.5 rounded-md transition-colors text-kumo-default bg-kumo-tint"
+  const navLinkClass = "text-[14px] px-3 py-1.5 rounded-[10px] transition-colors text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"
+  const navLinkActiveClass = "text-[14px] font-medium px-3 py-1.5 rounded-[10px] transition-colors text-kumo-default bg-kumo-fill"
 
   return (
     <header
       ref={headerRef}
-      className="app-header sticky top-0 z-50 backdrop-blur-md border-b border-kumo-line"
-      style={{
-        backgroundColor: 'color-mix(in srgb, var(--color-kumo-base) 80%, transparent)',
-      }}
-      >
+      className="app-header sticky top-0 z-50 border-b border-kumo-fill bg-kumo-base"
+    >
       <div className="relative px-4 sm:px-6 h-14 flex items-center justify-between">
         <TopBarNotice />
         {/* Logo */}
         <div className="flex items-center gap-6">
           <Link to="/" className="flex items-center gap-2">
             <SiteLogo size={22} className="shrink-0">
-              <Hexagon size={22} className="text-kumo-brand" weight="bold" />
+              <Hexagon size={22} className="text-kumo-brand" />
             </SiteLogo>
-            <span className="text-base font-semibold tracking-tight text-kumo-default">
+            <span className="text-[17px] font-bold tracking-[-0.3px] text-kumo-default">
               {siteName}
             </span>
           </Link>
@@ -62,7 +59,7 @@ export default function Header() {
               activeProps={{ className: navLinkActiveClass }}
               activeOptions={{ exact: true }}
             >
-              Home
+              Новая беседа
             </Link>
             <Link
               to="/gatekeepers"
@@ -70,14 +67,14 @@ export default function Header() {
               activeProps={{ className: navLinkActiveClass }}
               activeOptions={{ exact: true }}
             >
-              Gatekeepers
+              Подключения
             </Link>
             <Link
               to="/explore"
               className={navLinkClass}
               activeProps={{ className: navLinkActiveClass }}
             >
-              Explore
+              Шаблоны
             </Link>
             {gatekeeperApps.map((app) => (
               <Link
@@ -105,7 +102,9 @@ export default function Header() {
           {/* Mobile hamburger button */}
           <div className="sm:hidden">
             <button
+              type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label={mobileMenuOpen ? 'Закрыть меню' : 'Открыть меню'}
               className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-kumo-tint transition-colors text-kumo-default"
             >
               {mobileMenuOpen ? <X size={20} /> : <List size={20} />}
@@ -116,7 +115,7 @@ export default function Header() {
 
       {/* Mobile dropdown menu */}
       {mobileMenuOpen && (
-        <div className="sm:hidden border-t border-kumo-line bg-kumo-base">
+        <div className="sm:hidden border-t border-kumo-fill bg-kumo-base">
           <nav className="flex flex-col px-4 py-3 gap-1">
             <Link
               to="/"
@@ -125,7 +124,7 @@ export default function Header() {
               activeProps={{ className: navLinkActiveClass }}
               activeOptions={{ exact: true }}
             >
-              Home
+              Новая беседа
             </Link>
             <Link
               to="/gatekeepers"
@@ -134,7 +133,7 @@ export default function Header() {
               activeProps={{ className: navLinkActiveClass }}
               activeOptions={{ exact: true }}
             >
-              Gatekeepers
+              Подключения
             </Link>
             <Link
               to="/explore"
@@ -142,7 +141,7 @@ export default function Header() {
               className={navLinkClass}
               activeProps={{ className: navLinkActiveClass }}
             >
-              Explore
+              Шаблоны
             </Link>
             {gatekeeperApps.map((app) => (
               <Link
@@ -159,15 +158,15 @@ export default function Header() {
 
             {auth && (
               <>
-                <hr className="my-2 border-kumo-line" />
+                <hr className="my-2 border-kumo-fill" />
 
                 <Link
-                  to="/profile"
+                  to="/settings"
                   onClick={closeMobileMenu}
                   className={navLinkClass}
                   activeProps={{ className: navLinkActiveClass }}
                 >
-                  Profile
+                  Настройки
                 </Link>
                 <Link
                   to="/providers"
@@ -175,7 +174,7 @@ export default function Header() {
                   className={navLinkClass}
                   activeProps={{ className: navLinkActiveClass }}
                 >
-                  Providers
+                  Модели
                 </Link>
                 {auth.isAdmin && (
                   <Link
@@ -184,14 +183,14 @@ export default function Header() {
                     className={navLinkClass}
                     activeProps={{ className: navLinkActiveClass }}
                   >
-                    Admin
+                    Настройки платформы
                   </Link>
                 )}
                 <button
                   onClick={() => { closeMobileMenu(); auth.logout() }}
                   className="text-left text-sm px-3 py-1.5 rounded-md text-kumo-danger hover:bg-kumo-tint transition-colors"
                 >
-                  Sign out
+                  Выйти
                 </button>
               </>
             )}

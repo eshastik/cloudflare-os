@@ -1,13 +1,17 @@
 {
   "blueprintId": "format.spreadsheet",
-  "title": "Workspace Sheets",
-  "description": "Use to write, format, and edit spreadsheets interactively or with natural language.",
+  "title": "Таблица",
+  "description": "Заполняйте, считайте и оформляйте таблицы сами или просьбой агенту.",
   "output": {
     "id": "spreadsheet",
-    "noun": "Sheet",
-    "plural": "Sheets",
+    "noun": "Таблица",
+    "plural": "Таблицы",
     "icon": "table"
   },
-  "author": { "type": "user", "name": "Cloudflare", "id": "agent@cloudflare.com" },
-  "revision": 19
+  "author": {
+    "type": "user",
+    "name": "Mnemos",
+    "id": "agent@cloudflare.com"
+  },
+  "revision": 20
 }

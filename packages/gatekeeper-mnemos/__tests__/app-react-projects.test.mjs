@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mountMemoryApp } from "./app-react-harness.mjs";
 
-test("«Проекты»: страница проекта одним экраном — обзор, материалы, участники, согласование, подключения", async () => {
+test("«Проекты»: страница проекта одним экраном — сейчас, файлы, кто видит, согласование, подключения", async () => {
   const app = await mountMemoryApp({
     async readPublicationPolicy(project) {
       if (project !== "one") return { project_id: project, revision: 1, domains: [] };
@@ -15,19 +15,22 @@ test("«Проекты»: страница проекта одним экран�
   try {
     await app.open("Проекты");
     await app.until(() => app.button("Общий проект") && app.button("Второй проект"), "список проектов");
-    assert.ok(app.button("Создать проект"), "проект можно создать прямо во вкладке");
+    assert.ok(app.document.querySelector('#root button[aria-label="Новый проект"]'), "проект можно создать прямо в разделе");
     app.button("Общий проект").click();
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
-    await app.until(() => section("Ждёт решения")?.textContent.includes("Проверить ТЗ на страницу цен"), "текущая работа проекта");
-    assert.ok(section("Ждёт решения").textContent.includes("alice"), "кто ведёт");
-    assert.ok(section("Ждёт решения").textContent.includes("Согласовать: Заметка команды"), "согласование, где решение за текущим человеком");
-    await app.until(() => section("Материалы")?.textContent.includes("Заметка команды"), "материалы проекта на той же странице");
-    assert.ok(section("Материалы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
-    assert.ok(section("Папки")?.textContent.includes("Папка"), "папки проекта");
-    await app.until(() => section("Участники")?.textContent.includes("Кэрол"), "участники из политики");
-    assert.ok(section("Участники").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
-    assert.ok(section("Участники").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
-    await app.until(() => section("Агенты проекта")?.textContent.includes("Агент AgenticOS") && !section("Агенты проекта").textContent.includes("agent-alice"), "агенты по имени, без идентификатора");
+    await app.until(() => section("Сейчас")?.textContent.includes("Проверить ТЗ на страницу цен"), "текущая работа проекта");
+    assert.ok(section("Сейчас").textContent.includes("alice"), "кто ведёт");
+    assert.ok(section("Сейчас").textContent.includes("Согласовать «Заметка команды»"), "согласование, где решение за текущим человеком");
+    [...section("Сейчас").querySelectorAll("button")].find(b => b.textContent === "Согласовать").click();
+    await app.until(() => app.calls.some(([m]) => m === "recordReviewDecision"), "согласование прямо со страницы проекта");
+    assert.deepEqual(app.calls.find(([m]) => m === "recordReviewDecision").slice(2), ["Инженерия", 3, true]);
+    await app.until(() => section("Файлы")?.textContent.includes("Заметка команды"), "файлы проекта на той же странице");
+    assert.ok(section("Файлы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
+    assert.ok(section("Файлы").textContent.includes("Папка"), "папки проекта среди файлов");
+    await app.until(() => section("Кто видит")?.textContent.includes("Кэрол"), "участники из политики");
+    assert.ok(section("Кто видит").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
+    assert.ok(section("Кто видит").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
+    await app.until(() => section("Кто видит")?.textContent.includes("Агент AgenticOS") && !section("Кто видит").textContent.includes("agent-alice"), "агенты по имени, без идентификатора");
     await app.until(() => section("Согласование")?.textContent.includes("Папка"), "правило по папке");
     assert.ok(section("Согласование").textContent.includes("Все документы проекта"), "правило на весь проект");
     assert.ok(section("Согласование").textContent.includes("Кэрол"), "согласующий по имени");
@@ -57,13 +60,13 @@ test("«Проекты»: пустая политика и отказ серве
     await app.open("Проекты");
     await app.until(() => app.button("Общий проект"), "список проектов");
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
-    await app.until(() => section("Ждёт решения"), "обзор проекта");
-    assert.equal(section("Ждёт решения").textContent.includes("Проверить ТЗ"), false, "обращений нет");
+    await app.until(() => section("Сейчас"), "обзор проекта");
+    assert.equal(section("Сейчас").textContent.includes("Проверить ТЗ"), false, "обращений нет");
     await app.until(() => section("Согласование")?.textContent.includes("не требует согласования"), "пустые правила");
     app.button("Второй проект").click();
     // Вкладки первого проекта ещё на экране: ждём заголовок второго, иначе щелчок уйдёт в старую страницу.
     await app.until(() => [...app.document.querySelectorAll("#root h2")].some(h => h.textContent === "Второй проект"), "второй проект");
-    await app.until(() => section("Ждёт решения")?.textContent.includes("ничего не ждёт вашего решения"), "у второго проекта ничего не ждёт решения");
+    await app.until(() => section("Сейчас")?.textContent.includes("ничего не ждёт вашего решения"), "у второго проекта ничего не ждёт решения");
     await app.until(() => section("Согласование")?.textContent.includes("нет права или сервер отказал"), "отказ показан");
   } finally { app.dispose(); }
 });
@@ -73,10 +76,10 @@ test("«Мои проекты»: обзор с материалами откры
   const app = await mountMemoryApp({}, {section: "projects", project: "two"});
   try {
     await app.until(() => app.button("Начать беседу"), "страница проекта");
-    assert.ok(app.text().includes("Мои проекты"));
+    assert.ok(app.document.querySelector('#root nav[aria-label="Список проектов"]'), "список проектов рядом со страницей");
     assert.equal(app.document.querySelectorAll("#root details").length, 0, "главное содержимое не свёрнуто");
     assert.equal(app.tabs().length, 0, "страница проекта без вкладок");
-    await app.until(() => app.document.querySelector('#root section[aria-label="Материалы"]')?.textContent.includes("Другой документ"), "материалы на странице");
+    await app.until(() => app.document.querySelector('#root section[aria-label="Файлы"]')?.textContent.includes("Другой документ"), "файлы на странице");
     app.button("Начать беседу").click();
     await app.until(() => app.calls.some(c => c[0] === "openPrompt"), "подготовка беседы");
     const prompt = app.calls.find(c => c[0] === "openPrompt")[1];
@@ -89,7 +92,7 @@ test("«Мои проекты»: обзор с материалами откры
 
 test("Файлы и папки загружаются в выбранный проект, а не в беседу", async () => {
   const app = await mountMemoryApp({}, {section: "projects", project: "two", pickedFiles: [{path: "договор.pdf", receipt: {outcome: "placed", enqueued: false, placement_state: "personal"}}]});
-  try {await app.until(()=>app.document.querySelector('#root section[aria-label="Материалы проекта"]'),"материалы проекта");
+  try {await app.until(()=>app.document.querySelector('#root section[aria-label="Файлы"]'),"материалы проекта");
     await app.until(() => app.button("Загрузить файлы"), "загрузка проекта");
     app.button("Загрузить файлы").click();
     await app.until(() => app.text().includes("Принято файлов: 1 из 1"), "результат загрузки");
@@ -125,7 +128,7 @@ test("Материалы проекта: подтверждение област
   },
   async decideInboxAlert(id,decision){decisions.push({id,decision});confirmed=true;return {alert:{...alert,status:"approved"}};},
  },{section:"projects",project:"two"});
- try {await app.until(()=>app.document.querySelector('#root section[aria-label="Материалы проекта"]'),"материалы проекта");
+ try {await app.until(()=>app.document.querySelector('#root section[aria-label="Файлы"]'),"материалы проекта");
   await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"область готова к подтверждению");
   app.button("Подтвердить: 1").click();
   await app.until(()=>app.text().includes("Список документов обновлён"),"результат размещения прочитан");
@@ -147,7 +150,7 @@ test("Потерянный ответ подтверждения блокиру�
   },
   async decideInboxAlert(){writes++;sent=true;throw Error("response lost");},
  },{section:"projects",project:"two"});
- try {await app.until(()=>app.document.querySelector('#root section[aria-label="Материалы проекта"]'),"материалы проекта");
+ try {await app.until(()=>app.document.querySelector('#root section[aria-label="Файлы"]'),"материалы проекта");
   await app.until(()=>app.button("Подтвердить: 1")&&!app.button("Подтвердить: 1").closest("fieldset").disabled,"первое подтверждение доступно");
   app.button("Подтвердить: 1").click();
   await app.until(()=>app.text().includes("Остальные решения проверяем по серверу"),"неизвестный результат показан");
@@ -166,7 +169,7 @@ test("Область меняется у выбранных файлов до п
   async inboxAlerts(decided){return {alerts:decided?[]:alerts,truncated:false};},
   async decideInboxAlert(id,decision){decisions.push({id,decision});return {};},
  },{section:"projects",project:"two"});
- try {await app.until(()=>app.document.querySelector('#root section[aria-label="Материалы проекта"]'),"материалы проекта");
+ try {await app.until(()=>app.document.querySelector('#root section[aria-label="Файлы"]'),"материалы проекта");
   await app.until(()=>app.button("Подтвердить: 3")&&!app.button("Подтвердить: 3").closest("fieldset").disabled,"список поступлений");
   const area=name=>app.document.querySelector(`[aria-label="Область: ${name}.txt"]`);
   const checks=app.document.querySelectorAll('section[aria-label="Проверьте загруженные материалы"] input[type="checkbox"]');
@@ -191,7 +194,7 @@ test("Поступления проекта показывают обработ�
   async inboxStatus(project){assert.equal(project,"two");return {total:3,in_queue:2,awaiting_classification:0,awaiting_placement:1,placed_in_tree:0,dead_lettered:0,dead_letters:[]};},
   async inboxAlerts(){return {alerts:[],truncated:false};},
  },{section:"projects",project:"two"});
- try{await app.until(()=>app.document.querySelector('#root section[aria-label="Материалы проекта"]'),"материалы проекта");await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
+ try{await app.until(()=>app.document.querySelector('#root section[aria-label="Файлы"]'),"материалы проекта");await app.until(()=>app.text().includes("В обработке: 3"),"виден ход обработки");assert.equal(app.button("Подтвердить: 0"),undefined);}finally{app.dispose();}
 });
 
 test("Переходы между разделами и проектами не перезагружают данные", async () => {

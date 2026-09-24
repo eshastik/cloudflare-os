@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { Plus, Trash, UserPlus } from "@phosphor-icons/react";
 import type { MemoryData } from "./data.ts";
 import type { AdminPerson, AdminRight, AdminRights } from "../src/admin-people.ts";
-import type { OrganizationRole } from "../src/mnemos-api.ts";
+import type { OrganizationRole, OrgUnit } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
-import { ActionForm, Notice, Select, StatusBadge, TextInput } from "./ui.tsx";
-import { DepartmentsPanel, InvitePanel, headedUnits, useOrgUnits } from "./Departments.tsx";
+import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
+import { DepartmentsPanel, InvitationRows, InvitePanel, InviteForm, headedUnits, useInvitations, useOrgUnits } from "./Departments.tsx";
 import { AdminSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
+import { Card, CardRow, Field, FieldSelect, Initials, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
   if (!data.identity?.capabilities?.includes("principal.manage")) return <DepartmentHead data={data} />;
@@ -20,16 +20,27 @@ function DepartmentHead({ data }: { data: MemoryData }) {
   if (loading) return <Notice>Проверка доступа…</Notice>;
   if (!mine.length) return <Notice>Управление людьми недоступно для вашей учётной записи.</Notice>;
   return <section aria-label="Мой отдел" className="grid gap-6">
-    {mine.map(unit => <div key={unit.org_unit_id}>
-      <h2 className="m-0 mb-2 text-base font-semibold">Отдел «{unit.name}»</h2>
-      <p className="m-0 text-sm text-kumo-subtle">{unit.members.map(m => m.display_name || "Сотрудник").join(", ")}</p>
-    </div>)}
+    {mine.map(unit => <section key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`}>
+      <SectionHead title={`Отдел «${unit.name}»`} />
+      <Card>{unit.members.map(m => <CardRow key={m.principal_id}><Initials name={m.display_name || "Сотрудник"} /><RowTitle title={m.display_name || "Сотрудник"} note={m.is_head ? "руководитель" : undefined} /></CardRow>)}
+        {!unit.members.length && <CardRow><Notice>В отделе пока никого нет.</Notice></CardRow>}</Card>
+    </section>)}
     <InvitePanel units={mine} allowNoUnit={false} admin={false} />
   </section>;
 }
-/** «Люди и отделы» — одна страница блоками: пригласить (раскрывается на месте), отделы, люди, компетенции. */
+
+/** Отдел сотрудника словами: «Закупки · руководитель»; без отдела — так и сказано. */
+function unitWords(units: OrgUnit[], person: string): string {
+  const own = units.filter(u => u.members.some(m => m.principal_id === person));
+  if (!own.length) return "без отдела";
+  return own.map(u => `${u.name}${u.members.find(m => m.principal_id === person)?.is_head ? " · руководитель" : ""}`).join("; ");
+}
+
+/** «Люди и отделы» — одна страница: приглашение (раскрывается на месте), отделы и люди рядом, компетенции ниже. */
 function PeopleManager({ data }: { data: MemoryData }) {
   const ui = useUi();
+  const org = useOrgUnits();
+  const invitations = useInvitations();
   const [people, setPeople] = useState<AdminPerson[]>([]);
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
@@ -41,40 +52,45 @@ function PeopleManager({ data }: { data: MemoryData }) {
     void ui.listPeople().then(p => { if (current) setPeople(p.users); }, () => { if (current) {setPeople([]);setSelected("");setError("Не удалось получить список сотрудников. Обновите страницу.");} }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
   }, [ui, revision]);
-  const visiblePeople = people.filter(p => `${p.displayName} ${p.userName}`.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()));
+  const needle = query.toLocaleLowerCase().trim();
+  const visiblePeople = people.filter(p => `${p.displayName} ${p.userName}`.toLocaleLowerCase().includes(needle));
+  const openInvitations = (invitations.list ?? []).filter(i => i.status === "open" && (!needle || `${i.display_name} ${i.email}`.toLocaleLowerCase().includes(needle)));
   return <section aria-label="Люди и отделы" className="grid gap-8">
-    <section aria-label="Приглашения">
+    <section aria-label="Приглашения" className="grid gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="m-0 flex-1 text-sm text-kumo-subtle">Сотрудников: {people.length}</p>
-        <Button size="sm" variant="primary" aria-expanded={inviting} onClick={() => setInviting(!inviting)}><UserPlus size={16}/>{inviting ? "Свернуть" : "Пригласить"}</Button>
+        <p className="m-0 flex-1 text-[15px] text-kumo-subtle">Сотрудников: {people.length}{openInvitations.length ? ` · приглашены и ещё не вошли: ${openInvitations.length}` : ""}</p>
+        <Pill tone="primary" size="md" aria-expanded={inviting} onClick={() => setInviting(!inviting)}><UserPlus size={16} />{inviting ? "Свернуть" : "Пригласить"}</Pill>
       </div>
-      {inviting && <div className="mt-3 rounded-xl border border-kumo-line bg-kumo-elevated p-4"><AdminInvite /></div>}
+      {inviting && (org.loading ? <Notice>Загрузка отделов…</Notice> : <InviteForm units={org.units} allowNoUnit admin onCreated={invitations.reload} />)}
     </section>
-    <div><h2 className="m-0 mb-3 text-[15px] font-semibold text-kumo-strong">Отделы</h2><DepartmentsPanel people={people} /></div>
-    <section aria-label="Люди">
-      <h2 className="m-0 mb-3 text-[15px] font-semibold text-kumo-strong">Люди</h2>
-      <TextInput className="mb-3 w-full max-w-[360px]" type="search" aria-label="Найти сотрудника" placeholder="Найти сотрудника…" value={query} onChange={e => setQuery(e.target.value)} />
-      {error && <><Notice tone="danger">{error}</Notice><Button className="mt-2" size="sm" variant="ghost" disabled={loading} onClick={() => setRevision(v => v+1)}>Повторить</Button></>}
-      {loading ? <Notice>Загрузка…</Notice> : <div className="overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
-        {visiblePeople.map(p => <div key={p.userName} className="border-t border-kumo-line first:border-t-0">
-          <button type="button" aria-label={`Открыть карточку: ${p.displayName || "сотрудник без имени"}`} aria-expanded={selected === p.userName} onClick={() => setSelected(selected === p.userName ? "" : p.userName)}
-            className={`flex w-full items-center gap-3 px-3 py-3 text-left ${selected === p.userName ? "bg-kumo-tint" : "hover:bg-kumo-tint"}`}>
-            <span className="min-w-0 flex-1 break-words text-sm font-medium">{p.displayName || "Сотрудник без имени"}</span>
-            {!p.active && <StatusBadge tone="neutral">Доступ приостановлен</StatusBadge>}
-          </button>
-          {selected === p.userName && <div className="px-3 pb-4"><PersonCard key={p.userName} person={p} data={data} /></div>}
-        </div>)}
-        {!error && !people.length && <div className="p-3"><Notice>Сотрудников пока нет. Пригласите первого.</Notice></div>}
-        {people.length > 0 && !visiblePeople.length && <div className="p-3"><Notice>По этому запросу никого не найдено.</Notice></div>}
-      </div>}
-    </section>
-    <div><h2 className="m-0 mb-3 text-[15px] font-semibold text-kumo-strong">Компетенции</h2><CompetenciesPanel people={people} /></div>
+    <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+      <DepartmentsPanel people={people} org={org} />
+      <section aria-label="Люди" className="min-w-0">
+        <SectionHead title="Люди"><PillInput type="search" aria-label="Найти сотрудника" placeholder="Найти" className="w-[180px]" value={query} onChange={e => setQuery(e.target.value)} /></SectionHead>
+        {error && <div className="mb-2 flex flex-wrap items-center gap-2"><Notice tone="danger">{error}</Notice><Pill tone="ghost" disabled={loading} onClick={() => setRevision(v => v+1)}>Повторить</Pill></div>}
+        {loading ? <Notice>Загрузка…</Notice> : <Card>
+          {visiblePeople.map(p => {
+            const name = p.displayName || "Сотрудник без имени";
+            const open = selected === p.userName;
+            return <div key={p.userName} className={`border-t border-kumo-fill first:border-t-0 ${open ? "bg-kumo-base" : ""}`}>
+              <button type="button" aria-label={`Открыть карточку: ${p.displayName || "сотрудник без имени"}`} aria-expanded={open} onClick={() => setSelected(open ? "" : p.userName)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-kumo-tint">
+                <Initials name={name} />
+                <RowTitle title={name} note={org.loading ? undefined : unitWords(org.units, p.userName)} />
+                {!p.active && <StatusBadge tone="neutral">Доступ приостановлен</StatusBadge>}
+              </button>
+              {open && <div className="px-4 pb-4 sm:pl-[62px]"><PersonCard key={p.userName} person={p} data={data} units={org.units} unitsLoading={org.loading} /></div>}
+            </div>;
+          })}
+          {invitations.list && <InvitationRows list={openInvitations} onChanged={invitations.reload} />}
+          {!error && !people.length && !openInvitations.length && <CardRow><Notice>Сотрудников пока нет. Пригласите первого.</Notice></CardRow>}
+          {people.length > 0 && !visiblePeople.length && <CardRow><Notice>По этому запросу никого не найдено.</Notice></CardRow>}
+        </Card>}
+        {invitations.failed && <div className="mt-2"><Notice tone="danger">Список приглашений недоступен.</Notice></div>}
+      </section>
+    </div>
+    <CompetenciesPanel people={people} />
   </section>;
-}
-function AdminInvite() {
-  const { units, loading } = useOrgUnits();
-  if (loading) return <Notice>Загрузка отделов…</Notice>;
-  return <InvitePanel units={units} allowNoUnit admin />;
 }
 const STANDARD_RESOURCE_DOMAINS=[
  {id:"юридический",name:"Юридические вопросы"},{id:"финансовый",name:"Финансовые вопросы"},
@@ -85,18 +101,16 @@ const STANDARD_RESOURCE_DOMAINS=[
 const CAPABILITY_WORDS: Record<string,string> = {"principal.manage":"Управление людьми и правилами","project.create":"Создание проектов","platform.metrics.read":"Просмотр состояния системы"};
 const capabilityWords = (capability?: string) => CAPABILITY_WORDS[capability ?? ""] ?? "Особое полномочие";
 
-/** Карточка сотрудника: отделы и руководство, «Администратор», компетенции и проекты — словами. */
-function PersonCard({person,data}: {person:AdminPerson;data:MemoryData}) {
-  const { units, loading: unitsLoading } = useOrgUnits();
+/** Раскрытая строка сотрудника: отдел словами, компетенции метками, «Администратор» и доступ к проектам. */
+function PersonCard({person,data,units,unitsLoading}: {person:AdminPerson;data:MemoryData;units:OrgUnit[];unitsLoading:boolean}) {
   const own = units.filter(u => u.members.some(m => m.principal_id === person.userName));
-  return <section aria-label={`Сотрудник: ${person.displayName||"без имени"}`} className="grid min-w-0 gap-5">
-    <section aria-label="Отдел">
-      <h3 className="m-0 mb-2 text-[15px] font-semibold">Отдел</h3>
-      {unitsLoading ? <Notice>Загрузка…</Notice> : own.length === 0 ? <Notice>Не состоит ни в одном отделе. Добавить можно в разделе «Отделы».</Notice> :
-        <p className="m-0 text-[13px]">{own.map(u => `${u.name}${u.members.find(m => m.principal_id === person.userName)?.is_head ? " — руководитель" : ""}`).join("; ")}</p>}
+  return <section aria-label={`Сотрудник: ${person.displayName||"без имени"}`} className="grid min-w-0 gap-4">
+    <section aria-label="Отдел" className="text-[13px]">
+      {unitsLoading ? <Notice>Загрузка…</Notice> : own.length === 0 ? <Notice>Не состоит ни в одном отделе. Добавить можно в строке отдела слева.</Notice> :
+        <p className="m-0">Отдел: {own.map(u => `${u.name}${u.members.find(m => m.principal_id === person.userName)?.is_head ? " — руководитель" : ""}`).join("; ")}</p>}
     </section>
-    <section aria-label="Права администратора"><h3 className="m-0 mb-2 text-[15px] font-semibold">Права администратора</h3><AdminSwitch person={person} /></section>
-    <section aria-label="Компетенции сотрудника"><h3 className="m-0 mb-2 text-[15px] font-semibold">Компетенции</h3><PersonCompetencies person={person} /></section>
+    <section aria-label="Компетенции сотрудника"><PersonCompetencies person={person} /></section>
+    <section aria-label="Права администратора"><AdminSwitch person={person} /></section>
     <PersonRights person={person} data={data} />
   </section>;
 }
@@ -133,32 +147,33 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
   const projectName=(r:AdminRight)=>data.projects.find(p=>p.id===r.project_id)?.name||"Проект недоступен";
   const domainName=(r:AdminRight)=>r.functional_role_id ? STANDARD_RESOURCE_DOMAINS.find(d=>d.id===r.functional_role_id)?.name||roles.find(d=>d.id===r.functional_role_id)?.name||"Область без названия" : "Все области";
   const grant=()=>{if(busy||!rights?.exists||!project||(scope==="area"&&(!area||domainsError||domainsLoading)))return;void change({remove:false,right:{kind:"anchor",principal_id:person.userName,project_id:project,class:resourceClass,mode,node_id:"",functional_role_id:scope==="all"?"":area}});};
+  const canGrant=!busy&&!!rights?.exists&&!!project&&!(scope==="area"&&(!area||domainsError||domainsLoading));
   return <section aria-label="Проекты и доступ" className="min-w-0">
-    <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-      <h3 className="m-0 text-[15px] font-semibold">Проекты и доступ</h3>
-      {!editing&&<Button size="sm" variant="secondary" disabled={!rights?.exists||busy} onClick={()=>{setEditing(true);setPending(null);setError("");}}><Plus size={16}/>Дать доступ</Button>}
+    <div className="mb-1 flex flex-wrap items-center gap-3">
+      <h3 className="m-0 flex-1 text-[14px] font-semibold">Проекты и доступ</h3>
+      {!editing&&<Pill disabled={!rights?.exists||busy} onClick={()=>{setEditing(true);setPending(null);setError("");}}><Plus size={14}/>Дать доступ</Pill>}
     </div>
     {error && <Notice tone="danger">{error}</Notice>}{notice && <Notice tone="success">{notice}</Notice>}
     {!rights && !error && <Notice>Загрузка доступа…</Notice>}
     {rights?.deactivated && <Notice>Сохранённые права сейчас не действуют.</Notice>}
-    {rights && <div className="divide-y divide-kumo-line border-y border-kumo-line">
-      {rights.rights.map((r,i)=><div key={i} className="flex items-center gap-3 py-4">
-        <div className="min-w-0 flex-1"><div className="break-words text-sm font-medium">{r.kind==="capability"?capabilityWords(r.capability):projectName(r)}</div>
-        {r.kind!=="capability"&&<div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-kumo-subtle"><span>{domainName(r)}</span><span>{r.mode==="write"?"Чтение и запись":"Чтение"}</span>{r.class==="database"&&<span>База данных</span>}{r.node_id&&<span>Часть проекта</span>}</div>}</div>
-        <Button size="sm" variant="ghost" aria-label={`Отозвать доступ: ${projectName(r)}, ${domainName(r)}`} disabled={busy||!!pending} onClick={()=>{setPending({right:r,remove:true});setEditing(false);}}><Trash size={16}/></Button>
+    {rights && <div>
+      {rights.rights.map((r,i)=><div key={i} className="flex items-center gap-3 border-t border-kumo-fill py-2.5 first:border-t-0">
+        <div className="min-w-0 flex-1"><div className="break-words text-[14px] font-medium">{r.kind==="capability"?capabilityWords(r.capability):projectName(r)}</div>
+        {r.kind!=="capability"&&<div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-kumo-subtle"><span>{domainName(r)}</span><span>{r.mode==="write"?"Чтение и запись":"Чтение"}</span>{r.class==="database"&&<span>База данных</span>}{r.node_id&&<span>Часть проекта</span>}</div>}</div>
+        <Pill tone="ghost" aria-label={`Отозвать доступ: ${projectName(r)}, ${domainName(r)}`} disabled={busy||!!pending} onClick={()=>{setPending({right:r,remove:true});setEditing(false);}}><Trash size={14}/></Pill>
       </div>)}
-      {!rights.rights.length && <div className="py-6"><Notice>Доступ к проектам ещё не назначен.</Notice></div>}
+      {!rights.rights.length && <p className="m-0 py-1 text-[13px] text-kumo-subtle">Доступ к проектам ещё не назначен.</p>}
     </div>}
-    {editing&&<ActionForm aria-label="Новое назначение" className="grid gap-4 mt-5 rounded-xl border border-kumo-line p-4 sm:grid-cols-2" onAction={grant}>
-      <label className="grid gap-1.5 text-sm">Проект<Select aria-label="Проект" required value={project} onChange={e=>{setProject(e.target.value);setScope("area");}}><option value="">Выберите проект</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+    {editing&&<ActionForm aria-label="Новое назначение" className="mt-3 grid gap-3 rounded-2xl border border-kumo-fill bg-kumo-overlay p-4 sm:grid-cols-2" onAction={grant}>
+      <Field label="Проект"><FieldSelect aria-label="Проект" required value={project} onChange={e=>{setProject(e.target.value);setScope("area");}}><option value="">Выберите проект</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</FieldSelect></Field>
       {data.projectsError && <Notice tone="danger">Не удалось прочитать проекты.</Notice>}
-      <label className="grid gap-1.5 text-sm">Предметная область<Select aria-label="Предметная область материалов" required disabled={busy||domainsLoading||!project} value={scope==="all"?"__all__":area} onChange={e=>{setScope(e.target.value==="__all__"?"all":"area");setArea(e.target.value==="__all__"?"":e.target.value);}}><option value="">{domainsLoading?"Загрузка областей…":"Выберите область"}</option><option value="__all__">Все предметные области</option>{domains.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</Select></label>
+      <Field label="Предметная область"><FieldSelect aria-label="Предметная область материалов" required disabled={busy||domainsLoading||!project} value={scope==="all"?"__all__":area} onChange={e=>{setScope(e.target.value==="__all__"?"all":"area");setArea(e.target.value==="__all__"?"":e.target.value);}}><option value="">{domainsLoading?"Загрузка областей…":"Выберите область"}</option><option value="__all__">Все предметные области</option>{domains.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</FieldSelect></Field>
       {domainsError && <Notice tone="danger">Не удалось полностью прочитать области материалов проекта. Выберите проект заново.</Notice>}
       {rolesError && <Notice>Названия ролей недоступны; прежние назначения показаны по сохранённым значениям.</Notice>}
-      <label className="grid gap-1.5 text-sm">Действия<Select aria-label="Действия" value={mode} onChange={e=>setMode(e.target.value as "read"|"write")}><option value="read">Чтение</option><option value="write">Чтение и запись</option></Select></label>
-      <label className="grid gap-1.5 text-sm">Что открыть<Select aria-label="Ресурс" value={resourceClass} onChange={e=>setResourceClass(e.target.value as "filesystem"|"database")}><option value="filesystem">Файлы проекта</option><option value="database">Базы данных проекта</option></Select></label>
-      <div className="sm:col-span-2 flex gap-2"><Button type="button" onClick={grant} disabled={busy||!rights?.exists||!project||(scope==="area"&&(!area||domainsError||domainsLoading))}>{busy?"Сохраняем…":"Сохранить"}</Button><Button type="button" variant="ghost" disabled={busy} onClick={()=>{setEditing(false);setPending(null);}}>Отмена</Button></div>
+      <Field label="Действия"><FieldSelect aria-label="Действия" value={mode} onChange={e=>setMode(e.target.value as "read"|"write")}><option value="read">Чтение</option><option value="write">Чтение и запись</option></FieldSelect></Field>
+      <Field label="Что открыть"><FieldSelect aria-label="Ресурс" value={resourceClass} onChange={e=>setResourceClass(e.target.value as "filesystem"|"database")}><option value="filesystem">Файлы проекта</option><option value="database">Базы данных проекта</option></FieldSelect></Field>
+      <div className="flex gap-2 sm:col-span-2"><Pill tone="primary" onClick={grant} disabled={!canGrant}>{busy?"Сохраняем…":"Сохранить"}</Pill><Pill tone="ghost" disabled={busy} onClick={()=>{setEditing(false);setPending(null);}}>Отмена</Pill></div>
     </ActionForm>}
-    {pending && <div role="region" aria-label="Подтверждение изменения доступа" className="rounded-xl border border-kumo-line p-4 mt-4"><strong>{pending.remove?"Отозвать":"Добавить"} назначение для {person.displayName||person.userName}</strong><p>{summary(pending.right)}</p>{pending.remove&&<p className="text-sm text-kumo-subtle">Доступ через группы и другие назначения может сохраниться.</p>}<Button disabled={busy} onClick={()=>void change()}>Подтвердить {pending.remove?"отзыв":"назначение"}</Button><Button disabled={busy} variant="secondary" onClick={()=>setPending(null)}>Отмена</Button></div>}
+    {pending && <div role="region" aria-label="Подтверждение изменения доступа" className="mt-3 grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]"><strong className="font-medium">{pending.remove?"Отозвать":"Добавить"} назначение для {person.displayName||"сотрудника"}</strong><p className="m-0">{summary(pending.right)}</p>{pending.remove&&<p className="m-0 text-kumo-subtle">Доступ через группы и другие назначения может сохраниться.</p>}<div className="flex gap-2"><Pill tone="primary" disabled={busy} onClick={()=>void change()}>Подтвердить {pending.remove?"отзыв":"назначение"}</Pill><Pill tone="ghost" disabled={busy} onClick={()=>setPending(null)}>Отмена</Pill></div></div>}
   </section>;
 }

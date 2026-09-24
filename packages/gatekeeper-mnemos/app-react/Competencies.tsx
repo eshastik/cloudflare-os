@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { Plus, X } from "@phosphor-icons/react";
 import type { OrganizationRole, PrincipalMembership } from "../src/mnemos-api.ts";
 import type { AdminPerson } from "../src/admin-people.ts";
 import { useUi } from "./host.ts";
-import { ActionForm, Notice, Row, RowList, RowText, Select, StatusBadge, TextInput } from "./ui.tsx";
+import { ActionForm, Notice } from "./ui.tsx";
+import { Card, CardRow, Chip, Pill, PillInput, PillSelect, SectionHead, plural } from "./admin-ui.tsx";
 
 /** Группа администраторов организации: членство в ней даёт полный доступ ко всем проектам. */
 export const ADMINS_GROUP = "system:organization-admins";
@@ -49,7 +49,7 @@ async function limited<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R
   return out;
 }
 
-/** Переключатель «Администратор» в карточке сотрудника: то же членство в группе администраторов, с предупреждением и подтверждением. */
+/** Переключатель «Администратор» в строке сотрудника: то же членство в группе администраторов, с предупреждением и подтверждением. */
 export function AdminSwitch({ person }: { person: AdminPerson }) {
   const ui = useUi();
   const [state, setState] = useState<PrincipalMembership | null | undefined>(undefined);
@@ -64,26 +64,26 @@ export function AdminSwitch({ person }: { person: AdminPerson }) {
     catch { setError("Изменение не подтверждено: состав мог измениться. Обновите страницу."); setState(await membership(ui, ADMINS_GROUP, person.userName)); setPending(false); }
     finally { setBusy(false); }
   }
-  if (state === undefined) return <Notice>Проверяем…</Notice>;
-  if (state === null) return <Notice>Не удалось проверить. Обновите страницу.</Notice>;
+  if (state === undefined) return <Notice>Проверяем права…</Notice>;
+  if (state === null) return <Notice>Права администратора не проверены. Обновите страницу.</Notice>;
   return <div className="grid gap-2">
-    <label className="flex items-center gap-2 text-[13px]">
+    <label className="flex items-center gap-2 text-[13px] text-kumo-default">
       <input type="checkbox" role="switch" aria-label="Администратор" aria-checked={state.enabled} checked={pending ? !state.enabled : state.enabled} disabled={busy || (!state.enabled && !state.member_active)} onChange={() => setPending(!pending)} />
-      Администратор организации
+      Администратор
     </label>
-    {pending && <div role="region" aria-label="Подтверждение администратора" className="grid gap-2 rounded-lg border border-kumo-line bg-kumo-elevated p-3 text-[13px]">
+    {pending && <div role="region" aria-label="Подтверждение администратора" className="grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]">
       {!state.enabled && <p className="m-0">Администратор читает и меняет материалы всех проектов организации, управляет людьми и правилами. Согласование специалистами сохраняется. Назначайте только тем, кому нужен полный доступ.</p>}
       {state.enabled && <p className="m-0">Сотрудник потеряет права администратора. Личные права и доступ к проектам сохранятся.</p>}
       <div className="flex gap-2">
-        <Button size="sm" variant="primary" disabled={busy} onClick={() => void confirm()}>{state.enabled ? "Снять права администратора" : "Сделать администратором"}</Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setPending(false)}>Отмена</Button>
+        <Pill tone="primary" disabled={busy} onClick={() => void confirm()}>{state.enabled ? "Снять права администратора" : "Сделать администратором"}</Pill>
+        <Pill tone="ghost" disabled={busy} onClick={() => setPending(false)}>Отмена</Pill>
       </div>
     </div>}
     {error && <Notice tone="danger">{error}</Notice>}
   </div>;
 }
 
-/** Метки компетенций сотрудника: добавить и убрать. */
+/** Компетенции сотрудника метками: добавить и убрать. */
 export function PersonCompetencies({ person }: { person: AdminPerson }) {
   const ui = useUi();
   const { roles, loading, failed } = useCompetencies();
@@ -117,25 +117,25 @@ export function PersonCompetencies({ person }: { person: AdminPerson }) {
   const mine = roles.filter(r => held.get(r.id)?.enabled);
   const others = roles.filter(r => !held.get(r.id)?.enabled);
   return <div className="grid gap-2">
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap items-center gap-2">
       {mine.length === 0 && <span className="text-[13px] text-kumo-subtle">Компетенции не отмечены.</span>}
-      {mine.map(r => <span key={r.id} className="inline-flex items-center gap-1 rounded-full bg-kumo-fill px-2 py-0.5 text-[12px]">{r.name}
-        <button type="button" aria-label={`Убрать компетенцию: ${r.name}`} disabled={busy} onClick={() => void change(r.id, false)} className="text-kumo-subtle hover:text-kumo-default"><X size={12} /></button>
-      </span>)}
+      {mine.map(r => <Chip key={r.id}>{r.name}
+        <button type="button" aria-label={`Убрать компетенцию: ${r.name}`} disabled={busy} onClick={() => void change(r.id, false)} className="inline-flex text-kumo-subtle hover:text-kumo-default"><X size={12} /></button>
+      </Chip>)}
+      {others.length > 0 && <>
+        <PillSelect aria-label="Добавить компетенцию" value={adding} disabled={busy} onChange={e => setAdding(e.target.value)}>
+          <option value="">Компетенция…</option>
+          {others.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </PillSelect>
+        <Pill disabled={busy || !adding} onClick={() => void change(adding, true)}><Plus size={14} />Добавить</Pill>
+      </>}
     </div>
-    {others.length > 0 && <div className="flex flex-wrap items-center gap-2">
-      <Select aria-label="Добавить компетенцию" value={adding} disabled={busy} onChange={e => setAdding(e.target.value)}>
-        <option value="">Выберите компетенцию</option>
-        {others.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-      </Select>
-      <Button size="sm" variant="secondary" disabled={busy || !adding} onClick={() => void change(adding, true)}><Plus size={14} />Добавить</Button>
-    </div>}
-    {roles.length === 0 && <Notice>В организации ещё нет компетенций. Создайте их в разделе «Компетенции».</Notice>}
+    {roles.length === 0 && <Notice>В организации ещё нет компетенций. Создайте их ниже, в блоке «Компетенции».</Notice>}
     {error && <Notice tone="danger">{error}</Notice>}
   </div>;
 }
 
-/** «Компетенции»: что сотрудники умеют и могут согласовывать. Список, создание, кто владеет. */
+/** «Компетенции»: что сотрудники умеют и могут согласовывать. Строка на компетенцию; у кого она есть — раскрытием на месте. */
 export function CompetenciesPanel({ people }: { people: AdminPerson[] }) {
   const ui = useUi();
   const [revision, setRevision] = useState(0);
@@ -154,21 +154,21 @@ export function CompetenciesPanel({ people }: { people: AdminPerson[] }) {
     } catch { setError("Компетенция не создана. Обновите список и повторите: возможно, её уже создали."); setRevision(v => v + 1); }
     finally { setBusy(false); }
   }
-  const role = roles.find(r => r.id === selected);
-  return <section aria-label="Компетенции" className="grid gap-5">
-    <p className="m-0 max-w-[650px] text-sm text-kumo-subtle">Компетенция — то, что сотрудник умеет или вправе проверять, например «Проверка ТЗ» или «Юридическая экспертиза». По компетенциям назначают согласующих и открывают доступ к материалам своей области.</p>
-    <ActionForm aria-label="Новая компетенция" onAction={() => void create()} className="flex max-w-lg flex-wrap items-end gap-2">
-      <label className="grid flex-1 gap-1.5 text-sm">Новая компетенция<TextInput value={name} maxLength={255} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Проверка ТЗ" /></label>
-      <Button type="button" variant="secondary" disabled={busy || !name.trim()} onClick={() => void create()}><Plus size={16} />Создать</Button>
-    </ActionForm>
-    {error && <Notice tone="danger">{error}</Notice>}
-    {loading ? <Notice>Загрузка компетенций…</Notice> : failed ? <Notice tone="danger">Компетенции недоступны. Обновите страницу.</Notice> : roles.length === 0 ? <Notice>Компетенций пока нет. Создайте первую.</Notice> :
-      <div className="grid items-start gap-5 md:grid-cols-[240px_minmax(0,1fr)]">
-        <nav aria-label="Список компетенций" className="flex flex-col gap-1">
-          {roles.map(r => <button key={r.id} type="button" aria-pressed={selected === r.id} onClick={() => setSelected(r.id)} className={`rounded-lg px-3 py-2 text-left text-sm ${selected === r.id ? "bg-kumo-fill font-medium" : "hover:bg-kumo-tint"}`}>{r.name || "Без названия"}</button>)}
-        </nav>
-        <div className="min-w-0">{role ? <Holders key={role.id} role={role} people={people} /> : <Notice>Выберите компетенцию, чтобы увидеть, у кого она есть.</Notice>}</div>
-      </div>}
+  return <section aria-label="Компетенции" className="min-w-0">
+    <SectionHead title="Компетенции" />
+    <p className="mt-0 mb-3 max-w-[650px] text-[13px] text-kumo-subtle">Компетенция — то, что сотрудник умеет или вправе проверять, например «Проверка ТЗ» или «Юридическая экспертиза». По компетенциям назначают согласующих и открывают доступ к материалам своей области.</p>
+    {error && <div className="mb-2"><Notice tone="danger">{error}</Notice></div>}
+    <Card>
+      {loading ? <CardRow><Notice>Загрузка компетенций…</Notice></CardRow> : failed ? <CardRow><Notice tone="danger">Компетенции недоступны. Обновите страницу.</Notice></CardRow> : roles.length === 0 ? <CardRow><Notice>Компетенций пока нет. Создайте первую.</Notice></CardRow> :
+        roles.map(r => <div key={r.id} className="border-t border-kumo-fill first:border-t-0">
+          <button type="button" aria-expanded={selected === r.id} onClick={() => setSelected(selected === r.id ? "" : r.id)} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-[15px] font-medium ${selected === r.id ? "bg-kumo-tint" : "hover:bg-kumo-tint"}`}>{r.name || "Без названия"}</button>
+          {selected === r.id && <div className="px-4 pb-4 pt-2"><Holders key={r.id} role={r} people={people} /></div>}
+        </div>)}
+      <ActionForm aria-label="Новая компетенция" onAction={() => void create()} className="flex flex-wrap items-center gap-2 border-t border-kumo-fill bg-kumo-base px-4 py-3">
+        <label className="min-w-0 flex-1"><span className="sr-only">Новая компетенция</span><PillInput className="w-full" value={name} maxLength={255} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Новая компетенция, например «Проверка ТЗ»" /></label>
+        <Pill disabled={busy || !name.trim()} onClick={() => void create()}><Plus size={14} />Создать</Pill>
+      </ActionForm>
+    </Card>
   </section>;
 }
 
@@ -197,20 +197,17 @@ function Holders({ role, people }: { role: OrganizationRole; people: AdminPerson
   if (!states) return <Notice>Проверяем, у кого есть «{role.name}»…</Notice>;
   const holders = active.filter(p => states.get(p.userName)?.enabled);
   const others = active.filter(p => states.has(p.userName) && !states.get(p.userName)!.enabled);
-  return <section aria-label={`Компетенция ${role.name}`} className="grid gap-3">
-    <h3 className="m-0 text-[15px] font-semibold">{role.name}</h3>
-    {holders.length === 0 ? <Notice>Ни у кого из сотрудников нет этой компетенции.</Notice> :
-      <RowList>{holders.map(p => <Row key={p.userName}>
-        <RowText title={p.displayName || "Сотрудник без имени"} />
-        <StatusBadge tone="success">Владеет</StatusBadge>
-        <Button size="sm" variant="ghost" aria-label={`Убрать у сотрудника: ${p.displayName || "без имени"}`} disabled={busy} onClick={() => void change(p.userName, false)}><X size={14} /></Button>
-      </Row>)}</RowList>}
+  return <section aria-label={`Компетенция ${role.name}`} className="grid gap-2">
+    <p className="m-0 text-[13px] text-kumo-subtle">{holders.length ? `Есть у ${holders.length} ${plural(holders.length, "сотрудника", "сотрудников", "сотрудников")}.` : "Ни у кого из сотрудников нет этой компетенции."}</p>
+    {holders.length > 0 && <div className="flex flex-wrap gap-2">{holders.map(p => <Chip key={p.userName}>{p.displayName || "Сотрудник без имени"}
+      <button type="button" aria-label={`Убрать у сотрудника: ${p.displayName || "без имени"}`} disabled={busy} onClick={() => void change(p.userName, false)} className="inline-flex text-kumo-subtle hover:text-kumo-default"><X size={12} /></button>
+    </Chip>)}</div>}
     {others.length > 0 && <div className="flex flex-wrap items-center gap-2">
-      <Select aria-label={`Добавить сотрудника в компетенцию ${role.name}`} value={adding} disabled={busy} onChange={e => setAdding(e.target.value)}>
+      <PillSelect aria-label={`Добавить сотрудника в компетенцию ${role.name}`} value={adding} disabled={busy} onChange={e => setAdding(e.target.value)}>
         <option value="">Выберите сотрудника</option>
         {others.map(p => <option key={p.userName} value={p.userName}>{p.displayName || "Сотрудник без имени"}</option>)}
-      </Select>
-      <Button size="sm" variant="secondary" disabled={busy || !adding} onClick={() => void change(adding, true)}>Добавить</Button>
+      </PillSelect>
+      <Pill disabled={busy || !adding} onClick={() => void change(adding, true)}>Добавить</Pill>
     </div>}
     {error && <Notice tone="danger">{error}</Notice>}
   </section>;

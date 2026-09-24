@@ -85,12 +85,12 @@ function RootComponent() {
   if (error && !standalone) {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base p-6">
-        <p className="text-sm text-kumo-danger">Authentication error: {error}</p>
+        <p className="text-sm text-kumo-danger">Ошибка входа: {error}</p>
         <button
           onClick={() => window.location.reload()}
           className="px-4 py-2 text-sm font-medium text-kumo-inverse bg-kumo-brand rounded-lg hover:bg-kumo-brand-hover transition-colors"
         >
-          Retry
+          Повторить
         </button>
       </div>
     )
@@ -101,7 +101,7 @@ function RootComponent() {
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-kumo-subtle">Authenticating...</p>
+        <p className="text-sm text-kumo-subtle">Выполняется вход…</p>
       </div>
     )
   }

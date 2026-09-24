@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@cloudflare/kumo";
-import { FileText, Folder, UploadSimple } from "@phosphor-icons/react";
+import { ArrowClockwise, FileText, Folder, Plus, Robot, UploadSimple } from "@phosphor-icons/react";
 import type { PickedIntakeFile } from "../src/intake.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
+import { VISIBILITY_TITLES } from "../src/project-sharing.ts";
 import { useHost, useUi } from "./host.ts";
 import { actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
-import { SharePanel, VisibilityBadge } from "./ProjectSharing.tsx";
+import { SharePanel, VisibilityBadge, VISIBILITY_NOTES } from "./ProjectSharing.tsx";
 import ProjectApproval from "./ProjectApproval.tsx";
-import { ActionForm, Block, Eyebrow, Notice, Row, RowList, RowText, StatusBadge, TextInput } from "./ui.tsx";
+import { useReviewDecision } from "./ApprovalsTab.tsx";
+import { plural } from "./names.ts";
+import { ActionForm, Avatar, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
 import ProjectTasks from "./ProjectTasks.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
+/** Сколько файлов показывать до «Показать все». */
+const FILES_SHOWN = 8;
 
+/** Раздел «Проекты»: слева список проектов, справа страница выбранного проекта одним экраном. */
 export default function ProjectsTab({ data, initialProject = "", initialView = "", onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
@@ -36,31 +41,42 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
   const viewOf = (id: string) => views[id] ?? (linked && (id === initialProject || !initialProject && id === data.projects[0]?.id) ? linked : "overview");
 
   return (
-    <>
-      <div className="grid grid-cols-[208px_minmax(0,1fr)] gap-6 max-md:grid-cols-1">
-        <nav aria-label="Список проектов" className="flex flex-col gap-0.5">
-          <div className="px-2.5 pt-1 pb-2"><Eyebrow>Мои проекты</Eyebrow></div>
-          {data.projects.map(p => (
-            <button key={p.id} type="button" onClick={() => { if (selected?.id !== p.id) { setSelectedId(p.id); onSelectProject(p.id); } }} aria-current={selected?.id === p.id ? "true" : undefined}
-              className={`flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] leading-[18px] tracking-[-0.25px] ${selected?.id === p.id ? "bg-kumo-fill font-medium text-kumo-strong" : "text-kumo-default hover:bg-kumo-tint"}`}>
-              <span className="min-w-0 flex-1 truncate">{p.name}</span>
-            </button>
-          ))}
-          {data.projectsLoading && <p className="m-0 px-2.5 py-1 text-[12px] text-kumo-subtle">Загрузка…</p>}
-          {data.projectsError && <Notice tone="danger">{data.projectsError}</Notice>}
-          {!data.projectsLoading && !data.projectsError && data.projects.length === 0 && <Notice>Доступных проектов нет.</Notice>}
-          {canCreateProjects(data.identity) && <Button variant="secondary" size="sm" onClick={() => setCreating(true)}>Создать проект</Button>}
-          {creating && <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />}
-
-        </nav>
-        <div className="min-w-0">
-          {selected
+    <div className="grid min-h-screen grid-cols-[280px_minmax(0,1fr)] max-md:grid-cols-1">
+      <nav aria-label="Список проектов" className="flex flex-col gap-1.5 border-r border-kumo-fill px-4 py-7 max-md:border-r-0 max-md:border-b">
+        <div className="flex items-center gap-2 px-2 pb-3">
+          <h1 className="m-0 flex-1 text-[22px] leading-7 font-semibold tracking-[-0.5px] text-kumo-default">Проекты</h1>
+          <Button variant="ghost" size="sm" shape="circle" aria-label="Обновить" title="Обновить список" icon={<ArrowClockwise size={16} aria-hidden="true" />} onClick={() => void data.reloadProjects()} />
+          {canCreateProjects(data.identity) && <Button variant="secondary" size="sm" shape="circle" aria-label="Новый проект" title="Новый проект" icon={<Plus size={16} aria-hidden="true" />} onClick={() => setCreating(true)} />}
+        </div>
+        {data.projects.map(p => {
+          const current = !creating && selected?.id === p.id;
+          return (
+            <div key={p.id} className={`relative rounded-[12px] border px-3 py-2.5 ${current ? "border-kumo-fill bg-kumo-overlay" : "border-transparent hover:bg-kumo-tint"}`}>
+              <button type="button" aria-current={current ? "true" : undefined} onClick={() => { setCreating(false); if (selected?.id !== p.id) { setSelectedId(p.id); onSelectProject(p.id); } }}
+                className={`block w-full truncate border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default after:absolute after:inset-0 after:content-[''] ${current ? "font-semibold" : ""}`}>{p.name}</button>
+              {projectNote(p) && <span className="mt-0.5 block truncate text-[13px] leading-[18px] text-kumo-subtle">{projectNote(p)}</span>}
+            </div>
+          );
+        })}
+        {data.projectsLoading && <p className="m-0 px-3 py-1 text-[13px] text-kumo-subtle">Загрузка…</p>}
+        {data.projectsError && <div className="px-3"><Notice tone="danger">{data.projectsError}</Notice></div>}
+        {!data.projectsLoading && !data.projectsError && data.projects.length === 0 && <div className="px-3"><Notice>Доступных проектов нет.</Notice></div>}
+      </nav>
+      <div className="min-w-0 px-4 py-7 sm:px-10">
+        {creating
+          ? <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />
+          : selected
             ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} />
             : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
-        </div>
       </div>
-    </>
+    </div>
   );
+}
+
+/** Подпись проекта в списке: кому виден и сколько в нём файлов. */
+function projectNote(project: ProjectData): string {
+  const files = project.nodes.filter(n => !n.is_dir).length;
+  return [project.visibility ? VISIBILITY_TITLES[project.visibility] : "", files ? `${files}${project.truncated ? "+" : ""} ${plural(files, "файл", "файла", "файлов")}` : ""].filter(Boolean).join(" · ");
 }
 
 type ProjectView = "overview" | "materials" | "code" | "tasks" | "people";
@@ -71,8 +87,8 @@ function viewFromAddress(value: string): ProjectView | null {
   return found ? found[0] : null;
 }
 
-/** Страница проекта — один экран блоками: обзор, материалы, участники и согласование, код (если подключён).
- * Вкладка из адреса страницы только прокручивает к своему блоку. */
+/** Страница проекта — один экран: заголовок и описание, файлы, что сейчас ждёт решения, кто видит,
+ * согласование, источники и код (если подключён). Вкладка из адреса страницы только прокручивает к своему блоку. */
 function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { project: ProjectData; data: MemoryData; view: ProjectView; onView(view: ProjectView): void; onOpenDocuments(): void; onOpenSources(): void }) {
   const ui = useUi();
   const host = useHost();
@@ -87,25 +103,32 @@ function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { 
     const id = view === "tasks" ? "code" : view;
     document.getElementById(`project-${id}`)?.scrollIntoView?.({ block: "start" });
   }, [view, hasCode]);
+  const share = () => { setSharing(true); document.getElementById("project-share")?.scrollIntoView?.({ block: "start" }); };
 
   return (
-    <div>
-      <div className="mb-3 flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="m-0 text-lg font-semibold text-kumo-strong">{project.name}</h2>
-          {overview.value?.l0 && <p className="mt-1 mb-0 max-w-[650px] text-[13px] text-kumo-subtle">{overview.value.l0}</p>}
-          <div className="mt-1.5"><VisibilityBadge project={project} /></div>
+    <div className="mx-auto max-w-[1080px]">
+      <PageHeader level={2} title={project.name} subtitle={overview.value?.l0 || undefined}
+        actions={<>
+          <Button variant="secondary" aria-expanded={sharing} onClick={() => setSharing(!sharing)}>Поделиться</Button>
+          <Button onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}».\n\n`, {projectId:project.id,title:project.name}).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
+        </>}>
+        <div className="mt-2.5"><VisibilityBadge project={project} /></div>
+      </PageHeader>
+      {actionError && <div className="mb-4"><Notice tone="danger">{actionError}</Notice></div>}
+      <div id="project-share">{sharing && <SharePanel project={project} onClose={() => setSharing(false)} onChanged={data.reloadProjects} />}</div>
+      <div className="grid gap-x-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div className="min-w-0">
+          {overview.value?.l1 ? <p className="mt-0 mb-7 max-w-[650px] whitespace-pre-line text-[15px] leading-[23px] text-kumo-default">{overview.value.l1}</p>
+            : <div className="mb-7"><Notice>{overview.value?.pending ? "Описание проекта готовится по его материалам." : "Описание проекта появится, когда в нём будут материалы."}</Notice></div>}
+          <ProjectFiles project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} />
         </div>
-        <Button variant="secondary" size="sm" aria-expanded={sharing} onClick={() => setSharing(!sharing)}>Поделиться</Button>
-        <Button size="sm" onClick={() => { setActionError(""); void host.openPrompt(`Работаем над проектом «${project.name}».\n\n`, {projectId:project.id,title:project.name}).catch(() => setActionError("Не удалось начать беседу. Повторите попытку.")); }}>Начать беседу</Button>
+        <div className="min-w-0">
+          <ProjectNow project={project} data={data} />
+          <ProjectPeople project={project} data={data} onOpenSources={onOpenSources} onShare={share} />
+        </div>
       </div>
-      {actionError && <Notice tone="danger">{actionError}</Notice>}
-      {sharing && <SharePanel project={project} onClose={() => setSharing(false)} onChanged={data.reloadProjects} />}
-      <section id="project-overview" aria-label="Обзор"><ProjectOverview project={project} data={data} l1={overview.value?.l1 ?? ""} pending={overview.value?.pending ?? false} /></section>
-      <section id="project-materials" aria-label="Материалы проекта"><ProjectMaterials project={project} data={data} descriptions={overview.value?.children ?? []} onOpenDocuments={onOpenDocuments} /></section>
-      <section id="project-members" aria-label="Участники"><ProjectPeople project={project} data={data} onOpenSources={onOpenSources} /></section>
-      {hasCode && repositories.value && <section id="project-code" aria-label="Код" className="mb-6">
-        <h2 className="m-0 mb-2 text-[15px] font-semibold text-kumo-strong">Код</h2>
+      {hasCode && repositories.value && <section id="project-code" aria-label="Код" className="mt-2 mb-7">
+        <SectionTitle title="Код" />
         <ProjectCode admin={isAdministrator(data.identity)} key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo} />
         <div className="mt-4"><ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={repositories.value}
           onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); document.getElementById("project-code")?.scrollIntoView?.({ block: "start" }); }} /></div>
@@ -114,73 +137,62 @@ function ProjectPage({ project, data, view, onOpenDocuments, onOpenSources }: { 
   );
 }
 
-function MaterialRows({ project, rows, descriptions }: { project: ProjectData; rows: ReturnType<typeof documentRows>; descriptions?: Map<string, string> }) {
-  const host = useHost();
-  const [error, setError] = useState("");
-  return (
-    <>
-      {error && <Notice tone="danger">{error}</Notice>}
-      <RowList>
-        {rows.map(row => (
-          <Row key={row.nodeId} data-document={row.nodeId}>
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-kumo-line bg-kumo-elevated text-kumo-subtle"><FileText size={14} aria-hidden="true" /></span>
-            <div className="min-w-0 flex-1">
-              <button type="button" className="block max-w-full truncate text-left text-[13px] font-medium text-kumo-default hover:underline" onClick={() => {
-                setError("");
-                void host.openNativeDocument(project.id, row.nodeId).then(opened => { if (!opened) void host.openSection("documents", project.id); }).catch(() => setError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
-              }}>{row.name}</button>
-              {descriptions?.get(row.nodeId) && <div className="mt-0.5 line-clamp-2 text-[12px] text-kumo-subtle">{descriptions.get(row.nodeId)}</div>}
-            </div>
-            <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
-          </Row>
-        ))}
-      </RowList>
-    </>
-  );
-}
-
-function ProjectOverview({ project, data, l1, pending }: { project: ProjectData; data: MemoryData; l1: string; pending: boolean }) {
+/** «Сейчас»: что по проекту ждёт решения текущего человека и какая работа идёт. Согласование — кнопкой на месте. */
+function ProjectNow({ project, data }: { project: ProjectData; data: MemoryData }) {
+  const decision = useReviewDecision(data);
   const userId = data.identity?.subject.user_id ?? "";
   const approvals = myApprovals(data.reviews, userId).filter(item => item.review.project_id === project.id && item.mine === null && !item.review.stale && !item.review.withdrawn);
   const work = data.collaborations.filter(item => item.request.project_id === project.id);
   const task = data.task && (data.task.tracker?.project_id === project.id || data.task.team_budget?.project_id === project.id || data.task.budget_request?.project_id === project.id) ? data.task : null;
   const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name || project.privateDocs.get(id)?.name || UNNAMED_DOCUMENT;
   const waiting = approvals.length + work.length + (task ? 1 : 0);
+  const item = "flex items-center gap-3 border-t border-kumo-fill px-4 py-3.5 first:border-t-0";
   return (
-    <div>
-      {l1 ? <p className="mt-0 mb-6 max-w-[650px] whitespace-pre-line text-sm leading-[1.43] text-kumo-default">{l1}</p>
-        : <div className="mb-6"><Notice>{pending ? "Описание проекта готовится по его материалам." : "Описание проекта появится, когда в нём будут материалы."}</Notice></div>}
-      <Block title="Ждёт решения" count={waiting} empty={data.collaborationsError || "Сейчас по проекту ничего не ждёт вашего решения."}>
-        <RowList>
-          {approvals.map(item => (
-            <Row key={`${item.review.candidate_id}/${item.domain.domain_id}`}>
-              <RowText title={`Согласовать: ${item.domain.node_ids.map(nodeName).join(", ")}`} note={`направление ${item.domain.domain_id} · автор ${personName(item.review.author_id)}`} />
-              <StatusBadge tone="warning">Ваше решение</StatusBadge>
-            </Row>
-          ))}
-          {task && (
-            <Row>
-              <RowText title={`Задача агента: ${task.message.slice(0, 80)}`} note={`ведёт ${agentNames(data.connections).get(task.binding_id) ?? "ваш агент"}`} />
-              <StatusBadge tone={task.outcome?.state === "completed" ? "warning" : "info"}>{task.outcome?.state === "completed" ? "Ждёт приёмки" : task.submitted ? "В работе" : "Не отправлена"}</StatusBadge>
-            </Row>
-          )}
-          {work.map(item => (
-            <Row key={item.request.request_id}>
-              <RowText title={item.request.title} note={`ведёт: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)} · от: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)} · документ «${nodeName(item.request.node_id)}»`} />
-              <StatusBadge tone={item.progress?.state === "accepted" ? "success" : item.progress?.state === "changes_requested" ? "danger" : "neutral"}>{item.progress ? COLLABORATION_STATES[item.progress.state] : "Состояние недоступно"}</StatusBadge>
-            </Row>
-          ))}
-        </RowList>
-      </Block>
-    </div>
+    <Block title="Сейчас" count={waiting} empty={data.collaborationsError || "Сейчас по проекту ничего не ждёт вашего решения."}>
+      {decision.notice && <div className="mb-2"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
+      <div className="overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay">
+        {approvals.map(a => {
+          const key = `${a.review.candidate_id}/${a.domain.domain_id}`;
+          return (
+            <div key={key} className={item}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] leading-5 text-kumo-default">Согласовать «{a.domain.node_ids.map(nodeName).join(", ")}»</div>
+                <div className="mt-0.5 text-[13px] text-kumo-subtle">направление {a.domain.domain_id} · автор {personName(a.review.author_id)}</div>
+              </div>
+              <Button size="sm" disabled={decision.busy === key} onClick={() => void decision.decide(a, true)}>Согласовать</Button>
+            </div>
+          );
+        })}
+        {task && (
+          <div className={item}>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] leading-5 text-kumo-default">Задача агента: {task.message.slice(0, 80)}</div>
+              <div className="mt-0.5 text-[13px] text-kumo-subtle">ведёт {agentNames(data.connections).get(task.binding_id) ?? "ваш агент"}</div>
+            </div>
+            <Chip tone={task.outcome?.state === "completed" ? "warning" : "neutral"}>{task.outcome?.state === "completed" ? "Ждёт приёмки" : task.submitted ? "В работе" : "Не отправлена"}</Chip>
+          </div>
+        )}
+        {work.map(w => (
+          <div key={w.request.request_id} className={item}>
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] leading-5 text-kumo-default">{w.request.title}</div>
+              <div className="mt-0.5 text-[13px] text-kumo-subtle">ведёт: {actorName(data.connections, w.request.target_agent_id, w.request.target_user_id)} · от: {actorName(data.connections, w.request.requester_agent_id, w.request.requester_user_id)} · документ «{nodeName(w.request.node_id)}»</div>
+            </div>
+            <Chip tone={w.progress?.state === "awaiting_review" ? "warning" : w.progress?.state === "accepted" ? "success" : w.progress?.state === "changes_requested" ? "danger" : "neutral"}>{w.progress ? COLLABORATION_STATES[w.progress.state] : "Состояние недоступно"}</Chip>
+          </div>
+        ))}
+      </div>
+    </Block>
   );
 }
 
-function ProjectMaterials({ project, data, descriptions, onOpenDocuments }: { project: ProjectData; data: MemoryData; descriptions: { node_id: string; name: string; is_dir: boolean; l0: string }[]; onOpenDocuments(): void }) {
+/** «Файлы»: папки и документы проекта. Документ открывается рядом с беседой в своём редакторе. */
+function ProjectFiles({ project, data, descriptions, onOpenDocuments }: { project: ProjectData; data: MemoryData; descriptions: { node_id: string; name: string; is_dir: boolean; l0: string }[]; onOpenDocuments(): void }) {
   const host = useHost();
   const [actionError, setActionError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<PickedIntakeFile[]>([]);
+  const [all, setAll] = useState(false);
   useEffect(() => {
     const refresh = (event: MessageEvent) => {
       if (event.source === window.parent && event.data?.type === "mnemos-inbox-updated") void data.reloadProjects();
@@ -197,48 +209,59 @@ function ProjectMaterials({ project, data, descriptions, onOpenDocuments }: { pr
     } catch { setActionError("Загрузка не завершена. Проверьте материалы проекта перед повтором."); }
     finally { setUploading(false); }
   }
+  function openDocument(nodeId: string) {
+    setActionError("");
+    void host.openNativeDocument(project.id, nodeId).then(opened => { if (!opened) void host.openSection("documents", project.id); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
+  }
   const materials = useMemo(() => documentRows(project, data.reviews), [project, data.reviews]);
   const described = useMemo(() => new Map(descriptions.filter(d => d.l0).map(d => [d.node_id, d.l0])), [descriptions]);
   const folders = project.nodes.filter(n => n.is_dir);
+  const total = folders.length + materials.length;
+  const shownFolders = all ? folders : folders.slice(0, FILES_SHOWN);
+  const shownFiles = all ? materials : materials.slice(0, Math.max(0, FILES_SHOWN - shownFolders.length));
+  const name = "block max-w-full truncate border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default hover:text-kumo-brand";
   return (
-    <div>
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" disabled={uploading} onClick={() => void upload(false)}><UploadSimple size={15} />Загрузить файлы</Button>
+    <section id="project-materials" aria-label="Файлы" className="mb-7">
+      <SectionTitle title="Файлы" count={materials.length} actions={<>
+        <Button variant="secondary" size="sm" disabled={uploading} icon={<UploadSimple size={15} aria-hidden="true" />} onClick={() => void upload(false)}>Загрузить файлы</Button>
         <Button variant="ghost" size="sm" disabled={uploading} onClick={() => void upload(true)}>Выбрать папку</Button>
-        {uploading && <span role="status" className="text-sm text-kumo-subtle">Загружаем в проект…</span>}
-      </div>
-      {actionError && <Notice tone="danger">{actionError}</Notice>}
-      {uploaded.length > 0 && <div className="mb-5 text-sm" role="status">
-        <p className="text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
-        {uploaded.some(file => file.receipt?.placement_state === "personal") && <p>Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
+      </>} />
+      {uploading && <p role="status" className="m-0 mb-2 text-[14px] text-kumo-subtle">Загружаем в проект…</p>}
+      {actionError && <div className="mb-2"><Notice tone="danger">{actionError}</Notice></div>}
+      {uploaded.length > 0 && <div className="mb-4 text-[14px]" role="status">
+        <p className="m-0 text-kumo-subtle">Принято файлов: {uploaded.filter(file => !file.error).length} из {uploaded.length}.</p>
+        {uploaded.some(file => file.receipt?.placement_state === "personal") && <p className="m-0 mt-1">Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать.</p>}
         {uploaded.filter(file => file.error).map((file, index) => <Notice key={index} tone="danger">{file.path}: {file.error}</Notice>)}
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
-      {folders.length > 0 && (
-        <Block title="Папки" count={folders.length}>
-          <RowList>
-            {folders.map(folder => (
-              <Row key={folder.node_id}>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-kumo-line bg-kumo-elevated text-kumo-subtle"><Folder size={14} aria-hidden="true" /></span>
-                <div className="min-w-0 flex-1">
-                  <button type="button" className="block max-w-full truncate text-left text-[13px] font-medium text-kumo-default hover:underline" onClick={onOpenDocuments}>{folder.name}</button>
-                  {described.get(folder.node_id) && <div className="mt-0.5 line-clamp-2 text-[12px] text-kumo-subtle">{described.get(folder.node_id)}</div>}
-                </div>
-              </Row>
-            ))}
-          </RowList>
-        </Block>
-      )}
-      <Block title="Материалы" count={materials.length} empty={project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}
-        actions={<Button variant="ghost" size="sm" onClick={onOpenDocuments}>Все документы проекта</Button>}>
-        <MaterialRows project={project} rows={materials} descriptions={described} />
-        {project.truncated && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показана первая страница проекта; остальное — во вкладке «Материалы» слева.</p>}
-      </Block>
-    </div>
+      {total === 0
+        ? <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
+        : <div>
+          {shownFolders.map(folder => (
+            <ListRow key={folder.node_id} icon={<Folder size={18} />}>
+              <button type="button" className={name} onClick={onOpenDocuments}>{folder.name}</button>
+              {described.get(folder.node_id) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(folder.node_id)}</div>}
+            </ListRow>
+          ))}
+          {shownFiles.map(row => (
+            <ListRow key={row.nodeId} data-document={row.nodeId} icon={<FileText size={18} />}
+              meta={row.status.tone === "success" ? undefined : <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>}>
+              <button type="button" className={name} onClick={() => openDocument(row.nodeId)}>{row.name}</button>
+              {described.get(row.nodeId) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(row.nodeId)}</div>}
+            </ListRow>
+          ))}
+          <div className="flex flex-wrap items-center gap-3 px-1 pt-3 text-[14px]">
+            {!all && total > shownFolders.length + shownFiles.length && <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={() => setAll(true)}>Показать все {total}</button>}
+            <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={onOpenDocuments}>Все документы проекта</button>
+          </div>
+          {project.truncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показана первая страница проекта; остальное — по ссылке «Все документы проекта».</p>}
+        </div>}
+    </section>
   );
 }
 
-function ProjectPeople({ project, data, onOpenSources }: { project: ProjectData; data: MemoryData; onOpenSources(): void }) {
+/** «Кто видит»: уровень доступа, согласующие и агенты с доступом; ниже — согласование и источники материалов. */
+function ProjectPeople({ project, data, onOpenSources, onShare }: { project: ProjectData; data: MemoryData; onOpenSources(): void; onShare(): void }) {
   const ui = useUi();
   const policy = useLoad(() => ui.readPublicationPolicy(project.id), "Политика согласования не прочитана: нет права или сервер отказал.", [ui, project.id]);
   const approvers = useLoad(() => ui.listPolicyApprovers(project.id, ""), "Список согласующих не прочитан.", [ui, project.id]);
@@ -246,7 +269,6 @@ function ProjectPeople({ project, data, onOpenSources }: { project: ProjectData;
   const calendars = useLoad(() => ui.listCalendarConnections(""), "календарь: сервер отказал", [ui]);
   const databases = useLoad(() => ui.listVisibleDatabaseConnections(), "базы: сервер отказал", [ui]);
   const names = useMemo(() => new Map((approvers.value?.approvers ?? []).map(a => [a.principal_id, a.display_name || personName(a.principal_id)])), [approvers.value]);
-  const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name || project.privateDocs.get(id)?.name || UNNAMED_DOCUMENT;
   const agentTitles = useMemo(() => agentNames(data.connections), [data.connections]);
   const members = useMemo(() => membersByDomain(policy.value, names), [policy.value, names]);
   const absence = data.absences.get(project.id);
@@ -257,36 +279,50 @@ function ProjectPeople({ project, data, onOpenSources }: { project: ProjectData;
     ...(databases.value?.databases ?? []).filter(d => d.project_id === project.id).map(d => ({ key: `db/${d.db_id}`, kind: "База", title: d.name, note: d.unreachable_since ? `ошибка доступа с ${new Date(d.unreachable_since).toLocaleString("ru-RU")}` : "запросы агента только на чтение" })),
   ];
   const sourceErrors = [mail.error, calendars.error, databases.error].filter(Boolean);
+  const peopleError = policy.error || approvers.error;
   return (
     <div>
-      <Block title="Участники" count={members.length} empty={policy.error || approvers.error || "Участники не назначены."}>
-        <RowList>{members.map(member => <Row key={member.id}><RowText title={member.name} note={member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"} /></Row>)}</RowList>
-      </Block>
-      <Block title="Агенты проекта" count={agents.length} empty={data.connectionsError || "Ваших агентов в проекте нет."}>
-        <p className="mt-0 mb-2 text-[12px] text-kumo-subtle">Ваши агенты с доступом к проекту; каждый видит не больше вас.</p>
-        <RowList>
-          {agents.map(agent => {
-            const role = absence?.enabled && absence.local_binding_id === agent.binding_id ? "замещается" : absence?.enabled && absence.managed_binding_id === agent.binding_id ? `замещает до ${new Date(absence.ends_at).toLocaleString("ru-RU")}` : "";
-            return (
-              <Row key={agent.binding_id}>
-                <RowText title={agentTitles.get(agent.binding_id) ?? "Агент"} note={`${agentEnvironment(agent)}${role ? ` · ${role}` : ""}`} />
-              </Row>
-            );
-          })}
-        </RowList>
-      </Block>
+      <section id="project-members" aria-label="Кто видит" className="mb-7">
+        <SectionTitle title="Кто видит" actions={<Button variant="ghost" size="sm" onClick={onShare}>Изменить доступ</Button>} />
+        {project.visibility && <p className="m-0 mb-3 text-[14px] leading-5 text-kumo-subtle">{VISIBILITY_NOTES[project.visibility]}</p>}
+        {members.length === 0 && agents.length === 0 && <Notice>{peopleError || "Участники не назначены."}</Notice>}
+        {members.map(member => (
+          <div key={member.id} className="flex items-center gap-3 border-b border-kumo-fill py-2.5">
+            <Avatar name={member.name} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[15px] text-kumo-default">{member.name}</div>
+              <div className="text-[13px] text-kumo-subtle">{member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"}</div>
+            </div>
+          </div>
+        ))}
+        {agents.map(agent => {
+          const role = absence?.enabled && absence.local_binding_id === agent.binding_id ? "замещается" : absence?.enabled && absence.managed_binding_id === agent.binding_id ? `замещает до ${new Date(absence.ends_at).toLocaleString("ru-RU")}` : "";
+          return (
+            <div key={agent.binding_id} className="flex items-center gap-3 border-b border-kumo-fill py-2.5">
+              <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-selection-bg text-kumo-brand"><Robot size={16} /></span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[15px] text-kumo-default">{agentTitles.get(agent.binding_id) ?? "Агент"}</div>
+                <div className="text-[13px] text-kumo-subtle">ваш агент · {agentEnvironment(agent)}{role ? ` · ${role}` : ""}</div>
+              </div>
+            </div>
+          );
+        })}
+        {(members.length > 0 || agents.length > 0) && data.connectionsError && <div className="mt-2"><Notice tone="danger">{data.connectionsError}</Notice></div>}
+        {agents.length > 0 && <p className="m-0 mt-2 text-[13px] text-kumo-subtle">Каждый агент видит не больше вас.</p>}
+      </section>
       <ProjectApproval project={project} />
       <Block title="Откуда приходят материалы" count={sources.length} empty={sourceErrors.length ? `Подключения не прочитаны: ${sourceErrors.join("; ")}.` : "К проекту не подключены почта, календарь или базы."}
         actions={isAdministrator(data.identity) ? <Button variant="ghost" size="sm" onClick={onOpenSources}>Все подключения</Button> : undefined}>
         {sourceErrors.length > 0 && <div className="mb-2"><Notice tone="danger">Часть подключений не прочитана: {sourceErrors.join("; ")}.</Notice></div>}
-        <RowList>
-          {sources.map(source => (
-            <Row key={source.key}>
-              <StatusBadge tone="neutral">{source.kind}</StatusBadge>
-              <RowText title={source.title} note={source.note} />
-            </Row>
-          ))}
-        </RowList>
+        {sources.map(source => (
+          <div key={source.key} className="flex items-start gap-3 border-b border-kumo-fill py-2.5">
+            <Chip>{source.kind}</Chip>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] text-kumo-default">{source.title}</div>
+              <div className="text-[13px] text-kumo-subtle">{source.note}</div>
+            </div>
+          </div>
+        ))}
       </Block>
     </div>
   );
@@ -323,10 +359,22 @@ function CreateProject({ onCreated, onCancel }: { onCreated(id: string): Promise
       setError("Проект не создан или ответ не получен. Проверьте список проектов, имя и ваши полномочия перед повтором.");
     } finally { setBusy(false); }
   }
-  return <ActionForm aria-label="Новый проект" onAction={() => void submit()}>
-    <label>Название проекта<TextInput required maxLength={255} value={name} onChange={e => setName(e.target.value)} disabled={busy} /></label>
+  return <ActionForm aria-label="Новый проект" onAction={() => void submit()}
+    className="mx-auto mt-6 flex max-w-[560px] flex-col gap-[22px] rounded-[24px] bg-kumo-overlay p-8 shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]">
+    <div className="flex items-center gap-4">
+      <span aria-hidden="true" className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[16px] bg-selection-bg text-kumo-brand"><Folder size={28} /></span>
+      <div>
+        <h2 className="m-0 text-[24px] leading-[30px] font-semibold tracking-[-0.5px] text-kumo-default">Новый проект</h2>
+        <p className="mt-1.5 mb-0 text-[15px] leading-[22px] text-kumo-subtle">Файлы добавите на странице проекта. Кому он виден, решите кнопкой «Поделиться».</p>
+      </div>
+    </div>
+    <label className="flex flex-col gap-2 text-[14px] text-kumo-subtle">Название
+      <TextInput required maxLength={255} value={name} onChange={e => setName(e.target.value)} disabled={busy} className="h-[46px] text-[16px]" />
+    </label>
     {error && <Notice tone="danger">{error}</Notice>}
-    <Button type="button" onClick={() => void submit()} disabled={busy || !name.trim()}>Создать</Button>
-    <Button type="button" disabled={busy} onClick={onCancel}>Отмена</Button>
+    <div className="flex justify-end gap-2.5">
+      <Button variant="secondary" size="lg" disabled={busy} onClick={onCancel}>Отмена</Button>
+      <Button size="lg" onClick={() => void submit()} disabled={busy || !name.trim()}>Создать проект</Button>
+    </div>
   </ActionForm>;
 }

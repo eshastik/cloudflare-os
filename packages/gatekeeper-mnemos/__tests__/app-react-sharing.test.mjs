@@ -51,7 +51,7 @@ test("«Поделиться»: отказ сервера объяснён сл�
   } finally { app.dispose(); }
 });
 
-test("«Входящие»: карточка запроса руководителю — «Анна хочет открыть проект…», главная кнопка «Разрешить», отказ — в подробностях", async () => {
+test("«Входящие»: карточка запроса руководителю — «Анна хочет открыть проект…», решение «Разрешить» или «Отклонить» на месте", async () => {
   let decided = false;
   const app = await mountMemoryApp({
     async listShareRequests(mine) { return { requests: mine || decided ? [] : [REQUEST] }; },
@@ -63,12 +63,10 @@ test("«Входящие»: карточка запроса руководите
     assert.ok(card.textContent.includes("Анна хочет открыть проект «Общий проект» отделу «Продажи»"), card.textContent);
     assert.ok(card.textContent.includes("видящие смогут править"));
     assert.ok(!card.textContent.includes(REQUEST.request_id), "идентификатор запроса не показан");
-    const filter = [...app.document.querySelectorAll('#root [aria-label="Что показать"] button')].find(b => b.textContent.startsWith("Доступ"));
-    assert.equal(filter.textContent, "Доступ1", "запрос — в фильтре «Доступ»");
     const buttons = [...card.querySelectorAll("button")].map(b => b.textContent);
-    assert.ok(buttons.includes("Разрешить") && !buttons.includes("Отклонить"), "на карточке одна главная кнопка");
+    assert.ok(buttons.includes("Разрешить") && buttons.includes("Отклонить"), "обе кнопки решения на карточке, как в макете");
     card.querySelector("button").click();
-    await app.until(() => [...app.document.querySelectorAll('#root aside[aria-label="Подробности"] button')].some(b => b.textContent === "Отклонить"), "отказ — в подробностях");
+    await app.until(() => card.querySelector('aside[aria-label="Подробности"]')?.textContent.includes("сотрудники отдела «Продажи»"), "подробности раскрываются внутри карточки");
     [...card.querySelectorAll("button")].find(b => b.textContent === "Разрешить").click();
     await app.until(() => app.text().includes("Проект «Общий проект» открыт отделу «Продажи»."), "решение подтверждено");
     assert.deepEqual(app.calls.find(c => c[0] === "decideShareRequest"), ["decideShareRequest", REQUEST.request_id, true]);
@@ -85,7 +83,7 @@ test("«Входящие»: карточки без таблиц — от ког
   });
   try {
     await app.until(() => cards(app).some(c => c.dataset.inbox === "acceptance") && cards(app).some(c => c.dataset.inbox === "approval"), "карточки");
-    assert.equal(app.document.querySelector('#root section[aria-label="Ждёт решения"] table'), null, "во «Входящих» нет таблиц");
+    assert.equal(app.document.querySelector('#root section[aria-label="Ждут вашего решения"] table'), null, "во «Входящих» нет таблиц");
     const acceptance = cards(app).find(c => c.dataset.inbox === "acceptance");
     assert.ok(acceptance.textContent.includes("Принять работу «Сверить прайс»"));
     assert.ok(acceptance.textContent.includes("От: Свой агент (Claude Code или Codex)") && acceptance.textContent.includes("проект «Второй проект»"), acceptance.textContent);
@@ -123,7 +121,7 @@ test("Правила организации — на странице «Прав
   } finally { viewer.dispose(); }
 });
 
-test("Идентификаторы агентов и задач не видны сотруднику; администратору — только в «Подробнее»", async () => {
+test("Идентификаторы агентов и задач не видны ни сотруднику, ни администратору", async () => {
   const connections = [
     { binding_id: "workshop-7c1e0b5a9d2f4e3b", agent_principal_id: "agent-7c1e0b5a9d2f4e3b8a6c", runtime_id: "workshop", runtime_agent_id: "7c1e0b5a9d2f", managed_runtime: false, revoked: false, document_grants: [] },
     { binding_id: "external-0a9b8c7d6e5f4a3b", agent_principal_id: "agent-0a9b8c7d6e5f4a3b2c1d", runtime_id: "external", runtime_agent_id: "0a9b8c7d6e5f", managed_runtime: false, revoked: false, document_grants: [] },
@@ -143,6 +141,7 @@ test("Идентификаторы агентов и задач не видны 
     await admin.until(() => admin.document.querySelectorAll("#root [data-agent]").length === 3, "три агента");
     const card = admin.document.querySelector(`#root [data-agent="${connections[0].binding_id}"]`);
     assert.ok(!visibleText(card).includes(connections[0].binding_id), "в карточке идентификатора нет");
-    assert.ok(card.querySelector("[data-admin-details]").textContent.includes(connections[0].binding_id), "в «Подробнее» — есть");
+    assert.equal(admin.document.querySelector("#root [data-admin-details]"), null, "и администратору «Подробнее» с идентификаторами нет");
+    for (const c of connections) for (const id of [c.binding_id, c.agent_principal_id]) assert.ok(!admin.text().includes(id), `не показан ${id}`);
   } finally { admin.dispose(); }
 });

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { FileArrowUp, MagnifyingGlass, X } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
@@ -7,7 +6,7 @@ import { documentRows, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } fro
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { MaterialCard, MaterialChatButtons, materialPrompt, type MaterialAction } from "./MaterialCard.tsx";
 import { relativeTime } from "./time.ts";
-import { ActionForm, Notice, Select, StatusBadge } from "./ui.tsx";
+import { Button, ActionForm, Notice, Select, StatusBadge } from "./ui.tsx";
 
 /** Время документа даёт только история; чтобы не грузить сервер, берём первую страницу истории для ограниченного числа карточек. */
 const HISTORY_ROWS = 40;
@@ -185,10 +184,10 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <ActionForm onAction={submitSearch} aria-label="Поиск" className="flex min-w-[240px] flex-1 items-center gap-2">
-          <label className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-kumo-line bg-kumo-base px-3 text-kumo-inactive focus-within:border-kumo-ring">
+          <label className="flex h-9 flex-1 items-center gap-2 rounded-[12px] border border-kumo-fill-hover bg-kumo-control px-3 text-kumo-inactive focus-within:border-kumo-ring">
             <MagnifyingGlass size={16} aria-hidden="true" />
             <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Найти в материалах: слова, тема или вопрос…" aria-label="Поиск по материалам"
-              className="w-full bg-transparent text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive" />
+              className="w-full bg-transparent text-[14px] leading-5 text-kumo-default outline-none placeholder:text-kumo-inactive" />
           </label>
           <Button type="button" variant="secondary" disabled={search?.busy} onClick={submitSearch}>Найти</Button>
           {search && <Button type="button" variant="ghost" onClick={clearSearch}>Очистить</Button>}
@@ -206,7 +205,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
         <div className="min-w-0">
           {search ? (
             <section aria-label="Результаты поиска">
-              <p className="m-0 mb-2 text-[12px] text-kumo-subtle">
+              <p className="m-0 mb-2 text-[13px] text-kumo-subtle">
                 {search.busy ? "Ищем…" : `Найдено: ${search.hits.length}`}
                 {search.pending && " · поиск ещё обновляется, часть документов может не найтись"}
                 {search.failed > 0 && ` · не удалось проверить проектов: ${search.failed}`}
@@ -229,17 +228,17 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
                 {rows.map(row => <MaterialCard key={keyOf(row.projectId, row.nodeId)} row={row} at={times.get(keyOf(row.projectId, row.nodeId))}
                   selected={isOpened(row)} onOpen={() => void open(row)} onChat={action => chat(row, action)} />)}
               </div>}
-              {anyTruncated && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показана первая страница документов каждого проекта. Остальное находится поиском.</p>}
+              {anyTruncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показана первая страница документов каждого проекта. Остальное находится поиском.</p>}
             </section>
           )}
         </div>
 
         {opened && (
-          <aside aria-label="Просмотр документа" className="min-w-0 rounded-xl border border-kumo-line bg-kumo-base p-4 max-lg:order-first lg:sticky lg:top-4 lg:self-start">
+          <aside aria-label="Просмотр документа" className="min-w-0 rounded-[16px] border border-kumo-fill bg-kumo-overlay p-4 max-lg:order-first lg:sticky lg:top-4 lg:self-start">
             <div className="mb-3 flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <h2 className="m-0 text-[15px] font-semibold text-kumo-strong [overflow-wrap:anywhere]">{opened.row.name}</h2>
-                <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">
+                <p className="mt-0.5 mb-0 text-[13px] text-kumo-subtle">
                   {opened.row.projectName}{times.get(keyOf(opened.row.projectId, opened.row.nodeId)) && <> · изменён {relativeTime(times.get(keyOf(opened.row.projectId, opened.row.nodeId))!)}</>}
                 </p>
               </div>
@@ -249,11 +248,11 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
               <StatusBadge tone={opened.row.status.tone}>{opened.row.status.label}</StatusBadge>
               <MaterialChatButtons onChat={action => chat(opened.row, action)} />
             </div>
-            <div className="max-h-[70vh] overflow-auto rounded-lg border border-kumo-line bg-kumo-elevated p-3">
+            <div className="max-h-[70vh] overflow-auto rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">
               {opened.error && <div className="space-y-2"><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" size="sm" onClick={() => void open(opened.row)}>Повторить загрузку</Button></div>}
               {!opened.error && !opened.content && <Notice>Загрузка…</Notice>}
-              {opened.content && <pre className="m-0 whitespace-pre-wrap break-words font-sans text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>}
-              {opened.content?.truncated && <p className="mt-3 mb-0 text-[12px] text-kumo-subtle">Показано начало документа: он длиннее допустимого для просмотра.</p>}
+              {opened.content && <pre className="m-0 whitespace-pre-wrap break-words font-sans text-[14px] leading-5 text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>}
+              {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа: он длиннее допустимого для просмотра.</p>}
             </div>
           </aside>
         )}
@@ -269,13 +268,13 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
 /** Пустое состояние подсказывает первое действие: файлы кладут в беседу или загружают здесь. */
 function EmptyMaterials({ inProject, uploading, onUpload }: { inProject: boolean; uploading: boolean; onUpload(): void }) {
   return (
-    <div data-empty-materials="" className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-kumo-line bg-kumo-base px-6 py-10 text-center">
+    <div data-empty-materials="" className="flex flex-col items-center gap-3 rounded-[16px] border border-dashed border-kumo-fill-hover px-6 py-10 text-center">
       <FileArrowUp size={28} className="text-kumo-subtle" aria-hidden="true" />
       <div>
         <h2 className="m-0 text-[15px] font-semibold text-kumo-strong">{inProject ? "В этом проекте пока нет материалов" : "Материалов пока нет"}</h2>
-        <p className="mt-1 mb-0 max-w-[460px] text-[13px] leading-[18px] text-kumo-subtle">Перетащите файлы в беседу — агент предложит, куда их положить. Или загрузите их здесь.</p>
+        <p className="mt-1 mb-0 max-w-[460px] text-[14px] leading-5 text-kumo-subtle">Перетащите файлы в беседу — агент предложит, куда их положить. Или загрузите их здесь.</p>
       </div>
-      <Button variant="primary" size="sm" disabled={uploading} onClick={onUpload}>{uploading ? "Загружаем…" : "Загрузить файлы"}</Button>
+      <Button size="sm" disabled={uploading} onClick={onUpload}>{uploading ? "Загружаем…" : "Загрузить файлы"}</Button>
     </div>
   );
 }

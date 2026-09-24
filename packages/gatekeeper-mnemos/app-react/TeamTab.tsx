@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import type { ShareRequest } from "../src/project-sharing.ts";
 import { useUi } from "./host.ts";
 import { personName, useLoad, type MemoryData } from "./data.ts";
 import { headedUnits, useOrgUnits } from "./Departments.tsx";
 import { shareAudience } from "./MyWorkTab.tsx";
-import { Block, Notice, Row, RowList, RowText, StatusBadge } from "./ui.tsx";
+import { plural } from "./names.ts";
+import { Avatar, Button, Chip, Notice, PageHeader } from "./ui.tsx";
 
-/** «Мой отдел» — руководителю отдела и ответственному за проект: люди, проекты и запросы
- * «Поделиться», которые ждут его решения. Права проверяет сервер при каждом действии. */
-export default function TeamTab({ data, onOpenProject }: { data: MemoryData; onOpenProject(project: string): void }) {
+/** «Мой отдел» — руководителю отдела и ответственному за проект: запросы «Поделиться», которые ждут
+ * его решения, сотрудники и проекты. Права проверяет сервер при каждом действии. */
+export default function TeamTab({ data, onOpenProject, onInvite }: { data: MemoryData; onOpenProject(project: string): void; onInvite?(): void }) {
   const ui = useUi();
   const userId = data.identity?.subject.user_id ?? "";
   const { units, loading: unitsLoading, failed: unitsFailed } = useOrgUnits();
@@ -22,6 +22,7 @@ export default function TeamTab({ data, onOpenProject }: { data: MemoryData; onO
   const departmentProjects = data.projects.filter(p => p.orgUnit && unitIds.has(p.orgUnit));
   const responsible = new Set(data.identity?.roles?.responsible_projects ?? []);
   const responsibleProjects = data.projects.filter(p => responsible.has(p.id));
+  const people = mine.reduce((n, u) => n + u.members.length, 0);
 
   async function decide(share: ShareRequest, approve: boolean) {
     if (busy) return;
@@ -36,40 +37,61 @@ export default function TeamTab({ data, onOpenProject }: { data: MemoryData; onO
     } finally { setBusy(""); }
   }
 
+  const summary = mine.length > 0
+    ? [mine.length === 1 ? `Отдел «${mine[0].name}»` : `Отделы: ${mine.map(u => `«${u.name}»`).join(", ")}`, "вы руководитель",
+        `${people} ${plural(people, "сотрудник", "сотрудника", "сотрудников")}`, `${departmentProjects.length} ${plural(departmentProjects.length, "проект", "проекта", "проектов")}`].join(" · ")
+    : responsibleProjects.length > 0 ? `Вы отвечаете за ${responsibleProjects.length} ${plural(responsibleProjects.length, "проект", "проекта", "проектов")}` : "";
+
   const pending = shares.value ?? [];
-  return <div className="grid gap-6">
+  return <div className="flex flex-col gap-7">
+    <PageHeader title="Мой отдел" subtitle={summary || undefined}
+      actions={mine.length > 0 && onInvite ? <Button size="md" onClick={onInvite}>Пригласить в отдел</Button> : undefined} />
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
-    <Block title="Ждут вашего решения" count={pending.length} empty={shares.loading || shares.error ? undefined : "Запросов «Поделиться» на решение нет."}>
+
+    <section aria-label="Ждёт вашего решения" className="flex flex-col gap-2.5">
+      <h2 className="m-0 text-[17px] font-semibold text-kumo-default">Ждёт вашего решения</h2>
       {shares.error && <Notice tone="danger">{shares.error}</Notice>}
-      {pending.length > 0 && <RowList>{pending.map(share => (
-        <Row key={share.request_id} className="items-start" data-team-share="">
-          <RowText title={`${share.requested_by_name || personName(share.requested_by)} хочет открыть проект «${share.project_name}» ${shareAudience(share)}`}
-            note={share.can_edit ? "с правом править" : "только чтение"} />
-          <Button variant="primary" size="sm" disabled={!!busy} onClick={() => void decide(share, true)}>Подтвердить</Button>
-          <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => void decide(share, false)}>Отклонить</Button>
-        </Row>))}</RowList>}
-    </Block>
+      {!shares.loading && !shares.error && pending.length === 0 && <Notice>Запросов «Поделиться» на решение нет.</Notice>}
+      {pending.map(share => (
+        <div key={share.request_id} data-team-share="" className="flex flex-wrap items-center gap-3.5 rounded-[16px] border border-kumo-fill bg-kumo-overlay px-[18px] py-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] leading-[22px] text-kumo-default">{`${share.requested_by_name || personName(share.requested_by)} хочет открыть проект «${share.project_name}» ${shareAudience(share)}`}</div>
+            <div className="text-[13px] text-kumo-subtle">{share.can_edit ? "с правом править" : "только чтение"}</div>
+          </div>
+          <Button disabled={!!busy} onClick={() => void decide(share, true)}>Разрешить</Button>
+          <Button variant="secondary" disabled={!!busy} onClick={() => void decide(share, false)}>Отклонить</Button>
+        </div>))}
+    </section>
 
-    {(unitsLoading || mine.length > 0 || unitsFailed) && <Block title="Сотрудники отдела" count={mine.reduce((n, u) => n + u.members.length, 0)} empty={unitsLoading || unitsFailed ? undefined : "В ваших отделах пока никого нет."}>
-      {unitsLoading && <Notice>Загрузка отделов…</Notice>}
-      {unitsFailed && <Notice tone="danger">Отделы недоступны. Обновите страницу.</Notice>}
-      {mine.map(unit => <section key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`} className="grid gap-2">
-        {mine.length > 1 && <h3 className="m-0 text-[15px] font-semibold">{unit.name}</h3>}
-        <RowList>{unit.members.map(m => (
-          <Row key={m.principal_id}>
-            <RowText title={m.display_name || personName(m.principal_id)} />
-            {m.is_head && <StatusBadge tone="success">Руководитель</StatusBadge>}
-          </Row>))}</RowList>
-      </section>)}
-    </Block>}
+    <div className="grid gap-8 md:grid-cols-2">
+      {(unitsLoading || mine.length > 0 || unitsFailed) && <section aria-label="Сотрудники отдела">
+        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Сотрудники</h2>
+        {unitsLoading && <Notice>Загрузка отделов…</Notice>}
+        {unitsFailed && <Notice tone="danger">Отделы недоступны. Обновите страницу.</Notice>}
+        {!unitsLoading && !unitsFailed && people === 0 && <Notice>В ваших отделах пока никого нет.</Notice>}
+        {mine.map(unit => <div key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`} role="group">
+          {mine.length > 1 && <h3 className="m-0 mt-3 mb-1 text-[13px] font-medium text-kumo-subtle">{unit.name}</h3>}
+          {unit.members.map(m => {
+            const name = m.display_name || personName(m.principal_id);
+            return <div key={m.principal_id} className="flex items-center gap-3 border-b border-kumo-fill py-[11px]">
+              <Avatar name={name} />
+              <span className="min-w-0 flex-1 truncate text-[15px] text-kumo-default">{name}</span>
+              {m.is_head && <Chip tone="brand">Руководитель</Chip>}
+            </div>;
+          })}
+        </div>)}
+      </section>}
 
-    {mine.length > 0 && <Block title="Проекты отдела" count={departmentProjects.length} empty="У отдела пока нет общих проектов.">
-      {departmentProjects.length > 0 && <ProjectRows projects={departmentProjects} onOpen={onOpenProject} />}
-    </Block>}
+      {mine.length > 0 && <section aria-label="Проекты отдела">
+        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Проекты отдела</h2>
+        {departmentProjects.length === 0 ? <Notice>У отдела пока нет общих проектов.</Notice> : <ProjectRows projects={departmentProjects} onOpen={onOpenProject} />}
+      </section>}
 
-    {responsibleProjects.length > 0 && <Block title="Вы отвечаете за проекты" count={responsibleProjects.length}>
-      <ProjectRows projects={responsibleProjects} onOpen={onOpenProject} />
-    </Block>}
+      {responsibleProjects.length > 0 && <section aria-label="Вы отвечаете за проекты">
+        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Вы отвечаете за проекты</h2>
+        <ProjectRows projects={responsibleProjects} onOpen={onOpenProject} />
+      </section>}
+    </div>
 
     {!unitsLoading && mine.length === 0 && responsibleProjects.length === 0 && !data.projectsLoading &&
       <Notice>Вы не руководите отделом и не отвечаете за проекты. Когда администратор назначит вас руководителем или ответственным, здесь появятся люди и проекты.</Notice>}
@@ -77,9 +99,10 @@ export default function TeamTab({ data, onOpenProject }: { data: MemoryData; onO
 }
 
 function ProjectRows({ projects, onOpen }: { projects: MemoryData["projects"]; onOpen(project: string): void }) {
-  return <RowList>{projects.map(project => (
-    <Row key={project.id}>
-      <RowText title={project.name} note={project.pendingShare ? "ждёт решения о доступе" : undefined} />
-      <Button variant="ghost" size="sm" aria-label={`Открыть проект «${project.name}»`} onClick={() => onOpen(project.id)}>Открыть</Button>
-    </Row>))}</RowList>;
+  return <div>{projects.map(project => (
+    <button key={project.id} type="button" aria-label={`Открыть проект «${project.name}»`} onClick={() => onOpen(project.id)}
+      className="flex w-full items-center gap-3 border-0 border-b border-solid border-kumo-fill bg-transparent px-0 py-[11px] text-left hover:text-kumo-brand">
+      <span className="min-w-0 flex-1 truncate text-[15px]">{project.name}</span>
+      {project.pendingShare && <Chip tone="warning">ждёт решения о доступе</Chip>}
+    </button>))}</div>;
 }

@@ -145,7 +145,7 @@ export function useWorkspaceOpen({
         if (message.includes(OBSERVER_CANCELLED)) {
           showTerminalError({
             kind: 'message',
-            message: 'To open this workspace, you must choose connected accounts for the services it uses.',
+            message: 'Чтобы открыть беседу, выберите подключённые аккаунты для сервисов, которые она использует.',
           })
         } else if (message.includes('permitted to observe') ||
                    message.includes('no longer connected') ||

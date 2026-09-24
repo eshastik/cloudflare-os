@@ -22,17 +22,17 @@ interface ContextItem {
 }
 
 const TYPE_META: Record<Kind, { label: string; Icon: PhosphorIcon }> = {
-  collection: { label: 'Collection', Icon: BookOpen },
-  skill: { label: 'Skill', Icon: Sparkle },
+  collection: { label: 'Подборка', Icon: BookOpen },
+  skill: { label: 'Навык', Icon: Sparkle },
 }
 
 const MOCK_ITEMS: ContextItem[] = [
-  { id: '1', name: 'Company Handbook', kind: 'collection', detail: '12 documents', updated: '2d ago' },
-  { id: '2', name: 'Brand Voice & Style', kind: 'collection', detail: '5 documents', updated: '1w ago' },
-  { id: '3', name: 'API Reference', kind: 'collection', detail: '28 documents', updated: '1w ago' },
-  { id: '4', name: 'Summarize meeting notes', kind: 'skill', detail: 'Reusable skill', updated: '3d ago' },
-  { id: '5', name: 'Sales Playbook', kind: 'collection', detail: '9 documents', updated: '2w ago' },
-  { id: '6', name: 'Draft a customer email', kind: 'skill', detail: 'Reusable skill', updated: '2w ago' },
+  { id: '1', name: 'Справочник сотрудника', kind: 'collection', detail: '12 документов', updated: '2 дн назад' },
+  { id: '2', name: 'Стиль и тон компании', kind: 'collection', detail: '5 документов', updated: '1 нед назад' },
+  { id: '3', name: 'Описание API', kind: 'collection', detail: '28 документов', updated: '1 нед назад' },
+  { id: '4', name: 'Краткий итог встречи', kind: 'skill', detail: 'Готовый навык', updated: '3 дн назад' },
+  { id: '5', name: 'Правила продаж', kind: 'collection', detail: '9 документов', updated: '2 нед назад' },
+  { id: '6', name: 'Черновик письма клиенту', kind: 'skill', detail: 'Готовый навык', updated: '2 нед назад' },
 ]
 
 function ContextRow({ item }: { item: ContextItem }) {
@@ -56,21 +56,21 @@ function ContextRow({ item }: { item: ContextItem }) {
 }
 
 function ContextPage() {
-  useDocumentTitle('Context & Skills')
+  useDocumentTitle('Знания и навыки')
   const siteName = useSiteName()
   return (
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-6 sm:px-10">
       <header className="px-3 pb-4 pt-10">
-        <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Context &amp; Skills</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Знания и навыки</h1>
         <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-          Curated collections of knowledge your agents read, plus reusable skills they can apply.
+          Подборки знаний, которые читают агенты, и готовые навыки, которые они применяют.
         </p>
       </header>
 
       <ComingSoonPreview
         icon={BookOpen}
-        title={`Context & Skills are coming soon to ${siteName}`}
-        description="A preview of how you'll author knowledge collections and skills for your agents to draw on."
+        title={`Знания и навыки скоро появятся в ${siteName}`}
+        description="Так будет выглядеть работа с подборками знаний и навыками для агентов."
       >
         <div className="chat-panel min-h-0 flex-1 overflow-y-auto pb-8 pt-1">
           <div className="flex flex-col gap-0.5">

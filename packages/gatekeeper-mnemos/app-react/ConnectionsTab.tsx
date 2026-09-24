@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { Button } from "@cloudflare/kumo";
+import { CalendarBlank, Code, Database, Envelope, Folder, TelegramLogo } from "@phosphor-icons/react";
 import { useUi } from "./host.ts";
 import { agentNames, projectName, useLoad, type MemoryData } from "./data.ts";
-import { ActionForm, Notice, Row, RowList, RowText, Select, StatusBadge, TextInput } from "./ui.tsx";
+import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
+import { Field, FieldInput, FieldSelect, Pill, PillSelect, RowTitle } from "./admin-ui.tsx";
 
 const FAILURE = "не удалось прочитать подключения. Обновите страницу.";
 
@@ -16,27 +17,33 @@ const loadProblem = (a: { last_error_at?: string }) => a.last_error_at ? `пос
 /** Строка подключения: что это, работает ли, и «Отключить» с подтверждением на месте. */
 interface Item { key: string; title: string; note: string; problem: string; disconnect?: () => Promise<unknown> }
 
-/** «Подключения»: одна страница, строка на вид источника. Подключение настраивается прямо в строке,
+const ICONS = { mail: Envelope, calendar: CalendarBlank, drive: Folder, code: Code, database: Database, telegram: TelegramLogo } as const;
+
+/** «Подключения»: одна карточка, строка на вид источника. Подключение настраивается прямо в строке,
  * без адресов серверов, служебных учётных записей и технических строк. */
 export default function ConnectionsTab({ data }: { data: MemoryData }) {
-  return <section aria-label="Подключения организации" className="grid gap-4">
-    <MailRow data={data} />
-    <CalendarRow data={data} />
-    <DriveRow />
-    <GitRow data={data} />
-    <DatabaseRow data={data} />
-    <TelegramRow data={data} />
+  return <section aria-label="Подключения организации" className="max-w-[820px]">
+    <div className="overflow-hidden rounded-2xl border border-kumo-fill bg-kumo-overlay">
+      <MailRow data={data} />
+      <CalendarRow data={data} />
+      <DriveRow />
+      <GitRow data={data} />
+      <DatabaseRow data={data} />
+      <TelegramRow data={data} />
+    </div>
   </section>;
 }
 
-/** Общая строка: заголовок, число, состояние словами, список подключений и форма «Подключить» раскрытием. */
-function ConnectionRow({ title, what, loading, error, items, connect, reload, extra }: { title: string; what: string; loading: boolean; error: string; items: Item[]; connect?: (done: () => void) => ReactNode; reload(): Promise<void>; extra?: ReactNode }) {
+/** Строка источника: значок, название, состояние словами, кнопка справа. Подключения источника — строками ниже,
+ * настройка и форма «Подключить» раскрываются в этой же строке. */
+function ConnectionRow({ title, icon, what, loading, error, items, connect, connectLabel, reload, extra }: { title: string; icon: keyof typeof ICONS; what: string; loading: boolean; error: string; items: Item[]; connect?: (done: () => void) => ReactNode; connectLabel?: string; reload(): Promise<void>; extra?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const broken = items.filter(i => i.problem).length;
-  const state = loading ? "Загрузка…" : error ? `Не удалось прочитать: ${error}` : items.length === 0 ? "Не подключено." : broken ? `Подключено: ${items.length}; требуют внимания: ${broken}.` : `Подключено: ${items.length}. Работает.`;
+  const state = loading ? "Загрузка…" : error ? `Не удалось прочитать: ${error}` : items.length === 0 ? `Не подключено. ${what}` : broken ? `Подключено: ${items.length}; требуют внимания: ${broken}.` : `Работает · подключено: ${items.length}.`;
+  const Icon = ICONS[icon];
   async function disconnect(item: Item) {
     if (busy || !item.disconnect) return;
     setBusy(true); setNotice(null);
@@ -44,28 +51,31 @@ function ConnectionRow({ title, what, loading, error, items, connect, reload, ex
     catch { setNotice({ tone: "danger", text: "Отключение не подтверждено. Обновите страницу и проверьте ещё раз." }); }
     finally { setBusy(false); }
   }
-  return <section aria-label={title} className="rounded-xl border border-kumo-line bg-kumo-base p-4">
-    <div className="flex flex-wrap items-start gap-3">
-      <div className="min-w-0 flex-1">
-        <h2 className="m-0 text-[15px] font-semibold text-kumo-strong">{title}</h2>
-        <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">{what}</p>
-        <p className={`mt-1 mb-0 text-[13px] ${error || broken ? "text-kumo-danger" : "text-kumo-default"}`} role="status">{state}</p>
-      </div>
-      {connect && <Button variant={items.length ? "secondary" : "primary"} size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Свернуть" : "Подключить"}</Button>}
+  return <section aria-label={title} className="border-t border-kumo-fill first:border-t-0">
+    <div className="flex items-center gap-3.5 px-5 py-4">
+      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-kumo-tint text-kumo-default"><Icon size={18} /></span>
+      <span className="block min-w-0 flex-1">
+        <h2 className="m-0 text-[15px] font-medium text-kumo-default">{title}</h2>
+        <p role="status" className={`m-0 text-[13px] ${error || broken ? "text-kumo-danger" : "text-kumo-subtle"}`}>{state}</p>
+      </span>
+      {connect && <Pill tone={items.length ? "secondary" : "primary"} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Свернуть" : items.length ? "Настроить" : connectLabel ?? "Подключить"}</Pill>}
     </div>
-    {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-    {items.length > 0 && <div className="mt-3"><RowList>{items.map(item => <Row key={item.key} className="items-start" data-connection="">
-      <RowText title={item.title} note={item.problem ? <span className="text-kumo-danger">Не работает: {item.problem}</span> : item.note} />
-      <StatusBadge tone={item.problem ? "danger" : "success"}>{item.problem ? "Требует внимания" : "Работает"}</StatusBadge>
-      {item.disconnect && confirm !== item.key && <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm(item.key)}>Отключить</Button>}
-      {item.disconnect && confirm === item.key && <span className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[12px] text-kumo-subtle">Отключить?</span>
-        <Button variant="primary" size="sm" disabled={busy} onClick={() => void disconnect(item)}>Да, отключить</Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm("")}>Отмена</Button>
-      </span>}
-    </Row>)}</RowList></div>}
-    {extra}
-    {open && connect && <div className="mt-3 rounded-lg border border-kumo-line bg-kumo-elevated p-3">{connect(() => { setOpen(false); void reload(); })}</div>}
+    {(items.length > 0 || notice || open) && <div className="grid gap-2 px-5 pb-4 sm:pl-[70px]">
+      {items.length > 0 && <p className="m-0 text-[13px] text-kumo-subtle">{what}</p>}
+      {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+      {items.map(item => <div key={item.key} data-connection="" className="flex flex-wrap items-center gap-2 rounded-xl bg-kumo-base px-3 py-2.5">
+        <RowTitle title={item.title} note={item.problem ? <span className="text-kumo-danger">Не работает: {item.problem}</span> : item.note} />
+        <StatusBadge tone={item.problem ? "danger" : "success"}>{item.problem ? "Требует внимания" : "Работает"}</StatusBadge>
+        {item.disconnect && confirm !== item.key && <Pill tone="ghost" disabled={busy} onClick={() => setConfirm(item.key)}>Отключить</Pill>}
+        {item.disconnect && confirm === item.key && <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[13px] text-kumo-subtle">Отключить?</span>
+          <Pill tone="primary" disabled={busy} onClick={() => void disconnect(item)}>Да, отключить</Pill>
+          <Pill tone="ghost" disabled={busy} onClick={() => setConfirm("")}>Отмена</Pill>
+        </span>}
+      </div>)}
+      {open && extra}
+      {open && connect && <div className="rounded-2xl border border-kumo-fill p-4">{connect(() => { setOpen(false); void reload(); })}</div>}
+    </div>}
   </section>;
 }
 
@@ -85,14 +95,14 @@ function AccountForm({ services, what, onConnect, extra, done }: { services: { i
     finally { setBusy(false); }
   }
   if (!services.length) return <Notice>Администратор сервера ещё не добавил ни одного сервиса. Попросите его настроить подключение.</Notice>;
-  return <ActionForm aria-label={`Подключить: ${what}`} onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[13px]">
-    <label className="grid gap-1">Сервис<Select aria-label="Сервис" value={server} disabled={busy} onChange={e => setServer(e.target.value)}>{services.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</Select></label>
-    <label className="grid gap-1">Логин<TextInput aria-label="Логин" autoComplete="username" value={username} disabled={busy} onChange={e => setUsername(e.target.value)} placeholder="name@company.ru" /></label>
-    <label className="grid gap-1">Пароль приложения<TextInput aria-label="Пароль приложения" type="password" autoComplete="new-password" value={password} disabled={busy} onChange={e => setPassword(e.target.value)} /></label>
+  return <ActionForm aria-label={`Подключить: ${what}`} onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[14px]">
+    <Field label="Сервис"><FieldSelect aria-label="Сервис" value={server} disabled={busy} onChange={e => setServer(e.target.value)}>{services.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</FieldSelect></Field>
+    <Field label="Логин"><FieldInput aria-label="Логин" autoComplete="username" value={username} disabled={busy} onChange={e => setUsername(e.target.value)} placeholder="name@company.ru" /></Field>
+    <Field label="Пароль приложения"><FieldInput aria-label="Пароль приложения" type="password" autoComplete="new-password" value={password} disabled={busy} onChange={e => setPassword(e.target.value)} /></Field>
     <p className="m-0 text-[12px] text-kumo-subtle">Пароль приложения создаётся в настройках почты или календаря. Он хранится на сервере памяти и не передаётся агентам.</p>
     {extra && <label className="flex items-center gap-2"><input type="checkbox" checked={flag} disabled={busy} onChange={e => setFlag(e.target.checked)} />{extra}</label>}
     {error && <Notice tone="danger">{error}</Notice>}
-    <div><Button type="button" variant="primary" size="sm" disabled={busy || !server || !username.trim() || !password} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Button></div>
+    <div><Pill tone="primary" disabled={busy || !server || !username.trim() || !password} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
   </ActionForm>;
 }
 
@@ -108,7 +118,7 @@ function MailRow({ data }: { data: MemoryData }) {
       problem: c.enabled ? loadProblem(c) : "отключено", disconnect: c.enabled ? () => ui.disableMailConnection(c.connection_id, c.revision) : undefined })),
   ];
   const enabled = (projectMail.value?.connections ?? []).filter(c => c.enabled);
-  return <ConnectionRow title="Почта" what="Письма попадают в память; агент отвечает только после вашего согласования." loading={accounts.loading || projectMail.loading} error={accounts.error || projectMail.error} items={items} reload={reload}
+  return <ConnectionRow title="Почта" icon="mail" what="Письма попадают в память; агент отвечает только после вашего согласования." loading={accounts.loading || projectMail.loading} error={accounts.error || projectMail.error} items={items} reload={reload}
     extra={enabled.length > 0 && <ReadGrants data={data} kind="mail" connections={enabled.map(c => ({ id: c.connection_id, title: `Письма для проекта «${projectName(data.projects, c.project_id)}»` }))} />}
     connect={done => <AccountForm what="почта" done={done} services={accounts.value?.servers ?? []} extra="Разрешить отправлять письма с этого адреса (каждое — после моего согласования)"
       onConnect={({ server, username, password, extra }) => ui.connectImapAccount({ request: crypto.randomUUID(), server, username, password, mailbox: "INBOX", ...(extra ? { smtp: { from: username, username, password } } : {}) })} />} />;
@@ -126,7 +136,7 @@ function CalendarRow({ data }: { data: MemoryData }) {
       problem: c.enabled ? loadProblem(c) : "отключено", disconnect: c.enabled ? () => ui.disableCalendarConnection(c.connection_id, c.revision) : undefined })),
   ];
   const enabled = (projectCalendars.value?.connections ?? []).filter(c => c.enabled);
-  return <ConnectionRow title="Календарь" what="События попадают в память; встречи агент назначает только после вашего согласования." loading={accounts.loading || projectCalendars.loading} error={accounts.error || projectCalendars.error} items={items} reload={reload}
+  return <ConnectionRow title="Календарь" icon="calendar" what="События попадают в память; встречи агент назначает только после вашего согласования." loading={accounts.loading || projectCalendars.loading} error={accounts.error || projectCalendars.error} items={items} reload={reload}
     extra={enabled.length > 0 && <ReadGrants data={data} kind="calendar" connections={enabled.map(c => ({ id: c.connection_id, title: `Календарь для проекта «${projectName(data.projects, c.project_id)}»` }))} />}
     connect={done => <AccountForm what="календарь" done={done} services={accounts.value?.servers ?? []}
       onConnect={({ server, username, password }) => ui.connectCalDAVAccount({ request: crypto.randomUUID(), server, username, password })} />} />;
@@ -137,7 +147,7 @@ function DriveRow() {
   const accounts = useLoad(() => ui.listWebDAVAccounts(), FAILURE, [ui]);
   const items: Item[] = (accounts.value?.accounts ?? []).map(a => ({ key: `dav/${a.id}`, title: `${accounts.value?.servers.find(s => s.id === a.server)?.title ?? "Диск"} · ${a.username}`,
     note: `файлы копируются в память, на диске ничего не меняется · ${lastLoad(a)}`, problem: a.enabled ? loadProblem(a) : "подключение проверяется", disconnect: () => ui.removeWebDAVAccount(a.id) }));
-  return <ConnectionRow title="Диск" what="Файлы с корпоративного диска копируются в память по вашему выбору." loading={accounts.loading} error={accounts.error} items={items} reload={accounts.reload}
+  return <ConnectionRow title="Диск" icon="drive" what="Файлы с корпоративного диска копируются в память по вашему выбору." loading={accounts.loading} error={accounts.error} items={items} reload={accounts.reload}
     connect={done => <AccountForm what="диск" done={done} services={accounts.value?.servers ?? []}
       onConnect={({ server, username, password }) => ui.connectWebDAVAccount({ request: crypto.randomUUID(), server, username, password })} />} />;
 }
@@ -151,11 +161,9 @@ function GitRow({ data }: { data: MemoryData }) {
     problem: c.enabled ? loadProblem(c) : "отключено",
     disconnect: c.enabled ? () => ui.disableGitConnection(c.connection_id, c.revision) : undefined }));
   const enabled = (connections.value?.connections ?? []).filter(c => c.enabled);
-  return <>
-    <ConnectionRow title="Код" what="Внутреннее хранилище кода Mnemos, GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
-      connect={done => <GitForm done={done} />} />
-    {enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
-  </>;
+  return <ConnectionRow title="Код" icon="code" connectLabel="Добавить GitHub" what="Внутреннее хранилище кода Mnemos, GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
+    extra={enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
+    connect={done => <GitForm done={done} />} />;
 }
 
 /** Строка подключения кода словами. Внутреннее хранилище установки (provider "gitea") работает от
@@ -186,16 +194,16 @@ function GitForm({ done }: { done(): void }) {
     } catch { setToken(""); setError("Не подключилось. Проверьте ключ доступа и адрес сервера."); }
     finally { setBusy(false); }
   }
-  return <ActionForm aria-label="Подключить код" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[13px]">
-    <label className="grid gap-1">Где хранится код<Select aria-label="Хранилище кода" value={service} disabled={busy} onChange={e => setService(e.target.value as keyof typeof GIT_SERVICES)}>
+  return <ActionForm aria-label="Подключить код" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[14px]">
+    <Field label="Где хранится код"><FieldSelect aria-label="Хранилище кода" value={service} disabled={busy} onChange={e => setService(e.target.value as keyof typeof GIT_SERVICES)}>
       {Object.entries(GIT_SERVICES).map(([id, s]) => <option key={id} value={id}>{s.title}</option>)}
-    </Select></label>
-    {service === "own" && <label className="grid gap-1">Адрес сервера GitLab<TextInput aria-label="Адрес сервера GitLab" value={address} disabled={busy} onChange={e => setAddress(e.target.value)} placeholder="https://gitlab.company.ru" /></label>}
-    <label className="grid gap-1">Название<TextInput aria-label="Название подключения" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Код компании" /></label>
-    <label className="grid gap-1">Ключ доступа<TextInput aria-label="Ключ доступа" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></label>
+    </FieldSelect></Field>
+    {service === "own" && <Field label="Адрес сервера GitLab"><FieldInput aria-label="Адрес сервера GitLab" value={address} disabled={busy} onChange={e => setAddress(e.target.value)} placeholder="https://gitlab.company.ru" /></Field>}
+    <Field label="Название"><FieldInput aria-label="Название подключения" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Код компании" /></Field>
+    <Field label="Ключ доступа"><FieldInput aria-label="Ключ доступа" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></Field>
     <p className="m-0 text-[12px] text-kumo-subtle">Ключ доступа создаётся в настройках GitHub или GitLab. Он хранится на сервере памяти и не передаётся агентам.</p>
     {error && <Notice tone="danger">{error}</Notice>}
-    <div><Button type="button" variant="primary" size="sm" disabled={busy || !name.trim() || !token || !api} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Button></div>
+    <div><Pill tone="primary" disabled={busy || !name.trim() || !token || !api} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
   </ActionForm>;
 }
 
@@ -219,22 +227,22 @@ function GitBinding({ data, connections }: { data: MemoryData; connections: { co
     } catch { setNotice({ tone: "danger", text: "Не получилось. Проверьте, что у вас есть право менять проект." }); }
     finally { setBusy(false); }
   }
-  return <details aria-label="Код для проекта" className="rounded-xl border border-kumo-line bg-kumo-base p-4 text-[13px]">
-    <summary className="cursor-pointer font-medium">Открыть проекту репозиторий</summary>
-    <div className="mt-3 flex flex-wrap items-end gap-2">
-      {connections.length > 1 && <Select aria-label="Подключение кода" value={connection} disabled={busy} onChange={e => { setConnection(e.target.value); setRepository(""); }}>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}</Select>}
-      <Select aria-label="Репозиторий" value={repository} disabled={busy || !repositories.value} onChange={e => setRepository(e.target.value)}>
+  return <section aria-label="Код для проекта" className="rounded-2xl border border-kumo-fill p-4 text-[13px]">
+    <h3 className="m-0 text-[14px] font-medium">Открыть проекту репозиторий</h3>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {connections.length > 1 && <PillSelect aria-label="Подключение кода" value={connection} disabled={busy} onChange={e => { setConnection(e.target.value); setRepository(""); }}>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}</PillSelect>}
+      <PillSelect aria-label="Репозиторий" value={repository} disabled={busy || !repositories.value} onChange={e => setRepository(e.target.value)}>
         <option value="">{repositories.loading ? "Загрузка…" : "Выберите репозиторий"}</option>
         {(repositories.value ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-      </Select>
-      <Select aria-label="Проект для кода" value={project} disabled={busy} onChange={e => setProject(e.target.value)}>
+      </PillSelect>
+      <PillSelect aria-label="Проект для кода" value={project} disabled={busy} onChange={e => setProject(e.target.value)}>
         <option value="">Выберите проект</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </Select>
-      <Button size="sm" variant="secondary" disabled={busy || !project || !repository} onClick={() => void bind()}>Открыть проекту</Button>
+      </PillSelect>
+      <Pill disabled={busy || !project || !repository} onClick={() => void bind()}>Открыть проекту</Pill>
     </div>
     {repositories.error && <Notice tone="danger">{repositories.error}</Notice>}
     {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-  </details>;
+  </section>;
 }
 
 function DatabaseRow({ data }: { data: MemoryData }) {
@@ -243,7 +251,7 @@ function DatabaseRow({ data }: { data: MemoryData }) {
   const items: Item[] = (databases.value?.databases ?? []).map(d => ({ key: `db/${d.db_id}`, title: d.name || "База данных",
     note: `проект «${projectName(data.projects, d.project_id)}» · агент только читает · ${d.configured ? "структура прочитана" : "ждёт ключа доступа от администратора сервера"}`,
     problem: d.unreachable_since ? `база недоступна с ${timeOf(d.unreachable_since)}` : "", disconnect: () => ui.removeDatabaseConnection(d.project_id, d.name) }));
-  return <ConnectionRow title="Базы данных" what="Агент читает данные из рабочих баз, но ничего в них не меняет." loading={databases.loading} error={databases.error} items={items} reload={databases.reload}
+  return <ConnectionRow title="Базы данных" icon="database" what="Агент читает данные из рабочих баз, но ничего в них не меняет." loading={databases.loading} error={databases.error} items={items} reload={databases.reload}
     connect={done => <DatabaseForm data={data} done={done} />} />;
 }
 
@@ -262,13 +270,13 @@ function DatabaseForm({ data, done }: { data: MemoryData; done(): void }) {
     catch { setError("Не подключилось. Проверьте название ключа и что у вас есть право менять проект."); }
     finally { setBusy(false); }
   }
-  return <ActionForm aria-label="Подключить базу данных" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[13px]">
-    <label className="grid gap-1">Проект<Select aria-label="Проект базы" value={project} disabled={busy} onChange={e => setProject(e.target.value)}><option value="">Выберите проект</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
-    <label className="grid gap-1">Название базы<TextInput aria-label="Название базы" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Продажи" /></label>
-    <label className="grid gap-1">Ключ, который выдал администратор сервера<TextInput aria-label="Ключ базы" value={key} disabled={busy} onChange={e => setKey(e.target.value.toUpperCase())} placeholder="MNEMOS_DB_SALES" /></label>
+  return <ActionForm aria-label="Подключить базу данных" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[14px]">
+    <Field label="Проект"><FieldSelect aria-label="Проект базы" value={project} disabled={busy} onChange={e => setProject(e.target.value)}><option value="">Выберите проект</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</FieldSelect></Field>
+    <Field label="Название базы"><FieldInput aria-label="Название базы" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Продажи" /></Field>
+    <Field label="Ключ, который выдал администратор сервера"><FieldInput aria-label="Ключ базы" value={key} disabled={busy} onChange={e => setKey(e.target.value.toUpperCase())} placeholder="MNEMOS_DB_SALES" /></Field>
     <p className="m-0 text-[12px] text-kumo-subtle">Пароль от базы вводит не сотрудник: администратор сервера сохраняет его и сообщает название ключа.</p>
     {error && <Notice tone="danger">{error}</Notice>}
-    <div><Button type="button" variant="primary" size="sm" disabled={busy || !project || !name.trim() || !keyValid} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Button></div>
+    <div><Pill tone="primary" disabled={busy || !project || !name.trim() || !keyValid} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
   </ActionForm>;
 }
 
@@ -278,7 +286,7 @@ function TelegramRow({ data }: { data: MemoryData }) {
   const agents = agentNames(data.connections);
   const items: Item[] = (bots.value?.connections ?? []).filter(c => !c.disconnected || c.cleanup_pending).map(c => ({ key: `tg/${c.bot}`, title: `Бот @${c.username}`,
     note: `отвечает ${agents.get(c.binding) ?? "ваш агент"}`, problem: c.channel_registered ? "" : c.ready ? "подтвердите подключение в чате с ботом" : "бот недоступен", disconnect: () => ui.disconnectTelegram(c.bot) }));
-  return <ConnectionRow title="Telegram" what="Задачи агенту можно ставить сообщением в Telegram; ответы приходят туда же." loading={bots.loading} error={bots.error} items={items} reload={bots.reload}
+  return <ConnectionRow title="Telegram" icon="telegram" what="Задачи агенту можно ставить сообщением в Telegram; ответы приходят туда же." loading={bots.loading} error={bots.error} items={items} reload={bots.reload}
     connect={done => <TelegramForm data={data} done={done} />} />;
 }
 
@@ -313,34 +321,33 @@ function TelegramForm({ data, done }: { data: MemoryData; done(): void }) {
   if (!managed.length) return <Notice>Сначала нужен агент на платформе агентов: ему бот будет передавать сообщения.</Notice>;
   if (state && !state.channel_registered) return <div className="grid gap-2 text-[13px]">
     <p className="m-0">Откройте бота в Telegram и отправьте ему: <strong>/start {state.code}</strong></p>
-    <div><Button size="sm" variant="primary" disabled={busy} onClick={() => void check()}>Я отправил — проверить</Button></div>
+    <div><Pill tone="primary" disabled={busy} onClick={() => void check()}>Я отправил — проверить</Pill></div>
     {error && <Notice tone="danger">{error}</Notice>}
   </div>;
-  return <ActionForm aria-label="Подключить Telegram" onAction={() => void connect()} className="grid max-w-[480px] gap-3 text-[13px]">
-    <label className="grid gap-1">Токен бота от BotFather<TextInput aria-label="Токен бота" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></label>
-    <label className="grid gap-1">Кто отвечает в боте<Select aria-label="Агент бота" value={agent} disabled={busy} onChange={e => setAgent(e.target.value)}>{managed.map(a => <option key={a.binding_id} value={a.binding_id}>{names.get(a.binding_id) ?? "Агент"}</option>)}</Select></label>
+  return <ActionForm aria-label="Подключить Telegram" onAction={() => void connect()} className="grid max-w-[480px] gap-3 text-[14px]">
+    <Field label="Токен бота от BotFather"><FieldInput aria-label="Токен бота" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></Field>
+    <Field label="Кто отвечает в боте"><FieldSelect aria-label="Агент бота" value={agent} disabled={busy} onChange={e => setAgent(e.target.value)}>{managed.map(a => <option key={a.binding_id} value={a.binding_id}>{names.get(a.binding_id) ?? "Агент"}</option>)}</FieldSelect></Field>
     <label className="flex items-center gap-2"><input type="checkbox" checked={consent} disabled={busy} onChange={e => setConsent(e.target.checked)} />Разрешаю агенту получать мои сообщения и отвечать через Telegram</label>
     {error && <Notice tone="danger">{error}</Notice>}
-    <div><Button type="button" variant="primary" size="sm" disabled={busy || !token.trim() || !agent || !consent} onClick={() => void connect()}>{busy ? "Подключаем…" : "Подключить"}</Button></div>
+    <div><Pill tone="primary" disabled={busy || !token.trim() || !agent || !consent} onClick={() => void connect()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
   </ActionForm>;
 }
 
 type Grant = { connection_id: string; principal_id: string; connection_revision: number; revision: number; enabled: boolean };
-/** Какие агенты читают письма или календарь проекта: переключатель на пару «подключение — агент», по именам. */
+/** Какие агенты читают письма или календарь проекта: переключатель на пару «подключение — агент», по именам.
+ * Блок показывается только в раскрытой «Настроить» строке, поэтому разрешения читаются лишь тогда. */
 function ReadGrants({ data, kind, connections }: { data: MemoryData; kind: "mail" | "calendar"; connections: { id: string; title: string }[] }) {
   const ui = useUi();
   const agents = data.connections.filter(a => !a.revoked);
   const names = agentNames(data.connections);
-  const [opened, setOpened] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const read = (connection: string, principal: string): Promise<Grant> => kind === "mail" ? ui.readMailGrantState(connection, principal) : ui.readCalendarGrantState(connection, principal);
   const grants = useLoad(async () => {
-    if (!opened) return new Map<string, Grant>();
     const out = new Map<string, Grant>();
     for (const c of connections) for (const a of agents) { const g = await read(c.id, a.agent_principal_id).catch(() => null); if (g) out.set(`${c.id}/${a.agent_principal_id}`, g); }
     return out;
-  }, "Разрешения агентов не прочитаны.", [ui, opened, connections.map(c => c.id).join(","), agents.map(a => a.agent_principal_id).join(",")]);
+  }, "Разрешения агентов не прочитаны.", [ui, connections.map(c => c.id).join(","), agents.map(a => a.agent_principal_id).join(",")]);
   async function change(grant: Grant, enabled: boolean) {
     const key = `${grant.connection_id}/${grant.principal_id}`;
     if (busy) return;
@@ -351,10 +358,10 @@ function ReadGrants({ data, kind, connections }: { data: MemoryData; kind: "mail
     finally { setBusy(""); }
   }
   if (!agents.length) return null;
-  return <details className="mt-3 text-[13px]" onToggle={e => setOpened((e.currentTarget as HTMLDetailsElement).open)}>
-    <summary className="cursor-pointer text-kumo-subtle">{kind === "mail" ? "Какие агенты читают письма" : "Какие агенты видят календарь"}</summary>
-    <div className="mt-2 grid gap-1">
-      {grants.loading && opened && <Notice>Загрузка…</Notice>}
+  return <section aria-label={kind === "mail" ? "Какие агенты читают письма" : "Какие агенты видят календарь"} className="rounded-2xl border border-kumo-fill p-4 text-[13px]">
+    <h3 className="m-0 text-[14px] font-medium">{kind === "mail" ? "Какие агенты читают письма" : "Какие агенты видят календарь"}</h3>
+    <div className="mt-2 grid gap-1.5">
+      {grants.loading && <Notice>Загрузка…</Notice>}
       {connections.map(c => agents.map(a => {
         const grant = grants.value?.get(`${c.id}/${a.agent_principal_id}`);
         return grant ? <label key={`${c.id}/${a.binding_id}`} className="flex items-center gap-2">
@@ -364,5 +371,5 @@ function ReadGrants({ data, kind, connections }: { data: MemoryData; kind: "mail
       }))}
       {error && <Notice tone="danger">{error}</Notice>}
     </div>
-  </details>;
+  </section>;
 }

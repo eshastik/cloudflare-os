@@ -105,7 +105,7 @@ import CapsuleOverlay, { CAPSULE_OVERLAY_GAP } from "./CapsuleOverlay";
 import type { SelectableItem } from "./ResourcePicker";
 import GatekeeperModal from "./GatekeeperModal";
 import { GatekeeperIcon } from "./components/GatekeeperIcon";
-import { formatOf, FORMAT_ICONS } from "./components/format/formats";
+import { formatOf, FORMAT_ICONS, localizedNoun } from "./components/format/formats";
 import { FormatMiniature } from "./components/format/FormatVisuals";
 import { locateMessageFormatRefs } from "./components/format/messageFormatRefs";
 import { HookToggle } from "./components/HookToggle";
@@ -113,7 +113,6 @@ import { handlePickerKeyDown } from "./pickerNavigation";
 import { normalizeResourceUrl } from "./resourceMatching";
 import DeleteConfirmationDialog from "./components/DeleteConfirmationDialog";
 import AutoApproveConfirmDialog from "./components/AutoApproveConfirmDialog";
-import { AlwaysApproveButton, ResolveButton } from "./components/ResolveButton";
 import { WorkshopButton, WorkshopIconButton } from "./components/WorkshopControls";
 import { ChatSubline } from "./ChatSubline";
 import type { AgentStep } from "@gadgets/workshop-shared/code-work";
@@ -189,8 +188,8 @@ function CreatedGadgetChatCard({
               )}
               <span>
                 {gadget.isPending
-                    ? `New ${formatOf(gadget.output).noun.toLowerCase()} · Click to preview`
-                    : `${formatOf(gadget.output).noun} · Click to open`}
+                    ? `Новый файл: ${formatOf(gadget.output).noun.toLowerCase()} · Нажмите для просмотра`
+                    : `${formatOf(gadget.output).noun} · Нажмите, чтобы открыть`}
               </span>
             </span>
           </span>
@@ -382,19 +381,19 @@ const CHAT_ATTACHMENT_IMAGE_MAX_EDGE = 1568;
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Failed to encode image.")), type, quality);
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Не удалось подготовить картинку.")), type, quality);
   });
 }
 
 async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType: string}> {
   if (!file.type.startsWith("image/")) {
     if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
-      throw new Error(`Attachments must be ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_BYTES)} or smaller.`);
+      throw new Error(`Вложение должно быть не больше ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_BYTES)}.`);
     }
     return { blob: file, mimeType: file.type || "application/octet-stream" };
   }
   if (file.size > MAX_CHAT_ATTACHMENT_SOURCE_IMAGE_BYTES) {
-    throw new Error(`Images must be ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_SOURCE_IMAGE_BYTES)} or smaller before resizing.`);
+    throw new Error(`Картинка должна быть не больше ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_SOURCE_IMAGE_BYTES)}.`);
   }
 
   const bitmap = await createImageBitmap(file);
@@ -411,7 +410,7 @@ async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType:
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to get 2D canvas context.");
+    if (!ctx) throw new Error("Не удалось подготовить картинку.");
     ctx.drawImage(bitmap, 0, 0, width, height);
 
     // Preserve supported source formats when resizing. In particular, converting PNG to JPEG would
@@ -421,7 +420,7 @@ async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType:
     const quality = outputMimeType === "image/png" ? undefined : 0.85;
     const blob = await canvasToBlob(canvas, outputMimeType, quality);
     if (blob.size > MAX_CHAT_ATTACHMENT_BYTES) {
-      throw new Error(`Attachments must be ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_BYTES)} or smaller.`);
+      throw new Error(`Вложение должно быть не больше ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_BYTES)}.`);
     }
     return { blob, mimeType: outputMimeType };
   } finally {
@@ -689,7 +688,7 @@ function rawToolCallSummary(
       return { verb: "Сохранил ресурс", target: tc.input.bindingName };
     case "createGadget": {
       const output = outputOf?.(tc);
-      return { verb: output ? `Создал: ${output.noun}` : "Создал приложение", target: tc.input.title };
+      return { verb: output ? `Создал: ${localizedNoun(output.noun)}` : "Создал приложение", target: tc.input.title };
     }
     case "executeCode": {
       // Prefer the first non-empty line as a preview. `code` may be absent while the tool call's
@@ -956,7 +955,7 @@ function buildProvisionalToolSummary(
 ): { label: string; detailLines: string[] } {
 
   if (calls.length === 1 && calls[0].outputFormat) {
-    return { label: `Создаю: ${calls[0].outputFormat.noun}`, detailLines: [] };
+    return { label: `Создаю: ${localizedNoun(calls[0].outputFormat.noun)}`, detailLines: [] };
   }
   const toolNames = Array.from(
     new Set(calls.map((c) => c.toolName).filter((n): n is AiToolCall["toolName"] => !!n)),
@@ -1220,7 +1219,7 @@ function FormatMention({ format }: { format: MessageFormatRef }) {
   return (
     <span className={styles.capsuleMention}>
       <Icon size={13} className={styles.formatMentionIcon} />
-      {format.noun}
+      {localizedNoun(format.noun)}
     </span>
   );
 }
@@ -1811,10 +1810,12 @@ const ToolGroupRow = memo(function ToolGroupRow({
         aria-expanded={open}
       >
         <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-          <WorkIcon Icon={group.Icon} />
+          {group.hasError
+            ? <WorkIcon Icon={group.Icon} />
+            : <Check size={16} weight="bold" className="text-kumo-brand" aria-hidden="true" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2 text-[14px] leading-5 tracking-[-0.25px]">
+          <span className="flex min-w-0 items-center gap-2 text-[14px] leading-5">
             <span className="min-w-0 truncate">{group.label}</span>
             {group.hasError && (
               <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-kumo-danger">
@@ -1822,9 +1823,9 @@ const ToolGroupRow = memo(function ToolGroupRow({
               </span>
             )}
             <CaretRight
-              size={13}
+              size={11}
               weight="bold"
-              className={`flex-shrink-0 text-kumo-inactive transition-transform duration-150 ease-out ${open ? "rotate-90" : ""}`}
+              className={`flex-shrink-0 text-kumo-inactive opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
             />
           </span>
           {group.detailLines.length > 1 && (
@@ -2515,7 +2516,7 @@ export const ChatInput = ({
           match = await slashCommandPicker.resolveExact(parsed);
         } catch (error) {
           console.error("Failed to resolve slash command:", error);
-          toasts.add({ title: "Couldn't load slash commands", variant: "error" });
+          toasts.add({ title: "Не удалось загрузить команды", variant: "error" });
           return;
         }
         if (!match) {
@@ -3095,10 +3096,10 @@ export const ChatInput = ({
         ? "bg-kumo-warning"
         : "bg-kumo-inactive";
   const logKind = consoleLogSeverity === "error"
-    ? "error"
+    ? pluralize(pendingConsoleLogCount, "ошибку", "ошибки", "ошибок")
     : consoleLogSeverity === "warn"
-      ? "warning"
-      : "log";
+      ? pluralize(pendingConsoleLogCount, "предупреждение", "предупреждения", "предупреждений")
+      : pluralize(pendingConsoleLogCount, "запись консоли", "записи консоли", "записей консоли");
 
   const hasReadyAttachment = pendingAttachments.some(
     (attachment) => attachment.uploadState === "ready" && attachment.ref,
@@ -3151,8 +3152,7 @@ export const ChatInput = ({
               >
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${logDotClass}`} />
                 <span className="truncate">
-                  Send {pendingConsoleLogCount} captured {logKind}
-                  {pendingConsoleLogCount !== 1 ? "s" : ""} to chat
+                  Отправить в беседу {logKind}
                 </span>
               </button>
             </Tooltip>
@@ -3177,14 +3177,14 @@ export const ChatInput = ({
           into the canvas; the lift intensifies a touch on focus. */}
       <div
         ref={promptCardRef}
-        className="themed-prompt-card-shadow relative overflow-visible rounded-2xl border border-kumo-line bg-kumo-control transition-shadow duration-150 ease-out"
+        className="relative overflow-visible rounded-[20px] border border-kumo-fill-hover bg-kumo-control transition-[border-color,box-shadow] duration-150 ease-out focus-within:border-kumo-interact focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-kumo-brand)_10%,transparent)]"
         onDragEnter={handleAttachmentDragEnter}
         onDragOver={handleAttachmentDragOver}
         onDragLeave={handleAttachmentDragLeave}
         onDrop={handleAttachmentDrop}
       >
         {isAttachmentDragActive && (
-          <div className={`themed-inset-outline pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed p-4 backdrop-blur-[1px] transition-[opacity,transform] duration-150 ease-out ${canAttachMore ? "border-kumo-brand/55 bg-kumo-brand/10" : "border-kumo-warning/60 bg-kumo-warning/10"}`}>
+          <div className={`themed-inset-outline pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-[20px] border-2 border-dashed p-4 backdrop-blur-[1px] transition-[opacity,transform] duration-150 ease-out ${canAttachMore ? "border-kumo-brand/55 bg-kumo-brand/10" : "border-kumo-warning/60 bg-kumo-warning/10"}`}>
             <div className={`themed-floating-shadow flex items-center gap-2 rounded-full border bg-kumo-base/90 px-3 py-2 text-[13px] font-medium leading-4 tracking-[-0.2px] text-kumo-default ${canAttachMore ? "border-kumo-brand/25" : "border-kumo-warning/30"}`}>
               <span className={`grid h-7 w-7 place-items-center rounded-full ${canAttachMore ? "bg-kumo-brand/12 text-kumo-brand" : "bg-kumo-warning/15 text-kumo-warning"}`}>
                 <FileIcon size={16} weight="duotone" />
@@ -3203,13 +3203,13 @@ export const ChatInput = ({
           </div>
         )}
         {/* Textarea */}
-        <div className="relative px-4 pb-1 pt-3">
+        <div className="relative pl-[18px] pr-4 pb-1 pt-3">
           {slashCommandPicker.popup}
           {/* The resolved command is marked by color alone, so announce it for screen readers. */}
           <div className="sr-only" aria-live="polite">
             {slashCommandPicker.status ||
               (selectedSlashCommand
-                ? `Slash command /${selectedSlashCommand.choice.name} from ${selectedSlashCommand.choice.providerLabel} is ready to send`
+                ? `Команда /${selectedSlashCommand.choice.name} (${selectedSlashCommand.choice.providerLabel}) готова к отправке`
                 : "")}
           </div>
           <div ref={wrapperRef} className={styles.capsuleInputWrapper}>
@@ -3377,7 +3377,7 @@ export const ChatInput = ({
                   syncMirrorScroll(el);
                 }
               }}
-              className={`relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[14px] leading-[22px] tracking-[-0.25px] outline-none placeholder:text-kumo-inactive disabled:cursor-not-allowed ${composerTextareaClass}`}
+              className={`relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[15px] leading-[22px] outline-none placeholder:text-kumo-subtle disabled:cursor-not-allowed ${composerTextareaClass}`}
             />
           </div>
         </div>
@@ -3500,27 +3500,21 @@ export const ChatInput = ({
                   composerTextareaRef.current?.focus();
                 }} />
               {isAgentActive && onStop ? (
-                <WorkshopIconButton
+                <button
+                  type="button"
                   onClick={onStop}
-                  tone="primary"
-                  className="!h-8 !w-8"
-                  aria-label="Остановить выполнение"
+                  className="flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full bg-kumo-contrast transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+                  aria-label="Остановить"
+                  title="Остановить агента"
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <rect x="5" y="5" width="14" height="14" rx="2" />
-                  </svg>
-                </WorkshopIconButton>
+                  <span className="h-3 w-3 rounded-[2px] bg-white" aria-hidden="true" />
+                </button>
               ) : (
                 <WorkshopIconButton
                   onClick={submitMessage}
                   disabled={!canSend}
                   tone="primary"
-                  className="!h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-30"
+                  className="!h-9 !w-9 !rounded-full disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Отправить сообщение"
                 >
                   {/* Arrow-up icon */}
@@ -3731,7 +3725,7 @@ function DiscardPendingChangesPopover({
             disabled={disabled}
             className="inline-flex h-[30px] cursor-pointer items-center justify-center rounded-md border border-kumo-fill bg-kumo-base px-2.5 text-[12px] font-medium leading-[18px] tracking-[-0.25px] text-kumo-default transition-colors enabled:hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Discard…
+            Отменить…
           </button>
         }
       />
@@ -3747,8 +3741,8 @@ function DiscardPendingChangesPopover({
             Отменить все непринятые изменения?
           </Popover.Title>
           <p className="mt-0.5 text-[11.5px] leading-4 tracking-[-0.15px] text-kumo-subtle">
-            Return to the last accepted version. Any gadgets created by these changes will be
-            permanently deleted. Pending changes can&apos;t be restored.
+            Вернуться к последней принятой версии. Файлы, созданные этими изменениями, будут
+            удалены навсегда. Вернуть непринятые изменения не получится.
           </p>
           <p className="mt-2 border-t border-kumo-line pt-2 text-[11px] leading-[15px] tracking-[-0.1px] text-kumo-inactive">
             Нажмите <ArrowUUpLeft size={12} className="mx-0.5 inline-block align-[-2px]" aria-hidden="true" /><span className="sr-only">стрелку отмены</span> под ответом агента, чтобы отменить работу начиная с этого шага.
@@ -4202,10 +4196,10 @@ interface ChatInterfaceProps {
 type ChatTimeBucket = "today" | "yesterday" | "thisWeek" | "earlier";
 
 const CHAT_TIME_BUCKET_LABELS: Record<ChatTimeBucket, string> = {
-  today: "Today",
-  yesterday: "Yesterday",
+  today: "Сегодня",
+  yesterday: "Вчера",
   thisWeek: "На этой неделе",
-  earlier: "Earlier",
+  earlier: "Раньше",
 };
 const CHAT_TIME_BUCKET_ORDER: ChatTimeBucket[] = [
   "today",
@@ -5610,7 +5604,7 @@ function ChatInterface({
   // chat list (with explicit chatId/title).
   const handleDeleteChat = (chatId?: number, chatTitle?: string) => {
     const id = chatId ?? selectedChatId;
-    const title = chatTitle ?? currentChatMetadata?.title ?? "this chat";
+    const title = chatTitle ?? currentChatMetadata?.title ?? "без названия";
     if (id === null || id === undefined) return;
     setDeleteTarget({ id, title });
   };
@@ -5857,7 +5851,7 @@ function ChatInterface({
       }
     } catch (err) {
       console.error("Failed to toggle hook:", err);
-      toasts.add({ title: `Failed to ${enabled ? "enable" : "disable"} hook`, variant: "error" });
+      toasts.add({ title: `Не удалось ${enabled ? "включить" : "выключить"} хук`, variant: "error" });
       // Revert the optimistic update.
       if (applyOptimisticHookEnabled(actionId, !enabled)) forceUpdate();
     } finally {
@@ -6228,7 +6222,7 @@ function ChatInterface({
     const isDenied = msg.state === "denied";
     const isProc = processingConnections.has(msg.requestId);
 
-    const stateLabel = isAccepted ? "Connected" : isDenied ? "Denied" : null;
+    const stateLabel = isAccepted ? "Подключено" : isDenied ? "Не разрешено" : null;
     const stateLabelCls = isDenied ? "text-kumo-danger" : "text-kumo-success";
     const scope = msg.resourceTitle ?? msg.resourceUrl;
 
@@ -6244,7 +6238,7 @@ function ChatInterface({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="font-medium text-kumo-default">
-                  Connect {msg.vendorName}
+                  Подключить {msg.vendorName}
                 </span>
                 {scope && (
                   <span className="rounded-full bg-kumo-tint px-2 py-0.5 text-[11px] leading-4 text-kumo-subtle">
@@ -6420,9 +6414,9 @@ function ChatInterface({
     const showDescription = isPending || open;
     const metadata = log.resourceTitle;
     const stateLabel = isApproved
-      ? "Approved"
+      ? "Разрешено"
       : isRejected
-        ? "Denied"
+        ? "Отклонено"
         : null;
     const stateLabelCls = isRejected
       ? "text-kumo-danger"
@@ -6443,30 +6437,38 @@ function ChatInterface({
           }
         : undefined;
 
+    const canAlwaysApprove = !!autoApproveTarget &&
+      !isTagAutoApproved(autoApproveTarget.gatekeeperId, autoApproveTarget.actionKind.tag);
     const actionControls = isPending ? (
       <>
-        {autoApproveTarget &&
-          !isTagAutoApproved(autoApproveTarget.gatekeeperId, autoApproveTarget.actionKind.tag) && (
+        {canAlwaysApprove && (
           <Tooltip content="Разрешать действия этого типа для данного подключения без повторного подтверждения." asChild>
-            <span className="flex">
-              <AlwaysApproveButton
-                onClick={() => setAutoApproveConfirm(autoApproveTarget)}
-                disabled={isProc}
-              />
-            </span>
+            <button
+              type="button"
+              onClick={() => setAutoApproveConfirm(autoApproveTarget!)}
+              disabled={isProc}
+              className="h-7 cursor-pointer rounded-full px-2.5 text-[13px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Разрешать всегда
+            </button>
           </Tooltip>
         )}
-        <ResolveButton
-          tone="deny"
+        <button
+          type="button"
           onClick={() => void resolveAction(msg.actionId, "deny")}
           disabled={isProc}
-        />
-        <ResolveButton
-          tone="approve"
-          variant={isBlocking ? "filled" : "quiet"}
+          className="h-7 cursor-pointer rounded-full px-2.5 text-[13px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-danger disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Отклонить
+        </button>
+        <button
+          type="button"
           onClick={() => void resolveAction(msg.actionId, "approve")}
           disabled={isProc}
-        />
+          className="h-7 cursor-pointer rounded-full bg-kumo-brand px-3 text-[13px] font-medium text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Разрешить
+        </button>
       </>
     ) : null;
 
@@ -6497,29 +6499,56 @@ function ChatInterface({
     // A blocking (awaitDecision) action suspends the agent turn, so present it as a prominent
     // callout laid out like the connection-request card: a permissions icon, title + resource +
     // details, and the approve/deny actions.
+    // Карточка подтверждения по макету «Агент работает»: янтарная рамка, заголовок-вопрос,
+    // текст действия и кнопки решения внизу.
     if (isBlocking) {
       return (
-        <div className="group/work max-w-[860px] text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-          <div className="rounded-2xl border border-kumo-brand/40 bg-kumo-brand/10 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-kumo-tint text-kumo-brand" aria-hidden="true">
-                <ShieldCheck size={20} weight="fill" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="min-w-0 truncate font-medium text-kumo-default">
-                    {log.description.title}
-                  </span>
-                  {resourceMeta}
-                </div>
-                <div className={`chat-panel mt-1 max-h-[200px] overflow-y-auto pr-1 text-[13px] leading-[18px] text-kumo-subtle ${styles.markdownContent}`}>
-                  <MarkdownMessage message={log.description.description} />
-                </div>
-              </div>
-              <div className="ml-3 flex flex-shrink-0 items-center gap-1 self-center">
-                {actionControls}
-              </div>
+        <div
+          role="group"
+          aria-label="Нужно ваше подтверждение"
+          className="max-w-[720px] overflow-hidden rounded-[18px] border border-kumo-warning/35 bg-kumo-overlay shadow-[0_0_0_4px_color-mix(in_srgb,var(--color-kumo-warning-tint)_70%,transparent)]"
+        >
+          <div className="flex items-center gap-2.5 border-b border-kumo-warning/15 px-[18px] py-3.5">
+            <ShieldCheck size={18} className="flex-shrink-0 text-kumo-warning" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-[15px] leading-5 font-semibold text-kumo-default">
+              {log.description.title}
+            </span>
+          </div>
+          <div className="px-[18px] py-4 text-[15px] leading-6 text-kumo-default">
+            {resourceMeta && <div className="mb-2 text-[13px]">{resourceMeta}</div>}
+            <div className={`chat-panel max-h-[240px] overflow-y-auto pr-1 ${styles.markdownContent}`}>
+              <MarkdownMessage message={log.description.description} />
             </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-kumo-warning/15 px-[18px] py-3">
+            <button
+              type="button"
+              onClick={() => void resolveAction(msg.actionId, "approve")}
+              disabled={isProc}
+              className="h-[38px] cursor-pointer rounded-full bg-kumo-brand px-[18px] text-[14px] font-semibold text-white transition-colors hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Разрешить
+            </button>
+            {canAlwaysApprove && (
+              <Tooltip content="Разрешать действия этого типа для данного подключения без повторного подтверждения." asChild>
+                <button
+                  type="button"
+                  onClick={() => setAutoApproveConfirm(autoApproveTarget!)}
+                  disabled={isProc}
+                  className="h-[38px] cursor-pointer rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Разрешать всегда
+                </button>
+              </Tooltip>
+            )}
+            <button
+              type="button"
+              onClick={() => void resolveAction(msg.actionId, "deny")}
+              disabled={isProc}
+              className="h-[38px] cursor-pointer rounded-full px-4 text-[14px] text-kumo-subtle transition-colors hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Не разрешать
+            </button>
           </div>
         </div>
       );
@@ -6645,7 +6674,7 @@ function ChatInterface({
               // the all-empty case is handled by the outer chatList.length check.
               <div className="py-8 text-center">
                 <p className="text-[13px] leading-[18px] text-kumo-inactive">
-                  No conversations started by {chatListScope === "agents" ? "agents" : "people"} yet
+                  {chatListScope === "agents" ? "Бесед, начатых агентами, пока нет" : "Бесед, начатых людьми, пока нет"}
                 </p>
                 <button
                   type="button"
@@ -6756,7 +6785,7 @@ function ChatInterface({
                         <DropdownMenu.Trigger
                           render={
                             <WorkshopIconButton
-                              aria-label={`Actions for ${chat.title}`}
+                              aria-label={`Действия: ${chat.title}`}
                               onClick={(e) => e.stopPropagation()}
                               className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
                             >
@@ -6917,7 +6946,7 @@ function ChatInterface({
                   </div>
                 ) : (
                   <div
-                    className={`flex flex-col px-6 pt-8 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
+                    className={`flex flex-col px-7 pt-7 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
                   >
                     {isLoadingEarlier && (
                       <div className="mx-auto mb-6 text-[12px] leading-4 font-medium text-kumo-inactive">
@@ -6953,10 +6982,10 @@ function ChatInterface({
                               // Says what the agent traded away and what it still has, since the
                               // marker sits at the request rather than at the cut it describes.
                               <p className="mb-3 text-[12px] leading-[17px] text-kumo-subtle">
-                                The agent reads this in place of everything earlier in the chat.{" "}
+                                Агент читает эту сводку вместо всего, что было раньше в беседе.{" "}
                                 {kept === 0
-                                  ? "Nothing after it was kept."
-                                  : `The ${kept === 1 ? "message" : `${kept} messages`} after the cut ${kept === 1 ? "was" : "were"} kept in full.`}
+                                  ? "После неё ничего не сохранено полностью."
+                                  : `После сокращения полностью сохранено сообщений: ${kept}.`}
                               </p>
                             )}
                             <div className={`min-w-0 text-[13px] leading-[19px] ${styles.markdownContent}`}>
@@ -6981,7 +7010,7 @@ function ChatInterface({
                                   <Brain size={16} />
                                 </span>
                                 <span className="font-medium">
-                                  {entry.requestedBy.name} compacted the context
+                                  {entry.requestedBy.name} сократил контекст
                                 </span>
                                 <CaretRight
                                   size={11}
@@ -7027,7 +7056,7 @@ function ChatInterface({
                                 <Swap size={16} />
                               </span>
                               <span className="min-w-0 truncate">
-                                Switched to {entry.author.name}
+                                Теперь отвечает {entry.author.name}
                               </span>
                             </div>
                           </div>
@@ -7036,15 +7065,15 @@ function ChatInterface({
 
                       if (entry.type === "savedChanges") {
                         const isOwnChange = entry.message.author.id === currentUser?.id;
-                        const actor = isOwnChange ? "You" : entry.message.author.name;
+                        const actor = isOwnChange ? "Вы" : entry.message.author.name;
                         // A user-authored creation is recorded as a "changes" message carrying
                         // createdGadgets over a no-op update, so label it as a creation rather
                         // than as saved edits.
                         const createdGadgets = entry.message.createdGadgets ?? [];
                         const label = createdGadgets.length > 0
-                          ? `${actor} created ${createdGadgets.length === 1 ? "gadget" : "gadgets"} ${
-                              createdGadgets.map((g) => `“${g.title}”`).join(", ")}`
-                          : `${actor} saved edits`;
+                          ? `${actor}: ${createdGadgets.length === 1 ? "создан гаджет" : "созданы гаджеты"} ${
+                              createdGadgets.map((g) => `«${g.title}»`).join(", ")}`
+                          : `${actor}: правки сохранены`;
                         const discardLabel = getSavedEditsDiscardLabel(
                           entry.message.sequence === lastDurablePendingChange?.sequence,
                           createdGadgets.map((g) => g.title),
@@ -7142,7 +7171,7 @@ function ChatInterface({
                         {/* ── user / AI text message ── */}
                         {msg.type === "slashCommand" && (
                           <div className="group/message relative flex flex-col items-end">
-                            <div className="themed-user-bubble-shadow w-fit max-w-[min(680px,78%)] rounded-[24px] rounded-br-lg border border-transparent bg-kumo-bubble-user px-4 py-2.5 text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default">
+                            <div className="w-fit max-w-[min(460px,85%)] rounded-[18px] rounded-br-[4px] border border-kumo-fill bg-kumo-bubble-user px-4 py-3 text-[15px] leading-[22px] text-kumo-default">
                               <span className="whitespace-pre-wrap">
                                 <SlashCommandMention
                                   name={msg.skillName}
@@ -7171,7 +7200,7 @@ function ChatInterface({
                         {msg.type === "message" && (
                           msg.author.type === "user" ? (
                             <div className="group/message relative flex flex-col items-end">
-                              <div className={`themed-user-bubble-shadow w-fit max-w-[min(680px,78%)] rounded-[24px] rounded-br-lg border border-transparent bg-kumo-bubble-user px-4 py-2.5 text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default ${styles.markdownContent}`}>
+                              <div className={`w-fit max-w-[min(460px,85%)] rounded-[18px] rounded-br-[4px] border border-kumo-fill bg-kumo-bubble-user px-4 py-3 text-[15px] leading-[22px] text-kumo-default ${styles.markdownContent}`}>
                                 {msg.attachments && msg.attachments.length > 0 && (
                                   <ChatAttachmentGrid
                                     attachments={msg.attachments}
@@ -7248,7 +7277,7 @@ function ChatInterface({
                               )}
 
                               {hasMessageText && (
-                                <div className={`text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default ${styles.markdownContent}`}>
+                                <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
                                   <MarkdownMessage
                                     message={msg.message}
                                     capsules={msg.capsules}
@@ -7369,8 +7398,8 @@ function ChatInterface({
                                 <Tooltip
                                   content={
                                     isMerge
-                                      ? `Accepted draft changes${ts ? ` through ${formatFullTimestamp(ts)}` : ""}.`
-                                      : `Returned to the gadget state before the prompt sent ${ts ? `at ${ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "earlier"}.`
+                                      ? `Черновик принят${ts ? ` по состоянию на ${formatFullTimestamp(ts)}` : ""}.`
+                                      : `Гаджет возвращён к состоянию до сообщения${ts ? ` в ${ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}.`
                                   }
                                   asChild
                                 >
@@ -7379,10 +7408,10 @@ function ChatInterface({
                                       {isMerge ? <Check size={16} /> : <ArrowUUpLeft size={16} />}
                                     </span>
                                     <span className="font-medium">
-                                      {msg.author.name}{" "}
+                                      {msg.author.name}:{" "}
                                       {isMerge
-                                        ? "accepted changes"
-                                        : "discarded changes"}
+                                        ? "изменения приняты"
+                                        : "изменения отменены"}
                                     </span>
                                   </span>
                                 </Tooltip>
@@ -7396,7 +7425,7 @@ function ChatInterface({
 
                         {msg.type === "useGadget" && (
                           <div className="max-w-[860px] text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-                            <Tooltip content={`Used the gadget at ${formatFullTimestamp(msg.timestamp)}`} asChild>
+                            <Tooltip content={`Приложение использовано ${formatFullTimestamp(msg.timestamp)}`} asChild>
                               <span className="inline-flex items-center gap-3 px-1.5 py-1">
                                 <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-kumo-inactive" aria-hidden="true">
                                   <Plug size={16} />
@@ -7518,7 +7547,7 @@ function ChatInterface({
                         : "Черновик изменяется";
                       const description = isUserAuthored
                         ? "Ваши изменения находятся в черновике."
-                        : `${latestAuthor?.name ?? "The agent"} is editing changes for this gadget.`;
+                        : `${latestAuthor?.name ?? "Агент"} правит черновик гаджета.`;
                       const lastDraftEntry =
                         currentDraftState.entries[
                           currentDraftState.entries.length - 1
@@ -7538,7 +7567,7 @@ function ChatInterface({
                               <Pencil size={16} />
                             </span>
                             <Tooltip
-                              content={`${description} Last edited ${formatFullTimestamp(lastDraftEntry.timestamp)}`}
+                              content={`${description} Последняя правка: ${formatFullTimestamp(lastDraftEntry.timestamp)}`}
                               asChild
                             >
                               <span className="font-medium text-kumo-subtle">
@@ -7628,7 +7657,7 @@ function ChatInterface({
                           )}
 
                           {currentProvisionalState?.text && (
-                            <div className={`text-[14px] leading-[22px] tracking-[-0.25px] text-kumo-default ${styles.markdownContent}`}>
+                            <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
                               <MarkdownMessage message={currentProvisionalState.text} />
                             </div>
                           )}
@@ -7724,7 +7753,7 @@ function ChatInterface({
               </div>
 
               {/* ── Bottom: input, update state, and cost ──────────────── */}
-              <div className={`flex-shrink-0 bg-kumo-base ${sidebarMode ? "" : "border-t border-kumo-line"}`}>
+              <div className="flex-shrink-0 bg-kumo-base">
                 <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
                   {codeWork && codeWork.review && (
                     <div className="pt-2">

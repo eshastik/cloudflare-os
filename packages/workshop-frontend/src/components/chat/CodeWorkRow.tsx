@@ -49,12 +49,12 @@ const StepRow = memo(function StepRow({ step }: { step: AgentStep }) {
         disabled={!hasDetails}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={hasDetails ? open : undefined}
-        className="flex w-full items-center gap-3 rounded-xl px-1.5 py-0.5 text-left text-kumo-subtle transition-colors duration-150 ease-out enabled:cursor-pointer enabled:hover:text-kumo-default focus-visible:outline-none"
+        className="flex w-full items-center gap-2 rounded-lg py-0.5 text-left text-kumo-subtle transition-colors duration-150 ease-out enabled:cursor-pointer enabled:hover:text-kumo-default focus-visible:outline-none"
       >
-        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-          <Icon size={14} className={step.status === "error" ? "text-kumo-danger" : "text-kumo-inactive"} />
+        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+          <Icon size={13} className={step.status === "error" ? "text-kumo-danger" : "text-kumo-inactive"} />
         </span>
-        <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] leading-5 tracking-[-0.2px]">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-[14px] leading-5">
           <span className={`min-w-0 truncate ${running ? styles.thinkingShimmer : ""}`}>{step.title}</span>
           {step.status === "error" && (
             <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold tracking-[0.04em] text-kumo-danger">
@@ -71,7 +71,7 @@ const StepRow = memo(function StepRow({ step }: { step: AgentStep }) {
         </span>
       </button>
       {open && hasDetails && (
-        <div className="themed-surface-inset ml-8 mt-1 space-y-2 rounded-2xl border border-kumo-line/70 bg-kumo-elevated/45 p-3">
+        <div className="ml-6 mt-1 space-y-2 rounded-xl border border-kumo-fill bg-kumo-base p-2.5">
           {step.detail && (
             <pre className="max-h-40 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-2.5 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
               {step.detail}
@@ -114,19 +114,20 @@ export const CodeWorkRow = memo(function CodeWorkRow({
     try { await onStop(); } catch { setStopping(false); }
   };
   return (
-    <div className="-ml-0.5">
+    // Карточка работы агента кода по макету: белая, радиус 16, заголовок и короткие шаги под ним.
+    <div className="max-w-[560px] rounded-2xl border border-kumo-fill bg-kumo-overlay px-4 py-3.5">
       <div className="flex items-center gap-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 text-left text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg text-left text-kumo-default transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
       >
-        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-          <Code size={15} className="text-kumo-inactive" />
+        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+          <Code size={16} weight="bold" className="text-kumo-brand" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2 text-[14px] leading-5 tracking-[-0.25px]">
+          <span className="flex min-w-0 items-center gap-2 text-[14px] leading-5 font-semibold">
             <span className={`min-w-0 truncate ${running ? styles.thinkingShimmer : ""}`}>{title}</span>
             {error && (
               <span className="flex-shrink-0 rounded-full bg-kumo-danger-tint px-2 py-0.5 text-[10px] font-semibold tracking-[0.04em] text-kumo-danger">
@@ -140,7 +141,7 @@ export const CodeWorkRow = memo(function CodeWorkRow({
             />
           </span>
           {summary && (
-            <span className="mt-0.5 block truncate text-[12px] leading-4 text-kumo-inactive">{summary}</span>
+            <span className="mt-0.5 block truncate text-[13px] leading-4 font-normal text-kumo-subtle">{summary}</span>
           )}
         </span>
       </button>
@@ -149,17 +150,17 @@ export const CodeWorkRow = memo(function CodeWorkRow({
           type="button"
           onClick={stop}
           disabled={stopping}
-          className="flex-shrink-0 cursor-pointer rounded-lg border border-kumo-line px-2 py-0.5 text-[12px] leading-4 text-kumo-subtle transition-colors hover:text-kumo-default disabled:cursor-default disabled:opacity-60"
+          className="h-8 flex-shrink-0 cursor-pointer rounded-full border border-kumo-fill-hover bg-kumo-overlay px-3 text-[13px] leading-4 text-kumo-default transition-colors hover:bg-kumo-tint disabled:cursor-default disabled:opacity-60"
         >
           {stopping ? "Останавливаю…" : "Остановить"}
         </button>
       )}
       </div>
       {open && (
-        <div className="ml-8 mt-1 space-y-0.5" data-testid="code-work-steps">
+        <div className="mt-2 space-y-1 pl-[26px]" data-testid="code-work-steps">
           {steps.map((step) => <StepRow key={step.id} step={step} />)}
           {running && steps.length === 0 && (
-            <div className={`px-1.5 py-0.5 text-[13px] leading-5 ${styles.thinkingShimmer}`}>Готовлю рабочее место…</div>
+            <div className={`py-0.5 text-[14px] leading-5 ${styles.thinkingShimmer}`}>Готовлю рабочее место…</div>
           )}
           {error && (
             <pre className="rounded-xl border border-kumo-danger/20 bg-kumo-danger-tint/40 p-2.5 font-mono text-[12px] leading-[18px] text-kumo-danger whitespace-pre-wrap">
@@ -167,7 +168,7 @@ export const CodeWorkRow = memo(function CodeWorkRow({
             </pre>
           )}
           {!running && changedFiles && changedFiles.length > 0 && (
-            <div className="px-1.5 pt-1 text-[12px] leading-4 text-kumo-inactive">
+            <div className="pt-1 text-[14px] leading-5 text-kumo-default">
               Изменено файлов: {changedFiles.length}
             </div>
           )}

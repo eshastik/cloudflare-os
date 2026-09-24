@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DropdownMenu, useKumoToastManager } from '@cloudflare/kumo'
 import {
-  MagnifyingGlass,
   DotsThreeVertical,
   Stack,
   ArrowSquareOut,
@@ -19,17 +18,17 @@ import {
 import { OutputSummary } from '@gadgets/workshop-shared/api'
 import { useAuthenticatedApi } from '../AuthContext'
 import { useDocumentTitle } from '../useDocumentTitle'
-import ViewToggle from '../components/ViewToggle'
 import { MENU_CONTENT, MENU_ITEM, MENU_POSITIONER_STYLE } from '../components/menuStyles'
 import { formatOf } from '../components/format/formats'
-import { FormatThumbnail, FormatTile } from '../components/format/FormatVisuals'
+import { FormatTile } from '../components/format/FormatVisuals'
 import { useOutputFormats } from '../components/format/useOutputFormats'
-import NewFormatRow from '../components/format/NewFormatRow'
+import { groupByDate } from '../components/AppShell/dateGroups'
+import { GROUP_CARD, GROUP_LABEL, PAGE, PAGE_TITLE, SEARCH_FIELD } from '../components/AppShell/pageStyles'
 import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog'
 import { WorkshopButton, WorkshopIconButton } from '../components/WorkshopControls'
 
 // The Outputs page: everything the user's workspaces have produced, in one place, so they don't
-// have to remember which workspace they made a thing in. Backed by an index in the user's own
+// have to remember which workspace they made a thing in. По макету Chats — простой список по датам. Backed by an index in the user's own
 // account that each workspace pushes to (AuthenticatedApi.listOutputs()).
 
 export const Route = createFileRoute('/outputs')({
@@ -117,19 +116,11 @@ function OutputMenu({
   )
 }
 
-// Secondary line under an output's title in the grid, where there's no room for meta columns.
-function subtitle(output: OutputSummary): string {
-  const parts = [output.workspaceTitle || 'Беседа без названия']
-  if (output.owner) parts.push(`Поделился: ${output.owner.name}`)
-  parts.push(`Последняя активность ${formatRelativeTime(output.lastActive)}`)
-  return parts.join(' · ')
-}
-
 // Provenance for a list row: the output came out of the user's own workspace or a shared one.
 function OutputProvenance({ owner }: { owner?: OutputSummary['owner'] }) {
   return (
     <span
-      className="flex w-52 items-center gap-1 truncate whitespace-nowrap"
+      className="flex w-44 items-center gap-1 truncate whitespace-nowrap"
       title={owner ? `В беседе, которой поделился ${owner.name}` : 'В вашей беседе'}
     >
       {owner ? <ShareNetwork size={11} /> : <User size={11} />}
@@ -145,37 +136,6 @@ type OutputActions = {
   onRemove?: () => void
 }
 
-function OutputCard({
-  output, onOpen, onOpenWorkspace, onRename, onRemove,
-}: { output: OutputSummary } & OutputActions) {
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      className="themed-card-hover-shadow press group flex cursor-pointer flex-col overflow-hidden rounded-xl border border-kumo-line bg-kumo-base text-left transition-[border-color,box-shadow] duration-150 ease-out hover:border-kumo-fill"
-    >
-      <div className="relative aspect-[4/3] w-full border-b border-kumo-line">
-        <FormatThumbnail output={output.output} />
-      </div>
-      <div className="flex items-center gap-2.5 px-3 py-2.5">
-        <FormatTile output={output.output} size="sm" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium leading-[18px] tracking-[-0.25px] text-kumo-default">
-            {output.title || 'Без названия'}
-          </p>
-          <p className="mt-0.5 truncate text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
-            {subtitle(output)}
-          </p>
-        </div>
-        <OutputMenu onOpen={onOpen} onOpenWorkspace={onOpenWorkspace}
-                    onRename={onRename} onRemove={onRemove} />
-      </div>
-    </div>
-  )
-}
-
 function OutputRow({
   output, onOpen, onOpenWorkspace, onRename, onRemove,
 }: { output: OutputSummary } & OutputActions) {
@@ -185,23 +145,22 @@ function OutputRow({
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      className="group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150 ease-out hover:bg-kumo-tint"
+      className="group flex cursor-pointer items-center gap-3.5 border-b border-kumo-tint py-3.5 pl-5 pr-3 transition-colors duration-150 ease-out last:border-b-0 hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring"
     >
       <FormatTile output={output.output} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium tracking-[-0.25px] text-kumo-default">
+        <p className="m-0 truncate text-[15px] leading-5 font-medium text-kumo-default">
           {output.title || 'Без названия'}
         </p>
-        <p className="mt-0.5 truncate text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
+        <p className="mt-[3px] mb-0 truncate text-[13px] leading-4 text-kumo-subtle">
           {formatOf(output.output).noun} · {output.workspaceTitle || 'Беседа без названия'}
         </p>
       </div>
-      {/* Fixed-width meta columns so rows line up like a table. */}
-      <div className="hidden shrink-0 items-center gap-6 text-xs text-kumo-inactive lg:flex">
+      <div className="hidden shrink-0 items-center gap-6 text-[13px] text-kumo-subtle lg:flex">
         <OutputProvenance owner={output.owner} />
-        <span className="flex w-40 items-center justify-end gap-1 whitespace-nowrap">
-          <Clock size={10} />
-          Последняя активность {formatRelativeTime(output.lastActive)}
+        <span className="flex w-36 items-center justify-end gap-1 whitespace-nowrap">
+          <Clock size={11} />
+          {formatRelativeTime(output.lastActive)}
         </span>
       </div>
       <OutputMenu onOpen={onOpen} onOpenWorkspace={onOpenWorkspace}
@@ -227,9 +186,10 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium tracking-[-0.25px] transition-colors ${
+      aria-pressed={active}
+      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[14px] transition-colors ${
         active
-          ? 'bg-kumo-fill text-kumo-strong'
+          ? 'bg-kumo-fill font-medium text-kumo-default'
           : 'text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default'
       }`}
     >
@@ -274,10 +234,10 @@ function ScopeSelect({
         render={
           <button
             type="button"
-            className={`inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-3 text-[13px] font-medium tracking-[-0.25px] transition-colors ${
+            className={`inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3.5 text-[14px] transition-colors ${
               value === 'all'
-                ? 'border-kumo-line text-kumo-subtle hover:text-kumo-default'
-                : 'border-kumo-line bg-kumo-fill text-kumo-strong'
+                ? 'bg-kumo-overlay text-kumo-subtle hover:text-kumo-default'
+                : 'bg-kumo-fill text-kumo-default'
             }`}
           >
             <CurrentIcon size={14} className="shrink-0" />
@@ -398,10 +358,6 @@ function OutputsPage() {
   const toastsRef = useRef(toasts)
   toastsRef.current = toasts
 
-  const [view, setView] = useState<'grid' | 'list'>(() => {
-    if (typeof window === 'undefined') return 'grid'
-    return localStorage.getItem('outputs-view') === 'list' ? 'list' : 'grid'
-  })
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all')
   const [search, setSearch] = useState('')
@@ -414,10 +370,6 @@ function OutputsPage() {
   const [renameValue, setRenameValue] = useState('')
   const [removeOutput, setRemoveOutput] = useState<OutputSummary | null>(null)
   const [mutationBusy, setMutationBusy] = useState(false)
-
-  useEffect(() => {
-    localStorage.setItem('outputs-view', view)
-  }, [view])
 
   useEffect(() => {
     let cancelled = false
@@ -572,109 +524,87 @@ function OutputsPage() {
   const isFiltered = q !== '' || (showTypeFilters && typeFilter !== 'all')
       || (showOwnerFilters && ownerFilter !== 'all')
 
+  const groups = groupByDate(filtered, (o) => o.lastActive)
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-6 sm:px-10">
-      <header className="flex items-end justify-between gap-4 px-3 pb-4 pt-10">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Результаты</h1>
-          <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-            Всё, что создали ваши пространства, в одном месте.
-          </p>
-        </div>
-        <ViewToggle view={view} onChange={setView} />
+    <div className={PAGE}>
+      <header>
+        <h1 className={PAGE_TITLE}>Результаты</h1>
+        <p className="mt-2 mb-0 text-[15px] text-kumo-subtle">Документы и файлы, которые получились в ваших беседах.</p>
       </header>
 
-      <NewFormatRow label="Создать" layout="inline" />
-
-      {/* Toolbar: format chips on the left (the browsing axis), scope + search on the right (the
-          refining controls). Configured categories stay visible with zero counts. */}
-      <div className={`flex flex-col gap-3 px-3 pb-3 sm:flex-row sm:items-center sm:justify-between ${
-        !showToolbar ? 'hidden' : ''}`}>
-        <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 sidebar-scroll">
-          {showTypeFilters && (
-            <>
-              <FilterChip active={typeFilter === 'all'} label="Все" count={inTypeScope.length}
-                          onClick={() => setTypeFilter('all')} />
-              {presentTypes.map(([id, plural]) => (
-                <FilterChip
-                  key={id}
-                  active={typeFilter === id}
-                  label={plural}
-                  count={inTypeScope.filter((o) => formatOf(o.output).id === id).length}
-                  onClick={() => setTypeFilter(id)}
-                />
-              ))}
-            </>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {showOwnerFilters && (
-            <ScopeSelect
-              value={ownerFilter}
-              counts={{
-                all: inOwnerScope.length,
-                mine: inOwnerScope.filter((o) => !o.owner).length,
-                shared: inOwnerScope.filter((o) => o.owner).length,
-              }}
-              onChange={setOwnerFilter}
-            />
-          )}
-          <div className="relative sm:w-56">
-            <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kumo-inactive" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск результатов…"
-              className="h-9 w-full rounded-lg border border-kumo-line bg-kumo-base pl-9 pr-4 text-[13px] tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] duration-150 ease-out focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="chat-panel min-h-0 flex-1 overflow-y-auto pb-8 pt-1">
-        {loading ? (
-          <div className="grid grid-cols-2 gap-4 px-3 sm:grid-cols-3 lg:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="aspect-[4/3] animate-pulse rounded-xl bg-kumo-elevated" />
-            ))}
-          </div>
-        ) : loadError ? (
-          <div className="py-12 text-center text-sm">
-            <p className="text-kumo-danger">Не удалось загрузить результаты.</p>
-            <button onClick={() => setReloadToken((n) => n + 1)} className="mt-1 text-kumo-brand underline">
-              Попробовать ещё раз
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 px-3 py-20 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-kumo-fill text-kumo-subtle">
-              <Stack size={18} />
+      {/* Поиск, затем фильтры по виду и по тому, чьё: всё в одну колонку, без сетки карточек. */}
+      {showToolbar && (
+        <>
+          <label htmlFor="outputs-find" className="sr-only">Найти результат</label>
+          <input
+            id="outputs-find"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Найти по названию, беседе или виду"
+            className={SEARCH_FIELD}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 sidebar-scroll">
+              {showTypeFilters && (
+                <>
+                  <FilterChip active={typeFilter === 'all'} label="Все" count={inTypeScope.length}
+                              onClick={() => setTypeFilter('all')} />
+                  {presentTypes.map(([id, plural]) => (
+                    <FilterChip
+                      key={id}
+                      active={typeFilter === id}
+                      label={plural}
+                      count={inTypeScope.filter((o) => formatOf(o.output).id === id).length}
+                      onClick={() => setTypeFilter(id)}
+                    />
+                  ))}
+                </>
+              )}
             </div>
-            <div>
-              <p className="text-sm font-medium text-kumo-default">
-                {isFiltered ? 'Ничего не найдено' : 'Результатов пока нет'}
-              </p>
-              <p className="mt-1 text-[13px] leading-[18px] text-kumo-subtle">
-                {isFiltered
-                  ? 'Измените фильтр или запрос.'
-                  : 'Здесь появится всё, что создадут ваши пространства.'}
-              </p>
-            </div>
+            {showOwnerFilters && (
+              <ScopeSelect
+                value={ownerFilter}
+                counts={{
+                  all: inOwnerScope.length,
+                  mine: inOwnerScope.filter((o) => !o.owner).length,
+                  shared: inOwnerScope.filter((o) => o.owner).length,
+                }}
+                onChange={setOwnerFilter}
+              />
+            )}
           </div>
-        ) : view === 'grid' ? (
-          <div className="grid grid-cols-2 gap-4 px-3 sm:grid-cols-3 lg:grid-cols-4">
-            {filtered.map((output) => (
-              <OutputCard key={outputKey(output)} output={output}
-                          onOpen={() => openOutput(output)}
-                          onOpenWorkspace={() => openWorkspace(output)}
-                          onRename={canModify(output) ? () => beginRename(output) : undefined}
-                          onRemove={canModify(output) ? () => setRemoveOutput(output) : undefined} />
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-0.5">
-            {filtered.map((output) => (
+        </>
+      )}
+
+      {loading ? (
+        <div className={GROUP_CARD} aria-hidden="true">
+          {[0, 1, 2].map((i) => <div key={i} className="h-[70px] animate-pulse border-b border-kumo-tint last:border-b-0" />)}
+        </div>
+      ) : loadError ? (
+        <div className="py-12 text-center text-[15px]">
+          <p className="m-0 text-kumo-danger">Не удалось загрузить результаты.</p>
+          <button onClick={() => setReloadToken((n) => n + 1)} className="mt-1 cursor-pointer text-kumo-brand underline">
+            Попробовать ещё раз
+          </button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center gap-1 py-16 text-center">
+          <p className="m-0 text-[15px] font-medium text-kumo-default">
+            {isFiltered ? 'Ничего не найдено' : 'Результатов пока нет'}
+          </p>
+          <p className="m-0 text-[14px] text-kumo-subtle">
+            {isFiltered
+              ? 'Измените фильтр или запрос.'
+              : 'Здесь появится всё, что получится в ваших беседах.'}
+          </p>
+        </div>
+      ) : groups.map((group) => (
+        <section key={group.label} aria-label={group.label} className="flex flex-col gap-2.5">
+          <h2 className={GROUP_LABEL}>{group.label}</h2>
+          <div className={GROUP_CARD}>
+            {group.items.map((output) => (
               <OutputRow key={outputKey(output)} output={output}
                          onOpen={() => openOutput(output)}
                          onOpenWorkspace={() => openWorkspace(output)}
@@ -682,8 +612,8 @@ function OutputsPage() {
                          onRemove={canModify(output) ? () => setRemoveOutput(output) : undefined} />
             ))}
           </div>
-        )}
-      </div>
+        </section>
+      ))}
 
       <RenameOutputDialog
         output={renameOutput}
@@ -699,8 +629,8 @@ function OutputsPage() {
         description={
           <>
             Результат будет удалён из «{removeOutput?.workspaceTitle}»
-            {removeOutput?.owner ? ' для всех, у кого есть доступ к этому пространству' : ''}. Остальные
-            результаты пространства сохранятся. Отменить это нельзя.
+            {removeOutput?.owner ? ' для всех, у кого есть доступ к этой беседе' : ''}. Остальные
+            результаты беседы сохранятся. Отменить это нельзя.
           </>
         }
         confirmLabel="Убрать"

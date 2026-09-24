@@ -45,7 +45,7 @@ async function openStoreFrame<K extends StoreCapability>(api: Api, capability: K
     if (frame?.[capability]) return frame as StoreFrame<K>
     disposeGatekeeperFrame(frame)
   }
-  throw new Error(`No connected account provides ${capability}`)
+  throw new Error(`Нет подключённого аккаунта с возможностью ${capability}`)
 }
 
 export const openNativeWritesFrame = (api: Api, accountId?: number) => openStoreFrame(api, 'nativeWrites', accountId)

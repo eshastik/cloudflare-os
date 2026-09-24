@@ -10,6 +10,7 @@ import { DropdownMenu } from '@cloudflare/kumo'
 import type { OutputFormatOffer } from '@gadgets/workshop-shared/api'
 import { FormatGlyph } from './FormatVisuals'
 import { useOutputFormats } from './useOutputFormats'
+import { localizedNoun } from './formats'
 
 // Matches the surrounding items in the composer menu, which are quieter and rounder than the
 // app-wide MENU_ITEM.
@@ -32,7 +33,7 @@ export default function ComposerFormatMenuItems({
   return (
     <>
       <p className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase leading-4 tracking-[0.06em] text-kumo-inactive">
-        Start with
+        Начать с
       </p>
       {formats.map((format) => (
         <DropdownMenu.Item
@@ -49,7 +50,7 @@ export default function ComposerFormatMenuItems({
             />
           </span>
           <span className="flex-1 truncate">
-            {creating === format.blueprintId ? 'Creating…' : format.output.noun}
+            {creating === format.blueprintId ? 'Создаём…' : localizedNoun(format.output.noun)}
           </span>
         </DropdownMenu.Item>
       ))}

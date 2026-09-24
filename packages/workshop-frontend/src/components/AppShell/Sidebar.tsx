@@ -1,8 +1,8 @@
 import { Link } from '@tanstack/react-router'
 import {
   Hexagon,
-  House,
   MagnifyingGlass,
+  Plus,
   SidebarSimple,
 } from '@phosphor-icons/react'
 import { useSiteName } from '../../ServerConfigContext'
@@ -14,22 +14,18 @@ import { openCommandPalette } from './commandPaletteBus'
 import SidebarItem from './SidebarItem'
 import {
   SidebarWorkspacesProvider,
-  SidebarWorkspacesTools,
   SidebarWorkspacesLists,
 } from './SidebarWorkspaces'
 import SidebarUtilityStrip from './SidebarUtilityStrip'
 
 
-// The persistent left rail. Three pinned regions sandwich a single scrolling region of lists, so
-// the user can always reach Search, primary nav, and the bottom utility strip no matter how many
-// workspaces they have.
-//
-// Layout (top → bottom):
-//   • brand row                            pinned
-//   • primary nav (Home, Workspaces, …)    pinned
-//   • workspace tools (⌘K search)          pinned
-//   • Favorites / Recent workspaces        SCROLLS
-//   • utility strip (plug, avatar)         pinned
+// Левая панель по макету Sidebar (редизайн 24.09.2026). Сверху вниз:
+//   • логотип и название, кнопка сворачивания        закреплено
+//   • строка «Поиск ⌘K» — открывает палитру поиска    закреплено
+//   • Новая беседа, Входящие, Проекты, Мой отдел       закреплено
+//   • недавние беседы                                  ПРОКРУЧИВАЕТСЯ
+//   • разделы администратора плоским списком            закреплено
+//   • «Настройки» с аватаром                            закреплено
 export default function Sidebar({
   collapsed,
   onToggleCollapsed,
@@ -49,94 +45,75 @@ export default function Sidebar({
     <aside
       aria-label="Основная навигация"
       className={[
-        // Sidebar is the app chrome: a hair greyer than the (lighter) content canvas so the two
-        // surfaces read as distinct without a heavy divider.
-        'flex h-screen flex-col border-r border-kumo-line bg-kumo-elevated',
-        collapsed ? 'w-[56px]' : 'w-[260px]',
+        'flex h-screen flex-col border-r border-kumo-fill bg-kumo-base pt-5',
+        collapsed ? 'w-[56px]' : 'w-[248px]',
         'shrink-0 transition-[width] duration-200 ease-out',
       ].join(' ')}
     >
-      {/* Brand row */}
+      {/* Логотип и название */}
       <div
         className={[
-          'flex h-14 shrink-0 items-center border-b border-kumo-line',
-          collapsed ? 'justify-center px-1.5' : 'justify-between gap-2 px-3',
+          'flex shrink-0 items-center',
+          collapsed ? 'flex-col gap-2 px-2 pb-3' : 'gap-2.5 pr-3.5 pb-[18px] pl-6 pt-1',
         ].join(' ')}
       >
-        <Link to="/" aria-label={siteName} className="flex min-w-0 items-center gap-2">
-          <SiteLogo size={20} className="shrink-0">
-            <Hexagon size={20} weight="bold" className="text-kumo-brand shrink-0" />
+        <Link to="/" aria-label={siteName} className="flex min-w-0 flex-1 items-center gap-2.5">
+          <SiteLogo size={22} className="shrink-0">
+            <Hexagon size={22} className="shrink-0 text-kumo-brand" />
           </SiteLogo>
           {!collapsed && (
-            <span className="truncate text-[14px] leading-5 font-semibold tracking-[-0.25px] text-kumo-default">
+            <span className="truncate text-[17px] leading-6 font-bold tracking-[-0.3px] text-kumo-default">
               {siteName}
             </span>
           )}
         </Link>
-        {!collapsed && (
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => openCommandPalette()}
-              aria-label="Поиск"
-              title="Поиск (⌘K)"
-              className="press flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
-            >
-              <MagnifyingGlass size={15} />
-            </button>
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              aria-label="Свернуть панель"
-              title="Свернуть панель"
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
-            >
-              <SidebarSimple size={15} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Expand affordance when collapsed — placed just under the logo for discoverability. */}
-      {collapsed && (
         <button
           type="button"
           onClick={onToggleCollapsed}
-          aria-label="Развернуть панель"
-          title="Развернуть панель"
-          className="mx-auto mt-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+          aria-label={collapsed ? 'Развернуть панель' : 'Свернуть панель'}
+          title={collapsed ? 'Развернуть панель' : 'Свернуть панель'}
+          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
         >
-          <SidebarSimple size={15} className="rotate-180" />
+          <SidebarSimple size={16} className={collapsed ? 'rotate-180' : ''} />
         </button>
-      )}
+      </div>
+
+      {/* Поиск ⌘K: одна строка вместо раздела «Материалы» — найти беседу, проект или файл. */}
+      <div className={collapsed ? 'flex shrink-0 justify-center px-2 pb-2' : 'shrink-0 px-3.5 pb-2'}>
+        <button
+          type="button"
+          onClick={() => openCommandPalette()}
+          aria-label="Поиск"
+          title="Поиск (⌘K)"
+          className={[
+            'flex cursor-pointer items-center rounded-[10px] border border-kumo-fill bg-kumo-overlay text-kumo-subtle transition-colors hover:border-kumo-fill-hover hover:text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-ring',
+            collapsed ? 'h-9 w-9 justify-center' : 'h-[38px] w-full gap-2.5 px-3 text-[14px]',
+          ].join(' ')}
+        >
+          <MagnifyingGlass size={16} className="shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="flex-1 text-left">Поиск</span>
+              <span className="text-[12px]">⌘K</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <SidebarWorkspacesProvider>
-        {/* Pinned top stack. shrink-0 keeps it from squishing when the lists below grow. */}
-        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto pt-3">
-          {/* Основное меню: Новая беседа, Входящие, Проекты, Материалы; ниже — список бесед. */}
-          <nav className="flex flex-col gap-0.5 px-2">
-            <SidebarItem
-              to="/"
-              label="Новая беседа"
-              icon={<House size={14} weight="regular" />}
-              collapsed={collapsed}
-            />
-            {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
-          </nav>
+        <nav aria-label="Разделы" className={`flex shrink-0 flex-col gap-1 ${collapsed ? 'px-2' : 'px-3.5'}`}>
+          <SidebarItem
+            to="/"
+            label="Новая беседа"
+            icon={<Plus size={18} />}
+            collapsed={collapsed}
+          />
+          {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
+          {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
+        </nav>
 
-          {navigation.manager.length > 0 && (
-            <nav aria-label="Руководителю" className="flex flex-col gap-0.5 px-2">
-              {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
-            </nav>
-          )}
-
-          {/* Workspace tools: search. Pinned so it's always reachable. */}
-          <SidebarWorkspacesTools collapsed={collapsed} />
-        </div>
-
-        {/* Scrolling middle: only the Favorites / Recent workspaces / Recent blueprints lists.
-            min-h-0 lets flex children compute scroll height correctly. */}
-        <div className="sidebar-scroll mt-1 min-h-0 flex-1 overflow-y-auto">
+        {/* Недавние беседы. min-h-0 даёт списку прокручиваться внутри колонки. */}
+        <div className="sidebar-scroll mt-5 min-h-0 flex-1 overflow-y-auto">
           <SidebarWorkspacesLists collapsed={collapsed} />
         </div>
       </SidebarWorkspacesProvider>
@@ -149,4 +126,3 @@ export default function Sidebar({
     </aside>
   )
 }
-

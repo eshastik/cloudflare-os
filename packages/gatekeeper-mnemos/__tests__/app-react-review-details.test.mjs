@@ -28,7 +28,7 @@ test("согласующий проверяет точную версию и в�
       ["downloadReviewText", review.candidate_id, "doc", 7, "after"],
     ]);
     assert.equal(app.calls.filter(c => c[0] === "recordReviewDecision").length, 0);
-    app.button("Одобрить").click();
+    app.button("Согласовать").click();
     await app.until(() => app.calls.some(c => c[0] === "recordReviewDecision"), "решение");
     assert.deepEqual(app.calls.find(c => c[0] === "recordReviewDecision"), ["recordReviewDecision", review.candidate_id, "Юридическая", 7, true]);
   } finally { app.dispose(); }

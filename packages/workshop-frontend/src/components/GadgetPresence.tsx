@@ -7,18 +7,39 @@ import { PersonAvatar } from './PersonAvatar'
 const MAX_VISIBLE = 3
 
 const ROLE_LABELS: Record<PresenceParticipant['role'], string> = {
-  build: 'Workspace',
-  use: 'App only',
+  build: 'Беседа и гаджеты',
+  use: 'Только гаджеты',
+}
+
+function peopleWord(n: number) {
+  const tail = n % 10, hundred = n % 100
+  return tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? 'человека' : 'человек'
+}
+
+// Агент в стопке присутствующих: кружок акцентного цвета со значком, пока агент работает.
+function AgentAvatar({ size }: { size: number }) {
+  return (
+    <span
+      className="grid shrink-0 place-items-center rounded-full bg-kumo-brand text-white"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <svg width={Math.round(size * 0.46)} height={Math.round(size * 0.46)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /></svg>
+    </span>
+  )
 }
 
 export function GadgetPresence({
   overseer,
   authenticatedApi,
   currentUserId,
+  agentActive = false,
 }: {
   overseer: RpcStub<Overseer>
   authenticatedApi: RpcStub<AuthenticatedApi>
   currentUserId: string | null
+  /** Агент сейчас работает в этом рабочем месте — показывается последним в стопке. */
+  agentActive?: boolean
 }) {
   const [participants, setParticipants] = useState<PresenceParticipant[]>([])
 
@@ -177,13 +198,13 @@ export function GadgetPresence({
     }
   }, [])
 
-  if (display.length === 0) return null
+  if (display.length === 0 && !agentActive) return null
 
   const visible = display.slice(0, MAX_VISIBLE)
   const overflow = display.length - visible.length
   const count = display.length
-  const label = `${count} ${count === 1 ? 'person' : 'people'} here now`
-  const ariaLabel = `${count} ${count === 1 ? 'person' : 'people'} viewing this workspace`
+  const label = count === 0 ? 'Сейчас работает агент' : `Сейчас здесь: ${count} ${peopleWord(count)}${agentActive ? ' и агент' : ''}`
+  const ariaLabel = label
 
   return (
     <Popover>
@@ -191,7 +212,7 @@ export function GadgetPresence({
         render={
           <button
             type="button"
-            className="inline-flex cursor-pointer items-center rounded-full border border-kumo-line bg-kumo-base/60 p-0.5 transition-[background-color,transform] duration-150 ease-out hover:bg-kumo-tint focus-visible:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring active:scale-[0.97]"
+            className="inline-flex flex-shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-[background-color,transform] duration-150 ease-out hover:bg-kumo-tint focus-visible:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring active:scale-[0.97]"
             aria-label={ariaLabel}
           >
             <span ref={stackRef} className="relative flex -space-x-2">
@@ -201,13 +222,13 @@ export function GadgetPresence({
                       Kept on separate elements so the two transforms don't overwrite each other. */}
                   <span data-flip-id={p.user.id} className="inline-flex cursor-pointer">
                     <span
-                      className={`rounded-full ring-2 ring-kumo-base ${exiting.has(p.user.id) ? 'presence-pop-out' : 'presence-pop-in'}`}
+                      className={`rounded-full ring-2 ring-kumo-overlay ${exiting.has(p.user.id) ? 'presence-pop-out' : 'presence-pop-in'}`}
                     >
                       <PersonAvatar
                         api={authenticatedApi}
                         userId={p.user.id}
                         name={p.user.name}
-                        size={26}
+                        size={28}
                       />
                     </span>
                   </span>
@@ -216,13 +237,21 @@ export function GadgetPresence({
               {overflow > 0 && (
                 <span data-flip-id="__overflow" className="inline-flex cursor-pointer">
                   <span
-                    className="presence-pop-in grid h-[26px] w-[26px] place-items-center rounded-full bg-kumo-tint text-[10px] font-semibold text-kumo-strong ring-2 ring-kumo-base"
+                    className="presence-pop-in grid h-7 w-7 place-items-center rounded-full bg-kumo-tint text-[11px] font-semibold text-kumo-strong ring-2 ring-kumo-overlay"
                   >
                     +{overflow}
                   </span>
                 </span>
               )}
-              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-kumo-success ring-2 ring-kumo-base" />
+              {agentActive && (
+                <Tooltip content="Агент работает в этой беседе" asChild>
+                  <span data-flip-id="__agent" className="inline-flex cursor-pointer">
+                    <span className="presence-pop-in rounded-full ring-2 ring-kumo-overlay">
+                      <AgentAvatar size={28} />
+                    </span>
+                  </span>
+                </Tooltip>
+              )}
             </span>
           </button>
         }
@@ -257,6 +286,15 @@ export function GadgetPresence({
               </span>
             </div>
           ))}
+          {agentActive && (
+            <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-1.5">
+              <AgentAvatar size={28} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12px] leading-4 font-medium text-kumo-default">Агент</span>
+                <span className="mt-0.5 block text-[11px] leading-4 font-normal text-kumo-subtle">работает по вашей просьбе</span>
+              </span>
+            </div>
+          )}
         </div>
       </Popover.Content>
     </Popover>

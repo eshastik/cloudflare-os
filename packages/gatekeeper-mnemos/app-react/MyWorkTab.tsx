@@ -1,9 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Button } from "@cloudflare/kumo";
-import { LockOpen, PaperPlaneTilt, Robot, SquaresFour, Stamp, Tray } from "@phosphor-icons/react";
+import { Code, LockOpen, PaperPlaneTilt, SquaresFour, Stamp, Tray } from "@phosphor-icons/react";
 import type { PublicationReview } from "../src/mnemos-api.ts";
 import type { ShareRequest } from "../src/project-sharing.ts";
-import { INBOX_FILTER, inboxEntries, type InboxAlert, type InboxEntry, type InboxFilter, type InboxKind } from "../src/inbox-count.ts";
+import { inboxEntries, type InboxAlert, type InboxEntry, type InboxKind } from "../src/inbox-count.ts";
 import { useHost, useUi } from "./host.ts";
 import { actorName, documentNames, myApprovals, personName, projectName, UNNAMED_DOCUMENT, useLoad, type CollaborationItem, type MemoryData } from "./data.ts";
 import { ApprovalRow, useReviewDecision } from "./ApprovalsTab.tsx";
@@ -11,7 +10,8 @@ import ReviewDetails from "./ReviewDetails.tsx";
 import ProjectIntake from "./ProjectIntake.tsx";
 import { TemplateProposal, loadTemplateReviews } from "./TemplateApprovals.tsx";
 import { relativeTime } from "./time.ts";
-import { Block, EmptyTab, Notice, Row, RowList, RowText, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { plural } from "./names.ts";
+import { Block, Button, DecisionCard, EmptyState, Notice, PageHeader, Row, RowList, RowText, StatusBadge } from "./ui.tsx";
 import AcceptanceReview from "./AcceptanceReview.tsx";
 import AgentRequests from "./AgentRequests.tsx";
 
@@ -19,18 +19,13 @@ const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_revi
 /** Сколько проектов опрашивать на вопросы приёмной; столько же берёт счётчик в навигации. */
 const ALERT_PROJECTS = 10;
 
-type Filter = "all" | InboxFilter;
-const FILTERS: { id: Filter; title: string }[] = [
-  { id: "all", title: "Все" }, { id: "approvals", title: "Согласования" }, { id: "agents", title: "Работа агентов" },
-  { id: "intake", title: "Приём данных" }, { id: "access", title: "Доступ" },
-];
-const KIND: Record<InboxKind, { icon: ReactNode; badge: string; tone: BadgeTone }> = {
-  approval: { icon: <Stamp size={16} aria-hidden="true" />, badge: "Согласование", tone: "warning" },
-  publish: { icon: <PaperPlaneTilt size={16} aria-hidden="true" />, badge: "Можно публиковать", tone: "success" },
-  template: { icon: <SquaresFour size={16} aria-hidden="true" />, badge: "Шаблон", tone: "warning" },
-  acceptance: { icon: <Robot size={16} aria-hidden="true" />, badge: "Ждёт приёмки", tone: "warning" },
-  intake: { icon: <Tray size={16} aria-hidden="true" />, badge: "Вопрос по файлу", tone: "info" },
-  share: { icon: <LockOpen size={16} aria-hidden="true" />, badge: "Доступ к проекту", tone: "info" },
+const KIND: Record<InboxKind, { icon: ReactNode; tone: "neutral" | "warning" | "brand" }> = {
+  approval: { icon: <Stamp size={20} />, tone: "warning" },
+  publish: { icon: <PaperPlaneTilt size={20} />, tone: "brand" },
+  template: { icon: <SquaresFour size={20} />, tone: "warning" },
+  acceptance: { icon: <Code size={20} />, tone: "brand" },
+  intake: { icon: <Tray size={20} />, tone: "neutral" },
+  share: { icon: <LockOpen size={20} />, tone: "neutral" },
 };
 
 /** Кому откроется проект: отдел по имени, если сервер его назвал. */
@@ -62,14 +57,14 @@ function blockedReviews(reviews: PublicationReview[], userId: string): { review:
 
 interface Card { title: string; from: string; project: string; extra: string; chat?: string; chatProject?: string }
 
-/** «Входящие»: всё, что ждёт решения человека, карточками: одна главная кнопка и «Открыть в беседе».
- * Согласования живут здесь же под фильтром; отдельного раздела больше нет. */
-export default function MyWorkTab({ data, initialFilter = "all" }: { data: MemoryData; initialFilter?: Filter }) {
+/** «Входящие»: один плоский список того, что ждёт решения человека, новое сверху. У каждой карточки —
+ * кто и что, кнопки решения на месте; подробности раскрываются внутри карточки. Ниже — недавно решённое. */
+export default function MyWorkTab({ data }: { data: MemoryData }) {
   const ui = useUi();
   const host = useHost();
   const decision = useReviewDecision(data);
-  const [filter, setFilter] = useState<Filter>(initialFilter);
   const [selectedKey, setSelectedKey] = useState("");
+  const [agentRequests, setAgentRequests] = useState(0);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [publishing, setPublishing] = useState("");
   const [sharing, setSharing] = useState("");
@@ -87,10 +82,7 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
   const myShares = useLoad(async () => (await ui.listShareRequests(true).catch(() => ({ requests: [] as ShareRequest[] }))).requests.filter(r => r.status === "pending"), "", [ui]);
 
   const entries = inboxEntries({ reviews: data.reviews, collaborations: data.collaborations, templates: templates.value ?? [], alerts: alerts.value ?? [], shares: shares.value ?? [] }, userId);
-  const counts = new Map<Filter, number>([["all", entries.length]]);
-  for (const entry of entries) counts.set(INBOX_FILTER[entry.kind], (counts.get(INBOX_FILTER[entry.kind]) ?? 0) + 1);
-  const visible = filter === "all" ? entries : entries.filter(entry => INBOX_FILTER[entry.kind] === filter);
-  const selected = visible.find(entry => entry.key === selectedKey) ?? null;
+  const selected = entries.find(entry => entry.key === selectedKey) ?? null;
 
   const assigned = data.collaborations.filter(item => item.request.target_user_id === userId && !item.request.target_agent_id && item.request.requester_user_id !== userId);
   const blocked = userId ? blockedReviews(data.reviews, userId) : [];
@@ -98,6 +90,7 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
   const budgetBlocked = data.task && data.task.team_budget && !data.task.submitted ? data.task : null;
   const finished = userId ? myApprovals(data.reviews, userId).filter(item => item.mine !== null || item.review.stale || item.review.withdrawn) : [];
   const waitingShares = myShares.value ?? [];
+  const waitingCount = blocked.length + waitingCollaborations.length + (budgetBlocked ? 1 : 0) + waitingShares.length;
 
   async function publish(review: PublicationReview) {
     setPublishing(review.candidate_id); setNotice(null);
@@ -143,7 +136,7 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
       }
       case "publish": {
         const r = entry.review!;
-        return { title: `«${docs(r)}» можно публиковать`, from: "все согласующие одобрили", project: projectName(data.projects, r.project_id), extra: `направление ${r.domains.map(d => d.domain_id).join(", ")}` };
+        return { title: `«${docs(r)}» можно публиковать`, from: "все согласующие одобрили", project: projectName(data.projects, r.project_id), extra: "" };
       }
       case "acceptance": {
         const r = entry.collaboration!.request;
@@ -156,123 +149,108 @@ export default function MyWorkTab({ data, initialFilter = "all" }: { data: Memor
       }
       case "intake": {
         const a = entry.alert!.alert, file = a.paths[0] ?? "файл";
-        return { title: `Куда положить «${file}»?`, from: "приёмная", project: projectName(data.projects, entry.alert!.project), extra: a.suggested_domain ? `предложена область «${a.suggested_domain}»` : "",
+        return { title: `Куда положить «${file}»?`, from: "", project: projectName(data.projects, entry.alert!.project), extra: a.suggested_domain ? `предложена область «${a.suggested_domain}»` : "",
           chat: `Помоги решить, куда положить файл «${file}».`, chatProject: entry.alert!.project };
       }
       case "share": {
         const s = entry.share!;
-        return { title: `${s.requested_by_name || personName(s.requested_by)} хочет открыть проект «${s.project_name}» ${shareAudience(s)}`, from: s.requested_by_name || personName(s.requested_by), project: s.project_name,
+        return { title: `${s.requested_by_name || personName(s.requested_by)} хочет открыть проект «${s.project_name}» ${shareAudience(s)}`, from: "", project: "",
           extra: s.can_edit ? "видящие смогут править" : "видящие смогут только читать" };
       }
     }
   }
-  function primary(entry: InboxEntry): ReactNode {
+  function actions(entry: InboxEntry): ReactNode {
     switch (entry.kind) {
       case "approval": {
         const key = `${entry.review!.candidate_id}/${entry.domain!.domain_id}`;
-        return <Button variant="primary" size="sm" disabled={decision.busy === key} onClick={() => void decision.decide({ review: entry.review!, domain: entry.domain!, mine: null }, true)}>Одобрить</Button>;
+        return <Button disabled={decision.busy === key} onClick={() => void decision.decide({ review: entry.review!, domain: entry.domain!, mine: null }, true)}>Согласовать</Button>;
       }
-      case "publish": return <Button variant="primary" size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>;
-      case "acceptance": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Проверить результат</Button>;
-      case "template": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Рассмотреть</Button>;
-      case "intake": return <Button variant="primary" size="sm" onClick={() => setSelectedKey(entry.key)}>Решить</Button>;
-      // Отказ — во «Подробностях»: на карточке одна главная кнопка.
-      case "share": return <Button variant="primary" size="sm" disabled={!!sharing} onClick={() => void decideShare(entry.share!, true)}>Разрешить</Button>;
+      case "publish": return <Button disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>;
+      case "acceptance": return <Button onClick={() => setSelectedKey(entry.key)}>Проверить результат</Button>;
+      case "template": return <Button onClick={() => setSelectedKey(entry.key)}>Рассмотреть</Button>;
+      case "intake": return <Button onClick={() => setSelectedKey(entry.key)}>Решить</Button>;
+      case "share": return <>
+        <Button disabled={!!sharing} onClick={() => void decideShare(entry.share!, true)}>Разрешить</Button>
+        <Button variant="secondary" disabled={!!sharing} onClick={() => void decideShare(entry.share!, false)}>Отклонить</Button>
+      </>;
     }
   }
 
   const errors = [data.reviewsError, data.collaborationsError, templates.error, alerts.error].filter(Boolean);
   const loading = data.reviewsLoading || templates.loading || alerts.loading || shares.loading;
+  const total = entries.length + agentRequests;
+  const subtitle = total > 0
+    ? `${total} ${plural(total, "вещь", "вещи", "вещей")} ${plural(total, "ждёт", "ждут", "ждут")} вашего решения.`
+    : loading ? "Проверяем, что ждёт вашего решения…" : "Сейчас ничего не ждёт вашего решения.";
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Что показать" className="flex flex-1 flex-wrap gap-1">
-          {FILTERS.filter(f => f.id === "all" || (counts.get(f.id) ?? 0) > 0).map(f => (
-            <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => { setFilter(f.id); setSelectedKey(""); }}
-              className={`flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[13px] ${filter === f.id ? "bg-kumo-fill font-medium text-kumo-strong" : "text-kumo-default hover:bg-kumo-tint"}`}>
-              {f.title}<span className="rounded-full bg-kumo-fill px-1.5 text-[11px] leading-4 font-medium text-kumo-subtle">{counts.get(f.id) ?? 0}</span>
-            </button>
+      <PageHeader title="Входящие" subtitle={subtitle} />
+
+      {decision.notice && <div className="mb-3"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
+      {notice && <div className="mb-3"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
+      {errors.map(error => <div key={error} className="mb-3"><Notice tone="danger">{error}</Notice></div>)}
+
+      <section aria-label="Ждут вашего решения" className="mb-10 flex flex-col gap-4">
+        {entries.map(entry => {
+          const card = describe(entry);
+          const age = relativeTime(entry.at);
+          const note = [card.from && `От: ${card.from}`, card.project && `проект «${card.project}»`, card.extra, age].filter(Boolean).join(" · ");
+          const open = selected?.key === entry.key;
+          return (
+            <DecisionCard key={entry.key} data-inbox={entry.kind} data-decision={entry.kind === "approval" ? "approve" : entry.kind} aria-current={open ? "true" : undefined}
+              icon={KIND[entry.kind].icon} tone={KIND[entry.kind].tone} title={card.title} note={note}
+              onToggle={() => setSelectedKey(open ? "" : entry.key)} expanded={open}
+              actions={<>
+                {actions(entry)}
+                {card.chat && <Button variant="secondary" onClick={() => chat(card.chat!, card.chatProject)}>Открыть в беседе</Button>}
+              </>}>
+              {open && <aside aria-label="Подробности" className="rounded-[14px] bg-kumo-base p-4 sm:ml-[54px]">
+                <EntryDetails entry={entry} names={names} decision={decision} publishing={publishing} publish={publish} sharing={sharing} decideShare={decideShare}
+                  reloadCollaborations={data.reloadCollaborations} reloadTemplates={async () => { setSelectedKey(""); await templates.reload(); }} reloadAlerts={alerts.reload} />
+                <div className="mt-3"><Button variant="ghost" size="sm" onClick={() => setSelectedKey("")}>Закрыть</Button></div>
+              </aside>}
+            </DecisionCard>
+          );
+        })}
+        <AgentRequests data={data} onCount={setAgentRequests} />
+        {total === 0 && !loading && <EmptyState title="Всё решено" description="Сейчас ничего не ждёт вашего решения. Здесь появятся согласования, результаты работы агентов, запросы доступа к проектам и вопросы по загруженным материалам." />}
+        {total === 0 && loading && <Notice>Загрузка…</Notice>}
+        {data.reviewsCursor && <div><Button variant="secondary" disabled={data.reviewsLoading} onClick={() => void data.loadMoreReviews()}>Показать ещё</Button></div>}
+      </section>
+
+      {(assigned.length > 0 || data.collaborationsError) && <Block title="Поручено мне" count={assigned.length} empty={data.collaborationsError || "Поручений вам нет."}>
+        <RowList>{assigned.map(item => <CollaborationRow key={item.request.request_id} item={item} data={data} onChat={() => chat(`Помоги выполнить поручение «${item.request.title}»: что нужно сделать и по каким критериям?`, item.request.project_id)} />)}</RowList>
+      </Block>}
+
+      {waitingCount > 0 && <Block title="Жду решения других" count={waitingCount}>
+        <RowList>
+          {waitingShares.map(share => (
+            <Row key={share.request_id} className="items-start" data-share-request="">
+              <RowText title={`Проект «${share.project_name}»: ждёт подтверждения ${shareDecider(share)}`} note={`вы попросили открыть его ${shareAudience(share)}`} />
+            </Row>
           ))}
-        </div>
-      </div>
+          {blocked.map(({ review, waitingFor, domains }) => (
+            <Row key={review.candidate_id} className="items-start">
+              <RowText title={`«${docs(review)}» ждёт согласования`} note={`проект «${projectName(data.projects, review.project_id)}» · направление ${domains.join(", ")} · решение за ${waitingFor.map(id => personName(id)).join(", ")}`} />
+            </Row>
+          ))}
+          {waitingCollaborations.map(item => (
+            <Row key={item.request.request_id} className="items-start">
+              <RowText title={`Поручение «${item.request.title}» ждёт результата`} note={`проект «${projectName(data.projects, item.request.project_id)}» · результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
+            </Row>
+          ))}
+          {budgetBlocked && (
+            <Row className="items-start">
+              <RowText title="Задача агента ждёт согласования бюджета" note={`проект «${projectName(data.projects, budgetBlocked.team_budget!.project_id)}» · решение за владельцем бюджета проекта`} />
+            </Row>
+          )}
+        </RowList>
+      </Block>}
 
-      {decision.notice && <div className="mb-2"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
-      {notice && <div className="mb-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-      {errors.map(error => <div key={error} className="mb-2"><Notice tone="danger">{error}</Notice></div>)}
-
-      <div className={selected ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px]" : ""}>
-        <section aria-label="Ждёт решения" className="mb-6 min-w-0">
-          {visible.length === 0
-            ? (loading ? <Notice>Загрузка…</Notice> : <EmptyTab description="Сейчас ничего не ждёт вашего решения. Здесь появятся согласования, результаты работы агентов, запросы доступа к проектам и вопросы по загруженным материалам." />)
-            : <div className="grid gap-3">{visible.map(entry => {
-              const card = describe(entry);
-              const age = relativeTime(entry.at);
-              const meta = [card.from && `От: ${card.from}`, card.project && `проект «${card.project}»`, card.extra, age].filter(Boolean).join(" · ");
-              return (
-                <article key={entry.key} data-inbox={entry.kind} data-decision={entry.kind === "approval" ? "approve" : entry.kind} aria-current={selected?.key === entry.key ? "true" : undefined}
-                  className={`rounded-xl border border-kumo-line p-4 ${selected?.key === entry.key ? "bg-kumo-tint" : "bg-kumo-base"}`}>
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-kumo-line bg-kumo-elevated text-kumo-subtle">{KIND[entry.kind].icon}</span>
-                    <button type="button" className="min-w-0 flex-1 cursor-pointer text-left" onClick={() => setSelectedKey(entry.key)}>
-                      <RowText title={card.title} note={meta} />
-                    </button>
-                    <StatusBadge tone={KIND[entry.kind].tone}>{KIND[entry.kind].badge}</StatusBadge>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2 pl-11">
-                    {primary(entry)}
-                    {card.chat && <Button variant="ghost" size="sm" onClick={() => chat(card.chat!, card.chatProject)}>Открыть в беседе</Button>}
-                  </div>
-                </article>
-              );
-            })}</div>}
-          {(filter === "all" || filter === "approvals") && finished.length > 0 && <details className="mt-4">
-            <summary className="cursor-pointer py-1 text-[13px] text-kumo-subtle">Уже решённые, устаревшие и отозванные · {finished.length}</summary>
-            <div className="mt-2"><RowList>{finished.map(item => <ApprovalRow key={`${item.review.candidate_id}/${item.domain.domain_id}`} item={item} data={data} busy={decision.busy} decide={(i, a) => void decision.decide(i, a)} />)}</RowList></div>
-          </details>}
-          {filter === "approvals" && data.reviewsCursor && <div className="mt-3"><Button variant="secondary" size="sm" disabled={data.reviewsLoading} onClick={() => void data.loadMoreReviews()}>Показать ещё</Button></div>}
-        </section>
-        {selected && <aside aria-label="Подробности" className="min-w-0 rounded-xl border border-kumo-line bg-kumo-base p-4 lg:sticky lg:top-4 lg:self-start">
-          <div className="mb-3 flex items-start gap-2">
-            <div className="min-w-0 flex-1"><RowText title={describe(selected).title} note={[describe(selected).project && `проект «${describe(selected).project}»`, describe(selected).extra].filter(Boolean).join(" · ")} /></div>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedKey("")}>Закрыть</Button>
-          </div>
-          <EntryDetails entry={selected} names={names} decision={decision} publishing={publishing} publish={publish} sharing={sharing} decideShare={decideShare}
-            reloadCollaborations={data.reloadCollaborations} reloadTemplates={async () => { setSelectedKey(""); await templates.reload(); }} reloadAlerts={alerts.reload} />
-        </aside>}
-      </div>
-
-      {filter === "all" && <>
-        <AgentRequests data={data} />
-        <Block title="Поручено мне" count={assigned.length} empty={data.collaborationsError || "Поручений вам нет."}>
-          <RowList>{assigned.map(item => <CollaborationRow key={item.request.request_id} item={item} data={data} onChat={() => chat(`Помоги выполнить поручение «${item.request.title}»: что нужно сделать и по каким критериям?`, item.request.project_id)} />)}</RowList>
-        </Block>
-        <Block title="Жду решения других" count={blocked.length + waitingCollaborations.length + (budgetBlocked ? 1 : 0) + waitingShares.length} empty="Чужих решений вы не ждёте.">
-          <RowList>
-            {waitingShares.map(share => (
-              <Row key={share.request_id} className="items-start" data-share-request="">
-                <RowText title={`Проект «${share.project_name}»: ждёт подтверждения ${shareDecider(share)}`} note={`вы попросили открыть его ${shareAudience(share)}`} />
-                <StatusBadge tone="info">Ждёт подтверждения</StatusBadge>
-              </Row>
-            ))}
-            {blocked.map(({ review, waitingFor, domains }) => (
-              <Row key={review.candidate_id} className="items-start">
-                <RowText title={`«${docs(review)}» ждёт согласования по направлению ${domains.join(", ")}`} note={`проект «${projectName(data.projects, review.project_id)}» · решение за ${waitingFor.map(id => personName(id)).join(", ")}`} />
-              </Row>
-            ))}
-            {waitingCollaborations.map(item => (
-              <Row key={item.request.request_id} className="items-start">
-                <RowText title={`Поручение «${item.request.title}» ждёт результата`} note={`проект «${projectName(data.projects, item.request.project_id)}» · результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
-              </Row>
-            ))}
-            {budgetBlocked && (
-              <Row className="items-start">
-                <RowText title="Задача агента ждёт согласования бюджета" note={`проект «${projectName(data.projects, budgetBlocked.team_budget!.project_id)}» · решение за владельцем бюджета проекта`} />
-              </Row>
-            )}
-          </RowList>
-        </Block>
-      </>}
+      {finished.length > 0 && <Block title="Недавно решено" count={finished.length}>
+        <RowList>{finished.map(item => <ApprovalRow key={`${item.review.candidate_id}/${item.domain.domain_id}`} item={item} data={data} busy={decision.busy} decide={(i, a) => void decision.decide(i, a)} />)}</RowList>
+      </Block>}
     </div>
   );
 }
@@ -289,34 +267,30 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
       return <div className="space-y-4">
         <ReviewDetails key={`${entry.review!.candidate_id}/${entry.review!.decision_version}`} review={entry.review!} names={names} />
         <div className="flex gap-2">
+          <Button size="sm" disabled={decision.busy === key} onClick={() => void decision.decide(item, true)}>Согласовать</Button>
           <Button variant="secondary" size="sm" disabled={decision.busy === key} onClick={() => void decision.decide(item, false)}>Отклонить</Button>
-          <Button variant="primary" size="sm" disabled={decision.busy === key} onClick={() => void decision.decide(item, true)}>Одобрить</Button>
         </div>
       </div>;
     }
     case "publish":
-      return <div className="space-y-3 text-[13px]">
+      return <div className="space-y-3 text-[14px]">
         <p className="m-0 text-kumo-subtle">Все назначенные согласующие одобрили изменения. Публикация переносит их в общую версию проекта.</p>
-        <Button variant="primary" size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>
+        <Button size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>
       </div>;
     case "acceptance":
       return <AcceptanceReview key={entry.key} item={entry.collaboration!} onDone={reloadCollaborations} />;
     case "template":
       return <TemplateProposal key={entry.key} item={entry.template!.review} scope={entry.template!.scope} onDone={() => void reloadTemplates()} />;
     case "intake":
-      return <div className="space-y-3 text-[13px]">
+      return <div className="space-y-3 text-[14px]">
         {entry.alert!.alert.detail && <p className="m-0 text-kumo-subtle">{entry.alert!.alert.detail}</p>}
         <ProjectIntake projectId={entry.alert!.project} onPlaced={reloadAlerts} />
       </div>;
     case "share": {
       const s = entry.share!;
-      return <div className="space-y-3 text-[13px]">
+      return <div className="space-y-3 text-[14px]">
         <p className="m-0">После разрешения проект «{s.project_name}» увидят {s.level === "organization" ? "все сотрудники организации" : s.org_unit_name ? `сотрудники отдела «${s.org_unit_name}»` : "сотрудники отдела"}. {s.can_edit ? "Они смогут читать и править материалы." : "Они смогут только читать материалы."}</p>
         <p className="m-0 text-kumo-subtle">Отказ оставляет проект с прежним доступом; автор увидит ваше решение.</p>
-        <div className="flex gap-2">
-          <Button variant="primary" size="sm" disabled={!!sharing} onClick={() => void decideShare(s, true)}>Разрешить</Button>
-          <Button variant="secondary" size="sm" disabled={!!sharing} onClick={() => void decideShare(s, false)}>Отклонить</Button>
-        </div>
       </div>;
     }
   }
@@ -328,7 +302,7 @@ function CollaborationRow({ item, data, onChat }: { item: CollaborationItem; dat
     <Row className="items-start" data-collaboration="">
       <RowText title={item.request.title} note={`проект «${projectName(data.projects, item.request.project_id)}» · от: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)} · срок не задан`} />
       <StatusBadge tone={item.progress?.state === "accepted" ? "success" : item.progress?.state === "changes_requested" ? "danger" : "neutral"}>{state}</StatusBadge>
-      <Button variant="ghost" size="sm" onClick={onChat}>Открыть в беседе</Button>
+      <Button variant="secondary" size="sm" onClick={onChat}>Открыть в беседе</Button>
     </Row>
   );
 }

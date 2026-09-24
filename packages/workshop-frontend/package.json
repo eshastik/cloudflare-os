@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@cloudflare/kumo": "^2.9.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/literata": "5.3.0",
+    "@fontsource-variable/onest": "5.3.1",
     "@gadgets/error-reporting": "workspace:*",
     "@gadgets/workshop-shared": "workspace:*",
     "@monaco-editor/react": "^4.7.0",

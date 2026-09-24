@@ -135,7 +135,7 @@ describe('useWorkspaceOpen', () => {
     expect(document.title).toBe('Quarterly planning - Mnemos')
 
     await act(async () => root!.render(<WorkspaceProbe authenticatedApi={api(deniedOverseer)} />))
-    expect(container.textContent).toContain("You don't have access to this workspace")
+    expect(container.textContent).toContain('Нет доступа к этой беседе')
     expect(container.textContent).not.toContain('Quarterly planning')
     expect(document.title).toBe('Mnemos')
     expect(firstSubscriptionDispose).toHaveBeenCalledOnce()

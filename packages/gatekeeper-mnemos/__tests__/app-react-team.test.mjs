@@ -26,7 +26,7 @@ test("«Мой отдел»: сотрудники, проекты отдела �
     assert.ok(text.includes("Вы отвечаете за проекты") && text.includes("Склад"), "проект ответственного");
     assert.ok(!text.includes("Чужой"), "проект другого отдела не показывается");
     assert.ok(!/[a-f0-9]{16}|sales|r1/.test(text.replace(/Продажи/g, "")), "служебные идентификаторы не показываются");
-    app.button("Подтвердить").click();
+    app.button("Разрешить").click();
     await app.until(() => app.calls.some(c => c[0] === "decideShareRequest") && app.text().includes("Проект «Прайс» открыт отделу «Продажи»."), "решение записано");
     assert.deepEqual(app.calls.find(c => c[0] === "decideShareRequest"), ["decideShareRequest", "r1", true]);
     await app.until(() => app.text().includes("Запросов «Поделиться» на решение нет."), "список обновлён");

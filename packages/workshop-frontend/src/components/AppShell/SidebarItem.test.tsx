@@ -6,7 +6,7 @@ import {expect,it} from "vitest";
 import SidebarItem from "./SidebarItem";
 (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 it("подсвечивает только выбранный раздел одного приложения",async()=>{
- const route=createRootRoute({component:()=> <><SidebarItem to="/gatekeepers/$appId" params={{appId:"mnemos"}} search={{section:"projects"}} section="projects" label="Проекты" icon={null}/><SidebarItem to="/gatekeepers/$appId" params={{appId:"mnemos"}} search={{section:"documents"}} section="documents" label="Материалы" icon={null}/></>});
+ const route=createRootRoute({component:()=> <><SidebarItem to="/gatekeepers/$appId" params={{appId:"mnemos"}} search={{section:"projects"}} section="projects" label="Проекты" icon={null}/><SidebarItem to="/gatekeepers/$appId" params={{appId:"mnemos"}} search={{section:"my-work"}} section="my-work" label="Входящие" icon={null}/></>});
  const child=createRoute({getParentRoute:()=>route,path:"/gatekeepers/$appId"});
  const router=createRouter({history:createMemoryHistory({initialEntries:["/gatekeepers/mnemos?section=projects"]}),routeTree:route.addChildren([child])});
  const el=document.createElement("div"); document.body.append(el); const root=createRoot(el);
@@ -14,9 +14,9 @@ it("подсвечивает только выбранный раздел одн
   await React.act(async()=>root.render(<RouterProvider router={router}/>));
   expect(el.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   expect(el.querySelector('[aria-current="page"]')?.textContent).toBe("Проекты");
-  await React.act(async()=>router.navigate({to:"/gatekeepers/$appId",params:{appId:"mnemos"},search:{section:"documents"}}));
+  await React.act(async()=>router.navigate({to:"/gatekeepers/$appId",params:{appId:"mnemos"},search:{section:"my-work"}}));
   expect(el.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
-  expect(el.querySelector('[aria-current="page"]')?.textContent).toBe("Материалы");
+  expect(el.querySelector('[aria-current="page"]')?.textContent).toBe("Входящие");
  }finally{await React.act(async()=>root.unmount());el.remove();}
 });
 

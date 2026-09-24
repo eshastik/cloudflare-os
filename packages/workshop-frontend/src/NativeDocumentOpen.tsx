@@ -160,7 +160,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       const ticket = await download.issue()
       const bytes = await downloadGatekeeperOffice(storageOrigin.current, ticket, format, signal, () => download.validate())
       const suffix = format === 'cloudflareos.document' ? '.docx' : format === 'cloudflareos.presentation' ? '.pptx' : '.xlsx'
-      const name = (documents.find(d => d.id === document)?.name || 'Document').replace(/\.(cfdoc|cfsheet|cfslides)$/i, '').replace(/[\/\\\u0000-\u001f]/g, '_') + (original ? ' — оригинал' : '') + suffix
+      const name = (documents.find(d => d.id === document)?.name || 'Документ').replace(/\.(cfdoc|cfsheet|cfslides)$/i, '').replace(/[\/\\\u0000-\u001f]/g, '_') + (original ? ' — оригинал' : '') + suffix
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], {type: ticket.content_type}))
       const link = globalThis.document.createElement('a'); link.href = url; link.download = name
       globalThis.document.body.append(link); link.click(); link.remove()

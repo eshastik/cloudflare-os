@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { RpcStub } from 'capnweb'
 import { PublicApi } from '@gadgets/workshop-shared/api'
 import { Hexagon } from '@phosphor-icons/react'
-import { Input, Button, Banner, Loader } from '@cloudflare/kumo'
+import { Button, Banner, Loader } from '@cloudflare/kumo'
 import { hashPassword } from './passwordHash'
 import { useServerConfig, useServerConfigError, useSiteName } from './ServerConfigContext'
 import { useDocumentTitle } from './useDocumentTitle'
@@ -85,95 +85,77 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
   const authVendors = serverConfig.authVendors ?? []
   const passwordAuthEnabled = serverConfig.passwordAuthEnabled
 
+  const field = 'h-[50px] w-full rounded-[14px] border border-kumo-fill-hover bg-kumo-overlay px-4 text-[15px] text-kumo-default placeholder:text-kumo-inactive outline-none transition-[border-color,box-shadow] focus:border-kumo-ring focus:ring-[3px] focus:ring-kumo-ring/15 disabled:opacity-60'
+
+  // Макет Login: знак и заголовок по центру, сначала вход через внешние службы, под чертой «или» —
+  // рабочая учётная запись с паролем.
   return (
-    <div className="min-h-screen flex items-center justify-center bg-kumo-base px-4 relative overflow-hidden">
-      {/* Dot grid — fades from top to bottom */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage: 'radial-gradient(circle, var(--color-kumo-line) 1px, transparent 1px)',
-          backgroundSize: '24px 24px',
-          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%)',
-          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%)',
-        }}
-      />
+    <div className="flex min-h-screen items-center justify-center bg-kumo-base px-4">
+      <div className="flex w-full max-w-[400px] flex-col items-center gap-[18px]">
+        <SiteLogo size={44}>
+          <Hexagon size={44} className="text-kumo-brand" />
+        </SiteLogo>
+        <h1 className="m-0 text-center text-[30px] leading-9 font-semibold tracking-[-0.8px] text-kumo-default">Вход в {siteName}</h1>
+        <p className="m-0 mb-2 text-center text-[15px] text-kumo-subtle">Память вашей компании и агент, который с ней работает.</p>
 
-      <div className="w-full max-w-sm relative">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <SiteLogo size={40} className="mb-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-kumo-brand mb-3">
-              <Hexagon size={20} className="text-white" weight="bold" />
-            </div>
-          </SiteLogo>
-          <h1 className="text-xl font-semibold text-kumo-default">{siteName}</h1>
-          <p className="text-sm text-kumo-subtle mt-1">Войдите в рабочий аккаунт</p>
-        </div>
-
-        {passwordAuthEnabled && (
-          <>
-            {/* Username / password form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <Input
-                label="Логин"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoFocus
-                autoComplete="username"
-                disabled={loading}
-                placeholder="Ваш логин"
-              />
-
-              <Input
-                type="password"
-                label="Пароль"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                disabled={loading}
-                placeholder="••••••••"
-              />
-
-              {error && (
-                <Banner variant="error" title={error} />
-              )}
-
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={!username || !password}
-                loading={loading}
-                className="w-full justify-center"
-              >
-                Войти
-              </Button>
-            </form>
-
-            {serverConfig.signupsEnabled && <p className="text-center text-sm text-kumo-subtle mt-6">
-              Нет аккаунта?{' '}
-              <Link to="/signup" className="text-kumo-brand hover:underline font-medium">
-                Создать аккаунт
-              </Link>
-            </p>}
-          </>
-        )}
-
-        {/* Gatekeeper sign-in options, shown whenever any auth vendor is configured. */}
         {authVendors.length > 0 && (
-          <div className={passwordAuthEnabled ? 'mt-6' : ''}>
-            {passwordAuthEnabled && (
-              <div className="flex items-center gap-3 mb-4">
-                <div className="h-px flex-1 bg-kumo-line" />
-                <span className="text-xs text-kumo-subtle">или</span>
-                <div className="h-px flex-1 bg-kumo-line" />
-              </div>
-            )}
+          <div className="w-full">
             {!passwordAuthEnabled && error && (
               <Banner variant="error" title={error} className="mb-4" />
             )}
             <OAuthButtons rpcStub={rpcStub} vendors={authVendors} onSuccess={onLoginSuccess} />
           </div>
         )}
+
+        {passwordAuthEnabled && authVendors.length > 0 && (
+          <div className="flex w-full items-center gap-3 text-[13px] text-kumo-inactive">
+            <span className="h-px flex-1 bg-kumo-fill" />или<span className="h-px flex-1 bg-kumo-fill" />
+          </div>
+        )}
+
+        {passwordAuthEnabled && (
+          <form onSubmit={handleSubmit} className="flex w-full flex-col gap-3">
+            <label htmlFor="login-username" className="sr-only">Рабочая почта или логин</label>
+            <input
+              id="login-username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              autoComplete="username"
+              disabled={loading}
+              placeholder="Рабочая почта или логин"
+              className={field}
+            />
+            <label htmlFor="login-password" className="sr-only">Пароль</label>
+            <input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              disabled={loading}
+              placeholder="Пароль"
+              className={field}
+            />
+
+            {error && <Banner variant="error" title={error} />}
+
+            <button
+              type="submit"
+              disabled={!username || !password || loading}
+              className="flex h-[50px] w-full cursor-pointer items-center justify-center gap-2 rounded-[14px] bg-kumo-brand text-[15px] font-semibold text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading && <Loader size="sm" />}
+              {loading ? 'Входим…' : 'Войти'}
+            </button>
+          </form>
+        )}
+
+        <p className="m-0 mt-1.5 text-center text-[13px] text-kumo-subtle">
+          {passwordAuthEnabled && serverConfig.signupsEnabled ? (
+            <>Нет учётной записи?{' '}<Link to="/signup" className="text-kumo-link hover:underline">Создать</Link></>
+          ) : 'Нет доступа? Попросите руководителя прислать приглашение.'}
+        </p>
       </div>
     </div>
   )

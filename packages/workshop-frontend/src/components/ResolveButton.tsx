@@ -12,19 +12,19 @@ export function ResolveButton({
   onClick: MouseEventHandler<HTMLButtonElement>
 }) {
   const toneClassName = variant === 'filled'
-    ? 'h-7 bg-kumo-brand px-3 text-white enabled:hover:opacity-90'
+    ? 'h-8 bg-kumo-brand px-4 text-white enabled:hover:bg-kumo-brand-hover'
     : tone === 'approve'
-      ? 'h-6 px-2 text-kumo-default enabled:hover:bg-kumo-tint enabled:hover:text-kumo-default-hover'
-      : 'h-6 px-2 text-kumo-inactive enabled:hover:bg-kumo-tint enabled:hover:text-kumo-danger'
+      ? 'h-8 px-4 border border-kumo-fill-hover bg-kumo-overlay text-kumo-default enabled:hover:bg-kumo-tint'
+      : 'h-8 px-3 text-kumo-subtle enabled:hover:bg-kumo-tint enabled:hover:text-kumo-danger'
 
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex cursor-pointer items-center rounded-md text-[12px] font-medium tracking-[-0.15px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${toneClassName}`}
+      className={`flex cursor-pointer items-center rounded-full text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${toneClassName}`}
     >
-      {tone === 'approve' ? 'Approve' : 'Deny'}
+      {tone === 'approve' ? 'Разрешить' : 'Не разрешать'}
     </button>
   )
 }
@@ -41,9 +41,9 @@ export function AlwaysApproveButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="flex h-6 cursor-pointer items-center rounded-md px-2 text-[12px] font-medium tracking-[-0.15px] text-kumo-inactive transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex h-8 cursor-pointer items-center rounded-full px-3 text-[13px] font-medium text-kumo-subtle transition-colors enabled:hover:bg-kumo-tint enabled:hover:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
     >
-      Always approve
+      Разрешать всегда
     </button>
   )
 }

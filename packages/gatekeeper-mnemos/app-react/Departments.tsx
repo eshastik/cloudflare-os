@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Button } from "@cloudflare/kumo";
-import { Copy, Plus, Trash, UserPlus } from "@phosphor-icons/react";
+import { Copy, Trash } from "@phosphor-icons/react";
 import type { InvitationRole, OrganizationInvitation, OrgUnit, OrgUnitDeletion } from "../src/mnemos-api.ts";
 import type { AdminPerson } from "../src/admin-people.ts";
 import { useUi } from "./host.ts";
-import { ActionForm, AdminDetails, Notice, Row, RowList, RowText, Select, StatusBadge, TextInput, type BadgeTone } from "./ui.tsx";
+import { ActionForm, Notice } from "./ui.tsx";
+import { Card, CardRow, Field, FieldInput, FieldSelect, Initials, Pill, PillInput, PillSelect, RowTitle, SectionHead, plural } from "./admin-ui.tsx";
+
+export type OrgUnits = { units: OrgUnit[]; loading: boolean; failed: boolean; reload(): void };
 
 /** Отделы, видимые человеку; ошибка чтения — пустой список (старый сервер отделов не знает). */
-export function useOrgUnits(revision = 0): { units: OrgUnit[]; loading: boolean; failed: boolean; reload(): void } {
+export function useOrgUnits(revision = 0): OrgUnits {
   const ui = useUi();
   const [units, setUnits] = useState<OrgUnit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,20 +29,63 @@ export function headedUnits(units: OrgUnit[], userId: string): OrgUnit[] {
   return units.filter(u => u.members.some(m => m.principal_id === userId && m.is_head));
 }
 
-const STATUS: Record<OrganizationInvitation["status"], [string, BadgeTone]> = {
-  open: ["Ждёт входа", "info"], accepted: ["Вошёл", "success"], revoked: ["Отозвано", "neutral"], expired: ["Срок истёк", "neutral"],
-};
-
 function dateOf(value?: string): string {
   const date = value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) : "";
 }
 
-const ROLE_WORDS: Record<InvitationRole, string> = { employee: "Сотрудник", head: "Руководитель отдела", admin: "Администратор" };
+export const ROLE_WORDS: Record<InvitationRole, string> = { employee: "Сотрудник", head: "Руководитель отдела", admin: "Администратор" };
 
-/** «Пригласить»: почта, имя, отдел и роль → одноразовая ссылка. Администратор выбирает любой отдел и любую роль,
- * руководитель — только свой отдел и роли «Сотрудник» или «Руководитель отдела». */
-export function InvitePanel({ units, allowNoUnit, admin }: { units: OrgUnit[]; allowNoUnit: boolean; admin: boolean }) {
+/** Приглашения организации: список и перечитывание после создания или отзыва. */
+export function useInvitations(): { list: OrganizationInvitation[] | null; failed: boolean; reload(): void } {
+  const ui = useUi();
+  const [list, setList] = useState<OrganizationInvitation[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let current = true; setFailed(false);
+    void Promise.resolve().then(() => ui.listInvitations()).then(out => { if (current) setList(out); }, () => { if (current) { setList([]); setFailed(true); } });
+    return () => { current = false; };
+  }, [ui, revision]);
+  return { list, failed, reload: () => setRevision(v => v + 1) };
+}
+
+/** Строка приглашения словами: для кого, куда, с какой ролью, до какого дня. */
+function invitationNote(i: OrganizationInvitation): string {
+  return [i.display_name ? i.email : "", i.org_unit_name ? `отдел «${i.org_unit_name}»` : "", i.role && i.role !== "employee" ? ROLE_WORDS[i.role].toLowerCase() : "",
+    i.status === "open" ? `приглашение ждёт входа, ссылка действует до ${dateOf(i.expires_at)}` : i.status === "expired" ? "срок ссылки истёк" : i.status === "revoked" ? "приглашение отозвано" : "",
+    i.created_by_name ? `пригласил(а) ${i.created_by_name}` : ""].filter(Boolean).join(" · ");
+}
+
+/** Открытые приглашения строками карточки: приглашённый выглядит как будущий сотрудник, рядом — «Отозвать». */
+export function InvitationRows({ list, onChanged }: { list: OrganizationInvitation[]; onChanged(): void }) {
+  const ui = useUi();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  const revoke = async (invitation: OrganizationInvitation) => {
+    const who = invitation.display_name || invitation.email;
+    setBusy(true); setNotice(null);
+    try { await ui.revokeInvitation(invitation.invitation_id); setNotice({ tone: "success", text: `Приглашение для ${who} отозвано.` }); onChanged(); }
+    catch { setNotice({ tone: "danger", text: "Ссылку не удалось отозвать. Обновите список и повторите." }); }
+    finally { setBusy(false); }
+  };
+  const open = list.filter(i => i.status === "open");
+  return <>
+    {open.map(i => {
+      const who = i.display_name || i.email;
+      return <CardRow key={i.invitation_id} data-invitation="">
+        <Initials name={who} />
+        <RowTitle title={who} note={invitationNote(i)} />
+        <Pill tone="ghost" aria-label={`Отозвать приглашение: ${who}`} disabled={busy} onClick={() => void revoke(i)}>Отозвать</Pill>
+      </CardRow>;
+    })}
+    {notice && <div className="border-t border-kumo-fill px-4 py-2.5 first:border-t-0"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
+  </>;
+}
+
+/** Форма приглашения в одну строку: почта, имя, отдел, роль → одноразовая ссылка.
+ * Администратор выбирает любой отдел и любую роль, руководитель — только свой отдел и роли «Сотрудник» или «Руководитель отдела». */
+export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: OrgUnit[]; allowNoUnit: boolean; admin: boolean; onCreated(): void }) {
   const ui = useUi();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -50,24 +95,17 @@ export function InvitePanel({ units, allowNoUnit, admin }: { units: OrgUnit[]; a
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ link: string; who: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [list, setList] = useState<OrganizationInvitation[] | null>(null);
-  const [listError, setListError] = useState(false);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let current = true; setListError(false);
-    void Promise.resolve().then(() => ui.listInvitations()).then(out => { if (current) setList(out); }, () => { if (current) { setList([]); setListError(true); } });
-    return () => { current = false; };
-  }, [ui, revision]);
   useEffect(() => { if (!allowNoUnit && !unit && units[0]) setUnit(units[0].org_unit_id); }, [allowNoUnit, unit, units]);
 
   const roleBlocked = role === "head" && !unit;
+  const blocked = busy || !email.trim() || (!allowNoUnit && !unit) || roleBlocked;
   const submit = async () => {
-    if (busy || !email.trim() || (!allowNoUnit && !unit) || roleBlocked) return;
+    if (blocked) return;
     setBusy(true); setError(""); setCreated(null); setCopied(false);
     try {
       const out = await ui.createInvitation(email.trim(), name.trim(), unit, role);
       setCreated({ link: out.link, who: name.trim() || email.trim() });
-      setEmail(""); setName(""); setRole("employee"); setRevision(v => v + 1);
+      setEmail(""); setName(""); setRole("employee"); onCreated();
     } catch {
       setError("Приглашение не создано. Проверьте почту и что у вас есть право приглашать в этот отдел.");
     } finally { setBusy(false); }
@@ -75,64 +113,53 @@ export function InvitePanel({ units, allowNoUnit, admin }: { units: OrgUnit[]; a
   const copy = async (link: string) => {
     try { await navigator.clipboard.writeText(link); setCopied(true); } catch { setCopied(false); }
   };
-  const revoke = async (invitation: OrganizationInvitation) => {
-    setBusy(true); setError("");
-    try { await ui.revokeInvitation(invitation.invitation_id); setRevision(v => v + 1); }
-    catch { setError("Ссылку не удалось отозвать. Обновите список и повторите."); }
-    finally { setBusy(false); }
-  };
-
-  return <section aria-label="Пригласить сотрудника" className="grid gap-5">
-    <ActionForm aria-label="Приглашение" className="grid max-w-lg gap-3" onAction={() => void submit()}>
-      <h2 className="m-0 text-base font-semibold">Пригласить сотрудника</h2>
-      <p className="m-0 text-sm text-kumo-subtle">Получите ссылку и отправьте её сотруднику. Он войдёт по ней и сразу окажется в организации{units.length ? " и в выбранном отделе" : ""}.</p>
-      <label className="grid gap-1.5 text-sm">Почта<TextInput type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="anna@company.ru" /></label>
-      <label className="grid gap-1.5 text-sm">Имя (необязательно)<TextInput value={name} onChange={e => setName(e.target.value)} placeholder="Анна Смирнова" /></label>
-      {(units.length > 0 || !allowNoUnit) && <label className="grid gap-1.5 text-sm">Отдел<Select aria-label="Отдел приглашения" value={unit} onChange={e => setUnit(e.target.value)}>
-        {allowNoUnit && <option value="">Без отдела</option>}
-        {units.map(u => <option key={u.org_unit_id} value={u.org_unit_id}>{u.name}</option>)}
-      </Select></label>}
-      <label className="grid gap-1.5 text-sm">Роль<Select aria-label="Роль приглашённого" value={role} onChange={e => setRole(e.target.value as InvitationRole)}>
-        <option value="employee">{ROLE_WORDS.employee}</option>
-        <option value="head">{ROLE_WORDS.head}</option>
-        {admin && <option value="admin">{ROLE_WORDS.admin}</option>}
-      </Select></label>
-      {roleBlocked && <Notice>Чтобы пригласить руководителя, выберите его отдел.</Notice>}
-      {role === "admin" && <Notice>Администратор видит и меняет материалы всех проектов, управляет людьми и правилами.</Notice>}
-      {error && <Notice tone="danger">{error}</Notice>}
-      <div><Button type="button" variant="primary" disabled={busy || !email.trim() || (!allowNoUnit && !unit) || roleBlocked} onClick={() => void submit()}><UserPlus size={16} />{busy ? "Создаём…" : "Получить ссылку"}</Button></div>
-    </ActionForm>
-    {created && <div role="region" aria-label="Ссылка-приглашение" className="grid max-w-2xl gap-2 rounded-xl border border-kumo-line bg-kumo-elevated p-4">
-      <strong className="text-sm">Ссылка для: {created.who}</strong>
-      <TextInput readOnly aria-label="Ссылка-приглашение" value={created.link} onFocus={e => e.currentTarget.select()} className="w-full" />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={() => void copy(created.link)}><Copy size={16} />Скопировать</Button>
-        {copied && <Notice tone="success">Скопировано.</Notice>}
-      </div>
-      <p className="m-0 text-[12px] text-kumo-subtle">Ссылка сработает один раз и действует 7 дней. Сотрудник входит тем же способом, что и все в организации.</p>
-    </div>}
-    <div>
-      <h3 className="m-0 mb-2 text-[15px] font-semibold">Приглашения</h3>
-      {list === null ? <Notice>Загрузка приглашений…</Notice> : listError ? <Notice tone="danger">Список приглашений недоступен.</Notice> : list.length === 0 ? <Notice>Приглашений пока нет.</Notice> :
-        <RowList>{list.map(i => {
-          const [label, tone] = STATUS[i.status];
-          const who = i.display_name || i.email;
-          return <Row key={i.invitation_id}>
-            <RowText title={who} note={[i.display_name ? i.email : "", i.org_unit_name ? `отдел «${i.org_unit_name}»` : "", i.role && i.role !== "employee" ? ROLE_WORDS[i.role].toLowerCase() : "", i.status === "accepted" && i.accepted_by_name ? `вошёл как ${i.accepted_by_name}` : "", i.status === "open" ? `до ${dateOf(i.expires_at)}` : "", i.created_by_name ? `пригласил(а) ${i.created_by_name}` : ""].filter(Boolean).join(" · ")}>
-              <AdminDetails show={admin} items={[["Приглашение", i.invitation_id], ["Сотрудник", i.accepted_by]]} />
-            </RowText>
-            <StatusBadge tone={tone}>{label}</StatusBadge>
-            {i.status === "open" && <Button size="sm" variant="ghost" aria-label={`Отозвать приглашение: ${who}`} disabled={busy} onClick={() => void revoke(i)}><Trash size={16} /></Button>}
-          </Row>;
-        })}</RowList>}
-    </div>
+  const showUnit = units.length > 0 || !allowNoUnit;
+  return <section aria-label="Пригласить сотрудника" className="grid gap-3">
+    <Card className="p-5">
+      <ActionForm aria-label="Приглашение" className="grid items-end gap-2.5 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" onAction={() => void submit()}>
+        <Field label="Почта"><FieldInput type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="anna@company.ru" /></Field>
+        <Field label="Имя, если знаете"><FieldInput value={name} onChange={e => setName(e.target.value)} placeholder="Анна Смирнова" /></Field>
+        {showUnit ? <Field label="Отдел"><FieldSelect aria-label="Отдел приглашения" value={unit} onChange={e => setUnit(e.target.value)}>
+          {allowNoUnit && <option value="">Без отдела</option>}
+          {units.map(u => <option key={u.org_unit_id} value={u.org_unit_id}>{u.name}</option>)}
+        </FieldSelect></Field> : <span />}
+        <Field label="Роль"><FieldSelect aria-label="Роль приглашённого" value={role} onChange={e => setRole(e.target.value as InvitationRole)}>
+          <option value="employee">{ROLE_WORDS.employee}</option>
+          <option value="head">{ROLE_WORDS.head}</option>
+          {admin && <option value="admin">{ROLE_WORDS.admin}</option>}
+        </FieldSelect></Field>
+        <Pill tone="primary" size="md" className="h-[42px]" disabled={blocked} onClick={() => void submit()}>{busy ? "Создаём…" : "Получить ссылку"}</Pill>
+      </ActionForm>
+      <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Сотрудник войдёт по ссылке и сразу окажется в организации{units.length ? " и в выбранном отделе" : ""}. Ссылка сработает один раз и действует 7 дней.</p>
+      {roleBlocked && <div className="mt-2"><Notice>Чтобы пригласить руководителя, выберите его отдел.</Notice></div>}
+      {role === "admin" && <div className="mt-2"><Notice>Администратор видит и меняет материалы всех проектов, управляет людьми и правилами.</Notice></div>}
+      {error && <div className="mt-2"><Notice tone="danger">{error}</Notice></div>}
+      {created && <div role="region" aria-label="Ссылка-приглашение" className="mt-4 grid gap-2 border-t border-kumo-fill pt-4">
+        <strong className="text-[14px] font-medium">Ссылка для: {created.who}</strong>
+        <div className="flex flex-wrap items-center gap-2">
+          <FieldInput readOnly aria-label="Ссылка-приглашение" value={created.link} onFocus={e => e.currentTarget.select()} className="min-w-0 flex-1" />
+          <Pill onClick={() => void copy(created.link)}><Copy size={14} />Скопировать</Pill>
+          {copied && <Notice tone="success">Скопировано.</Notice>}
+        </div>
+      </div>}
+    </Card>
   </section>;
 }
 
-function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10, m100 = n % 100;
-  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many;
+/** Приглашение и открытые приглашения — для руководителя отдела без полномочия управления людьми. */
+export function InvitePanel({ units, allowNoUnit, admin }: { units: OrgUnit[]; allowNoUnit: boolean; admin: boolean }) {
+  const invitations = useInvitations();
+  const open = (invitations.list ?? []).filter(i => i.status === "open");
+  return <div className="grid gap-6">
+    <InviteForm units={units} allowNoUnit={allowNoUnit} admin={admin} onCreated={invitations.reload} />
+    <section aria-label="Приглашения">
+      <SectionHead title="Приглашения" />
+      {invitations.list === null ? <Notice>Загрузка приглашений…</Notice> : invitations.failed ? <Notice tone="danger">Список приглашений недоступен.</Notice> : open.length === 0 ? <Notice>Открытых приглашений нет.</Notice> :
+        <Card><InvitationRows list={invitations.list} onChanged={invitations.reload} /></Card>}
+    </section>
+  </div>;
 }
+
 /** Итог удаления отдела словами. */
 export function deletionSummary(name: string, out: OrgUnitDeletion): string {
   const parts = [
@@ -144,10 +171,10 @@ export function deletionSummary(name: string, out: OrgUnitDeletion): string {
   return `Отдел «${name}» удалён.${parts.length ? " " + parts.join(", ") + "." : ""}`;
 }
 
-/** Отделы для администратора: создать и удалить отдел, состав, руководитель. */
-export function DepartmentsPanel({ people }: { people: AdminPerson[] }) {
+/** Отделы для администратора: строка на отдел, «Удалить отдел» видна в строке сразу; состав раскрывается на месте. */
+export function DepartmentsPanel({ people, org }: { people: AdminPerson[]; org: OrgUnits }) {
   const ui = useUi();
-  const { units, loading, failed, reload } = useOrgUnits();
+  const { units, loading, failed, reload } = org;
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -167,53 +194,63 @@ export function DepartmentsPanel({ people }: { people: AdminPerson[] }) {
     setResult(deletionSummary(unit.name, out));
   }, "Отдел не удалён. Удалять отделы может только администратор организации; обновите список и повторите.");
   const createUnit = () => { const value = name.trim(); if (value) void run(async () => { await ui.createOrgUnit(value); setName(""); }, "Отдел не создан. Возможно, у вас нет права администратора организации."); };
-  return <section aria-label="Отделы" className="grid gap-5">
-    <ActionForm aria-label="Новый отдел" className="flex max-w-lg flex-wrap items-end gap-2" onAction={createUnit}>
-      <label className="grid flex-1 gap-1.5 text-sm">Новый отдел<TextInput value={name} onChange={e => setName(e.target.value)} placeholder="Например, Продажи" /></label>
-      <Button type="button" variant="secondary" disabled={busy || !name.trim()} onClick={createUnit}><Plus size={16} />Создать отдел</Button>
-    </ActionForm>
-    {error && <Notice tone="danger">{error}</Notice>}
-    {result && <Notice tone="success">{result}</Notice>}
-    {loading ? <Notice>Загрузка отделов…</Notice> : failed ? <Notice tone="danger">Отделы недоступны. Проверьте подключение и полномочия.</Notice> : units.length === 0 ? <Notice>Отделов пока нет. Создайте первый: руководитель отдела подтверждает, когда сотрудник делится проектом с отделом.</Notice> :
-      units.map(unit => {
-        const inside = new Set(unit.members.map(m => m.principal_id));
-        const candidates = people.filter(p => p.active && !inside.has(p.userName));
-        const heads = unit.members.filter(m => m.is_head).length;
-        return <section key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`} className="rounded-xl border border-kumo-line p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" aria-expanded={openUnit === unit.org_unit_id} onClick={() => setOpenUnit(openUnit === unit.org_unit_id ? "" : unit.org_unit_id)} className="text-left text-[15px] font-semibold hover:underline">{unit.name}</button>
-            <span className="text-[12px] text-kumo-subtle">{unit.members.length ? `сотрудников: ${unit.members.length}` : "пока никого"}</span>
-            {heads === 0 && unit.members.length > 0 && <StatusBadge tone="warning">Нет руководителя</StatusBadge>}
-            <div className="flex-1" />
-            {/* Кнопка видна в строке всегда: владелец не нашёл её за раскрытием отдела. */}
-            {deleting !== unit.org_unit_id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setOpenUnit(unit.org_unit_id); setDeleting(unit.org_unit_id); setResult(""); }}>Удалить отдел</Button>}
-          </div>
-          {openUnit === unit.org_unit_id && <div className="mt-3">
-          {deleting === unit.org_unit_id && <div role="region" aria-label={`Удаление отдела ${unit.name}`} className="mb-3 grid gap-2 rounded-lg border border-kumo-line bg-kumo-elevated p-3 text-[13px]">
-            <p className="m-0">Удалить отдел «{unit.name}»? Проекты, открытые отделу, станут видны только их создателям; сотрудники останутся в организации без отдела; незавершённые запросы и приглашения в отдел будут закрыты.</p>
-            <div className="flex gap-2">
-              <Button size="sm" variant="primary" disabled={busy} onClick={() => remove(unit)}>Удалить</Button>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setDeleting("")}>Отмена</Button>
+  const summary = (unit: OrgUnit): { text: string; warn: boolean } => {
+    const heads = unit.members.filter(m => m.is_head).map(m => nameOf(m.principal_id, m.display_name));
+    const count = unit.members.length ? `${unit.members.length} ${plural(unit.members.length, "сотрудник", "сотрудника", "сотрудников")}` : "пока никого";
+    if (!unit.members.length) return { text: count, warn: false };
+    return heads.length ? { text: `${count} · ${plural(heads.length, "руководитель", "руководители", "руководители")} ${heads.join(", ")}`, warn: false } : { text: `${count} · нет руководителя`, warn: true };
+  };
+  return <section aria-label="Отделы" className="min-w-0">
+    <SectionHead title="Отделы" />
+    {error && <div className="mb-2"><Notice tone="danger">{error}</Notice></div>}
+    {result && <div className="mb-2"><Notice tone="success">{result}</Notice></div>}
+    <Card>
+      {loading ? <CardRow><Notice>Загрузка отделов…</Notice></CardRow> : failed ? <CardRow><Notice tone="danger">Отделы недоступны. Проверьте подключение и полномочия.</Notice></CardRow> : units.length === 0 ? <CardRow><Notice>Отделов пока нет. Руководитель отдела подтверждает, когда сотрудник делится проектом с отделом.</Notice></CardRow> :
+        units.map(unit => {
+          const inside = new Set(unit.members.map(m => m.principal_id));
+          const candidates = people.filter(p => p.active && !inside.has(p.userName));
+          const expanded = openUnit === unit.org_unit_id;
+          const { text, warn } = summary(unit);
+          return <section key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`} className="border-t border-kumo-fill first:border-t-0">
+            <div className="flex items-center gap-2.5 px-4 py-3">
+              <span className="block min-w-0 flex-1">
+                <button type="button" aria-expanded={expanded} onClick={() => setOpenUnit(expanded ? "" : unit.org_unit_id)} className="block max-w-full break-words text-left text-[15px] font-medium text-kumo-default hover:underline">{unit.name}</button>
+                <span className={`block text-[13px] ${warn ? "text-kumo-warning" : "text-kumo-subtle"}`}>{text}</span>
+              </span>
+              {/* Кнопка видна в строке всегда: владелец не нашёл её за раскрытием отдела. */}
+              {deleting !== unit.org_unit_id && <Pill tone="danger" disabled={busy} onClick={() => { setOpenUnit(unit.org_unit_id); setDeleting(unit.org_unit_id); setResult(""); }}>Удалить отдел</Pill>}
             </div>
-          </div>}
-          {unit.members.length > 0 && <RowList>{unit.members.map(m => {
-            const who = nameOf(m.principal_id, m.display_name);
-            return <Row key={m.principal_id}>
-              <RowText title={who} />
-              {m.is_head && <StatusBadge tone="success">Руководитель</StatusBadge>}
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => ui.setOrgUnitMember(unit.org_unit_id, m.principal_id, true, !m.is_head), "Изменение не сохранено.")}>{m.is_head ? "Снять руководство" : "Сделать руководителем"}</Button>
-              <Button size="sm" variant="ghost" aria-label={`Убрать из отдела: ${who}`} disabled={busy} onClick={() => void run(() => ui.setOrgUnitMember(unit.org_unit_id, m.principal_id, false, false), "Сотрудник не убран из отдела.")}><Trash size={16} /></Button>
-            </Row>;
-          })}</RowList>}
-          {candidates.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Select aria-label={`Добавить в отдел ${unit.name}`} value={adding[unit.org_unit_id] ?? ""} onChange={e => setAdding({ ...adding, [unit.org_unit_id]: e.target.value })}>
-              <option value="">Выберите сотрудника</option>
-              {candidates.map(p => <option key={p.userName} value={p.userName}>{p.displayName || "Сотрудник без имени"}</option>)}
-            </Select>
-            <Button size="sm" variant="secondary" disabled={busy || !adding[unit.org_unit_id]} onClick={() => { const who = adding[unit.org_unit_id]; if (who) void run(async () => { await ui.setOrgUnitMember(unit.org_unit_id, who, true, false); setAdding({ ...adding, [unit.org_unit_id]: "" }); }, "Сотрудник не добавлен в отдел."); }}>Добавить в отдел</Button>
-          </div>}
-          </div>}
-        </section>;
-      })}
+            {expanded && <div className="grid gap-2 px-4 pb-4">
+              {deleting === unit.org_unit_id && <div role="region" aria-label={`Удаление отдела ${unit.name}`} className="grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]">
+                <p className="m-0">Удалить отдел «{unit.name}»? Проекты, открытые отделу, станут видны только их создателям; сотрудники останутся в организации без отдела; незавершённые запросы и приглашения в отдел будут закрыты.</p>
+                <div className="flex gap-2">
+                  <Pill tone="primary" disabled={busy} onClick={() => remove(unit)}>Удалить</Pill>
+                  <Pill tone="ghost" disabled={busy} onClick={() => setDeleting("")}>Отмена</Pill>
+                </div>
+              </div>}
+              {unit.members.map(m => {
+                const who = nameOf(m.principal_id, m.display_name);
+                return <div key={m.principal_id} className="flex flex-wrap items-center gap-2 rounded-xl px-1 py-1 text-[14px]">
+                  <span className="min-w-0 flex-1 break-words">{who}</span>
+                  {m.is_head && <span className="rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] text-kumo-brand">Руководитель</span>}
+                  <Pill tone="ghost" disabled={busy} onClick={() => void run(() => ui.setOrgUnitMember(unit.org_unit_id, m.principal_id, true, !m.is_head), "Изменение не сохранено.")}>{m.is_head ? "Снять руководство" : "Сделать руководителем"}</Pill>
+                  <Pill tone="ghost" aria-label={`Убрать из отдела: ${who}`} disabled={busy} onClick={() => void run(() => ui.setOrgUnitMember(unit.org_unit_id, m.principal_id, false, false), "Сотрудник не убран из отдела.")}><Trash size={14} /></Pill>
+                </div>;
+              })}
+              {candidates.length > 0 && <div className="flex flex-wrap items-center gap-2">
+                <PillSelect aria-label={`Добавить в отдел ${unit.name}`} value={adding[unit.org_unit_id] ?? ""} onChange={e => setAdding({ ...adding, [unit.org_unit_id]: e.target.value })}>
+                  <option value="">Выберите сотрудника</option>
+                  {candidates.map(p => <option key={p.userName} value={p.userName}>{p.displayName || "Сотрудник без имени"}</option>)}
+                </PillSelect>
+                <Pill disabled={busy || !adding[unit.org_unit_id]} onClick={() => { const who = adding[unit.org_unit_id]; if (who) void run(async () => { await ui.setOrgUnitMember(unit.org_unit_id, who, true, false); setAdding({ ...adding, [unit.org_unit_id]: "" }); }, "Сотрудник не добавлен в отдел."); }}>Добавить в отдел</Pill>
+              </div>}
+            </div>}
+          </section>;
+        })}
+      <ActionForm aria-label="Новый отдел" className="flex flex-wrap items-center gap-2 border-t border-kumo-fill bg-kumo-base px-4 py-3" onAction={createUnit}>
+        <label className="min-w-0 flex-1"><span className="sr-only">Новый отдел</span><PillInput className="w-full" value={name} onChange={e => setName(e.target.value)} placeholder="Новый отдел, например «Продажи»" /></label>
+        <Pill disabled={busy || !name.trim()} onClick={createUnit}>Создать отдел</Pill>
+      </ActionForm>
+    </Card>
   </section>;
 }

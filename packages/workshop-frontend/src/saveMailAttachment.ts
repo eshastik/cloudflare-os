@@ -8,7 +8,7 @@ export function saveDocumentFile(bytes:Uint8Array,filename:string):void {
 }
 
 function saveDownloadedFile(bytes:Uint8Array,filename:string,maxBytes:number):void {
- if(!(bytes instanceof Uint8Array)||bytes.byteLength>maxBytes||typeof filename!=='string'||filename.length>4096)throw Error('Attachment unavailable.')
+ if(!(bytes instanceof Uint8Array)||bytes.byteLength>maxBytes||typeof filename!=='string'||filename.length>4096)throw Error('Вложение недоступно.')
  const name=filename.split(/[\\/]/).at(-1)!.replace(/[\x00-\x1f\x7f<>:"|?*\u202a-\u202e\u2066-\u2069]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,180)||'attachment'
  const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'application/octet-stream'}))
  const a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.append(a)

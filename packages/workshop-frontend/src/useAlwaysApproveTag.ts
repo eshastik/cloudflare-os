@@ -29,7 +29,7 @@ export function useAlwaysApproveTag(
       return true
     } catch (err) {
       console.error('Failed to enable auto-approval:', err)
-      toasts.add({ title: 'Failed to enable auto-approval', variant: 'error' })
+      toasts.add({ title: 'Не удалось включить автоодобрение', variant: 'error' })
       return false
     } finally {
       setProcessingActions(prev => {

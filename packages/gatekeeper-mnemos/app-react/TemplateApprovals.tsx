@@ -1,8 +1,8 @@
 import {BLUEPRINT_TEMPLATE_MIME} from '@gadgets/workshop-shared/blueprint-template';
 import {useState} from "react";
-import {Button} from "@cloudflare/kumo";
 import {useHost,useUi} from "./host.ts";
-import {Notice,Row,RowText,TextInput} from "./ui.tsx";
+import {Notice} from "./ui.tsx";
+import {Field,FieldInput,Pill,RowTitle} from "./admin-ui.tsx";
 import {personName} from "./data.ts";
 import {readTemplateProposalText,readTemplateBaselineText} from "../app/template-source.ts";
 import type {TemplatePromotionReview,TemplateScope} from "../src/work-templates.ts";
@@ -31,21 +31,21 @@ export function TemplateProposal({item,scope,onDone}:{item:TemplatePromotionRevi
    const result=await ui.executeSavedTemplateDecision(id);setSaved(result);if(!result.receipt)throw Error("Нет подтверждения");onDone();
   }catch{setReady(false);setError("Решение не подтверждено. Сначала проверьте его состояние.");}finally{setBusy(false);}
  }
- return <div className="border-b border-kumo-line py-2">
-  <Row><RowText title={proposal.message} note={`${scope.name} · версия ${proposal.template_revision} · от ${personName(proposal.user_id)}`}/><Button size="sm" variant="secondary" disabled={busy} onClick={()=>open?setOpen(false):void inspect()}>{open?"Свернуть":"Проверить шаблон"}</Button></Row>
-  {open&&<div className="space-y-3 px-3 pb-3 text-sm">
-   <p className="text-kumo-subtle">{proposal.expected_catalogue_revision?"Сравните предложение с общей версией, на основе которой оно подготовлено.":"Предлагается сделать шаблон доступным этому подразделению."}</p>
+ return <div className="border-t border-kumo-fill first:border-t-0" data-template-proposal="">
+  <div className="flex items-center gap-3 px-4 py-3"><RowTitle title={proposal.message||"Шаблон работы"} note={`${scope.name} · версия ${proposal.template_revision} · от ${personName(proposal.user_id)}`}/><Pill disabled={busy} aria-expanded={open} onClick={()=>open?setOpen(false):void inspect()}>{open?"Свернуть":"Проверить шаблон"}</Pill></div>
+  {open&&<div className="grid gap-3 px-4 pb-4 text-[14px]">
+   <p className="m-0 text-kumo-subtle">{proposal.expected_catalogue_revision?"Сравните предложение с общей версией, на основе которой оно подготовлено.":"Предлагается сделать шаблон доступным этому подразделению."}</p>
    {error&&<Notice tone="danger">{error}</Notice>}
-   {busy&&<p role="status">Проверяем…</p>}
-   {gadget&&ready&&<div><Button size="sm" variant="secondary" disabled={busy} onClick={()=>void openGadget()}>Открыть копию в гаджете</Button><p className="mt-1 text-xs text-kumo-subtle">Откроется отдельная рабочая копия. Для решения вернитесь назад; общий шаблон останется прежним.</p></div>}
+   {busy&&<p role="status" className="m-0 text-kumo-subtle">Проверяем…</p>}
+   {gadget&&ready&&<div><Pill disabled={busy} onClick={()=>void openGadget()}>Открыть копию рядом</Pill><p className="mt-1 mb-0 text-[12px] text-kumo-subtle">Откроется отдельная рабочая копия. Для решения вернитесь сюда; общий шаблон останется прежним.</p></div>}
    {text!==null&&<div className={baseline===null?"":"grid gap-3 lg:grid-cols-2"}>
-    {baseline!==null&&<section aria-label="До изменений"><h3 className="mb-2 font-medium">До изменений · общая версия {proposal.expected_catalogue_revision}</h3><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-kumo-line p-3 font-sans">{baseline}</pre></section>}
-    <section aria-label="Предложенная версия"><h3 className="mb-2 font-medium">Предложенная версия</h3><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg border border-kumo-line p-3 font-sans">{text}</pre></section>
+    {baseline!==null&&<section aria-label="До изменений"><h3 className="m-0 mb-2 text-[14px] font-medium">До изменений · общая версия {proposal.expected_catalogue_revision}</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-kumo-fill bg-kumo-overlay p-3 font-serif text-[14px]">{baseline}</pre></section>}
+    <section aria-label="Предложенная версия"><h3 className="m-0 mb-2 text-[14px] font-medium">Предложенная версия</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-kumo-fill bg-kumo-overlay p-3 font-serif text-[14px]">{text}</pre></section>
    </div>}
-   {!busy&&(!ready||text===null)&&<Button size="sm" variant="secondary" onClick={()=>void inspect()}>Повторить проверку</Button>}
-   {saved?<div><p>{saved.receipt?"Решение записано.":`Сохранено решение: ${saved.input.approved?"одобрить":"отклонить"}.`}</p>{!saved.receipt&&ready&&<Button size="sm" disabled={busy} onClick={()=>void decide()}>Повторить сохранённое решение</Button>}</div>:<>
-    <label className="flex max-w-xl flex-col gap-1">Комментарий<TextInput className="w-full" aria-label="Комментарий к шаблону" value={comment} disabled={busy||!ready} onChange={e=>setComment(e.target.value)}/></label>
-    <div className="flex gap-2"><Button size="sm" variant="secondary" disabled={busy||!ready||!comment.trim()} onClick={()=>void decide(false)}>Отклонить шаблон</Button><Button size="sm" disabled={busy||!ready||text===null||!comment.trim()} onClick={()=>void decide(true)}>Одобрить шаблон</Button></div>
+   {!busy&&(!ready||text===null)&&<div><Pill onClick={()=>void inspect()}>Повторить проверку</Pill></div>}
+   {saved?<div><p className="m-0">{saved.receipt?"Решение записано.":`Сохранено решение: ${saved.input.approved?"одобрить":"отклонить"}.`}</p>{!saved.receipt&&ready&&<Pill tone="primary" className="mt-2" disabled={busy} onClick={()=>void decide()}>Повторить сохранённое решение</Pill>}</div>:<>
+    <Field label="Комментарий" className="max-w-xl"><FieldInput aria-label="Комментарий к шаблону" value={comment} disabled={busy||!ready} onChange={e=>setComment(e.target.value)}/></Field>
+    <div className="flex gap-2"><Pill disabled={busy||!ready||!comment.trim()} onClick={()=>void decide(false)}>Отклонить шаблон</Pill><Pill tone="primary" disabled={busy||!ready||text===null||!comment.trim()} onClick={()=>void decide(true)}>Одобрить шаблон</Pill></div>
    </>}
   </div>}
  </div>;

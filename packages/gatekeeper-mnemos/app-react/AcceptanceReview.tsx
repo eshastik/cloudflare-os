@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { useUi } from "./host.ts";
 import { useLoad, type CollaborationItem } from "./data.ts";
-import { Notice } from "./ui.tsx";
+import { Button, Notice, textAreaClass } from "./ui.tsx";
 
 /** Приёмка результата поручения прямо во «Входящих»: что просили, что сделано, решение. */
 export default function AcceptanceReview({ item, onDone }: { item: CollaborationItem; onDone(): Promise<void> }) {
@@ -28,20 +27,20 @@ export default function AcceptanceReview({ item, onDone }: { item: Collaboration
     } finally { setBusy(false); }
   }
 
-  return <div className="space-y-3 text-[13px]">
+  return <div className="space-y-3 text-[14px] leading-5">
     {r.description && <p className="m-0 whitespace-pre-wrap">{r.description}</p>}
     {r.criteria && <p className="m-0 text-kumo-subtle">Что должно получиться: {r.criteria}</p>}
     {messages.loading && <Notice>Загружаем результат…</Notice>}
     {messages.error && <Notice tone="danger">{messages.error}</Notice>}
-    {result && <div aria-label="Результат" className="whitespace-pre-wrap rounded-lg border border-kumo-line bg-kumo-elevated p-3">{result.body}</div>}
+    {result && <div aria-label="Результат" className="whitespace-pre-wrap rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">{result.body}</div>}
     {!messages.loading && !messages.error && !result && <Notice>Текст результата не приложен.</Notice>}
-    <label className="grid gap-1">Комментарий
+    <label className="grid gap-1.5 text-kumo-subtle">Комментарий
       <textarea aria-label="Комментарий к приёмке" rows={3} value={comment} disabled={busy} onChange={e => setComment(e.target.value)}
-        className="w-full resize-y rounded-lg border border-kumo-line bg-kumo-base p-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring" />
+        className={textAreaClass} />
     </label>
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
     <div className="flex gap-2">
-      <Button variant="primary" size="sm" disabled={busy || !item.progress} onClick={() => void decide("accepted")}>Принять</Button>
+      <Button size="sm" disabled={busy || !item.progress} onClick={() => void decide("accepted")}>Принять</Button>
       <Button variant="secondary" size="sm" disabled={busy || !item.progress} onClick={() => void decide("changes_requested")}>Вернуть на доработку</Button>
     </div>
   </div>;

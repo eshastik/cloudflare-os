@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import type { OperationAuditEvent } from "../src/operation-audit.ts";
 import type { PlatformSignal, PlatformSignalOwnerPage, WorkJournalEntry } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
 import { agentNames, looksLikeId, UNNAMED_DOCUMENT, useLoad, type MemoryData } from "./data.ts";
 import { MEANINGFUL_ACTIONS, mergeJournal, unitNamesFrom, type JournalNames } from "./journal-words.ts";
-import { AdminDetails, Block, Notice, Row, RowList, RowText, Select, StatusBadge, TextInput } from "./ui.tsx";
+import { Notice, StatusBadge } from "./ui.tsx";
+import { Card, Pill, PillInput, PillSelect } from "./admin-ui.tsx";
 import { relativeTime } from "./time.ts";
 
 /** Подсистемы состояния: название и сигналы, из которых складывается строка. */
@@ -18,18 +18,23 @@ const SUBSYSTEMS: { title: string; keys: PlatformSignal["key"][]; ok: string; pr
 type Health = "ok" | "problem" | "unknown";
 const DOT: Record<Health, string> = { ok: "bg-kumo-success", problem: "bg-kumo-danger", unknown: "bg-kumo-fill" };
 
-/** «Журнал и состояние»: одна страница — панель состояния и журнал действий словами. */
+/** Проверки и их итог словами — для раскрытия «Подробнее для администратора». */
+const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт открывается", "external.login": "Вход сотрудников", dependencies: "База данных и хранилище файлов", "external.read": "Чтение материалов", "external.save": "Сохранение материалов" };
+const SIGNAL_STATES: Record<string, string> = { ok: "в порядке", firing: "есть сбой", unknown: "нет свежих данных" };
+const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила" };
+
+/** «Журнал и состояние»: одна страница — строка состояния и журнал действий словами. */
 export default function JournalTab({ data }: { data: MemoryData }) {
   const capabilities = data.identity?.capabilities ?? [];
   const admin = capabilities.includes("principal.manage");
-  return <>
+  return <div className="grid max-w-[820px] gap-6">
     {capabilities.includes("platform.metrics.read") && <SystemState admin={admin} />}
     {admin && <Journal data={data} />}
-  </>;
+  </div>;
 }
 
-/** Состояние системы одной панелью: строка на подсистему словами, числа карточками;
- * техническое раскрывается на месте под «Подробнее для администратора». */
+/** Состояние системы одной карточкой: «Всё работает» или какие части с перебоями и что делать; числа — строкой ниже;
+ * подробности проверок раскрываются на месте под «Подробнее для администратора». */
 function SystemState({ admin }: { admin: boolean }) {
   const ui = useUi();
   const metrics = useLoad(() => ui.readPlatformMetrics(), "Состояние системы не прочитано. Обновите страницу.", [ui]);
@@ -42,33 +47,39 @@ function SystemState({ admin }: { admin: boolean }) {
   });
   const owners = [...new Set((usage?.signal_owners ?? []).filter(o => o.owner_id).map(o => o.owner_name || "сотрудник"))];
   const problems = rows.filter(r => r.health === "problem").length;
-  return <Block title="Состояние системы">
+  const allOk = rows.every(r => r.health === "ok");
+  const overall: Health = problems ? "problem" : allOk ? "ok" : "unknown";
+  return <section aria-label="Состояние системы">
     {metrics.loading && !usage && <Notice>Загрузка…</Notice>}
     {metrics.error && <Notice tone="danger">{metrics.error}</Notice>}
-    {usage && <div className="grid gap-3" data-system-state="">
-      <p className="m-0 text-[13px] text-kumo-default">{problems ? `Есть проблемы: ${problems} из ${rows.length}.` : rows.every(r => r.health === "ok") ? "Всё работает." : "Часть проверок давно не приходила."} <span className="text-kumo-subtle">Проверено {relativeTime(usage.readiness?.checked_at || usage.recorded_at) || "недавно"}.</span></p>
-      <RowList>{rows.map(r => <Row key={r.title} data-subsystem={r.health}>
-        <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${DOT[r.health]}`} />
-        <RowText title={r.title} note={r.health === "ok" ? r.ok : r.health === "problem" ? r.problem : "Нет свежих данных проверки."} />
-      </Row>)}</RowList>
-      <p className="m-0 text-[13px] text-kumo-subtle">{owners.length ? `Ответственный: ${owners.join(", ")}.` : "Ответственный не назначен."}</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {([["Сотрудников вошло за сутки", usage.authenticated_users_24h], ["Входов за сутки", usage.human_logins_24h], ["Опубликовано материалов", usage.shared_publications]] as const).map(([label, value]) =>
-          <div key={label} className="rounded-lg border border-kumo-line p-3"><div className="text-lg font-semibold">{value}</div><div className="text-[12px] text-kumo-subtle">{label}</div></div>)}
+    {usage && <Card data-system-state="">
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+        <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${DOT[overall]}`} />
+        <span className="flex-1 text-[15px] text-kumo-default">{problems ? `Есть проблемы: ${problems} из ${rows.length}.` : allOk ? "Всё работает." : "Часть проверок давно не приходила."}</span>
+        <span className="text-[13px] text-kumo-subtle">{allOk ? rows.map(r => r.title.toLocaleLowerCase("ru-RU")).join(", ").replace(/^./, c => c.toLocaleUpperCase("ru-RU")) : `Проверено ${relativeTime(usage.readiness?.checked_at || usage.recorded_at) || "недавно"}`}</span>
       </div>
-      {admin && <details aria-label="Подробнее для администратора" className="text-[13px]">
+      {!allOk && <div className="grid gap-2 border-t border-kumo-fill px-5 py-3">{rows.map(r => <div key={r.title} data-subsystem={r.health} className="flex items-start gap-3 text-[13px]">
+        <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[r.health]}`} />
+        <span><span className="font-medium text-kumo-default">{r.title}.</span> <span className="text-kumo-subtle">{r.health === "ok" ? r.ok : r.health === "problem" ? r.problem : "Нет свежих данных проверки."}</span></span>
+      </div>)}</div>}
+      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-kumo-fill px-5 py-3">
+        {([["Сотрудников вошло за сутки", usage.authenticated_users_24h], ["Входов за сутки", usage.human_logins_24h], ["Опубликовано материалов", usage.shared_publications]] as const).map(([label, value]) =>
+          <span key={label} className="text-[13px] text-kumo-subtle"><span className="mr-1 text-[15px] font-semibold text-kumo-default">{value}</span>{label}</span>)}
+        <span className="text-[13px] text-kumo-subtle">{owners.length ? `Ответственный: ${owners.join(", ")}.` : "Ответственный не назначен."}</span>
+      </div>
+      {admin && <details aria-label="Подробнее для администратора" className="border-t border-kumo-fill px-5 py-3 text-[13px]">
         <summary className="cursor-pointer text-kumo-subtle">Подробнее для администратора</summary>
         <div className="mt-2 grid gap-3">
           <OwnerPicker onChanged={metrics.reload} />
           <div className="grid gap-1 text-[12px] text-kumo-subtle">
-            {signals.map(sig => <p key={sig.key} className="m-0 break-words">{sig.key}: {sig.state} · {sig.reason}{sig.observed_at ? ` · ${sig.observed_at}` : ""}</p>)}
-            {!!usage.readiness?.reasons.length && <p className="m-0 break-words">readiness: {usage.readiness.reasons.join("; ")}</p>}
-            {usage.deployment && <p className="m-0 break-words">{usage.deployment.environment} · {usage.deployment.release} · {usage.deployment.source_revision}</p>}
+            {signals.map(sig => <p key={sig.key} className="m-0 break-words">{SIGNAL_TITLES[sig.key] ?? "Другая проверка"}: {SIGNAL_STATES[sig.state] ?? sig.state}{SIGNAL_REASONS[sig.reason] ? ` · ${SIGNAL_REASONS[sig.reason]}` : ""}{sig.observed_at ? ` · ${new Date(sig.observed_at).toLocaleString("ru-RU")}` : ""}</p>)}
+            {!!usage.readiness?.reasons.length && <p className="m-0 break-words">Почему установка не готова: {usage.readiness.reasons.join("; ")}</p>}
+            {usage.deployment && <p className="m-0 break-words">Версия установки: {usage.deployment.release}</p>}
           </div>
         </div>
       </details>}
-    </div>}
-  </Block>;
+    </Card>}
+  </section>;
 }
 
 /** Один ответственный за состояние: назначается сразу на все проверки, по имени сотрудника. */
@@ -93,11 +104,11 @@ function OwnerPicker({ onChanged }: { onChanged(): Promise<void> }) {
     finally { setBusy(false); }
   }
   return <div className="flex flex-wrap items-center gap-2">
-    <Select aria-label="Ответственный за состояние" value={owner} disabled={busy || !people.value} onChange={e => setOwner(e.target.value)}>
+    <PillSelect aria-label="Ответственный за состояние" value={owner} disabled={busy || !people.value} onChange={e => setOwner(e.target.value)}>
       <option value="">Выберите ответственного</option>
       {(people.value ?? []).map(p => <option key={p.userName} value={p.userName}>{p.displayName || "Сотрудник без имени"}</option>)}
-    </Select>
-    <Button size="sm" variant="secondary" disabled={busy || !owner} onClick={() => void assign()}>Назначить ответственным</Button>
+    </PillSelect>
+    <Pill disabled={busy || !owner} onClick={() => void assign()}>Назначить ответственным</Pill>
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
   </div>;
 }
@@ -243,48 +254,53 @@ function Journal({ data }: { data: MemoryData }) {
   const allFailed = audit.failed && sources.every(([, w]) => w.failed);
   const refresh = () => { void loadAudit(null); void loadWork(projectIds, null); };
   const earlier = () => { if (audit.end > 0) void loadAudit(audit); void loadWork(projectIds, work); };
-  return <Block title="Журнал действий" actions={<Button variant="ghost" size="sm" disabled={loading > 0} onClick={refresh}>Обновить журнал</Button>}>
-    <div className="mb-3 flex flex-wrap items-center gap-2">
-      <TextInput type="search" aria-label="Поиск по журналу" placeholder="Найти: человек, действие, проект" value={query} onChange={e => setQuery(e.target.value)} className="min-w-[220px] flex-1" />
-      <Select aria-label="Кто" value={actor} onChange={e => setActor(e.target.value)}><option value="">Все люди и агенты</option>{actors.map(a => <option key={a} value={a}>{who(a)}</option>)}</Select>
-      <Select aria-label="Проект журнала" value={project} onChange={e => setProject(e.target.value)}><option value="">Все проекты</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Select>
+  const groups: { day: string; items: typeof shown }[] = [];
+  for (const item of shown) { const day = dayLabel(item.at); const last = groups.at(-1); if (last?.day === day) last.items.push(item); else groups.push({ day, items: [item] }); }
+  return <section aria-label="Журнал действий" className="grid gap-3">
+    <div className="flex flex-wrap items-center gap-2">
+      <h2 className="m-0 flex-1 text-[17px] font-semibold text-kumo-default">Что происходило</h2>
+      <PillInput type="search" aria-label="Поиск по журналу" placeholder="Кто, что, где" value={query} onChange={e => setQuery(e.target.value)} className="w-[200px]" />
+      <PillSelect aria-label="Кто" value={actor} onChange={e => setActor(e.target.value)}><option value="">Все люди и агенты</option>{actors.map(a => <option key={a} value={a}>{who(a)}</option>)}</PillSelect>
+      <PillSelect aria-label="Проект журнала" value={project} onChange={e => setProject(e.target.value)}><option value="">Все проекты</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</PillSelect>
+      <Pill tone="ghost" disabled={loading > 0} onClick={refresh}>Обновить журнал</Pill>
     </div>
     {loading > 0 && !items.length && <Notice>Загрузка…</Notice>}
     {allFailed && <Notice tone="danger">Журнал не прочитан. Для просмотра нужны права администратора.</Notice>}
     {!loading && started && !allFailed && shown.length === 0 && <Notice>{visible.length ? "Под выбранные условия ничего не подходит." : "Действий людей и агентов пока не было."}</Notice>}
-    {shown.length > 0 && <RowList>{shown.map(item => {
-      const { line } = item;
-      const inProject = line.projectId ? data.projects.find(p => p.id === line.projectId) : undefined;
-      const e = item.audit[0];
-      const w = item.work;
-      const state = w ? (w.outcome === "accepted" ? { tone: "success" as const, label: "Выполнено" } : w.outcome === "awaiting_approval" ? { tone: "neutral" as const, label: "Ждёт одобрения" } : { tone: "neutral" as const, label: "Возвращено" })
-        : e.reason === "requested" ? { tone: "neutral" as const, label: "Начато" } : e.allowed ? { tone: "success" as const, label: "Выполнено" } : { tone: "danger" as const, label: "Не выполнено" };
-      const author = w ? w.actor : e.actor;
-      const behalf = w ? w.on_behalf_of ?? "" : e.on_behalf_of;
-      return <div key={item.key} data-journal-event="" data-journal-source={w ? (item.audit.length ? "work+audit" : "work") : "audit"} data-technical={line.technical ? "" : undefined} className="border-t border-kumo-line first:border-t-0">
-        <button type="button" aria-expanded={opened === item.key} onClick={() => setOpened(opened === item.key ? "" : item.key)} className="flex w-full items-center gap-3 p-3 text-left hover:bg-kumo-tint">
-          <RowText title={line.text} note={relativeTime(item.at)} />
-          <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
-        </button>
-        {opened === item.key && <div className="px-3 pb-3 text-[13px]">
-          <p className="m-0">{who(author)}{behalf && behalf !== author ? ` по поручению: ${who(behalf)}` : ""} · {new Date(item.at).toLocaleString("ru-RU")}{inProject ? ` · проект «${inProject.name}»` : ""}</p>
-          {w ? <>
-            {w.purpose && <p className="m-0">Зачем: {w.purpose}</p>}
-            {w.summary.trim().includes("\n") && <p className="m-0 whitespace-pre-line">{w.summary.trim()}</p>}
-            <p className="m-0 text-kumo-subtle">{w.outcome === "accepted" ? "Работа принята." : w.outcome === "awaiting_approval" ? "Работа ждёт одобрения." : "Работа возвращена."}{w.changed.length ? ` Затронуто файлов: ${w.changed.length}.` : ""}</p>
-          </> : <p className="m-0 text-kumo-subtle">{e.reason === "requested" ? "Действие начато; результат — отдельной записью." : e.allowed ? "Действие выполнено." : "Действие не выполнено: отказ или ошибка."}</p>}
-          <AdminDetails show items={[
-            ...(w ? [["Журнал работ", `${w.source} · запись ${w.entry_id}${w.result.reference ? ` · ${w.result.reference}` : ""}`] as [string, string]] : []),
-            ...item.audit.map(a => [`Операция ${a.id}`, `${a.action} · ${a.resource}`] as [string, string]),
-          ]} />
-        </div>}
-      </div>;
-    })}</RowList>}
-    {more && <div className="mt-2"><Button variant="ghost" size="sm" disabled={loading > 0} onClick={earlier}>{loading > 0 ? "Загрузка…" : "Показать более ранние"}</Button></div>}
-    {!allFailed && (audit.failed || deniedProjects.length > 0) && <p data-journal-unavailable="" className="mt-2 mb-0 text-[12px] text-kumo-subtle">
+    {groups.map(group => <div key={group.day} className="grid gap-1.5">
+      <div className="px-1 text-[13px] font-medium text-kumo-subtle">{group.day}</div>
+      <Card>{group.items.map(item => {
+        const { line } = item;
+        const inProject = line.projectId ? data.projects.find(p => p.id === line.projectId) : undefined;
+        const e = item.audit[0];
+        const w = item.work;
+        const state = w ? (w.outcome === "accepted" ? null : w.outcome === "awaiting_approval" ? { tone: "neutral" as const, label: "Ждёт одобрения" } : { tone: "neutral" as const, label: "Возвращено" })
+          : e.reason === "requested" ? { tone: "neutral" as const, label: "Начато" } : e.allowed ? null : { tone: "danger" as const, label: "Не выполнено" };
+        const author = w ? w.actor : e.actor;
+        const behalf = w ? w.on_behalf_of ?? "" : e.on_behalf_of;
+        const reference = w?.result.reference && !looksLikeId(w.result.reference) ? w.result.reference : "";
+        return <div key={item.key} data-journal-event="" data-journal-source={w ? (item.audit.length ? "work+audit" : "work") : "audit"} data-technical={line.technical ? "" : undefined} className="border-t border-kumo-fill first:border-t-0">
+          <button type="button" aria-expanded={opened === item.key} onClick={() => setOpened(opened === item.key ? "" : item.key)} className="flex w-full items-start gap-3.5 px-4 py-3 text-left text-[14px] hover:bg-kumo-tint">
+            <span className="w-11 shrink-0 pt-px text-[13px] tabular-nums text-kumo-subtle">{clock(item.at)}</span>
+            <span className={`min-w-0 flex-1 break-words ${line.technical ? "text-kumo-subtle" : "text-kumo-default"}`}>{/[.!?…]$/.test(line.text) ? line.text : `${line.text}.`}</span>
+            {state && <StatusBadge tone={state.tone}>{state.label}</StatusBadge>}
+          </button>
+          {opened === item.key && <div className="grid gap-1 px-4 pb-3 text-[13px] sm:pl-[74px]">
+            <p className="m-0">{who(author)}{behalf && behalf !== author ? ` по поручению: ${who(behalf)}` : ""} · {new Date(item.at).toLocaleString("ru-RU")}{inProject ? ` · проект «${inProject.name}»` : ""}</p>
+            {w ? <>
+              {w.purpose && <p className="m-0">Зачем: {w.purpose}</p>}
+              {w.summary.trim().includes("\n") && <p className="m-0 whitespace-pre-line">{w.summary.trim()}</p>}
+              <p className="m-0 text-kumo-subtle">{w.outcome === "accepted" ? "Работа принята." : w.outcome === "awaiting_approval" ? "Работа ждёт одобрения." : "Работа возвращена."}{w.changed.length ? ` Затронуто файлов: ${w.changed.length}.` : ""}{reference ? ` Результат: ${reference}.` : ""}</p>
+            </> : <p className="m-0 text-kumo-subtle">{e.reason === "requested" ? "Действие начато; результат — отдельной записью." : e.allowed ? "Действие выполнено." : "Действие не выполнено: отказ или ошибка."}</p>}
+          </div>}
+        </div>;
+      })}</Card>
+    </div>)}
+    {more && <div><Pill tone="ghost" disabled={loading > 0} onClick={earlier}>{loading > 0 ? "Загрузка…" : "Показать более ранние"}</Pill></div>}
+    {!allFailed && (audit.failed || deniedProjects.length > 0) && <p data-journal-unavailable="" className="m-0 text-[12px] text-kumo-subtle">
       Показано не всё.{audit.failed ? " Журнал операций организации не прочитан: нужны права администратора." : ""}{deniedProjects.length ? ` Нет доступа к журналу работ ${deniedProjects.length === 1 ? "проекта" : "проектов"}: ${deniedProjects.map(n => `«${n}»`).join(", ")}.` : ""}
     </p>}
-    <details aria-label="Настройки журнала" className="mt-3 text-[13px]">
+    <details aria-label="Настройки журнала" className="text-[13px]">
       <summary className="cursor-pointer text-kumo-subtle">Настройки журнала</summary>
       <label className="mt-2 flex items-center gap-2">
         <input type="checkbox" aria-label="Показывать служебные" checked={technical} onChange={e => setTechnical(e.target.checked)} />
@@ -292,5 +308,20 @@ function Journal({ data }: { data: MemoryData }) {
       </label>
       <p className="mt-1 mb-0 text-kumo-subtle">Служебные записи — это технические шаги системы: чтения, продление входа, работа хранилища и поиска.{audit.dropped ? ` Их много, поэтому показаны только последние ${TECHNICAL_KEEP}.` : ""}</p>
     </details>
-  </Block>;
+  </section>;
+}
+
+/** «Сегодня», «Вчера» или дата словами — заголовок группы журнала. */
+function dayLabel(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "Раньше";
+  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(date)) / 86_400_000);
+  if (days === 0) return "Сегодня";
+  if (days === 1) return "Вчера";
+  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long", ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
+}
+function clock(at: string): string {
+  const date = new Date(at);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }

@@ -5,13 +5,14 @@ import type { AuthenticatedApi, OutputFormatOffer } from '@gadgets/workshop-shar
 import { useAuthenticatedApi } from './AuthContext'
 import { WorkshopButton, WorkshopIconButton } from './components/WorkshopControls'
 import { FormatGlyph } from './components/format/FormatVisuals'
+import { localizedNoun } from './components/format/formats'
 
 export type ChatTemplate = { id: string; title: string; description: string; format?: OutputFormatOffer }
 type CatalogApi = Pick<AuthenticatedApi, 'listOwnBlueprints' | 'listLibraryBlueprints' | 'listFeaturedBlueprints' | 'listOutputFormats'>
 
 export async function loadChatTemplates(api: CatalogApi): Promise<{ items: ChatTemplate[]; failed: number }> {
   const results = await Promise.allSettled([
-    api.listOutputFormats().then(items => items.map(format => ({ id: format.blueprintId, title: format.output.noun, description: format.description, format }))),
+    api.listOutputFormats().then(items => items.map(format => ({ id: format.blueprintId, title: localizedNoun(format.output.noun), description: format.description, format }))),
     api.listOwnBlueprints().then(items => items.map(({ id, title, description }) => ({ id, title, description }))),
     api.listLibraryBlueprints().then(items => items.map(({ id, metadata }) => ({ id, title: metadata.title, description: metadata.description }))),
     api.listFeaturedBlueprints().then(items => items.map(({ id, metadata }) => ({ id, title: metadata.title, description: metadata.description }))),

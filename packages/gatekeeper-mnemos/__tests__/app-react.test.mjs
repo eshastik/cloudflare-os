@@ -88,9 +88,9 @@ test("прямые разделы Mnemos: материалы, согласова
     await app.open("Входящие");
     await until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");
     app.document.querySelector('#root [data-inbox="approval"] button').click();
-    await until(() => button("Одобрить") && button("Отклонить"), "кнопки решения");
+    await until(() => app.button("Согласовать") && button("Отклонить"), "кнопки решения");
     assert.ok(text().includes("Инженерия") && text().includes("bob") && text().includes("1 из 2"));
-    button("Одобрить").click();
+    app.button("Согласовать").click();
     await until(() => text().includes("Одобрение записано"), "подтверждение одобрения");
     assert.deepEqual(decisions, [[REVIEW, "Инженерия", 3, true]]);
 

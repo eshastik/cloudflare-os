@@ -1,12 +1,12 @@
-import { useState, type ReactNode } from "react";
-import { Button } from "@cloudflare/kumo";
+import { useEffect, useState, type ReactNode } from "react";
+import { CalendarBlank, EnvelopeSimple, Wallet } from "@phosphor-icons/react";
 import type { TeamBudgetProposal } from "../src/mnemos-api.ts";
 import type { MailDraftReview } from "../src/mail-drafts.ts";
 import type { CalendarDraftReview } from "../src/calendar-drafts.ts";
 import { formatBudgetUSD } from "../app/budget-money.ts";
 import { useHost, useUi } from "./host.ts";
 import { agentName, projectName, useLoad, type MemoryData } from "./data.ts";
-import { Block, Notice, StatusBadge } from "./ui.tsx";
+import { Button, DecisionCard, Notice, textAreaClass } from "./ui.tsx";
 
 /** Сколько проектов опрашивать на заявки бюджета. */
 const BUDGET_PROJECTS = 10;
@@ -19,9 +19,10 @@ type Request =
 const SEND_PROVIDERS = ["google", "microsoft", "apple", "yandex", "imap"];
 const MEETING_PROVIDERS = ["google", "microsoft", "apple", "yandex", "caldav"];
 
-/** Просьбы агентов к человеку во «Входящих»: письма, встречи и расходы. Карточка — одна главная кнопка,
- * подробности раскрываются на месте. Решение записывается ровно по показанной версии. */
-export default function AgentRequests({ data }: { data: MemoryData }) {
+/** Просьбы агентов к человеку во «Входящих»: письма, встречи и расходы — карточками в общем списке.
+ * Кнопки решения на карточке, текст письма или задачи раскрывается на месте. Решение записывается
+ * ровно по показанной версии. Число карточек сообщается «Входящим» для подзаголовка. */
+export default function AgentRequests({ data, onCount }: { data: MemoryData; onCount?(count: number): void }) {
   const ui = useUi();
   const userId = data.identity?.subject.user_id ?? "";
   const projectIds = data.projects.slice(0, BUDGET_PROJECTS).map(p => p.id).join(",");
@@ -54,11 +55,11 @@ export default function AgentRequests({ data }: { data: MemoryData }) {
     return out;
   }, "Просьбы агентов не прочитаны. Обновите страницу.", [ui, userId, projectIds]);
   const list = requests.value ?? [];
-  if (!requests.error && list.length === 0) return null;
-  return <Block title="Просьбы агентов" count={list.length}>
+  useEffect(() => { onCount?.(list.length); }, [onCount, list.length]);
+  return <>
     {requests.error && <Notice tone="danger">{requests.error}</Notice>}
-    <div className="grid gap-3">{list.map(r => <RequestCard key={r.key} request={r} data={data} onDone={requests.reload} />)}</div>
-  </Block>;
+    {list.map(r => <RequestCard key={r.key} request={r} data={data} onDone={requests.reload} />)}
+  </>;
 }
 
 function RequestCard({ request, data, onDone }: { request: Request; data: MemoryData; onDone(): Promise<void> }) {
@@ -85,12 +86,12 @@ function RequestCard({ request, data, onDone }: { request: Request; data: Memory
     note = `${agent} подготовил письмо`;
     const canSend = SEND_PROVIDERS.includes(request.provider);
     primary = d.state === "approved"
-      ? <Button variant="primary" size="sm" disabled={busy || !canSend} onClick={() => void act(() => host.sendMailDraft(d.id, d.sha256), "Письмо отправлено.", "Отправка не подтверждена. Проверьте почту, прежде чем отправлять снова.")}>Отправить</Button>
-      : <Button variant="primary" size="sm" disabled={busy} onClick={() => void act(async () => { await ui.decideMailDraft(d.id, d.sha256, true); if (canSend) await host.sendMailDraft(d.id, d.sha256); }, canSend ? "Письмо согласовано и отправлено." : "Письмо согласовано.", "Не получилось. Обновите страницу и проверьте письмо ещё раз.")}>{canSend ? "Согласовать и отправить" : "Согласовать"}</Button>;
+      ? <Button disabled={busy || !canSend} onClick={() => void act(() => host.sendMailDraft(d.id, d.sha256), "Письмо отправлено.", "Отправка не подтверждена. Проверьте почту, прежде чем отправлять снова.")}>Отправить</Button>
+      : <Button disabled={busy} onClick={() => void act(async () => { await ui.decideMailDraft(d.id, d.sha256, true); if (canSend) await host.sendMailDraft(d.id, d.sha256); }, canSend ? "Письмо согласовано и отправлено." : "Письмо согласовано.", "Не получилось. Обновите страницу и проверьте письмо ещё раз.")}>{canSend ? "Согласовать и отправить" : "Согласовать"}</Button>;
     if (d.state === "pending") reject = () => void act(() => ui.decideMailDraft(d.id, d.sha256, false), "Письмо отклонено.", "Решение не записано. Обновите страницу.");
     details = <>
       <p className="m-0">Кому: {d.content.to.join(", ")}{d.content.cc?.length ? ` · копия: ${d.content.cc.join(", ")}` : ""}</p>
-      <pre className="m-0 whitespace-pre-wrap rounded-lg border border-kumo-line bg-kumo-elevated p-3 font-sans">{d.content.body}</pre>
+      <pre className="m-0 whitespace-pre-wrap rounded-[12px] bg-kumo-base p-3 font-sans">{d.content.body}</pre>
       {!!d.content.attachments?.length && <p className="m-0 text-kumo-subtle">Вложения: {d.content.attachments.map(a => a.filename).join(", ")}</p>}
     </>;
   } else if (request.kind === "meeting") {
@@ -100,43 +101,37 @@ function RequestCard({ request, data, onDone }: { request: Request; data: Memory
     note = `${agent} предлагает встречу${d.content.attendees.length ? ` с ${d.content.attendees.join(", ")}` : ""}`;
     const canCreate = MEETING_PROVIDERS.includes(request.provider);
     primary = d.state === "approved"
-      ? <Button variant="primary" size="sm" disabled={busy || !canCreate} onClick={() => void act(() => host.createCalendarDraft(d.id, d.sha256), "Встреча создана в календаре.", "Создание не подтверждено. Проверьте календарь, прежде чем повторять.")}>Создать встречу</Button>
-      : <Button variant="primary" size="sm" disabled={busy} onClick={() => void act(async () => { await ui.decideCalendarDraft(d.id, d.sha256, true); if (canCreate) await host.createCalendarDraft(d.id, d.sha256); }, canCreate ? "Встреча согласована и создана." : "Встреча согласована.", "Не получилось. Обновите страницу и проверьте встречу ещё раз.")}>{canCreate ? "Согласовать и создать" : "Согласовать"}</Button>;
+      ? <Button disabled={busy || !canCreate} onClick={() => void act(() => host.createCalendarDraft(d.id, d.sha256), "Встреча создана в календаре.", "Создание не подтверждено. Проверьте календарь, прежде чем повторять.")}>Создать встречу</Button>
+      : <Button disabled={busy} onClick={() => void act(async () => { await ui.decideCalendarDraft(d.id, d.sha256, true); if (canCreate) await host.createCalendarDraft(d.id, d.sha256); }, canCreate ? "Встреча согласована и создана." : "Встреча согласована.", "Не получилось. Обновите страницу и проверьте встречу ещё раз.")}>{canCreate ? "Согласовать и создать" : "Согласовать"}</Button>;
     if (d.state === "pending") reject = () => void act(() => ui.decideCalendarDraft(d.id, d.sha256, false), "Встреча отклонена.", "Решение не записано. Обновите страницу.");
     details = <>
       <p className="m-0">С {when} до {new Date(d.content.end).toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" })}{d.content.location ? ` · ${d.content.location}` : ""}</p>
-      {d.content.description && <pre className="m-0 whitespace-pre-wrap rounded-lg border border-kumo-line bg-kumo-elevated p-3 font-sans">{d.content.description}</pre>}
+      {d.content.description && <pre className="m-0 whitespace-pre-wrap rounded-[12px] bg-kumo-base p-3 font-sans">{d.content.description}</pre>}
     </>;
   } else {
     const p = request.proposal;
     title = `Расход до ${formatBudgetUSD(p.proposal.limit_usd_micros)} $ на задачу «${p.proposal.task.slice(0, 80)}»`;
     note = `проект «${projectName(data.projects, request.project)}» · оценка ${formatBudgetUSD(p.proposal.estimate_usd_micros)} $ · агентов: ${p.proposal.members.length}`;
     const decide = (decision: "approved" | "rejected") => ui.decideTeamBudget(request.project, p.id, { decision_id: crypto.randomUUID(), expected_revision: p.decision?.revision ?? 0, policy_revision: request.policyRevision, decision, comment: comment.trim() || (decision === "approved" ? "Разрешено." : "Отклонено.") });
-    primary = <Button variant="primary" size="sm" disabled={busy} onClick={() => void act(() => decide("approved"), "Расход разрешён.", "Решение не записано: заявка или правила бюджета могли измениться.")}>Разрешить</Button>;
+    primary = <Button disabled={busy} onClick={() => void act(() => decide("approved"), "Расход разрешён.", "Решение не записано: заявка или правила бюджета могли измениться.")}>Разрешить</Button>;
     reject = () => void act(() => decide("rejected"), "Расход отклонён.", "Решение не записано. Обновите страницу.");
     details = <>
-      <pre className="m-0 whitespace-pre-wrap rounded-lg border border-kumo-line bg-kumo-elevated p-3 font-sans">{p.proposal.task}</pre>
+      <pre className="m-0 whitespace-pre-wrap rounded-[12px] bg-kumo-base p-3 font-sans">{p.proposal.task}</pre>
       {p.proposal.criteria && <p className="m-0 text-kumo-subtle">Что должно получиться: {p.proposal.criteria}</p>}
     </>;
   }
 
-  return <article data-agent-request={request.kind} className="rounded-xl border border-kumo-line bg-kumo-base p-4 text-[13px]">
-    <div className="flex items-start gap-3">
-      <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <div className="font-medium text-kumo-default">{title}</div>
-        <div className="mt-0.5 text-[12px] text-kumo-subtle">{note}</div>
-      </button>
-      <StatusBadge tone="warning">{request.kind === "mail" ? "Письмо" : request.kind === "meeting" ? "Встреча" : "Расход"}</StatusBadge>
-    </div>
-    <div className="mt-3 flex flex-wrap items-center gap-2">
+  const icon = request.kind === "mail" ? <EnvelopeSimple size={20} /> : request.kind === "meeting" ? <CalendarBlank size={20} /> : <Wallet size={20} />;
+  return <DecisionCard data-agent-request={request.kind} icon={icon} tone="warning" title={title} note={note} onToggle={() => setOpen(!open)} expanded={open}
+    actions={<>
       {primary}
-      <Button variant="ghost" size="sm" onClick={() => setOpen(!open)}>{open ? "Свернуть" : "Подробнее"}</Button>
-    </div>
-    {open && <div className="mt-3 grid gap-2">
+      {reject && <Button variant="secondary" disabled={busy} onClick={reject}>Отклонить</Button>}
+      <Button variant="ghost" onClick={() => setOpen(!open)}>{open ? "Свернуть" : "Подробнее"}</Button>
+    </>}>
+    {open && <div className="grid gap-2 text-[14px] sm:ml-[54px]">
       {details}
-      {request.kind === "budget" && <label className="grid gap-1">Комментарий<textarea aria-label="Комментарий к решению" rows={2} value={comment} disabled={busy} onChange={e => setComment(e.target.value)} className="w-full resize-y rounded-lg border border-kumo-line bg-kumo-base p-2 text-[13px]" /></label>}
-      {reject && <div><Button variant="secondary" size="sm" disabled={busy} onClick={reject}>Отклонить</Button></div>}
+      {request.kind === "budget" && <label className="grid gap-1">Комментарий к решению<textarea aria-label="Комментарий к решению" rows={2} value={comment} disabled={busy} onChange={e => setComment(e.target.value)} className={textAreaClass} /></label>}
     </div>}
-    {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-  </article>;
+    {notice && <div className="sm:ml-[54px]"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
+  </DecisionCard>;
 }

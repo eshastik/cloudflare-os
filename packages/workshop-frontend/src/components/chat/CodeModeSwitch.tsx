@@ -15,13 +15,14 @@ export type CodeModeSwitchProps = {
 };
 
 export function CodeModeSwitch({ mode, onChange, disabled = false }: CodeModeSwitchProps) {
+  // Сегментный переключатель по макету «Работа с кодом»: подпись «Код:» и три положения.
   return (
-    <div className="inline-flex flex-shrink-0 items-center gap-1 text-[11px] leading-4 text-kumo-inactive">
-      <span aria-hidden>Код:</span>
+    <div className="inline-flex flex-shrink-0 items-center gap-0.5 rounded-xl bg-kumo-tint p-[3px] text-[13px] leading-4">
+      <span aria-hidden className="pr-2 pl-1.5 text-kumo-subtle">Код:</span>
       <div
         role="radiogroup"
         aria-label="Работа с кодом"
-        className="inline-flex items-center rounded-full border border-kumo-line bg-kumo-elevated/40 p-px"
+        className="inline-flex items-center gap-0.5"
       >
         {OPTIONS.map((option) => {
           const checked = option.mode === mode;
@@ -34,8 +35,10 @@ export function CodeModeSwitch({ mode, onChange, disabled = false }: CodeModeSwi
               title={option.hint}
               disabled={disabled}
               onClick={() => { if (!checked) onChange(option.mode); }}
-              className={`cursor-pointer rounded-full px-1.5 py-px transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-50 ${
-                checked ? "bg-kumo-base text-kumo-default shadow-sm" : "text-kumo-inactive hover:text-kumo-default"
+              className={`h-[26px] cursor-pointer rounded-[9px] px-2.5 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-50 ${
+                checked
+                  ? "bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]"
+                  : "text-kumo-subtle hover:text-kumo-default"
               }`}
             >
               {option.label}

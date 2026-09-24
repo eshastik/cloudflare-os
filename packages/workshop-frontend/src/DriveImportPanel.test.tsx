@@ -20,14 +20,14 @@ it.each(['google','yandex','memory'])('%s restores an unconfirmed capture after 
  const click=async(label:string)=>{const b=[...container.querySelectorAll('button')].find(b=>b.textContent===label);expect(b).toBeDefined();await act(async()=>b!.click())}
  const fill=async(label:string,value:string)=>{const el=container.querySelector(`[aria-label="${label}"]`) as HTMLInputElement|HTMLSelectElement;const prototype=el.tagName==='INPUT'?HTMLInputElement.prototype:HTMLSelectElement.prototype;await act(async()=>{Object.getOwnPropertyDescriptor(prototype,'value')!.set!.call(el,value);el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('input',{bubbles:true}))})}
  try{
-  await act(async()=>root.render(<DriveImportPanel/>));await fill('Drive source account','7');await fill('Аккаунт-получатель диска',vendor==='memory'?'7':'8');await fill('Drive project','project');await fill('Drive file','file')
-  if(vendor==='memory')await fill('Drive WebDAV account',webdav)
+  await act(async()=>root.render(<DriveImportPanel/>));await fill('Диск-источник','7');await fill('Аккаунт-получатель диска',vendor==='memory'?'7':'8');await fill('Проект получателя','project');await fill('Файл на диске','file')
+  if(vendor==='memory')await fill('Аккаунт WebDAV диска',webdav)
   await click('Сохранить копию');expect(container.textContent).toContain('Сохранение не подтверждено')
   const original=state.api.captureDriveImport.mock.calls[0];expect(original.slice(0,4)).toEqual([7,vendor==='memory'?7:8,vendor==='memory'?webdav+':file':'file','project']);expect(readDriveAttempt(sessionStorage,'owner')?.request).toBe(original[4])
   await act(async()=>root.unmount());root=createRoot(container);await act(async()=>root.render(<DriveImportPanel/>))
   expect(state.api.captureDriveImport).toHaveBeenCalledTimes(1)
   await click('Повторить сохранение');expect(state.api.captureDriveImport.mock.calls[1]).toEqual(original);expect(container.textContent).toContain('source-node')
-  state.owner='other';await act(async()=>root.render(<DriveImportPanel/>));expect(container.textContent).not.toContain(original[4]);expect(container.textContent).not.toContain('source-node');expect((container.querySelector('[aria-label="Drive file"]') as HTMLInputElement).value).toBe('')
+  state.owner='other';await act(async()=>root.render(<DriveImportPanel/>));expect(container.textContent).not.toContain(original[4]);expect(container.textContent).not.toContain('source-node');expect((container.querySelector('[aria-label="Файл на диске"]') as HTMLInputElement).value).toBe('')
   expect(sessionStorage.getItem(driveAttemptKey('owner'))).not.toBeNull();expect(sessionStorage.getItem(driveAttemptKey('other'))).toBeNull()
  }finally{await act(async()=>root.unmount());container.remove();sessionStorage.clear()}
  expect(disposed).toHaveBeenCalledTimes(3)

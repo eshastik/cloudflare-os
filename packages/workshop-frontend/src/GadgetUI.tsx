@@ -323,7 +323,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       if (!isCurrent()) return
       loadGenerationRef.current++      // so a late reply can no longer write state
       setLoading(false)
-      setError('Timed out loading this view.')
+      setError('Экран не загрузился вовремя.')
       resolveSupport(true)
       attempt?.finish("timeout")
     }, UI_BUNDLE_LOAD_TIMEOUT_MS)
@@ -353,7 +353,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       } catch (err) {
         if (!isCurrent()) return
         console.error('Failed to load UI bundle:', err)
-        setError('Failed to load UI bundle')
+        setError('Не удалось загрузить экран')
         resolveSupport(true)
         attempt?.finish("error")
       } finally {
@@ -425,7 +425,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           port.close()
           if (!isCurrent()) return
           console.error('Failed to establish RPC connection:', caught)
-          setError('Failed to connect gadget to server')
+          setError('Не удалось связаться с приложением')
           readinessRef.current?.finish("error")
         } finally {
           if (handshakePendingRef.current === generation) handshakePendingRef.current = null
@@ -466,7 +466,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
         style={{ height }}
       >
         <Text variant="secondary">
-          Switch to this tab to load the Gadget UI
+          Откройте эту вкладку, чтобы загрузить гаджет
         </Text>
       </div>
     )
@@ -496,7 +496,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       }}>
         <Banner
           variant="error"
-          title="Error"
+          title="Ошибка"
           description={error}
           action={
             <Banner.Action
@@ -507,7 +507,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
                 setRetryNonce(n => n + 1)
               }}
             >
-              Try again
+              Попробовать ещё раз
             </Banner.Action>
           }
         />
@@ -518,7 +518,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   if (!sandboxedHtml) {
     return (
       <div
-        className="relative overflow-hidden bg-kumo-base"
+        className="relative overflow-hidden bg-kumo-overlay"
         style={{
           height,
           display: 'flex',
@@ -539,10 +539,10 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           </div>
           <div className="space-y-1">
             <h2 className="text-[20px] leading-7 font-normal tracking-[-0.45px] text-kumo-default">
-              No gadget UI yet
+              Интерфейса пока нет
             </h2>
             <p className="text-[15px] leading-5 font-normal tracking-[-0.3px] text-kumo-subtle">
-              When the gadget builds one, it will appear here.
+              Когда агент соберёт гаджет, он появится здесь.
             </p>
           </div>
         </div>
@@ -563,7 +563,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           border: 'none'
         }}
         sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-        title="Gadget UI"
+        title="Гаджет"
       />
     </div>
   )

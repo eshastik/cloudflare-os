@@ -2,16 +2,17 @@ import type { GatekeeperAppInfo } from '@gadgets/workshop-shared/api'
 
 // Левое меню по роли человека (ревизия интерфейса 24.09.2026). Роль выводится из разделов,
 // которые приложение отдаёт по полномочиям (managementSections):
-//   • всем — «Входящие», «Проекты», «Материалы»;
+//   • всем — «Входящие», «Проекты» (раздела «Материалы» в меню нет: файлы живут в проектах,
+//     найти любой — поиском ⌘K; редизайн 24.09.2026);
 //   • руководителю — «Мой отдел» (team);
-//   • администратору — пять разделов группы manage: люди, правила, подключения, агенты, журнал.
+//   • администратору — пять разделов группы manage плоским списком: люди, правила, подключения,
+//     агенты, журнал. Экран моделей открывается из «Настроек», отдельного пункта меню у него нет.
 // Пункт показывается, только если раздел пришёл из приложения. Решения по согласованиям живут
 // во «Входящих», отдельного пункта для них нет.
 
 export type NavRole = 'employee' | 'manager' | 'admin'
 export type NavIcon =
-  | 'inbox' | 'projects' | 'documents' | 'team' | 'people' | 'rules' | 'connections' | 'agents'
-  | 'journal' | 'models'
+  | 'inbox' | 'projects' | 'team' | 'people' | 'rules' | 'connections' | 'agents' | 'journal'
 
 export type NavLink = {
   key: string
@@ -24,17 +25,15 @@ export type NavLink = {
   section?: string
   matchDefaultAccount?: boolean
   to?: string
-  // Вложенные ссылки на страницы оболочки, которые относятся к этому разделу.
-  children?: NavLink[]
 }
 
 export type RoleNavigation = {
   role: NavRole
-  // Всем: Входящие, Проекты, Материалы («Новая беседа» и «Беседы» рисует меню само).
+  // Всем: Входящие, Проекты («Новая беседа», поиск и беседы меню рисует само).
   primary: NavLink[]
   // Руководителю: «Мой отдел».
   manager: NavLink[]
-  // Администратору: пункт «Управление», ровно разделы из договора с приложением.
+  // Администратору: ровно разделы из договора с приложением, плоским списком.
   management: NavLink[]
 }
 
@@ -43,7 +42,6 @@ type Spec = { id: string; label: string; icon: NavIcon }
 const PRIMARY: Spec[] = [
   { id: 'my-work', label: 'Входящие', icon: 'inbox' },
   { id: 'projects', label: 'Проекты', icon: 'projects' },
-  { id: 'documents', label: 'Материалы', icon: 'documents' },
 ]
 const MANAGER: Spec[] = [
   { id: 'team', label: 'Мой отдел', icon: 'team' },
@@ -55,9 +53,6 @@ const MANAGEMENT: Spec[] = [
   { id: 'agents', label: 'Агенты и расходы', icon: 'agents' },
   { id: 'journal', label: 'Журнал и состояние', icon: 'journal' },
 ]
-
-// Экран моделей — страница оболочки; администратор открывает его из «Агентов и расходов».
-const MODELS: NavLink = { key: 'manage:models', label: 'Модели', icon: 'models', to: '/providers' }
 
 type Section = NonNullable<GatekeeperAppInfo['sections']>[number]
 
@@ -92,8 +87,5 @@ export function buildRoleNavigation(apps: GatekeeperAppInfo[]): RoleNavigation {
   const primary = pick(PRIMARY, 'primary')
   const manager = pick(MANAGER, 'manager')
   const management = pick(MANAGEMENT, 'manage', isManagement)
-  // Экран моделей один на установку, поэтому ссылка на него — только у первых «Агентов и расходов».
-  const agents = management.find(link => link.section === 'agents')
-  if (agents) agents.children = [MODELS]
   return { role, primary, manager, management }
 }

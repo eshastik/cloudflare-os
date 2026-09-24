@@ -1,7 +1,8 @@
 import { Link, useRouterState, type LinkProps } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 
-// A single nav row in the sidebar. Renders as a TanStack <Link>. Active state is computed from the
+// A single nav row in the sidebar (макет Sidebar: строка 40 px, шрифт 15 px, активный пункт — плашка).
+// Renders as a TanStack <Link>. Active state is computed from the
 // current router pathname so we can also tint the icon (TanStack's activeProps only swaps top-level
 // className, not child styles). When `collapsed` is true the label is hidden but kept in the DOM for
 // screen readers / hover-tooltips.
@@ -18,6 +19,8 @@ export type SidebarItemProps = {
   collapsed?: boolean
   /** When true, match this item active when the current path starts with `to`. */
   matchPrefix?: boolean
+  /** Малый пункт (разделы администратора): ниже строка, мельче шрифт. */
+  compact?: boolean
 }
 
 export default function SidebarItem({
@@ -32,6 +35,7 @@ export default function SidebarItem({
   trailing,
   collapsed = false,
   matchPrefix = false,
+  compact = false,
 }: SidebarItemProps) {
   // Resolve the active path manually so we can style the icon as well as the row. For parameterized
   // routes (e.g. "/gatekeepers/$appId"), substitute the params so the resolved path can match.
@@ -59,24 +63,30 @@ export default function SidebarItem({
       aria-current={isActive ? 'page' : undefined}
       title={collapsed ? label : undefined}
       className={[
-        'group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-[18px] tracking-[-0.25px] transition-colors',
+        'group relative flex items-center rounded-[10px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring',
+        compact ? 'h-8 gap-2.5 px-3 text-[14px] leading-5' : 'h-10 gap-3 px-3 text-[15px] leading-5',
+        collapsed ? 'justify-center px-0' : '',
         isActive
-          ? 'bg-kumo-fill font-medium text-kumo-strong'
+          ? 'bg-kumo-fill font-medium text-kumo-default'
           : 'font-normal text-kumo-default hover:bg-kumo-tint',
       ].join(' ')}
     >
-      <span
-        className={[
-          'flex h-5 w-5 shrink-0 items-center justify-center transition-colors',
-          isActive ? 'text-kumo-brand' : 'text-kumo-subtle group-hover:text-kumo-default',
-        ].join(' ')}
-      >
-        {icon}
-      </span>
-      {!collapsed && (
+      {icon && (
+        <span
+          className={[
+            'flex h-5 w-5 shrink-0 items-center justify-center transition-colors',
+            isActive ? 'text-kumo-brand' : 'text-kumo-default',
+          ].join(' ')}
+        >
+          {icon}
+        </span>
+      )}
+      {collapsed ? (
+        !icon && <span className="sr-only">{label}</span>
+      ) : (
         <>
           <span className="min-w-0 flex-1 truncate">{label}</span>
-          {trailing && <span className="shrink-0 text-kumo-inactive">{trailing}</span>}
+          {trailing && <span className="shrink-0">{trailing}</span>}
         </>
       )}
     </Link>

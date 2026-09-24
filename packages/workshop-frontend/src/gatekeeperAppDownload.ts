@@ -28,7 +28,7 @@ export async function downloadGatekeeperFile(storageOrigin:string,ticket:Gatekee
 async function downloadVerifiedBytes(
   storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal, maxBytes: number,
 ): Promise<Uint8Array> {
-  const failure = () => new Error('Document download failed.')
+  const failure = () => new Error('Не удалось скачать документ.')
   try {
     const origin = new URL(storageOrigin), url = new URL(ticket.url)
     if (origin.protocol !== 'https:' || origin.origin !== storageOrigin ||
@@ -63,7 +63,7 @@ async function downloadVerifiedBytes(
 
 async function downloadVerifiedText(storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal, maxBytes: number): Promise<string> {
   try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await downloadVerifiedBytes(storageOrigin, ticket, signal, maxBytes)) }
-  catch { throw new Error('Document download failed.') }
+  catch { throw new Error('Не удалось скачать документ.') }
 }
 
 /** Fetch a bounded office export and recheck source access before offering a local download. */
@@ -93,7 +93,7 @@ export async function downloadGatekeeperNativeDocument(
   signal: AbortSignal,
   validateAccess: () => Promise<void>,
 ): Promise<NativeDocumentSnapshot> {
-  const failure = () => new Error('Native document download failed.')
+  const failure = () => new Error('Не удалось скачать документ.')
   try {
     const mime = `application/vnd.${format}+json`
     if ((!isNativeDocumentFormat(format)) ||

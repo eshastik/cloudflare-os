@@ -596,7 +596,7 @@ export default function GatekeeperModal({
     try {
       const result = await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns)
       window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Complete the account connection in the new tab.', variant: 'success' })
+      toasts.add({ title: 'Завершите подключение аккаунта в новой вкладке.', variant: 'success' })
     } catch (error) {
       console.error('Failed to initiate connection:', error)
       reportIssue('gatekeeper.connect-start', error, { gatekeeperVendorId: vendorId })
@@ -618,7 +618,7 @@ export default function GatekeeperModal({
       const result = await authenticatedApi.ensureAccountResources(accountId, missing)
       if (result.url) {
         window.open(result.url, '_blank', 'noopener,noreferrer')
-        toasts.add({ title: 'Grant the additional access in the new tab.', variant: 'success' })
+        toasts.add({ title: 'Выдайте дополнительный доступ в новой вкладке.', variant: 'success' })
       }
       // The new grant arrives via subscribeConnectedAccounts(); the account's flag then clears and
       // the configurator loads automatically.
@@ -638,7 +638,7 @@ export default function GatekeeperModal({
     try {
       const result = await authenticatedApi.reconnectAccount(accountId)
       window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Complete the account reconnect in the new tab.', variant: 'success' })
+      toasts.add({ title: 'Завершите повторное подключение в новой вкладке.', variant: 'success' })
     } catch (error) {
       console.error('Failed to initiate reconnect:', error)
       reportIssue('gatekeeper.reconnect-start', error, {
@@ -725,10 +725,10 @@ export default function GatekeeperModal({
     let transferred = false
     try {
       if (!configuratorFrameState?.frame || configuratorFrameState.accountId !== selectedAccountId || configuratorFrameState.resourceUrlPattern !== resourceUrlPattern) {
-        throw new Error('Configurator is not ready.')
+        throw new Error('Настройка ещё не готова.')
       }
       const resourceUrl = await configuratorCollectResourceUrlRef.current?.()
-      if (!resourceUrl) throw new Error('Configurator did not provide a resource URL.')
+      if (!resourceUrl) throw new Error('Настройка не вернула адрес ресурса.')
       const overseer = await getOverseer()
       gatekeeper = await overseer.newGatekeeper(selectedAccountId, resourceUrl)
       if (gatekeeper) {

@@ -55,8 +55,8 @@ test("Предложенный Blueprint открывается отдельно
  const app=await mountMemoryApp(backend,{section:'approvals',downloadText:JSON.stringify(snapshot)});
  try{
   await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
-  await app.until(()=>app.button('Открыть копию в гаджете')&&!app.button('Открыть копию в гаджете').disabled,'копия доступна');
-  app.button('Открыть копию в гаджете').click();await app.until(()=>app.calls.some(([method])=>method==='openTemplateProposal'),'открытие через хост');
+  await app.until(()=>app.button('Открыть копию рядом')&&!app.button('Открыть копию рядом').disabled,'копия доступна');
+  app.button('Открыть копию рядом').click();await app.until(()=>app.calls.some(([method])=>method==='openTemplateProposal'),'открытие через хост');
   assert.deepEqual(app.calls.find(([method])=>method==='openTemplateProposal'),['openTemplateProposal','project','doc','q']);
   assert.equal(backend.writes.length,0,'открытие не утверждает предложение');
  }finally{app.dispose();}

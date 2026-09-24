@@ -141,7 +141,7 @@ function formatConsoleLogs(logs: BufferedLogEntry[]): string {
     const parts = log.message.map(p => (typeof p === 'string' ? p : JSON.stringify(p)))
     return `[${log.source} ${log.level}] ${parts.join(' ')}`
   })
-  return 'Console logs:\n' + lines.join('\n')
+  return 'Записи консоли:\n' + lines.join('\n')
 }
 
 // ─── right-panel tabs ─────────────────────────────────────────────────────────
@@ -186,20 +186,21 @@ function PaneLabel({
 }: {
   icon?: Icon
   output?: BlueprintOutput
-  title: string
+  // null — название показывает сам гаджет внутри; в шапке остаётся только значок типа.
+  title: string | null
   badge?: string
 }) {
   return (
     <div
-      title={title}
-      className="inline-flex w-full min-w-0 max-w-[180px] items-center gap-1.5 overflow-hidden rounded-lg bg-kumo-tint px-2.5 py-1.5 text-[13px] font-medium tracking-[-0.15px] text-kumo-default"
+      title={title ?? formatOf(output).noun}
+      className="inline-flex min-w-0 items-center gap-2 overflow-hidden text-kumo-default"
     >
       {LabelIcon
-        ? <LabelIcon size={14} weight="bold" className="flex-shrink-0" />
-        : <FormatGlyph output={output} size="sm" className="flex-shrink-0" weight="regular" />}
-      <span className="truncate">{title}</span>
+        ? <LabelIcon size={18} className="flex-shrink-0" />
+        : <FormatGlyph output={output} size="md" className="flex-shrink-0" weight="regular" />}
+      {title !== null && <span className="truncate text-[14px] leading-5 text-kumo-subtle">{title}</span>}
       {badge !== undefined && (
-        <span className="rounded-full bg-kumo-fill px-1.5 py-0.5 text-[10px] font-medium leading-none text-kumo-subtle">
+        <span className="flex-shrink-0 rounded-full bg-kumo-tint px-2 py-0.5 text-[11px] font-medium leading-4 text-kumo-subtle">
           {badge}
         </span>
       )}
@@ -310,9 +311,13 @@ function PaneTab({
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`relative flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium tracking-[-0.15px] transition-colors duration-150 ${
-        active ? 'bg-kumo-tint text-kumo-default' : 'text-kumo-subtle hover:text-kumo-default'
+      className={`relative flex h-[26px] cursor-pointer items-center gap-1.5 rounded-[9px] px-2.5 text-[13px] leading-4 transition-colors duration-150 ${
+        active
+          ? 'bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]'
+          : 'text-kumo-subtle hover:text-kumo-default'
       }`}
     >
       {label}
@@ -331,7 +336,15 @@ function nativeFormatOf(outputId?: string) {
   return outputId === 'document' ? 'cloudflareos.document' as const : outputId === 'spreadsheet' ? 'cloudflareos.spreadsheet' as const : outputId === 'presentation' ? 'cloudflareos.presentation' as const : null
 }
 const MIN_WORKSPACE_WIDTH = 400
-const DEFAULT_CHAT_WIDTH = 420
+const DEFAULT_CHAT_WIDTH = 440
+const CARD_GAP = 12
+const GADGET_HEADER_H = 56
+const FULLSCREEN_HEADER_H = 64
+
+// Пилюли шапки гаджета по макету: главная — заливка акцентом, значки — круглые.
+const PILL_PRIMARY = 'inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full bg-kumo-brand px-3.5 text-[13px] leading-4 font-medium text-white transition-colors duration-150 hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40'
+const ROUND_ICON = 'inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40'
+const GADGET_CARD_SHADOW = 'shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]'
 const WORKSPACE_TRANSITION_MS = 200
 
 const isBrowser = typeof window !== 'undefined'
@@ -1262,9 +1275,10 @@ export default function GadgetEditor() {
   }
 
   // ── shared height tokens ──────────────────────────────────────────────────────
-  const TOPBAR_H = 56   // h-14 (matches home page Header)
-  const TABBAR_H = 48   // h-12
-  const RIGHT_CONTENT_H = `calc(100dvh - var(--shell-top, 0px) - ${TOPBAR_H}px - ${TABBAR_H}px)`
+  // Шапка беседы (64) и шапка карточки гаджета; карточка отстоит от краёв на CARD_GAP.
+  const TOPBAR_H = 64
+  const RIGHT_CONTENT_H = `calc(100dvh - var(--shell-top, 0px) - ${2 * CARD_GAP}px - ${GADGET_HEADER_H}px)`
+  const FULLSCREEN_CONTENT_H = `calc(100dvh - ${FULLSCREEN_HEADER_H}px)`
 
   // ── error / loading states ────────────────────────────────────────────────────
   if (error?.kind === 'open') {
@@ -1335,143 +1349,146 @@ export default function GadgetEditor() {
   }
 
   // ── always render the full two-pane edit layout; preview overlays on top ──────
+  const selectedNativeFormat = nativeFormatOf(selectedGadgetSummary?.output?.id)
+  // Встроенные редакторы (документ, таблица, презентация) сами показывают своё название внутри;
+  // у прочих гаджетов шапка карточки называет рабочее место некрупным текстом.
+  const headerTitle = selectedNativeFormat ? null : selectedGadgetSummary?.title ?? metadata.title
+  // Сюда попадает только роль build: роль use уходит в GadgetUseView выше. Код и подключения
+  // показываются там, где они нужны: у произвольного гаджета, или когда агент сам переключил
+  // вкладку на код. У документа, таблицы и презентации переключателя нет.
+  const showBuildTabs = !isGadgetFullscreen && (selectedNativeFormat === null || activeTab !== 'app')
+  const presence = (
+    <GadgetPresence
+      overseer={overseer.stub}
+      authenticatedApi={authenticatedApi}
+      currentUserId={userInfo?.id ?? null}
+      agentActive={isAgentActive}
+    />
+  )
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-kumo-base relative">
-      {/* ═══ SHARED TOP BAR (visible in both modes) ════════════════════════════ */}
+    <div className="flex h-full overflow-hidden bg-kumo-base relative">
+      {/* ── LEFT: беседа — шапка и лента ───────────────────────────────────────── */}
       <div
-        className="relative flex items-center justify-between px-4 sm:px-6 backdrop-blur-md border-b border-kumo-line flex-shrink-0 gap-3"
-        style={{ height: TOPBAR_H, backgroundColor: 'color-mix(in srgb, var(--color-kumo-base) 80%, transparent)' }}
+        className={`flex flex-col flex-shrink-0 min-w-0 ${workspaceTransitionClass}`}
+        style={{
+          width: showFullEditor
+            ? chatWidth
+            : `calc(100% - ${outputRailWidth}px)`,
+        }}
       >
-        <TopBarNotice />
-        {/* Left: logo / title */}
-        {/* The rail carries the logo and profile; on phones its menu button sits over our left edge. */}
-        <div className="flex items-center gap-2 min-w-0 pl-10 md:pl-0">
-          {isEditingTitle ? (
-            <div className="flex items-center gap-1">
-              <WorkshopInput
-                type="text"
-                value={titleInput}
-                onChange={e => setTitleInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleSaveTitle()
-                  if (e.key === 'Escape') handleCancelEdit()
-                }}
-                autoFocus
-                className="!h-7 w-56 bg-kumo-tint text-[14px] leading-5 font-medium tracking-[-0.25px]"
-              />
-              <WorkshopIconButton
-                onClick={handleSaveTitle}
-                disabled={!titleInput.trim()}
-                className="!h-7 !w-7 hover:text-kumo-brand disabled:opacity-30"
-                aria-label="Сохранить название"
-              >
-                <Check size={14} />
-              </WorkshopIconButton>
-              <WorkshopIconButton
-                onClick={handleCancelEdit}
-                className="!h-7 !w-7"
-                aria-label="Отменить правку названия"
-              >
-                <X size={14} />
-              </WorkshopIconButton>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 min-w-0">
-              <span className="text-[14px] leading-5 font-medium tracking-[-0.25px] text-kumo-default truncate">
-                {metadata.title}
-              </span>
-              <WorkshopIconButton
-                onClick={() => setIsEditingTitle(true)}
-                className="!h-7 !w-7 flex-shrink-0"
-                title="Переименовать пространство"
-                aria-label="Переименовать пространство"
-              >
-                <Pencil size={16} />
-              </WorkshopIconButton>
-            </div>
-          )}
-
-          {metadata.owner && (
-            <span className="text-xs text-kumo-inactive flex-shrink-0">
-              автор: {metadata.owner.name}
-            </span>
-          )}
-        </div>
-
-        {/* Right: who is here, pending actions, and one labelled menu for everything else. */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <GadgetPresence
-            overseer={overseer.stub}
-            authenticatedApi={authenticatedApi}
-            currentUserId={userInfo?.id ?? null}
-          />
-
-          <ActivityNotifications
-            overseer={overseer.stub}
-            pendingActions={pendingActions}
-            onViewActivity={openActivity}
-          />
-
-          {connectionLost && (
-            <span className="text-xs text-kumo-warning px-2 py-0.5 rounded-full bg-kumo-warning-tint border border-kumo-warning/20">
-              Переподключение…
-            </span>
-          )}
-
-          <DropdownMenu>
-            <DropdownMenu.Trigger
-              render={
-                <WorkshopIconButton title="Действия с беседой" aria-label="Действия с беседой">
-                  <DotsThree size={18} weight="bold" />
+        <header
+          className="relative flex items-center justify-between gap-3 border-b border-kumo-fill px-5 sm:px-7 flex-shrink-0"
+          style={{ height: TOPBAR_H }}
+        >
+          <TopBarNotice />
+          {/* The rail carries the logo and profile; on phones its menu button sits over our left edge. */}
+          <div className="flex min-w-0 items-center gap-3 pl-10 md:pl-0">
+            {isEditingTitle ? (
+              <div className="flex items-center gap-1">
+                <WorkshopInput
+                  type="text"
+                  value={titleInput}
+                  onChange={e => setTitleInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleSaveTitle()
+                    if (e.key === 'Escape') handleCancelEdit()
+                  }}
+                  autoFocus
+                  aria-label="Название беседы"
+                  className="!h-8 w-56 bg-kumo-overlay text-[15px] leading-5 font-semibold"
+                />
+                <WorkshopIconButton
+                  onClick={handleSaveTitle}
+                  disabled={!titleInput.trim()}
+                  className="!h-7 !w-7 hover:text-kumo-brand disabled:opacity-30"
+                  aria-label="Сохранить название"
+                >
+                  <Check size={14} />
                 </WorkshopIconButton>
-              }
+                <WorkshopIconButton
+                  onClick={handleCancelEdit}
+                  className="!h-7 !w-7"
+                  aria-label="Отменить правку названия"
+                >
+                  <X size={14} />
+                </WorkshopIconButton>
+              </div>
+            ) : (
+              <div className="group/title flex min-w-0 items-center gap-1">
+                <h1 className="m-0 truncate text-[16px] leading-6 font-semibold text-kumo-default">
+                  {metadata.title}
+                </h1>
+                <WorkshopIconButton
+                  onClick={() => setIsEditingTitle(true)}
+                  className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
+                  title="Переименовать беседу"
+                  aria-label="Переименовать беседу"
+                >
+                  <Pencil size={15} />
+                </WorkshopIconButton>
+              </div>
+            )}
+
+            {metadata.owner && (
+              <span className="flex-shrink-0 text-[14px] leading-5 text-kumo-subtle">
+                автор: {metadata.owner.name}
+              </span>
+            )}
+          </div>
+
+          {/* Right: who is here (when no file is open), pending actions, one menu for the rest. */}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {!showFullEditor && presence}
+
+            <ActivityNotifications
+              overseer={overseer.stub}
+              pendingActions={pendingActions}
+              onViewActivity={openActivity}
             />
-            <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
-              <DropdownMenu.Item onClick={() => setShareModalOpen(true)} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
-              {effectiveSelectedChatId !== null && (
-                <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
-              )}
-              <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
-              <DropdownMenu.Item onClick={() => openActivity('history')} className={MENU_ITEM}>Журнал действий</DropdownMenu.Item>
-              {metadata.totalCost != null && (
-                <div className="px-2.5 py-1.5 text-[12px] leading-4 text-kumo-subtle">Расходы: {formatHeaderCost(metadata.totalCost)}</div>
-              )}
-              {!metadata.owner && (
-                <>
-                  <DropdownMenu.Separator />
-                  <DropdownMenu.Item variant="danger" onClick={() => setDeleteDialogOpen(true)} className={MENU_ITEM_DANGER}>Удалить беседу</DropdownMenu.Item>
-                </>
-              )}
-            </DropdownMenu.Content>
-          </DropdownMenu>
-        </div>
-      </div>
 
-      {/* ═══ BODY ═════════════════════════════════════════════════════════════ */}
-      <div className="flex flex-1 min-h-0 relative overflow-hidden">
+            {connectionLost && (
+              <span className="text-xs text-kumo-warning px-2 py-0.5 rounded-full bg-kumo-warning-tint">
+                Переподключение…
+              </span>
+            )}
 
-        {isAgentActive && (
-          <div
-            className="absolute left-0 h-0 z-10"
-            style={{ top: simpleMode ? 0 : TABBAR_H, right: outputRailWidth }}
-          >
-            <div className="absolute left-0 right-0 h-0.5 bg-kumo-fill overflow-hidden">
+            <DropdownMenu>
+              <DropdownMenu.Trigger
+                render={
+                  <WorkshopIconButton title="Действия с беседой" aria-label="Действия с беседой">
+                    <DotsThree size={18} weight="bold" />
+                  </WorkshopIconButton>
+                }
+              />
+              <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
+                <DropdownMenu.Item onClick={() => setShareModalOpen(true)} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
+                {effectiveSelectedChatId !== null && (
+                  <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
+                <DropdownMenu.Item onClick={() => openActivity('history')} className={MENU_ITEM}>Журнал действий</DropdownMenu.Item>
+                {metadata.totalCost != null && (
+                  <div className="px-2.5 py-1.5 text-[12px] leading-4 text-kumo-subtle">Расходы: {formatHeaderCost(metadata.totalCost)}</div>
+                )}
+                {!metadata.owner && (
+                  <>
+                    <DropdownMenu.Separator />
+                    <DropdownMenu.Item variant="danger" onClick={() => setDeleteDialogOpen(true)} className={MENU_ITEM_DANGER}>Удалить беседу</DropdownMenu.Item>
+                  </>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu>
+          </div>
+        </header>
+
+        <div className="relative flex-1 min-h-0">
+          {isAgentActive && (
+            <div className="absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-kumo-fill">
               <div className="absolute inset-y-0 w-1/3 bg-kumo-brand animate-[thinking_1.5s_ease-in-out_infinite]" />
             </div>
-          </div>
-        )}
-
-        {/* ── LEFT: Chat pane ──────────────────────────────────────────────────── */}
-        <div
-          className={`flex flex-col flex-shrink-0 ${workspaceTransitionClass} ${showFullEditor ? 'border-r border-kumo-line' : ''}`}
-          style={{
-            width: showFullEditor
-              ? chatWidth
-              : `calc(100% - ${outputRailWidth}px)`,
-          }}
-        >
+          )}
           {overseer ? (
-            <div className="flex-1 min-h-0 relative">
+            <div className="h-full relative">
               <div className={layoutModeReady ? 'h-full' : 'h-full invisible'}>
                 <ChatInterface
                   key={id}
@@ -1516,41 +1533,68 @@ export default function GadgetEditor() {
               )}
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex h-full items-center justify-center">
               <div className="w-6 h-6 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
             </div>
           )}
         </div>
+      </div>
 
-        {/* ── Resize handle ───────────────────────────────────────────────────── */}
-        <div
-          className={`flex-shrink-0 overflow-visible bg-kumo-line cursor-col-resize relative touch-none ${workspaceTransitionClass}`}
-          style={{ width: showFullEditor ? 1 : 0 }}
-          onPointerDown={handleResizePointerDown}
-          onPointerMove={handleResizePointerMove}
-          onPointerUp={handleResizePointerUp}
-          onPointerCancel={handleResizePointerUp}
-        >
-          <div className="absolute inset-y-0 -left-2 -right-2" />
-        </div>
+      {/* ── Resize handle: невидимая полоса между беседой и карточкой гаджета ─────── */}
+      <div
+        className={`group/resize flex-shrink-0 overflow-visible cursor-col-resize relative touch-none ${workspaceTransitionClass}`}
+        style={{ width: showFullEditor ? CARD_GAP : 0 }}
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerUp}
+        onPointerCancel={handleResizePointerUp}
+        aria-hidden="true"
+      >
+        <div className="absolute inset-y-6 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-transparent transition-colors group-hover/resize:bg-kumo-interact" />
+      </div>
 
-        {/* ── RIGHT: App / Code / Connections tabs ───────────────────────────── */}
-        <div
-          className={`flex flex-shrink-0 min-w-0 overflow-hidden bg-kumo-base ${workspaceTransitionClass}`}
-          style={{
-            width: showFullEditor ? `calc(100% - ${chatWidth}px - 1px)` : 0,
-            opacity: showFullEditor ? 1 : 0,
-          }}
+      {/* ── RIGHT: карточка гаджета ──────────────────────────────────────────────── */}
+      {/* Скрытая карточка обрезается и не ловит нажатий; открытая не обрезается, чтобы тень легла на фон. */}
+      <div
+        className={`flex flex-shrink-0 min-w-0 ${showFullEditor ? '' : 'pointer-events-none overflow-hidden'} ${workspaceTransitionClass}`}
+        aria-hidden={showFullEditor ? undefined : true}
+        style={{
+          width: showFullEditor ? `calc(100% - ${chatWidth}px - ${CARD_GAP}px)` : 0,
+          opacity: showFullEditor ? 1 : 0,
+        }}
+      >
+        <section
+          ref={fullscreenOverlayRef}
+          tabIndex={isGadgetFullscreen ? -1 : undefined}
+          role={isGadgetFullscreen ? 'dialog' : undefined}
+          aria-modal={isGadgetFullscreen ? true : undefined}
+          aria-label={isGadgetFullscreen ? 'Гаджет на весь экран' : 'Открытый файл'}
+          className={isGadgetFullscreen
+            ? 'fixed inset-0 z-20 flex flex-col bg-kumo-base outline-none'
+            : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
-          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <div
-            className="flex items-center gap-2 border-b border-kumo-line px-3 flex-shrink-0"
-            style={{ height: TABBAR_H }}
+          <header
+            className={`flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
+              ? 'gap-3.5 border-b border-kumo-fill bg-kumo-overlay px-6'
+              : 'pl-5 pr-3'}`}
+            style={{ height: isGadgetFullscreen ? FULLSCREEN_HEADER_H : GADGET_HEADER_H }}
           >
-            <div className="flex min-w-0 flex-1 items-center overflow-hidden">
+            {isGadgetFullscreen && (
+              <button
+                type="button"
+                onClick={exitGadgetFullscreen}
+                aria-label="Закрыть полноэкранный режим"
+                title="Закрыть (Esc)"
+                className="inline-flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-kumo-overlay text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+              >
+                <X size={16} />
+              </button>
+            )}
+
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
               {paneShowsActivity ? (
                 <PaneLabel icon={Pulse} title="Активность" />
-              ) : visibleGadgets.length > 1 ? (
+              ) : visibleGadgets.length > 1 && !isGadgetFullscreen ? (
                 <PaneWorkpieceTabs
                   gadgets={visibleGadgets}
                   activeId={selectedGadgetId}
@@ -1559,14 +1603,33 @@ export default function GadgetEditor() {
               ) : selectedGadgetSummary && (
                 <PaneLabel
                   output={selectedGadgetSummary.output}
-                  title={selectedGadgetSummary.title}
+                  title={headerTitle}
                   badge={selectedGadgetSummary.chatId !== undefined ? 'Черновик' : undefined}
                 />
               )}
             </div>
 
-            <div className="flex flex-shrink-0 items-center gap-1.5">
-              <div className="flex items-center rounded-lg border border-kumo-line p-0.5">
+            {!paneShowsActivity && presence}
+
+            {!paneShowsActivity && selectedGadgetStub && selectedNativeFormat && (
+              <DocumentStatus
+                key={`${selectedGadgetId}:${previewChatId ?? 'workspace'}`}
+                gadget={selectedGadgetStub}
+                format={selectedNativeFormat}
+                snapshotSource={nativeSnapshotSource}
+                chatId={previewChatId}
+                disabled={activeTab !== 'app' || previewMode}
+                panelHost={versionPanelHost}
+                onCollapseChat={() => setChatWidth(MIN_CHAT_WIDTH)}
+              />
+            )}
+
+            {(paneShowsActivity || showBuildTabs) && (
+              <div
+                role="tablist"
+                aria-label={paneShowsActivity ? 'Раздел активности' : 'Что показать'}
+                className="flex flex-shrink-0 items-center gap-0.5 rounded-xl bg-kumo-tint p-[3px]"
+              >
                 {paneShowsActivity
                   ? ACTIVITY_TABS.map(tab => (
                     <PaneTab
@@ -1586,53 +1649,52 @@ export default function GadgetEditor() {
                     />
                   ))}
               </div>
+            )}
 
-              {!paneShowsActivity && selectedGadgetStub && nativeFormatOf(selectedGadgetSummary?.output?.id) && (
-                <DocumentStatus
-                  key={`${selectedGadgetId}:${previewChatId ?? 'workspace'}`}
-                  gadget={selectedGadgetStub}
-                  format={nativeFormatOf(selectedGadgetSummary?.output?.id)!}
-                  snapshotSource={nativeSnapshotSource}
-                  chatId={previewChatId}
-                  disabled={activeTab !== 'app' || previewMode}
-                  panelHost={versionPanelHost}
-                  onCollapseChat={() => setChatWidth(MIN_CHAT_WIDTH)}
-                />
-              )}
+            {!paneShowsActivity && (
+              <GadgetExportMenu
+                gadget={selectedGadgetStub}
+                gadgetTitle={selectedGadgetSummary?.title ?? 'Гаджет'}
+                chatId={previewChatId}
+                disabled={activeTab !== 'app' || previewMode}
+              />
+            )}
 
-              {!paneShowsActivity && (
-                <GadgetExportMenu
-                  gadget={selectedGadgetStub}
-                  gadgetTitle={selectedGadgetSummary?.title ?? 'Гаджет'}
-                  chatId={previewChatId}
-                  disabled={activeTab !== 'app' || previewMode}
-                />
-              )}
+            {!paneShowsActivity && (
+              <button type="button" className={PILL_PRIMARY} onClick={() => setShareModalOpen(true)}>
+                Поделиться
+              </button>
+            )}
 
-              {!paneShowsActivity && (
-                <WorkshopIconButton
-                  aria-label="На весь экран"
-                  title={activeTab === 'app' && !previewMode
-                    ? 'На весь экран'
-                    : `На весь экран — только во вкладке «${formatOf(selectedGadgetSummary?.output).noun}»`}
-                  onClick={enterGadgetFullscreen}
-                  disabled={activeTab !== 'app' || previewMode}
-                >
-                  <ArrowsOutSimple size={17} />
-                </WorkshopIconButton>
-              )}
+            {!paneShowsActivity && !isGadgetFullscreen && (
+              <button
+                type="button"
+                className={ROUND_ICON}
+                aria-label="Во весь экран"
+                title={activeTab === 'app' && !previewMode
+                  ? 'Во весь экран'
+                  : `Во весь экран — только в режиме «${formatOf(selectedGadgetSummary?.output).noun}»`}
+                onClick={enterGadgetFullscreen}
+                disabled={activeTab !== 'app' || previewMode}
+              >
+                <ArrowsOutSimple size={16} />
+              </button>
+            )}
 
-              <WorkshopIconButton
+            {!isGadgetFullscreen && (
+              <button
+                type="button"
+                className={`${ROUND_ICON} text-kumo-subtle`}
                 aria-label={paneShowsActivity ? 'Закрыть активность' : 'Закрыть панель гаджета'}
                 title="Закрыть"
                 onClick={closeWorkspacePane}
               >
-                <X size={16} />
-              </WorkshopIconButton>
-            </div>
-          </div>
+                <X size={15} />
+              </button>
+            )}
+          </header>
 
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="relative flex-1 min-h-0 overflow-hidden">
             {paneShowsActivity && (
               <Activity
                 overseer={overseer.stub}
@@ -1643,25 +1705,12 @@ export default function GadgetEditor() {
               />
             )}
             <div className={paneShowsActivity ? 'hidden' : 'contents'}>
-            <div
-              ref={fullscreenOverlayRef}
-              tabIndex={isGadgetFullscreen ? -1 : undefined}
-              role={isGadgetFullscreen ? 'dialog' : undefined}
-              aria-modal={isGadgetFullscreen ? true : undefined}
-              aria-label={isGadgetFullscreen ? 'Гаджет на весь экран' : undefined}
-              className={
-                activeTab !== 'app' || previewMode
-                  ? 'hidden'
-                  : isGadgetFullscreen
-                    ? 'fixed inset-0 z-20 bg-kumo-base outline-none'
-                    : 'h-full'
-              }
-            >
+            <div className={activeTab !== 'app' || previewMode ? 'hidden' : 'h-full'}>
               {selectedGadgetStub && !previewMode ? (
                 <GadgetUI
                   key={selectedGadgetId}
                   gadget={selectedGadgetStub}
-                  height={isGadgetFullscreen ? '100%' : RIGHT_CONTENT_H}
+                  height={isGadgetFullscreen ? FULLSCREEN_CONTENT_H : RIGHT_CONTENT_H}
                   reloadTrigger={uiReloadTrigger}
                   isVisible={activeTab === 'app' && !previewMode}
                   chatId={previewChatId}
@@ -1669,7 +1718,7 @@ export default function GadgetEditor() {
                   onIframeEscape={isGadgetFullscreen ? exitGadgetFullscreen : undefined}
                   nativeSnapshotSource={nativeSnapshotSource}
                   readinessApi={authenticatedApi}
-                  readinessSurface={selectedGadgetSummary?.output?.id === "document" ? "cloudflareos.document" : selectedGadgetSummary?.output?.id === "spreadsheet" ? "cloudflareos.spreadsheet" : selectedGadgetSummary?.output?.id === "presentation" ? "cloudflareos.presentation" : undefined}
+                  readinessSurface={selectedNativeFormat ?? undefined}
                 />
               ) : !previewMode && (
                 <NoGadgetPlaceholder height={RIGHT_CONTENT_H} />
@@ -1680,8 +1729,8 @@ export default function GadgetEditor() {
                   aria-live="polite"
                   className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 transform"
                 >
-                  <div className="rounded-full border border-kumo-line bg-kumo-base/90 px-4 py-1.5 text-[13px] leading-[18px] text-kumo-default shadow-md backdrop-blur-sm">
-                    Нажмите <kbd className="rounded border border-kumo-line bg-kumo-elevated px-1.5 py-0.5 text-[11px] font-medium">Esc</kbd>, чтобы выйти из полноэкранного режима
+                  <div className="rounded-full bg-kumo-contrast px-4 py-1.5 text-[13px] leading-[18px] text-white shadow-md">
+                    Нажмите <kbd className="rounded bg-white/15 px-1.5 py-0.5 text-[11px] font-medium">Esc</kbd>, чтобы выйти из полноэкранного режима
                   </div>
                 </div>
               )}
@@ -1724,28 +1773,27 @@ export default function GadgetEditor() {
                 <NoGadgetPlaceholder height={RIGHT_CONTENT_H} />
               )}
             </div>
-
             </div>
           </div>
-          <div ref={setVersionPanelHost} className="relative flex shrink-0" />
-          </div>
-        </div>
-
-        {showOutputRail && (
-          <WorkpiecePicker
-            gadgets={allGadgets}
-            selectedId={null}
-            agentEditingId={streamingActiveFile?.workpieceId ?? null}
-            hookedGadgetIds={hookedGadgetIds}
-            expanded={workpieceRailExpanded}
-            onExpandedChange={handleWorkpieceRailExpandedChange}
-            onSelect={handleSelectWorkpiece}
-            onRename={handleRenameWorkpiece}
-            pendingActivityCount={pendingActionsCount}
-            onOpenActivity={() => openActivity(pendingActionsCount > 0 ? 'review' : 'history')}
-          />
-        )}
+          {/* Панель «Версии» ложится поверх карточки справа; узел без собственной коробки. */}
+          <div ref={setVersionPanelHost} className="contents" />
+        </section>
       </div>
+
+      {showOutputRail && (
+        <WorkpiecePicker
+          gadgets={allGadgets}
+          selectedId={null}
+          agentEditingId={streamingActiveFile?.workpieceId ?? null}
+          hookedGadgetIds={hookedGadgetIds}
+          expanded={workpieceRailExpanded}
+          onExpandedChange={handleWorkpieceRailExpandedChange}
+          onSelect={handleSelectWorkpiece}
+          onRename={handleRenameWorkpiece}
+          pendingActivityCount={pendingActionsCount}
+          onOpenActivity={() => openActivity(pendingActionsCount > 0 ? 'review' : 'history')}
+        />
+      )}
 
       {/* ═══ PREVIEW OVERLAY ══════════════════════════════════════════════════ */}
       {previewMode && (

@@ -62,12 +62,12 @@ function CaptureForm({owner}:{owner:string}){
  const frozen=busy||!!pending
  return <IntegrationForm title="Копия файла с диска">
   <p>Выберите Google Drive, Яндекс Диск или WebDAV и проект получателя. Для Google укажите ID файла, для Яндекса — путь вида disk:/Папка/Документ.docx, для WebDAV — путь относительно подключённой папки. Внешний оригинал остаётся без изменений.</p>
-  <label>Диск <select aria-label="Drive source account" value={source} disabled={frozen} onChange={e=>setSource(e.target.value)}><option value="">Выберите аккаунт</option>{[...accounts].filter(([,a])=>isDriveSource(a)).map(([id,a])=><option key={id} value={id}>{a.vendor==='yandex'?'Яндекс Диск':a.receiver?'WebDAV':'Google Drive'} — {a.name}</option>)}</select></label>
-  {isWebdav&&<label>Аккаунт WebDAV <select aria-label="Drive WebDAV account" value={webdav} disabled={frozen} onChange={e=>setWebdav(e.target.value)}><option value="">Выберите аккаунт WebDAV</option>{webdavAccounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></label>}
+  <label>Диск <select aria-label="Диск-источник" value={source} disabled={frozen} onChange={e=>setSource(e.target.value)}><option value="">Выберите аккаунт</option>{[...accounts].filter(([,a])=>isDriveSource(a)).map(([id,a])=><option key={id} value={id}>{a.vendor==='yandex'?'Яндекс Диск':a.receiver?'WebDAV':'Google Drive'} — {a.name}</option>)}</select></label>
+  {isWebdav&&<label>Аккаунт WebDAV <select aria-label="Аккаунт WebDAV диска" value={webdav} disabled={frozen} onChange={e=>setWebdav(e.target.value)}><option value="">Выберите аккаунт WebDAV</option>{webdavAccounts.map(account=><option key={account.id} value={account.id}>{account.name}</option>)}</select></label>}
   {isWebdav&&!webdavAccounts.length&&<p>Добавьте аккаунт через «Аккаунты WebDAV» в подключении получателя.</p>}
   <label>Аккаунт-получатель <select aria-label="Аккаунт-получатель диска" value={target} disabled={frozen} onChange={e=>setTarget(e.target.value)}><option value="">Выберите аккаунт</option>{[...accounts].filter(([,a])=>a.receiver).map(([id,a])=><option key={id} value={id}>{a.name}</option>)}</select></label>
-  <label>Проект <input aria-label="Drive project" value={project} disabled={frozen} onChange={e=>setProject(e.target.value)}/></label>
-  <label>ID или путь файла <input aria-label="Drive file" value={file} disabled={frozen} onChange={e=>setFile(e.target.value)}/></label>
+  <label>Проект <input aria-label="Проект получателя" value={project} disabled={frozen} onChange={e=>setProject(e.target.value)}/></label>
+  <label>ID или путь файла <input aria-label="Файл на диске" value={file} disabled={frozen} onChange={e=>setFile(e.target.value)}/></label>
   <Button disabled={busy||!!receipt||storageError} onClick={()=>void capture()}>{pending?'Повторить сохранение':'Сохранить копию'}</Button>
   {pending&&<p>Запрос: <code>{pending.request}</code>. Он сохраняется при обновлении этой вкладки. Для нового запроса сохраните этот ID, если результат ещё не подтверждён.</p>}
   {(pending||storageError)&&<Button disabled={busy} onClick={reset}>Новый запрос</Button>}

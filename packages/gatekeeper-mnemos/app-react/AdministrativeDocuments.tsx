@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { FileText } from "@phosphor-icons/react";
 import type { AdminPerson } from "../src/admin-people.ts";
 import type { PrivateDocumentPage } from "../src/mnemos-api.ts";
 import type { MemoryData } from "./data.ts";
 import { useHost, useUi } from "./host.ts";
-import { Notice, Row, RowList, StatusBadge } from "./ui.tsx";
+import { Notice, StatusBadge } from "./ui.tsx";
+import { Card, CardRow, Pill } from "./admin-ui.tsx";
 
 type Document = PrivateDocumentPage["documents"][number];
-const selectClass = "h-9 rounded-lg border border-kumo-line bg-kumo-base px-3 text-sm text-kumo-default";
+const selectClass = "h-9 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-3 text-[14px] text-kumo-default outline-none focus:border-kumo-ring";
 
 /** Личные версии сотрудников — для администратора, раскрытием на странице «Материалы». */
 export default function AdministrativeDocuments({data, initialProject}: {data:MemoryData;initialProject:string}) {
@@ -56,28 +56,27 @@ export default function AdministrativeDocuments({data, initialProject}: {data:Me
   catch{if(alive.current&&generation.current===current)setDownloadError("Не удалось скачать файл. Проверьте подключение и повторите попытку.");}
   finally{if(alive.current)setDownloading(false);}
  }
- const name=people.find(person=>person.userName===owner)?.displayName || owner;
+ const name=people.find(person=>person.userName===owner)?.displayName || "сотрудник";
  return <section aria-label="Личные версии сотрудников" className="space-y-4">
   <p className="m-0 text-sm text-kumo-subtle">Выберите автора и проект. Просмотр не меняет документ.</p>
   <div className="flex flex-wrap items-end gap-3">
-   <label className="flex min-w-48 flex-col gap-1 text-sm text-kumo-default">Автор<select aria-label="Автор личных версий" className={selectClass} value={owner} onChange={event=>setOwner(event.target.value)}><option value="">Выберите сотрудника</option>{people.map(person=><option key={person.userName} value={person.userName}>{person.displayName || person.userName}{person.active===false?" · неактивен":""}</option>)}</select></label>
+   <label className="flex min-w-48 flex-col gap-1 text-sm text-kumo-default">Автор<select aria-label="Автор личных версий" className={selectClass} value={owner} onChange={event=>setOwner(event.target.value)}><option value="">Выберите сотрудника</option>{people.map(person=><option key={person.userName} value={person.userName}>{person.displayName || "Сотрудник без имени"}{person.active===false?" · неактивен":""}</option>)}</select></label>
    <label className="flex min-w-48 flex-col gap-1 text-sm text-kumo-default">Проект<select aria-label="Проект личных версий" className={selectClass} value={project} onChange={event=>setProject(event.target.value)}>{!project&&<option value="">Выберите проект</option>}{data.projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-   <Button variant="secondary" disabled={loading||!owner||!project} onClick={()=>void load("")}>Обновить список</Button>
+   <Pill disabled={loading||!owner||!project} onClick={()=>void load("")}>Обновить список</Pill>
   </div>
   {peopleError&&<Notice tone="danger">{peopleError}</Notice>}
   {error&&<Notice tone="danger">{error}</Notice>}
   {loading&&<Notice>Загрузка личных версий…</Notice>}
-  {opened&&<section aria-label="Просмотр личной версии" className="rounded-xl border border-kumo-line p-4">
-   <Button variant="ghost" size="sm" onClick={()=>{generation.current++;setOpened(null);}}>Свернуть</Button>
-   <h3 className="mb-1 text-base font-semibold text-kumo-strong">{opened.document.name}</h3><p className="mt-0 text-sm text-kumo-subtle">Автор: {name} · {data.projects.find(item=>item.id===project)?.name}</p>
-   <Button variant="secondary" disabled={downloading||opened.document.conflicted} onClick={()=>void download(opened.document)}>{downloading?"Скачивание…":"Скачать файл"}</Button>
+  {opened&&<section aria-label="Просмотр личной версии" className="grid gap-2 rounded-2xl border border-kumo-fill bg-kumo-overlay p-5">
+   <div className="flex flex-wrap items-center gap-2"><div className="min-w-0 flex-1"><h3 className="m-0 text-[17px] font-semibold text-kumo-default">{opened.document.name}</h3><p className="m-0 text-[13px] text-kumo-subtle">Автор: {name} · {data.projects.find(item=>item.id===project)?.name}</p></div>
+   <Pill disabled={downloading||opened.document.conflicted} onClick={()=>void download(opened.document)}>{downloading?"Скачивание…":"Скачать файл"}</Pill><Pill tone="ghost" onClick={()=>{generation.current++;setOpened(null);}}>Свернуть</Pill></div>
    {downloadError&&<Notice tone="danger">{downloadError}</Notice>}
-   {opened.error?<><Notice tone="danger">{opened.error}</Notice><Button variant="secondary" onClick={()=>void open(opened.document)}>Повторить загрузку</Button></>:opened.text===null?<Notice>Загрузка документа…</Notice>:<pre className="whitespace-pre-wrap break-words font-sans text-sm text-kumo-default">{opened.text||"(Пустой файл)"}</pre>}
+   {opened.error?<><Notice tone="danger">{opened.error}</Notice><div><Pill onClick={()=>void open(opened.document)}>Повторить загрузку</Pill></div></>:opened.text===null?<Notice>Загрузка документа…</Notice>:<pre className="m-0 whitespace-pre-wrap break-words font-serif text-[15px] leading-relaxed text-kumo-default">{opened.text||"(Пустой файл)"}</pre>}
   </section>}
   {page&&<>
    {page.documents.length===0&&<Notice>На этой странице нет доступных личных документов{page.next_cursor?". Продолжите просмотр следующей страницы.":"."}</Notice>}
-   <RowList>{page.documents.map(document=><Row key={document.node_id}><FileText size={20} className="shrink-0 text-kumo-subtle"/><div className="min-w-0 flex-1"><button type="button" className="text-left text-sm font-medium text-kumo-default" onClick={()=>void open(document)}>{document.name}</button><p className="m-0 text-xs text-kumo-subtle">{name}</p></div><StatusBadge tone={document.conflicted?"danger":"neutral"}>{document.conflicted?"Конфликт":"Личная версия"}</StatusBadge></Row>)}</RowList>
-   {page.next_cursor&&<Button variant="secondary" onClick={()=>void load(page.next_cursor)}>Следующая страница</Button>}
+   {page.documents.length>0&&<Card>{page.documents.map(document=><CardRow key={document.node_id}><FileText size={20} className="shrink-0 text-kumo-subtle"/><div className="min-w-0 flex-1"><button type="button" className="text-left text-[15px] font-medium text-kumo-default hover:underline" onClick={()=>void open(document)}>{document.name}</button><p className="m-0 text-xs text-kumo-subtle">{name}</p></div><StatusBadge tone={document.conflicted?"danger":"neutral"}>{document.conflicted?"Конфликт":"Личная версия"}</StatusBadge></CardRow>)}</Card>}
+   {page.next_cursor&&<div><Pill onClick={()=>void load(page.next_cursor)}>Следующая страница</Pill></div>}
   </>}
  </section>;
 }

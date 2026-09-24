@@ -10,20 +10,20 @@ export type WorkspaceOpenFailureKind = 'access-denied' | 'not-found' | 'unexpect
 
 const CONTENT = {
   'access-denied': {
-    title: "You don't have access to this workspace",
-    message: 'Ask the workspace owner to grant you access, then try again.',
+    title: 'Нет доступа к этой беседе',
+    message: 'Попросите владельца беседы выдать вам доступ и попробуйте снова.',
     Icon: Lock,
     retryable: true,
   },
   'not-found': {
-    title: 'Workspace not found',
-    message: 'The link may be incorrect, or the workspace may have been deleted.',
+    title: 'Беседа не найдена',
+    message: 'Ссылка неверна, или беседу удалили.',
     Icon: MagnifyingGlass,
     retryable: false,
   },
   unexpected: {
-    title: "We couldn't load this workspace",
-    message: 'Try again. If the problem continues, return to your workspaces.',
+    title: 'Не удалось загрузить беседу',
+    message: 'Попробуйте ещё раз. Если не поможет, вернитесь к списку бесед.',
     Icon: WarningCircle,
     retryable: true,
   },
@@ -88,11 +88,11 @@ export default function WorkspaceOpenErrorPage({ kind, onRetry, onGoToWorkspaces
             className="!h-9"
             onClick={onGoToWorkspaces}
           >
-            Go to workspaces
+            К беседам
           </WorkshopButton>
           {retryable && (
             <WorkshopButton tone="primary" onClick={onRetry}>
-              Try again
+              Попробовать снова
             </WorkshopButton>
           )}
         </div>

@@ -22,7 +22,8 @@ import {
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch, homeProjectFromSearch, projectContextFromProjects } from "../homePrompt";
 import { ProjectChips } from "../components/chat/ProjectChips";
-import { MAX_CHAT_PROJECTS, chatProjects, type ChatProject } from "@gadgets/workshop-shared/code-work";
+import { CodeModeSwitch } from "../components/chat/CodeModeSwitch";
+import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
 
 type HomeSearch = { prompt?: string; projectContext?: import('@gadgets/workshop-shared/api').ChatProjectContext };
 
@@ -36,7 +37,7 @@ export const Route = createFileRoute("/")({
 
 // The Home page is the "new workspace" launcher. Persistent navigation (recents, favorites) lives
 // in the AppShell rail, so this page focuses on a single thing: composing the first message of a
-// new gadget — a centered column with a hero, the prompt composer, and a few task suggestions.
+// new gadget. Макет Main: приветствие по центру, одно поле ввода, под ним несколько подсказок.
 function HomePage() {
   return <HomePageContent {...Route.useSearch()} />;
 }
@@ -70,6 +71,10 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
       .catch(() => { if (!cancelled) setProjectChoices("failed"); });
     return () => { cancelled = true; };
   }, [authenticatedApi]);
+
+  // Работа с кодом для новой беседы. Сохраняется в беседе сразу после её создания; по умолчанию
+  // «Авто», как у любой беседы без явного выбора.
+  const [codeMode, setCodeMode] = useState<ChatCodeMode>(() => chatCodeMode(undefined));
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -143,6 +148,15 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           projectContext ? overseer.newChat(message, modelId, capsules, attachments, formats, projectContext) : overseer.newChat(message, modelId, capsules, attachments, formats),
           overseer.getMetadata(),
         ]);
+        if (codeMode !== chatCodeMode(undefined)) {
+          // Беседа уже создана: сбой переключателя не должен терять её, человек поправит режим в ней.
+          try {
+            await overseer.setChatCodeMode(chat, codeMode);
+          } catch (err) {
+            logRpcFailure("Не удалось сохранить режим работы с кодом:", err);
+            toasts.add({ title: "Беседа начата, но режим работы с кодом не сохранился. Выберите его в беседе.", variant: "error" });
+          }
+        }
         provisionalOverseerRef.current?.stub[Symbol.dispose]();
         provisionalOverseerRef.current = null;
         // Open the conversation we just started.
@@ -161,7 +175,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
         throw err;
       }
     },
-    [ensureProvisionalGadget, navigate, toasts, projects],
+    [ensureProvisionalGadget, navigate, toasts, projects, codeMode],
   );
 
   const getOverseer = useCallback((): RpcStub<Overseer> => {
@@ -178,47 +192,54 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
   );
 
   return (
-    <div className="flex min-h-full w-full flex-col items-center justify-start px-4 pb-16 pt-16 sm:px-8 lg:pt-28">
-      <div className="flex w-full max-w-2xl flex-col items-stretch gap-8">
-        {/* Hero */}
-        <header className="text-center">
-          <h1 className="text-3xl font-semibold tracking-tight leading-tight text-kumo-default sm:text-4xl">
+    <div className="flex min-h-full w-full flex-col items-center justify-center px-4 pb-20 pt-12 sm:px-8">
+      <div className="flex w-full max-w-[720px] flex-col items-stretch">
+        {/* Крупное приветствие по центру (макет Main). */}
+        <header className="mb-9 text-center">
+          <h1 className="m-0 text-[34px] leading-tight font-semibold tracking-[-1px] text-kumo-default sm:text-[44px] sm:tracking-[-1.4px]">
             Над чем работаем?
           </h1>
-          <p className="mx-auto mt-3 max-w-md text-[14px] leading-5 tracking-[-0.25px] text-kumo-subtle">
-            Опишите задачу. Материалы и инструменты подключим по ходу работы.
+          <p className="mx-auto mt-3 mb-0 max-w-[520px] text-[17px] leading-normal text-kumo-subtle">
+            Спросите или поручите что угодно. Агент найдёт нужное в ваших проектах и сделает в пределах ваших прав.
           </p>
         </header>
 
-        {/* Composer: проекты беседы — тихие чипы над полем ввода. */}
+        {/* Одно поле ввода: над ним — проекты беседы и переключатель работы с кодом. */}
         <div>
-        <ProjectChips projects={projects} onChange={setProjects} loadChoices={loadProjectChoices} />
-        <ChatInput
-          createCapsuleGatekeeper={createCapsuleGatekeeper}
-          getOverseer={getOverseer}
-          onSend={handleSend}
-          isAgentActive={false}
-          models={models}
-          selectedModel={selectedModel}
-          onModelChange={handleModelChange}
-          newChat
-          autoFocus
-          minRows={3}
-          seedText={seed.text}
-          seedNonce={seed.nonce}
-          onFolderProjectCreated={addProject}
-        />
+          <ProjectChips
+            projects={projects}
+            onChange={setProjects}
+            loadChoices={loadProjectChoices}
+            trailing={<CodeModeSwitch mode={codeMode} onChange={setCodeMode} />}
+          />
+          <ChatInput
+            createCapsuleGatekeeper={createCapsuleGatekeeper}
+            getOverseer={getOverseer}
+            onSend={handleSend}
+            isAgentActive={false}
+            models={models}
+            selectedModel={selectedModel}
+            onModelChange={handleModelChange}
+            newChat
+            autoFocus
+            minRows={2}
+            seedText={seed.text}
+            seedNonce={seed.nonce}
+            onFolderProjectCreated={addProject}
+          />
         </div>
 
-        {/* A few example work tasks to spark ideas. Picking one seeds the composer above. */}
-        <HomeTaskSuggestions
-          choices={projectChoices}
-          onPick={(example) => {
-            setSeed((prev) => ({ text: example.prompt, nonce: prev.nonce + 1 }));
-            // Пример по проекту подключает этот проект к беседе (если его ещё нет в наборе).
-            if (example.project) addProject(example.project);
-          }}
-        />
+        {/* Три-четыре подсказки по проектам человека. Щелчок кладёт текст в поле ввода. */}
+        <div className="mt-7">
+          <HomeTaskSuggestions
+            choices={projectChoices}
+            onPick={(example) => {
+              setSeed((prev) => ({ text: example.prompt, nonce: prev.nonce + 1 }));
+              // Пример по проекту подключает этот проект к беседе (если его ещё нет в наборе).
+              if (example.project) addProject(example.project);
+            }}
+          />
+        </div>
       </div>
     </div>
   );

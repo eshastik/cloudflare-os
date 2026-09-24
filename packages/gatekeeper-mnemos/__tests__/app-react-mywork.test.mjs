@@ -17,9 +17,8 @@ function mixed() {
   };
 }
 const rowsOf = app => [...app.document.querySelectorAll("#root [data-inbox]")];
-const tabOf = (app, name) => [...app.document.querySelectorAll('#root [aria-label="Что показать"] button')].find(t => t.textContent.startsWith(name));
 
-test("«Входящие»: все виды решений в одном списке по времени, фильтры с числами", async () => {
+test("«Входящие»: все виды решений одним плоским списком по времени, число — в подзаголовке", async () => {
   const app = await mountMemoryApp(mixed());
   try {
     assert.equal(app.document.querySelector("#root h1").textContent, "Входящие", "раздел по умолчанию");
@@ -28,23 +27,16 @@ test("«Входящие»: все виды решений в одном спи�
     assert.deepEqual(rowsOf(app).map(r => r.dataset.inbox), ["approval", "publish", "intake", "template", "acceptance"]);
     assert.ok(rowsOf(app)[2].textContent.includes("Счёт.pdf") && rowsOf(app)[2].textContent.includes("Второй проект"), "вопрос приёмной с проектом");
     assert.ok(!app.text().includes("Своё предложение"), "собственное предложение шаблона не ждёт моего решения");
-    assert.equal(tabOf(app, "Все").textContent, "Все5");
-    assert.equal(tabOf(app, "Согласования").textContent, "Согласования3");
-    assert.equal(tabOf(app, "Работа агентов").textContent, "Работа агентов1");
-    assert.equal(tabOf(app, "Приём данных").textContent, "Приём данных1");
-    assert.equal(tabOf(app, "Доступ"), undefined, "пустой фильтр скрыт");
-
-    tabOf(app, "Приём данных").click();
-    await app.until(() => rowsOf(app).length === 1 && rowsOf(app)[0].dataset.inbox === "intake", "фильтр приёмной");
-    tabOf(app, "Все").click();
-    await app.until(() => rowsOf(app).length === 5, "снова все");
+    assert.equal(app.document.querySelector('#root [aria-label="Что показать"]'), null, "фильтров над списком нет");
+    assert.ok(app.document.querySelector("#root header p").textContent.includes("5 вещей ждут вашего решения"), "подзаголовок с числом");
+    assert.equal(app.tabs().length, 0, "без вкладок");
 
     const rowWith = name => rowsOf(app).find(r => r.textContent.includes(name));
-    [...rowWith("Инженерия").querySelectorAll("button")].find(b => b.textContent === "Одобрить").click();
+    [...rowWith("Инженерия").querySelectorAll("button")].find(b => b.textContent === "Согласовать").click();
     await app.until(() => app.calls.some(([m]) => m === "recordReviewDecision"), "решение записано из строки");
     assert.deepEqual(app.calls.find(([m]) => m === "recordReviewDecision"), ["recordReviewDecision", REVIEW_MINE, "Инженерия", 3, true]);
 
-    [...rowWith("Дизайн").querySelectorAll("button")].find(b => b.textContent === "Опубликовать").click();
+    [...rowsOf(app).find(r => r.dataset.inbox === "publish").querySelectorAll("button")].find(b => b.textContent === "Опубликовать").click();
     await app.until(() => app.text().includes("Изменения проекта опубликованы"), "публикация подтверждена");
     const publish = app.calls.find(([m]) => m === "publishDraft");
     assert.equal(publish[1], "one"); assert.equal(publish[2], "a".repeat(64)); assert.equal(publish[3], "b".repeat(64));
@@ -104,7 +96,7 @@ test("«Входящие»: пустое состояние говорит, чт
     await app.until(() => app.text().includes("Согласования шаблонов не прочитаны"), "отказ источника шаблонов виден");
     const block = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => block("Поручено мне")?.textContent.includes("Обращения недоступны"), "отказ в поручениях");
-    assert.ok(block("Жду решения других").textContent.includes("Чужих решений вы не ждёте"));
+    assert.equal(block("Жду решения других"), null, "пустой блок ожиданий не показывается");
     for (const gone of ["Мои загрузки", "Поручить", "Разрешения агентов"]) assert.equal(app.button(gone), undefined, `в шапке «Входящих» нет «${gone}»`);
     assert.ok(!app.text().includes("Аудио"), "карточки «Аудио» нет");
   } finally { app.dispose(); }

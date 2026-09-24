@@ -4,7 +4,7 @@ import { X, Check, Robot } from '@phosphor-icons/react'
 import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import type { GatekeeperAgentConsent } from '@gadgets/workshop-shared/gatekeeper'
-import { WorkshopButton, WorkshopIconButton } from './components/WorkshopControls'
+import { WorkshopIconButton } from './components/WorkshopControls'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { openAgentConsentFrame, type AgentConsentFrame } from './accountCapabilities'
 
@@ -13,6 +13,9 @@ type Preview = Awaited<ReturnType<GatekeeperAgentConsent['preview']>>
 type Opened = { frame: AgentConsentFrame; vendorId: string; accountId: number }
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{43}$/
+
+const SECONDARY = 'h-11 cursor-pointer rounded-full border border-kumo-fill-hover bg-kumo-overlay px-[18px] text-[15px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:cursor-not-allowed disabled:opacity-60'
+const PRIMARY = 'h-11 min-w-[140px] cursor-pointer rounded-full bg-kumo-brand px-[22px] text-[15px] font-semibold text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60'
 
 const INVALID_LINK = 'Ссылка на подключение агента неверна: в ней должен быть ровно один request_id из 43 символов. Начните подключение заново в клиенте агента.'
 const NO_ACCOUNT = 'Ни одно подключение не принимает агентов. Подключите аккаунт с экраном управления и начните запрос заново.'
@@ -77,121 +80,123 @@ export default function AgentConsentDialog({ requestIds, api, onClose, returnTo 
     } finally { if (revision.current === current) { setSettled(true); setBusy(false) } }
   }
 
+  // Макет Consent: белая карточка, крупный заголовок, одна фраза о правах, проекты галочками,
+  // две кнопки-«пилюли». Технические подробности запроса (клиент, ресурс, операции, срок) — под
+  // раскрывающейся строкой: их проверяет тот, кому это нужно, остальным они не мешают.
   return (
     <Dialog.Root open onOpenChange={open => { if (!open && !busy) onClose() }}>
       <Dialog
-        className="!z-[1000] !top-[clamp(28px,8vh,80px)] !flex !max-h-[calc(100vh-clamp(28px,8vh,80px)-28px)] !w-[min(560px,calc(100vw-32px))] !-translate-y-0 flex-col overflow-hidden bg-kumo-base p-0"
+        className="!z-[1000] !top-[clamp(28px,8vh,80px)] !flex !max-h-[calc(100vh-clamp(28px,8vh,80px)-28px)] !w-[min(520px,calc(100vw-32px))] !-translate-y-0 flex-col overflow-hidden !rounded-[24px] bg-kumo-overlay p-0 shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]"
         size="lg"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-kumo-line px-5 py-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-strong">
-              <Robot size={20} />
-            </div>
-            <div className="min-w-0">
-              <Dialog.Title className="text-[17px] leading-6 font-medium tracking-[-0.35px] text-kumo-default">
-                {preview ? `Подключить ${preview.client_id}` : 'Подключение своего агента'}
-              </Dialog.Title>
-              <Dialog.Description className="mt-0.5 text-[12px] leading-4 text-kumo-subtle">
-                Запрос начат из вашего клиента агента. Подтверждайте только подключение, которое начали сами.
-              </Dialog.Description>
-            </div>
+        <div className="flex shrink-0 items-start gap-3.5 px-8 pt-8">
+          <div className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-2xl bg-kumo-fill text-kumo-default">
+            <Robot size={26} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <Dialog.Title className="m-0 text-[22px] leading-7 font-semibold tracking-[-0.4px] text-kumo-default">
+              {preview ? `Подключить ${preview.client_id}` : 'Подключить своего агента'}
+            </Dialog.Title>
+            <Dialog.Description className="mt-1 mb-0 text-[14px] leading-5 text-kumo-subtle">
+              Вы начали подключение в клиенте агента. Подтверждайте, только если начали его сами.
+            </Dialog.Description>
           </div>
           <Dialog.Close
             render={props => (
-              <WorkshopIconButton {...props} disabled={busy} aria-label="Закрыть">
+              <WorkshopIconButton {...props} disabled={busy} aria-label="Закрыть" className="!h-8 !w-8 shrink-0 !rounded-full">
                 <X size={16} />
               </WorkshopIconButton>
             )}
           />
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-8 py-5">
           {preview && <>
-            <div className="overflow-hidden rounded-xl border border-kumo-line">
-              <div className="flex items-center gap-3 px-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="m-0 text-[13px] leading-[18px] font-medium text-kumo-default">Клиент: {preview.client_id}</p>
-                  <p className="m-0 mt-0.5 truncate font-mono text-[11px] leading-4 text-kumo-subtle">Ресурс: {preview.resource}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 border-t border-kumo-line px-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="m-0 text-[13px] leading-[18px] font-medium text-kumo-default">Аккаунт: {preview.account} · отдельный агент, за вас</p>
-                  <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">У агента собственные разрешения, не шире ваших.</p>
-                </div>
-              </div>
-            </div>
+            <p className="m-0 text-[15px] leading-relaxed text-kumo-default">
+              Агент будет работать от вашего имени: у него собственные разрешения, не шире ваших, и видит он не больше, чем вы.
+              {preview.projects && preview.projects.length > 0 && ' Выберите, к каким проектам его пустить.'}
+            </p>
 
             {preview.projects && (
-              <div>
-                <h3 className="mb-2 text-[13px] leading-[18px] font-medium text-kumo-default">Проекты, с которыми агент сможет работать</h3>
-                {preview.projects.length === 0
-                  ? <p className="m-0 text-[12px] leading-4 text-kumo-subtle">У вас пока нет проектов. Агент подключится без доступа к документам.</p>
-                  : <ul className="m-0 list-none overflow-hidden rounded-xl border border-kumo-line p-0">
-                      {preview.projects.map(project => (
-                        <li key={project.project_id} className="border-t border-kumo-line first:border-t-0">
-                          <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-[13px] leading-[18px] text-kumo-default">
-                            <input type="checkbox" data-consent-project={project.project_id} disabled={busy}
-                              checked={chosen.has(project.project_id)}
-                              onChange={event => setChosen(prev => { const next = new Set(prev); if (event.target.checked) next.add(project.project_id); else next.delete(project.project_id); return next })} />
-                            <span className="min-w-0 flex-1 truncate">{project.name || 'Проект без названия'}</span>
-                          </label>
-                        </li>
-                      ))}
-                    </ul>}
-              </div>
+              preview.projects.length === 0
+                ? <p className="m-0 text-[14px] leading-5 text-kumo-subtle">У вас пока нет проектов. Агент подключится без доступа к документам.</p>
+                : <ul aria-label="Проекты, с которыми агент сможет работать" className="m-0 list-none overflow-hidden rounded-2xl border border-kumo-fill p-0">
+                    {preview.projects.map(project => (
+                      <li key={project.project_id} className="border-t border-kumo-tint first:border-t-0">
+                        <label className="flex cursor-pointer items-center gap-3 px-4 py-[13px] text-[15px] leading-5 text-kumo-default">
+                          <input type="checkbox" data-consent-project={project.project_id} disabled={busy}
+                            className="h-5 w-5 accent-kumo-brand"
+                            checked={chosen.has(project.project_id)}
+                            onChange={event => setChosen(prev => { const next = new Set(prev); if (event.target.checked) next.add(project.project_id); else next.delete(project.project_id); return next })} />
+                          <span className="min-w-0 flex-1 truncate">{project.name || 'Проект без названия'}</span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
             )}
 
-            <div>
-              <h3 className="mb-2 text-[12px] leading-4 font-semibold uppercase tracking-[0.6px] text-kumo-subtle">Запрошенные операции и область</h3>
-              <ul className="m-0 list-none overflow-hidden rounded-xl border border-kumo-line p-0">
-                {preview.scopes.map(scope => (
-                  <li key={scope} data-scope-line={scope} className="flex items-center gap-3 border-t border-kumo-line px-3 py-2.5 first:border-t-0">
+            <details className="group rounded-2xl border border-kumo-fill">
+              <summary className="cursor-pointer list-none px-4 py-3 text-[14px] text-kumo-link marker:hidden">
+                Что именно запрошено
+              </summary>
+              <div className="space-y-3 border-t border-kumo-tint px-4 py-3">
+                <div>
+                  <p className="m-0 text-[14px] leading-5 text-kumo-default">Клиент: {preview.client_id}</p>
+                  <p className="m-0 mt-0.5 break-all font-mono text-[12px] leading-4 text-kumo-subtle">Ресурс: {preview.resource}</p>
+                  <p className="m-0 mt-1 text-[14px] leading-5 text-kumo-default">Учётная запись: {preview.account} · отдельный агент, за вас</p>
+                </div>
+                <ul className="m-0 list-none overflow-hidden rounded-xl border border-kumo-tint p-0">
+                  {preview.scopes.map(scope => (
+                    <li key={scope} data-scope-line={scope} className="flex items-center gap-3 border-t border-kumo-tint px-3 py-2.5 first:border-t-0">
+                      <div className="min-w-0 flex-1">
+                        <p className="m-0 text-[14px] leading-5 text-kumo-default">{scope}</p>
+                        <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">Чтения записываются в аудит Mnemos</p>
+                      </div>
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-brand">
+                        <Check size={12} weight="bold" />Запрошено
+                      </span>
+                    </li>
+                  ))}
+                  <li className="flex items-center gap-3 border-t border-kumo-tint px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="m-0 text-[13px] leading-[18px] font-medium text-kumo-default">{scope}</p>
-                      <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">Область: {preview.resource} · чтения записываются в аудит Mnemos</p>
+                      <p className="m-0 text-[14px] leading-5 text-kumo-default">Всё остальное</p>
+                      <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">Не запрошено. Доступ ко всем документам не выдаётся.</p>
                     </div>
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-kumo-success-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-success">
-                      <Check size={12} weight="bold" />Запрошено
-                    </span>
+                    <span className="shrink-0 rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">Нет</span>
                   </li>
-                ))}
-                <li className="flex items-center gap-3 border-t border-kumo-line px-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <p className="m-0 text-[13px] leading-[18px] font-medium text-kumo-default">Всё остальное</p>
-                    <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">Не запрошено. Доступ ко всем документам не выдаётся.</p>
-                  </div>
-                  <span className="shrink-0 rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">Нет</span>
-                </li>
-              </ul>
-            </div>
-
-            <p className="m-0 text-[12px] leading-4 text-kumo-subtle">
-              Запрос действует до {formatExpiry(preview.expires_at)}. Фактически выданные права и отзыв — на карточке агента в «Памяти».
-            </p>
+                </ul>
+                <p className="m-0 text-[13px] leading-5 text-kumo-subtle">Запрос действует до {formatExpiry(preview.expires_at)}.</p>
+              </div>
+            </details>
           </>}
 
-          {busy && <p role="status" className="m-0 text-[13px] leading-[18px] text-kumo-subtle">Загрузка…</p>}
-          {notice && <p role="status" className="m-0 text-[13px] leading-[18px] text-kumo-default">{notice}</p>}
+          {busy && <p role="status" className="m-0 text-[14px] leading-5 text-kumo-subtle">Загрузка…</p>}
+          {notice && <p role="status" className="m-0 text-[15px] leading-relaxed text-kumo-default">{notice}</p>}
           {callback && (
-            <p className="m-0 text-[13px] leading-[18px]">
-              <a href={callback} rel="noreferrer" referrerPolicy="no-referrer" className="text-kumo-brand">Вернуться в клиент агента</a>
+            <p className="m-0 text-[14px] leading-5">
+              <a href={callback} rel="noreferrer" referrerPolicy="no-referrer" className="text-kumo-link">Вернуться в клиент агента</a>
             </p>
           )}
           {settled && opened && (
-            <p className="m-0 text-[13px] leading-[18px]">
-              <a href={`/gatekeepers/${encodeURIComponent(opened.vendorId)}`} className="text-kumo-brand">Открыть карточку агента в «Памяти»</a>
+            <p className="m-0 text-[14px] leading-5">
+              <a href={`/gatekeepers/${encodeURIComponent(opened.vendorId)}`} className="text-kumo-link">Открыть карточку агента в «Памяти»</a>
             </p>
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-kumo-line bg-kumo-base px-5 py-3">
-          {preview ? <>
-            <WorkshopButton onClick={() => void decide(false)} disabled={busy} className="!h-9">Отклонить</WorkshopButton>
-            <WorkshopButton tone="primary" onClick={() => void decide(true)} disabled={busy} className="min-w-[160px]">Подключить агента</WorkshopButton>
-          </> : (
-            <Dialog.Close render={props => <WorkshopButton {...props} disabled={busy} className="!h-9">Закрыть</WorkshopButton>} />
+        <div className="flex shrink-0 flex-col gap-3 px-8 pb-8">
+          <div className="flex items-center justify-end gap-2.5">
+            {preview ? <>
+              <button type="button" onClick={() => void decide(false)} disabled={busy} className={SECONDARY}>Не подключать</button>
+              <button type="button" onClick={() => void decide(true)} disabled={busy} className={PRIMARY}>Подключить</button>
+            </> : (
+              <Dialog.Close render={props => <button type="button" {...props} disabled={busy} className={SECONDARY}>Закрыть</button>} />
+            )}
+          </div>
+          {preview && (
+            <p className="m-0 text-[13px] leading-5 text-kumo-subtle">
+              После нажатия вы вернётесь в клиент агента. Выданные права и отключение — на карточке агента в «Памяти».
+            </p>
           )}
         </div>
       </Dialog>

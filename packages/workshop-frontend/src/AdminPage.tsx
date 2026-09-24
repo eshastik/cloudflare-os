@@ -173,7 +173,7 @@ export default function AdminPage() {
     try {
       await admin.api.setResourceEnabled(vendorId, urlPattern, enabled)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update failed'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить'
       toasts.add({ title: message, variant: 'error' })
       await reloadResources().catch(() => {})
     } finally {
@@ -195,7 +195,7 @@ export default function AdminPage() {
     try {
       await admin.api.setGatekeeperMode(vendorId, enabled ? 'enabled' : 'disabled')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update failed'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить'
       toasts.add({ title: message, variant: 'error' })
       await reloadResources().catch(() => {})
     } finally {
@@ -217,7 +217,7 @@ export default function AdminPage() {
     try {
       await admin.api.setGatekeeperMode(vendorId, mode)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update failed'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить'
       toasts.add({ title: message, variant: 'error' })
       await reloadResources().catch(() => {})
     } finally {
@@ -235,9 +235,9 @@ export default function AdminPage() {
     try {
       await admin.api.setAnnouncement(announcementDraft)
       setSavedAnnouncement(announcementDraft)
-      toasts.add({ title: 'Announcement saved', variant: 'success' })
+      toasts.add({ title: 'Объявление сохранено', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save announcement'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить объявление'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingAnnouncement(false)
@@ -253,9 +253,9 @@ export default function AdminPage() {
     try {
       await admin.api.setBanner(bannerTextDraft, bannerColorDraft)
       setSavedBanner({ text: bannerTextDraft, color: bannerColorDraft })
-      toasts.add({ title: 'Banner saved', variant: 'success' })
+      toasts.add({ title: 'Баннер сохранён', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save banner'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить баннер'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingBanner(false)
@@ -270,9 +270,9 @@ export default function AdminPage() {
     try {
       await admin.api.setAccentColor(accentDraft)
       setSavedAccent(accentDraft)
-      toasts.add({ title: 'Accent color saved', variant: 'success' })
+      toasts.add({ title: 'Цвет сохранён', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save accent color'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить цвет'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingAccent(false)
@@ -287,7 +287,7 @@ export default function AdminPage() {
       await admin.api.setSignupsEnabled(enabled)
     } catch (err) {
       setSignupsEnabled(!enabled) // revert
-      const message = err instanceof Error ? err.message : 'Update failed'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingSignups(false)
@@ -300,9 +300,9 @@ export default function AdminPage() {
     try {
       await admin.api.setSiteName(siteNameDraft)
       setSavedSiteName(siteNameDraft)
-      toasts.add({ title: 'Site name saved', variant: 'success' })
+      toasts.add({ title: 'Название сохранено', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save site name'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить название'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingSiteName(false)
@@ -319,9 +319,9 @@ export default function AdminPage() {
       const data = await prepareSiteLogo(file)
       const logo = await admin.api.setSiteLogo(data)
       setSiteLogoUrl(logo ? cacheBustSiteLogoUrl(logo.url) : null)
-      toasts.add({ title: 'Logo saved', variant: 'success' })
+      toasts.add({ title: 'Логотип сохранён', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save logo'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить логотип'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingSiteLogo(false)
@@ -334,9 +334,9 @@ export default function AdminPage() {
     try {
       await admin.api.setSiteLogo(null)
       setSiteLogoUrl(null)
-      toasts.add({ title: 'Default logo restored', variant: 'success' })
+      toasts.add({ title: 'Исходный логотип возвращён', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to remove logo'
+      const message = err instanceof Error ? err.message : 'Не удалось убрать логотип'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingSiteLogo(false)
@@ -349,9 +349,9 @@ export default function AdminPage() {
     try {
       await admin.api.setInstanceInstructions(instructionsDraft)
       setSavedInstructions(instructionsDraft)
-      toasts.add({ title: 'System prompt instructions saved', variant: 'success' })
+      toasts.add({ title: 'Указания для агентов сохранены', variant: 'success' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save instructions'
+      const message = err instanceof Error ? err.message : 'Не удалось сохранить указания'
       toasts.add({ title: message, variant: 'error' })
     } finally {
       setSavingInstructions(false)
@@ -482,9 +482,9 @@ export default function AdminPage() {
         <div className="bg-kumo-elevated border border-kumo-line rounded-xl p-6">
           <h2 className="text-lg font-semibold text-kumo-strong mb-1">Логотип</h2>
           <p className="text-sm text-kumo-subtle mb-5">
-            Shown in the app chrome, sign-in screens, and browser tab. Images are scaled without
-            cropping and converted to a static PNG. Square images work best. Applies on each
-            user&rsquo;s next connection.
+            Показывается в интерфейсе, на экране входа и во вкладке браузера. Картинка
+            уменьшается без обрезки и сохраняется как PNG. Лучше всего подходят квадратные картинки.
+            Пользователи увидят новый логотип при следующем входе.
           </p>
 
           <div className="flex flex-wrap items-center gap-4">
@@ -509,7 +509,7 @@ export default function AdminPage() {
                 loading={savingSiteLogo}
                 disabled={savingSiteLogo}
               >
-                {siteLogoUrl ? 'Change logo' : 'Upload logo'}
+                {siteLogoUrl ? 'Заменить логотип' : 'Загрузить логотип'}
               </Button>
               {siteLogoUrl && (
                 <Button
@@ -609,7 +609,7 @@ export default function AdminPage() {
             value={bannerTextDraft}
             onValueChange={setBannerTextDraft}
             rows={1}
-            placeholder={'e.g. \uD83C\uDF89 New: blueprints now support imports \u2014 [learn more](https://example.com).'}
+            placeholder={'Например: \uD83C\uDF89 Новое: шаблоны теперь можно импортировать \u2014 [подробнее](https://example.com).'}
             maxLength={MAX_ANNOUNCEMENT_LENGTH}
             error={
               bannerTextDraft.length > MAX_ANNOUNCEMENT_LENGTH
@@ -687,7 +687,7 @@ export default function AdminPage() {
             value={announcementDraft}
             onValueChange={setAnnouncementDraft}
             rows={1}
-            placeholder={'e.g. Heads up: scheduled maintenance Saturday \u2014 see [status](https://status.example.com).'}
+            placeholder={'Например: в субботу плановые работы \u2014 [подробнее](https://status.example.com).'}
             maxLength={MAX_ANNOUNCEMENT_LENGTH}
             error={
               announcementDraft.length > MAX_ANNOUNCEMENT_LENGTH
@@ -741,7 +741,7 @@ export default function AdminPage() {
           value={instructionsDraft}
           onValueChange={setInstructionsDraft}
           rows={6}
-          placeholder={'e.g. ACME Corp is a logistics company that helps small businesses ship\ninternationally. Our team builds internal tools and dashboards to track shipments.'}
+          placeholder={'Например: «Ромашка» — логистическая компания, помогает малому бизнесу\nотправлять грузы за рубеж. Команда делает внутренние инструменты и отчёты по отправкам.'}
           maxLength={MAX_INSTANCE_INSTRUCTIONS_LENGTH}
           error={
             instructionsDraft.length > MAX_INSTANCE_INSTRUCTIONS_LENGTH
@@ -822,7 +822,7 @@ export default function AdminPage() {
                         {vendor.displayName}
                       </h3>
                       <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-kumo-tint text-kumo-subtle border border-kumo-line">
-                        auto-provisioned
+                        подключается автоматически
                       </span>
                     </div>
                     <div className="flex gap-2 px-3 py-1">
@@ -875,12 +875,12 @@ export default function AdminPage() {
                     {vendor.displayName}
                     {!vendor.enabled && (
                       <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-kumo-tint text-kumo-subtle border border-kumo-line">
-                        disabled
+                        выключено
                       </span>
                     )}
                   </h3>
                   <span className="text-xs text-kumo-subtle">
-                    {vendor.enabled ? 'Enabled' : 'Off'}
+                    {vendor.enabled ? 'Включено' : 'Выключено'}
                   </span>
                   <span onClick={(e) => e.stopPropagation()}>
                     <Switch
@@ -932,7 +932,7 @@ export default function AdminPage() {
                   </div>
                 ) : (
                   <p className="text-xs text-kumo-subtle px-3 py-1">
-                    {vendor.resources.length} resource{vendor.resources.length === 1 ? '' : 's'} hidden while disabled.
+                    Скрыто, пока подключение выключено: {vendor.resources.length}.
                   </p>
                 )}
               </div>

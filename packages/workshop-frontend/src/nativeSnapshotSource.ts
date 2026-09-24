@@ -10,7 +10,7 @@ export function requestNativeSnapshot(target: Window, format: NativeDocumentForm
     const { port1, port2 } = new MessageChannel()
     const lifetime = AbortSignal.any([signal, AbortSignal.timeout(20_000)])
     const cleanup = () => { port1.close(); port2.close(); lifetime.removeEventListener('abort', cancel) }
-    const cancel = () => { cleanup(); reject(new Error('Editor snapshot unavailable.')) }
+    const cancel = () => { cleanup(); reject(new Error('Редактор не отдал документ.')) }
     if (lifetime.aborted) { cancel(); return }
     lifetime.addEventListener('abort', cancel, { once: true })
     port1.onmessage = event => {
@@ -19,7 +19,7 @@ export function requestNativeSnapshot(target: Window, format: NativeDocumentForm
       if (!snapshot || snapshot.format !== format || snapshot.formatVersion !== 1 ||
           !snapshot.document || typeof snapshot.document !== 'object' || Array.isArray(snapshot.document) ||
           Object.keys(snapshot).some(key => !['format', 'formatVersion', 'document'].includes(key))) {
-        reject(new Error('Editor could not save a current snapshot.')); return
+        reject(new Error('Редактор не смог сохранить текущую версию.')); return
       }
       resolve(snapshot)
     }

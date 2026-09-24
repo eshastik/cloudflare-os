@@ -1,11 +1,14 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { Plus } from '@phosphor-icons/react'
+import type { GadgetMetadataWithTimestamps } from '@gadgets/workshop-shared/api'
 import PendingActions from '../PendingActions'
-import GadgetList from '../components/GadgetList'
+import { SidebarWorkspacesProvider, useWorkspacesContext } from '../components/AppShell/SidebarWorkspaces'
+import SidebarGadgetRow from '../components/AppShell/SidebarGadgetRow'
+import { groupByDate } from '../components/AppShell/dateGroups'
+import { GROUP_CARD, GROUP_LABEL, PAGE, PAGE_TITLE, PRIMARY_PILL, SEARCH_FIELD } from '../components/AppShell/pageStyles'
 import { useDocumentTitle } from '../useDocumentTitle'
 
-// Full workspace listing. The sidebar surfaces Favorites + a handful of Recent workspaces; this is
-// the "see them all" destination linked from the rail.
+// «Все беседы» (макет Chats): заголовок с кнопкой «Новая беседа», поле поиска и простой список
+// бесед по датам. Меню строки — то же, что в левой панели.
 export const Route = createFileRoute('/workspaces')({
   validateSearch: (search: Record<string, unknown>): { approvals?: boolean } => ({ approvals: search.approvals === true || search.approvals === 'true' }),
   component: WorkspacesPage,
@@ -14,27 +17,79 @@ export const Route = createFileRoute('/workspaces')({
 function WorkspacesPage() {
   const { approvals } = Route.useSearch()
   useDocumentTitle(approvals ? 'Действия на согласовании' : 'Беседы')
-  return (
-    <div className="mx-auto flex h-full w-full max-w-4xl flex-col px-6 sm:px-10">
-      <header className="flex items-end justify-between gap-4 px-3 pb-3 pt-10">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">{approvals ? 'Действия на согласовании' : 'Беседы'}</h1>
-          <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-            {approvals ? 'Проверьте действия, которым требуется ваше разрешение.' : 'Продолжите работу с сохранёнными беседами, материалами и результатами.'}
-          </p>
-        </div>
-        {/* "Create" just routes to Home (the new-workspace launcher) for now. */}
-        <Link
-          to="/"
-          className="press inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover"
-        >
-          <Plus size={14} weight="bold" />
-          Новая беседа
-        </Link>
-      </header>
-      <div className="min-h-0 flex-1">
-        {approvals ? <PendingActions /> : <GadgetList showHeader={false} />}
+  if (approvals) {
+    return (
+      <div className={PAGE}>
+        <header>
+          <h1 className={PAGE_TITLE}>Действия на согласовании</h1>
+          <p className="mt-2 mb-0 text-[15px] text-kumo-subtle">Проверьте действия, которым требуется ваше разрешение.</p>
+        </header>
+        <PendingActions />
       </div>
+    )
+  }
+  return (
+    <SidebarWorkspacesProvider>
+      <ChatsList />
+    </SidebarWorkspacesProvider>
+  )
+}
+
+function subtitle(gadget: GadgetMetadataWithTimestamps): string | undefined {
+  if (gadget.owner) return `Поделился: ${gadget.owner.name}`
+  if (gadget.pinned) return 'В избранном'
+  return undefined
+}
+
+function ChatsList() {
+  const { search, setSearch, favorites, recent, gadgetsLoading, gadgetsFailed, onTogglePin, onRename, onShare, onDelete } = useWorkspacesContext()
+  const all = [...favorites, ...recent].toSorted((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
+  const groups = groupByDate(all, g => g.lastActive)
+
+  return (
+    <div className={PAGE}>
+      <div className="flex items-center gap-3">
+        <h1 className={PAGE_TITLE}>Беседы</h1>
+        <Link to="/" className={PRIMARY_PILL}>Новая беседа</Link>
+      </div>
+      <label htmlFor="chat-find" className="sr-only">Найти беседу</label>
+      <input
+        id="chat-find"
+        type="search"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="Найти беседу по названию"
+        className={SEARCH_FIELD}
+      />
+      {gadgetsLoading ? (
+        <div className={GROUP_CARD} aria-hidden="true">
+          {[0, 1, 2].map(i => <div key={i} className="h-[70px] animate-pulse border-b border-kumo-tint last:border-b-0" />)}
+        </div>
+      ) : gadgetsFailed ? (
+        <p className="py-10 text-center text-[15px] text-kumo-danger">Не удалось загрузить беседы. Обновите страницу.</p>
+      ) : groups.length === 0 ? (
+        <p className="py-10 text-center text-[15px] text-kumo-subtle">
+          {search ? 'Ничего не найдено.' : 'Бесед пока нет. Начните новую — она появится здесь.'}
+        </p>
+      ) : groups.map(group => (
+        <section key={group.label} aria-label={group.label} className="flex flex-col gap-2.5">
+          <h2 className={GROUP_LABEL}>{group.label}</h2>
+          <div className={GROUP_CARD}>
+            {group.items.map(g => (
+              <SidebarGadgetRow
+                key={g.id}
+                gadget={g}
+                variant="list"
+                subtitle={subtitle(g)}
+                onTogglePin={onTogglePin}
+                onRename={onRename}
+                onShare={onShare}
+                onDelete={onDelete}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   )
 }

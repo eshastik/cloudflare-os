@@ -59,15 +59,20 @@ export const GENERIC_OUTPUT: BlueprintOutput = {
   icon: 'appWindow',
 }
 
+// Переводим встроенные подписи, сохраняя названия пользовательских форматов.
+const NOUN_LABELS: Record<string, string> = {
+  Doc: 'Документ', Docs: 'Документы', Sheet: 'Таблица', Sheets: 'Таблицы',
+  Slides: 'Презентации', Slide: 'Презентация', App: 'Приложение', Apps: 'Приложения',
+}
+
+export function localizedNoun(noun: string): string {
+  return NOUN_LABELS[noun] ?? noun
+}
+
 // Resolve what to draw for a (possibly absent, possibly unrecognized) declared format.
 export function formatOf(output?: BlueprintOutput): BlueprintOutput {
   if (!output || !Object.hasOwn(FORMAT_ICONS, output.icon)) return GENERIC_OUTPUT
-  // Переводим встроенные подписи, сохраняя названия пользовательских форматов.
-  const labels: Record<string, string> = {
-    Doc: 'Документ', Docs: 'Документы', Sheet: 'Таблица', Sheets: 'Таблицы',
-    Slides: 'Презентации', Slide: 'Презентация', App: 'Приложение', Apps: 'Приложения',
-  }
-  return { ...output, noun: labels[output.noun] ?? output.noun, plural: labels[output.plural] ?? output.plural }
+  return { ...output, noun: localizedNoun(output.noun), plural: localizedNoun(output.plural) }
 }
 
 export function wireframeOf(output?: BlueprintOutput): FormatWireframe {

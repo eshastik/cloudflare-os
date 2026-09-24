@@ -4,7 +4,7 @@ import {mountMemoryApp} from "./app-react-harness.mjs";
 
 // Каждый раздел перечня открывается со своим заголовком и содержимым, а не пустой страницей и не чужим разделом.
 const SECTIONS = [
- ["my-work","Входящие",'[aria-label="Ждёт решения"]'],
+ ["my-work","Входящие",'[aria-label="Ждут вашего решения"]'],
  ["projects","Проекты",'nav[aria-label="Список проектов"]'],
  ["documents","Материалы",'[aria-label="Поиск по материалам"]'],
  ["team","Мой отдел","section"],

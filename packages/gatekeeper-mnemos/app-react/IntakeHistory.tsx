@@ -1,10 +1,9 @@
 import {useEffect,useRef,useState} from "react";
-import {Button} from "@cloudflare/kumo";
 import {ArrowLeft} from "@phosphor-icons/react";
 import type {IntakeAlert} from "../src/intake.ts";
 import type {ProjectPage} from "../src/mnemos-api.ts";
 import {useHost,useUi} from "./host.ts";
-import {Notice,StatusBadge} from "./ui.tsx";
+import { Button, Notice,StatusBadge } from "./ui.tsx";
 
 function resultState(alert:IntakeAlert){
  if(alert.status==="declined")return "Отклонено";
@@ -42,10 +41,10 @@ export default function IntakeHistory({alerts,projects}:{alerts:IntakeAlert[];pr
   <div className="flex flex-wrap items-center justify-between gap-3"><Button size="sm" variant="ghost" onClick={()=>{generation.current++;setOpened(null);setDownloading(false);}}><ArrowLeft size={16}/>К истории</Button>{alert.placement_state==="personal"&&<Button size="sm" variant="secondary" disabled={downloading} onClick={()=>void download(alert)}>{downloading?"Скачивание…":"Скачать файл"}</Button>}</div>
   <div><h3 className="m-0 text-base font-semibold">{name(alert)}</h3><p className="mb-0 mt-1 text-sm text-kumo-subtle">{alert.placement_state==="personal"?"Сохранено в личной версии. Публикация выполняется отдельно.":"Материал проекта"}</p></div>
   {downloadError&&<Notice tone="danger">{downloadError}</Notice>}
-  {opened.error?<Notice tone="danger">{opened.error}</Notice>:opened.text===null?<Notice>Открываем материал…</Notice>:<pre className="m-0 whitespace-pre-wrap break-words rounded-lg border border-kumo-line p-4 font-sans text-sm">{opened.text||"Пустой файл"}</pre>}
+  {opened.error?<Notice tone="danger">{opened.error}</Notice>:opened.text===null?<Notice>Открываем материал…</Notice>:<pre className="m-0 whitespace-pre-wrap break-words rounded-[12px] border border-kumo-fill p-4 font-sans text-sm">{opened.text||"Пустой файл"}</pre>}
   {opened.error&&!opened.error.startsWith("Скачайте файл")&&<Button size="sm" variant="ghost" disabled={downloading} onClick={()=>void open(alert)}>Повторить</Button>}
  </section>;}
- return <div className="divide-y divide-kumo-line">{alerts.map(alert=><div key={alert.id} className="flex flex-wrap items-center gap-3 py-4">
+ return <div className="divide-y divide-kumo-fill">{alerts.map(alert=><div key={alert.id} className="flex flex-wrap items-center gap-3 py-4">
   <div className="min-w-0 flex-1">{canOpen(alert)?<button type="button" className="text-left text-sm font-medium text-kumo-link hover:underline" onClick={()=>void open(alert)}>{alert.paths[0]||"Материал"}</button>:<span className="text-sm font-medium">{alert.paths[0]||"Материал"}</span>}
    <p className="mb-0 mt-1 break-words text-xs text-kumo-subtle">{alert.placement.split("/").map((part,index)=>index===0?projects.find(project=>project.slug===part)?.name||part:part).join(" / ")}</p>
    {alert.note&&<p className="mb-0 mt-1 text-xs text-kumo-subtle">{alert.note}</p>}

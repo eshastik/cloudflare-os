@@ -1,6 +1,6 @@
 import type {NativeDocumentLaunch} from './nativeDocumentLaunch'
 import { useEffect, useState, type ReactNode } from 'react'
-import { Plus, SidebarSimple, X } from '@phosphor-icons/react'
+import { CaretLeft, Plus, SidebarSimple } from '@phosphor-icons/react'
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import type { NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
@@ -36,8 +36,8 @@ function useDocked() {
   return docked
 }
 
-const rowText = 'text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default'
-const subText = 'text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle'
+const rowText = 'text-[14px] leading-5 text-kumo-default'
+const subText = 'text-[13px] leading-[18px] text-kumo-subtle'
 const modeLabel = (mode: string) => mode === 'write' ? 'Приглашение · Редактирование' : 'Приглашение · Чтение'
 const badgeTone = { neutral: 'bg-kumo-fill text-kumo-default', success: 'bg-kumo-success-tint text-kumo-default', warning: 'bg-kumo-warning-tint text-kumo-default', danger: 'bg-kumo-danger-tint text-kumo-default' } as const
 
@@ -46,19 +46,19 @@ function Badge({ tone, children }: { tone: keyof typeof badgeTone; children: Rea
 }
 function Section({ label, name, children }: { label: string; name?: string; children: ReactNode }) {
   return <section data-section={name} className="flex flex-col gap-2.5">
-    <h3 className="m-0 text-[11px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">{label}</h3>
+    <h3 className="m-0 text-[15px] leading-5 font-semibold text-kumo-default">{label}</h3>
     {children}
   </section>
 }
 function Rows({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col divide-y divide-kumo-line overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">{children}</div>
+  return <div className="flex flex-col divide-y divide-kumo-fill overflow-hidden rounded-2xl border border-kumo-fill bg-kumo-overlay">{children}</div>
 }
 function Row({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`flex items-center gap-3 px-3 py-2.5 ${className}`}>{children}</div>
+  return <div className={`flex items-center gap-3 px-4 py-3 ${className}`}>{children}</div>
 }
 function Avatar({ name }: { name: string }) {
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join('') || '?'
-  return <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-kumo-fill text-[11px] font-semibold text-kumo-default">{initials}</span>
+  return <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-kumo-tint text-[13px] font-semibold text-kumo-default">{initials}</span>
 }
 
 export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget, format, snapshotSource, chatId, disabled, status, section, onSection, onClose, onCollapseChat }: Props) {
@@ -69,6 +69,17 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
   const review = data?.review ?? null
   const invited = data?.participants?.filter(p => p.mode !== '') ?? []
   const showConflict = section === 'conflict' || model?.kind === 'conflict'
+  // В панели документ и проект называются по имени, а не опознавателем хранилища.
+  const [documentName, setDocumentName] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setDocumentName(null)
+    if (!binding?.resource) return
+    status.listDocuments(binding.scope)
+      .then(list => { if (!cancelled) setDocumentName(list.find(d => d.id === binding.resource)?.name ?? null) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [binding?.scope, binding?.resource, status.busy])
 
   async function compare() {
     const transport = status.comparison()
@@ -84,20 +95,20 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
     finally { if (!signal.aborted) setComparing(false) }
   }
 
-  return <aside data-version-panel className={`flex flex-col border-l border-kumo-line bg-kumo-elevated ${docked ? 'h-full w-[320px] shrink-0' : 'absolute inset-y-0 right-0 z-20 w-[320px] max-w-full shadow-[0_10px_28px_-16px_rgba(20,17,16,0.4)]'}`}>
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-kumo-line px-4">
-      <h2 className="m-0 text-[14px] leading-5 font-medium tracking-[-0.25px] text-kumo-strong">Версия</h2>
-      <div className="flex items-center gap-1">
-        {!docked && onCollapseChat && <WorkshopIconButton aria-label="Свернуть чат" title="Свернуть чат" className="!h-7 !w-7" onClick={onCollapseChat}><SidebarSimple size={15} /></WorkshopIconButton>}
-        <WorkshopIconButton aria-label="Закрыть панель" title="Закрыть" className="!h-7 !w-7" onClick={onClose}><X size={14} /></WorkshopIconButton>
-      </div>
+  // Панель шириной 640 ложится поверх карточки гаджета справа (макет «Версии»).
+  return <aside data-version-panel aria-label="Версии" className="absolute inset-y-0 right-0 z-30 flex w-[min(640px,100%)] flex-col rounded-[20px] bg-kumo-overlay shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]">
+    <header className="flex shrink-0 items-center gap-3 px-7 pt-6 pb-4">
+      <button type="button" aria-label="Назад к документу" title="Закрыть" onClick={onClose}
+        className="inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><CaretLeft size={16} /></button>
+      <h2 className="m-0 min-w-0 flex-1 truncate text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">Версии</h2>
+      {!docked && onCollapseChat && <WorkshopIconButton aria-label="Свернуть беседу" title="Свернуть беседу" className="!h-8 !w-8" onClick={onCollapseChat}><SidebarSimple size={16} /></WorkshopIconButton>}
     </header>
-    <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+    <div className="flex flex-1 flex-col gap-6 overflow-y-auto px-7 pb-6">
       <Section label="Документ Mnemos" name="binding">
         {binding && section !== 'bind' ? <Rows><Row>
           <div className="min-w-0 flex-1">
-            <div className={`${rowText} truncate`}>{binding.resource || 'Документ не выбран'}</div>
-            <div className={`${subText} truncate`}>Проект: {binding.scope}</div>
+            <div className={`${rowText} truncate`}>{binding.resource ? documentName ?? 'Документ Mnemos' : 'Документ не выбран'}</div>
+            <div className={`${subText} truncate`}>Проект: {status.projectLink?.name ?? 'выбран'}</div>
           </div>
           <WorkshopButton disabled={status.busy} onClick={() => onSection('bind')}>Сменить</WorkshopButton>
           <WorkshopButton disabled={status.busy} onClick={status.refresh}>Перечитать</WorkshopButton>
@@ -129,10 +140,10 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
           {review ? review.domains.flatMap(domain => domain.approvers.map(id => {
             const decision = domain.decisions.find(d => d.approver_id === id) as (typeof domain.decisions[number] & { comment?: string }) | undefined
             return <Row key={`${domain.domain_id}:${id}`}>
-              <Avatar name={names.get(id) ?? id} />
+              <Avatar name={names.get(id) ?? 'Согласующий'} />
               <div className="min-w-0 flex-1">
                 <div className={rowText}>{domain.domain_id}</div>
-                <div className={`${subText} truncate`}>{names.get(id) ?? id}</div>
+                <div className={`${subText} truncate`}>{names.get(id) ?? 'Согласующий'}</div>
                 {decision && !decision.approved && <div className={`${subText} mt-0.5 text-kumo-default`}>{decision.comment ? `«${decision.comment}»` : 'без комментария'}</div>}
               </div>
               {review.stale ? <Badge tone="warning">Устарело</Badge> : !decision ? <Badge tone="neutral">Ждёт</Badge> : decision.approved ? <Badge tone="success">Одобрено</Badge> : <Badge tone="danger">Отклонено</Badge>}
@@ -158,14 +169,16 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
       </Section>}
 
       {binding && <Section label="История" name="history">
-        <div className="flex flex-col">
-          {data?.history.map(entry => <div key={entry.id} className="flex gap-2.5 px-0.5 py-1.5">
-            <span className={`mt-1.5 h-[7px] w-[7px] shrink-0 rounded-full ${entry.personal ? 'bg-kumo-brand' : 'bg-kumo-inactive'}`} />
+        <ol className="m-0 flex list-none flex-col p-0">
+          {data?.history.map((entry, index) => <li key={entry.id} className="grid grid-cols-[20px_minmax(0,1fr)] gap-3.5 border-b border-kumo-fill py-3.5 last:border-b-0">
+            <span className={`mt-1 h-3 w-3 rounded-full ${entry.personal ? 'bg-kumo-warning' : index === data.history.findIndex(h => !h.personal) ? 'bg-kumo-brand' : 'border-2 border-kumo-interact'}`} />
             <div className="min-w-0">
-              <div className={rowText}>{entry.personal ? entry.label : `${entry.label} опубликована`}</div>
-              <div className={`${subText} truncate`}>{entry.personal ? `сохранена ${formatAgo(entry.recordedAt)}` : `${new Date(entry.recordedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}${entry.onBehalfOf ? ` · агент ${entry.actor} от имени ${entry.onBehalfOf}` : entry.actor ? ` · ${entry.actor}` : ''}`}</div>
+              <div className={`text-[15px] leading-5 text-kumo-default ${entry.personal || index === data.history.findIndex(h => !h.personal) ? 'font-semibold' : ''}`}>{entry.personal ? entry.label : `${entry.label} · опубликована`}</div>
+              <div className={`${subText} mt-0.5 truncate text-[14px]`}>{entry.personal ? `сохранена ${formatAgo(entry.recordedAt)}` : `${new Date(entry.recordedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}${entry.onBehalfOf ? ` · агент ${entry.actor} от имени ${entry.onBehalfOf}` : entry.actor ? ` · ${entry.actor}` : ''}`}</div>
             </div>
-          </div>)}
+          </li>)}
+        </ol>
+        <div className="flex flex-col">
           {data && data.history.length === 0 && <p className={`m-0 px-0.5 ${subText}`}>Версий пока нет.</p>}
           <div className="flex flex-wrap gap-2 px-0.5 pt-1.5">
             {review && !review.stale && data?.sharedVersion && <WorkshopButton disabled={comparing} onClick={() => { void compare() }}>Сравнить с {data.sharedVersion}</WorkshopButton>}
@@ -188,6 +201,7 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
       </Section>
 
       {chatId === undefined && <NativeEditorUpdate gadget={gadget} disabled={disabled} snapshotSource={snapshotSource} format={format} onUpdated={() => window.location.reload()} />}
+      <p className="m-0 mt-auto text-[13px] leading-5 text-kumo-subtle">Опубликованные версии не пропадают. Открыть можно любую из истории.</p>
     </div>
   </aside>
 }

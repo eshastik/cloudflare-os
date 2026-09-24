@@ -1,11 +1,10 @@
 import {useEffect,useState} from "react";
-import {Button} from "@cloudflare/kumo";
 import {FolderOpen,FileText,CheckCircle} from "@phosphor-icons/react";
 import type {IntakeAlert} from "../src/intake.ts";
 import {buildIntakePlan,selectedFromFolder,type IntakeChoice,type IntakePlanItem} from "../src/intake-review.ts";
 import type {ProjectPage} from "../src/mnemos-api.ts";
 import {useUi} from "./host.ts";
-import {Notice,Select,TextInput} from "./ui.tsx";
+import { Button, Notice,Select,TextInput } from "./ui.tsx";
 const NEW_PROJECT="__new__";
 const DOMAINS=["юридический","финансовый","коммерческий","технический","административный","общий"];
 
@@ -80,7 +79,7 @@ export default function IntakeReview({alerts,projects,refresh}:{alerts:IntakeAle
  const selectedCount=files.filter(file=>selected.has(file.id)).length;
  return <section aria-label="Проверка распределения материалов" className="space-y-4">
   {completed>0&&<Notice>Подтверждено решений: {completed}. Остальные материалы показаны ниже.</Notice>}
-  <div className="rounded-xl border border-kumo-line bg-kumo-base p-4">
+  <div className="rounded-[16px] border border-kumo-fill bg-kumo-overlay p-4">
    <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="m-0 text-base font-semibold">Проверьте распределение</h3><p className="mb-0 mt-1 text-sm text-kumo-subtle">Выберите файлы или папку. Проект и область можно назначить сразу всей группе.</p></div><span className="rounded-full bg-kumo-fill px-3 py-1 text-xs">Выбрано {selectedCount} из {files.length}</span></div>
    <p className="mb-0 mt-2 text-xs text-kumo-subtle">{new Set(files.filter(f=>selected.has(f.id)).map(f=>choices[f.id]?.domain).filter(Boolean)).size>1?"В выбранной группе разные предметные области. Они сохранятся, пока вы не назначите общую.":"Каждый файл сохраняет свою область до явного изменения."}</p>
    <div className="mt-4 flex flex-wrap gap-2">
@@ -90,7 +89,7 @@ export default function IntakeReview({alerts,projects,refresh}:{alerts:IntakeAle
    </div>
   </div>
   <fieldset disabled={busy} className="m-0 min-w-0 space-y-4 border-0 p-0">
-   {selectedCount>0&&<div className="grid gap-3 rounded-xl border border-kumo-line bg-kumo-elevated p-4 sm:grid-cols-2">
+   {selectedCount>0&&<div className="grid gap-3 rounded-[16px] border border-kumo-fill bg-kumo-overlay p-4 sm:grid-cols-2">
     <label className="text-sm">Проект для выбранных<Select aria-label="Проект для выбранных" value={project} onChange={e=>{setProject(e.target.value);setPlan(null);}}><option value="">Сохранить индивидуальный выбор</option>{projects.map(p=><option key={p.id} value={p.slug}>{p.name}</option>)}<option value={NEW_PROJECT}>Создать новый проект</option></Select></label>
     <label className="text-sm">Область для выбранных<TextInput aria-label="Область для выбранных" list="intake-domains" value={domain} placeholder="Сохранить индивидуальный выбор" onChange={e=>{setDomain(e.target.value);setPlan(null);}}/></label>
     {project===NEW_PROJECT&&<label className="text-sm">Название нового проекта<TextInput aria-label="Название нового проекта" value={newName} disabled={created} onChange={e=>{setNewName(e.target.value);setPlan(null);}}/></label>}
@@ -98,7 +97,7 @@ export default function IntakeReview({alerts,projects,refresh}:{alerts:IntakeAle
     <div className="flex items-end gap-2"><Button variant="secondary" onClick={applyGroup}>Применить к выбранным</Button>{created&&<Button variant="ghost" onClick={()=>{setNewSlug("project-"+crypto.randomUUID().slice(0,12));setNewName("");setCreated(false);setPlan(null);}}>Другой новый проект</Button>}</div>
    </div>}
    <datalist id="intake-domains">{DOMAINS.map(area=><option key={area} value={area}/>)}</datalist>
-   <div className="divide-y divide-kumo-line overflow-hidden rounded-xl border border-kumo-line">
+   <div className="divide-y divide-kumo-fill overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay">
     {files.map(file=>{const choice=choices[file.id];if(!choice)return null;const checked=selected.has(file.id);return <div key={file.id} className={"p-4 "+(checked?"bg-kumo-elevated":"bg-kumo-base")}>
      <label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={()=>toggle(file.id)} aria-label={`Выбрать ${file.paths[0]||"материал"}`} className="mt-1"/><FileText size={18} className="mt-0.5 shrink-0 text-kumo-subtle"/><div className="min-w-0"><strong className="break-words text-sm">{file.paths[0]||"Материал"}</strong>{file.paths.length>1&&<p className="mb-0 mt-1 text-xs text-kumo-subtle">Ещё путей этого содержимого: {file.paths.length-1}</p>}</div></label>
      <p className="mb-0 ml-7 mt-2 text-xs text-kumo-subtle">{file.suggested_project_name?`Предложен новый проект: ${file.suggested_project_name}. `:""}{file.proposed_project_slug?`Предложен проект: ${projects.find(p=>p.slug===file.proposed_project_slug)?.name??file.proposed_project_slug}. `:""}{file.suggested_domain?`Предметная область: ${file.suggested_domain}.`:"Предметная область требует выбора."}</p>
@@ -113,7 +112,7 @@ export default function IntakeReview({alerts,projects,refresh}:{alerts:IntakeAle
     </div>;})}
    </div>
    {error&&<Notice tone="danger">{error}</Notice>}
-   {!plan?<div className="flex flex-wrap gap-2"><Button disabled={!selectedCount} onClick={()=>preview()}>Проверить итог размещения</Button><Button variant="ghost" disabled={!selectedCount} onClick={()=>preview(false)}>Отклонить выбранные</Button></div>:<div className="rounded-xl border border-kumo-line bg-kumo-elevated p-5">
+   {!plan?<div className="flex flex-wrap gap-2"><Button disabled={!selectedCount} onClick={()=>preview()}>Проверить итог размещения</Button><Button variant="ghost" disabled={!selectedCount} onClick={()=>preview(false)}>Отклонить выбранные</Button></div>:<div className="rounded-[16px] border border-kumo-fill bg-kumo-overlay p-5">
     <h3 className="mt-0 flex items-center gap-2 text-base"><CheckCircle size={20}/>{approve?"Итог перед размещением":"Проверка отклонения"}</h3>
     {[...new Set(plan.map(p=>p.place.split("/")[0]))].filter(slug=>(slug===newSlug||draftProjects[slug])&&!draftProjects[slug]?.created).map(slug=><p key={slug}>Будет создан проект «{draftName(slug)}».</p>)}
     <ul className="space-y-2 pl-4 text-sm">{plan.map(item=><li key={item.id}><span className="text-kumo-subtle">{item.paths[0]}</span><br/><strong>{!approve?"Предложение будет отклонено":item.place.split("/").map((part,i)=>i===0?(draftName(part)||projects.find(p=>p.slug===part)?.name||part):part).join(" / ")}</strong></li>)}</ul>

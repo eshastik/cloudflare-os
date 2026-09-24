@@ -33,7 +33,8 @@ function subscribeAccounts(consentFrame: object | null) {
   return plain
 }
 
-function buttons() { return [...document.body.querySelectorAll('button')].filter(b => b.textContent === 'Подключить агента' || b.textContent === 'Отклонить') }
+// Кнопки решения по макету Consent: «Подключить» и «Не подключать».
+function buttons() { return [...document.body.querySelectorAll('button')].filter(b => b.textContent === 'Подключить' || b.textContent === 'Не подключать') }
 
 async function mount(requestIds: string[], returnTo = vi.fn<(href: string) => void>()) {
   const onClose = vi.fn<() => void>()
@@ -73,7 +74,7 @@ for (const host of ['127.0.0.1', 'localhost']) for (const approved of [true, fal
     expect(document.body.querySelector('[data-scope-line="memory"]')).not.toBeNull()
     expect(document.body.querySelector('[data-scope-line="drafts"]')).not.toBeNull()
     expect(text).toContain('2099')
-    const button = buttons().find(b => b.textContent === (approved ? 'Подключить агента' : 'Отклонить'))!
+    const button = buttons().find(b => b.textContent === (approved ? 'Подключить' : 'Не подключать'))!
     await act(async () => { button.click(); button.click() })
     expect(target.decideCall).toHaveBeenCalledExactlyOnceWith('selection', approved)
     const links = [...document.body.querySelectorAll('a')]
@@ -154,7 +155,7 @@ it('lets the person choose projects for the agent and returns to the client with
     expect(text).not.toContain('p2')
     await act(async () => boxes[1].click())
     expect(boxes[1].checked).toBe(false)
-    await act(async () => buttons().find(b => b.textContent === 'Подключить агента')!.click())
+    await act(async () => buttons().find(b => b.textContent === 'Подключить')!.click())
     expect(target.decideCall).toHaveBeenCalledExactlyOnceWith('selection', true, ['p1', 'p3'])
     expect(returnTo).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4321/callback?state=saved&code=issued')
   } finally { await unmount(); capability[Symbol.dispose]() }

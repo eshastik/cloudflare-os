@@ -30,7 +30,7 @@ it('rejects redirected authority, altered checksums/lengths and arbitrary header
     { method: 'POST' }, { checksum_header: 'Authorization' },
     { checksum_value: 'wrong' }, { content_length: 999 },
   ]) {
-    await expect(uploadGatekeeperText('edit', origin, async (size, checksum) => ({ ...ticket(size, checksum), ...change }), new AbortController().signal)).rejects.toThrow('Document upload failed.')
+    await expect(uploadGatekeeperText('edit', origin, async (size, checksum) => ({ ...ticket(size, checksum), ...change }), new AbortController().signal)).rejects.toThrow('Не удалось загрузить документ.')
   }
   expect(request).not.toHaveBeenCalled()
 })
@@ -46,6 +46,6 @@ it('bounds multibyte text, stops revoked sessions, and masks storage errors with
     controller.abort(); return ticket(size, checksum)
   }, controller.signal)).rejects.toThrow()
   expect(request).not.toHaveBeenCalled()
-  await expect(uploadGatekeeperText('edit', origin, issue, new AbortController().signal)).rejects.toThrow(/^Document upload failed\.$/)
+  await expect(uploadGatekeeperText('edit', origin, issue, new AbortController().signal)).rejects.toThrow(/^Не удалось загрузить документ\.$/)
   expect(request).toHaveBeenCalledTimes(1)
 })

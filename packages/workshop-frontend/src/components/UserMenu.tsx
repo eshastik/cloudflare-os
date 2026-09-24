@@ -23,28 +23,28 @@ export default function UserMenu() {
       <DropdownMenu.Trigger
         render={
           <button
-            className="w-7 h-7 cursor-pointer rounded-full flex items-center justify-center bg-kumo-tint hover:bg-kumo-fill transition-colors overflow-hidden"
+            className="w-8 h-8 cursor-pointer rounded-full flex items-center justify-center bg-selection-bg hover:opacity-90 transition-opacity overflow-hidden"
             title="Открыть меню профиля"
             aria-label="Открыть меню профиля"
           >
             {avatarUrl ? (
               <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
             ) : (
-              <span className="text-xs font-medium text-kumo-strong">{initials}</span>
+              <span className="text-[13px] font-semibold text-selection-text">{initials}</span>
             )}
           </button>
         }
       />
       <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
         <DropdownMenu.Item
-          onClick={() => navigate({ to: '/profile' })}
+          onClick={() => navigate({ to: '/settings' })}
           className={MENU_ITEM}
         >
-          Профиль
+          Настройки
         </DropdownMenu.Item>
         <DropdownMenu.Item onClick={() => setAppearanceOpen(true)} className={MENU_ITEM}>Оформление</DropdownMenu.Item>
-        {/* Модели открываются из «Управления → Агенты и расходы»; здесь — только служебное
-            администратора платформы, которого нет в разделах приложения. */}
+        {/* Служебное администратора платформы, которого нет в разделах приложения; то же есть на
+            странице «Настройки». */}
         {isAdmin && (
           <>
             <DropdownMenu.Item onClick={() => navigate({ to: '/gatekeepers' })} className={MENU_ITEM}>

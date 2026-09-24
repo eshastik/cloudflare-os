@@ -1,8 +1,7 @@
 import {useCallback, useEffect, useRef, useState} from "react";
-import {Button} from "@cloudflare/kumo";
 import {useHost, useUi} from "./host.ts";
 import type {MemoryData} from "./data.ts";
-import {Block, Notice, Row, RowList, RowText} from "./ui.tsx";
+import { Button, Block, Notice, Row, RowList, RowText } from "./ui.tsx";
 import { type IntakeAlerts, type IntakeStatus, type PickedIntakeFile} from "../src/intake.ts";
 import IntakeReview from "./IntakeReview.tsx";
 import IntakeHistory from "./IntakeHistory.tsx";
@@ -50,7 +49,7 @@ export default function IntakeTab({data,compact=false}:{data:MemoryData;compact?
   {status&&compact&&<p role="status" className="mb-4 text-sm text-kumo-subtle">В разборе: {status.in_queue}. Требуют решения: {status.awaiting_classification}. Ожидают размещения: {status.awaiting_placement}. Размещены: {status.placed_in_tree}.</p>}
   {status&&!compact&&<Block title="Состояние материалов">
    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-    {[["Всего принято",status.total],["В очереди разбора",status.in_queue],["Ожидают решения",status.awaiting_classification],["Размещены",status.placed_in_tree]].map(([label,value])=><div key={label} className="rounded-xl border border-kumo-line p-3"><div className="text-2xl">{value}</div><div>{label}</div></div>)}
+    {[["Всего принято",status.total],["В очереди разбора",status.in_queue],["Ожидают решения",status.awaiting_classification],["Размещены",status.placed_in_tree]].map(([label,value])=><div key={label} className="rounded-[16px] border border-kumo-fill bg-kumo-overlay p-3"><div className="text-2xl">{value}</div><div>{label}</div></div>)}
    </div>
    {status.awaiting_placement>0&&<Notice>Ожидают размещения после решения: {status.awaiting_placement}.</Notice>}
   </Block>}

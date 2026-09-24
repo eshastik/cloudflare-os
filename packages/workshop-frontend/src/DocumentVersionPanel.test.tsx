@@ -83,9 +83,9 @@ it('панель «Версия»: согласующие с решениями,
     expect(document.querySelector('button[data-primary-action]')?.textContent).toBe('Доработать')
 
     expect(panel()).toBeNull()
-    await click('Версия')
+    await click('Версии')
     expect(panel()).not.toBeNull()
-    expect(panel()!.querySelector('h2')?.textContent).toBe('Версия')
+    expect(panel()!.querySelector('h2')?.textContent).toBe('Версии')
     const approvers = panel()!.querySelector('[data-section="approvers"]')!
     expect(approvers.textContent).toContain('Дизайн'); expect(approvers.textContent).toContain('Мария'); expect(approvers.textContent).toContain('Одобрено')
     expect(approvers.textContent).toContain('Разработка'); expect(approvers.textContent).toContain('Иван'); expect(approvers.textContent).toContain('Отклонено')
@@ -112,7 +112,7 @@ it('панель «Версия»: согласующие с решениями,
     expect(decisions).toEqual([['incoming', 'Разработка', 1, true]])
     expect(document.body.textContent).toContain('вы одобрили')
 
-    await act(async () => { (document.querySelector('button[aria-label="Закрыть панель"]') as HTMLButtonElement).click() })
+    await act(async () => { (document.querySelector('button[aria-label="Назад к документу"]') as HTMLButtonElement).click() })
     expect(panel()).toBeNull()
   } finally { await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]() }
 })
@@ -148,7 +148,7 @@ it('«Привязать» объявляет текущую ревизию ре
     await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={0} />))
     await act(async () => { await vi.waitFor(() => expect(status()).toContain('сверить не с чем')) })
     expect(document.querySelector('button[data-primary-action]')?.textContent).toBe('Сохранить')
-    await click('Версия'); await click('Сменить')
+    await click('Версии'); await click('Сменить')
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('select[aria-label="Проект документа"]')?.querySelectorAll('option').length).toBe(2)) })
     const select = async (label: string, value: string) => {
       const element = document.querySelector(`select[aria-label="${label}"]`) as HTMLSelectElement

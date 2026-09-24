@@ -39,7 +39,9 @@ test("«Подключения»: почта подключается прямо
   try {
     const row = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => row("Почта")?.textContent.includes("d.sokolov"), "почта");
-    [...row("Почта").querySelectorAll("button")].find(b => b.textContent === "Подключить").click();
+    // У подключённого источника кнопка — «Настроить»; у пустого — «Подключить».
+    assert.ok([...row("Календарь").querySelectorAll("button")].some(b => b.textContent === "Подключить"), "пустой источник подключается");
+    [...row("Почта").querySelectorAll("button")].find(b => b.textContent === "Настроить").click();
     await app.until(() => row("Почта").querySelector('input[aria-label="Логин"]'), "форма раскрылась в строке");
     assert.deepEqual([...row("Почта").querySelectorAll('select[aria-label="Сервис"] option')].map(o => o.textContent), ["Яндекс"], "сервис назван, без адреса сервера");
     app.type(row("Почта").querySelector('input[aria-label="Логин"]'), "anna@example.test");

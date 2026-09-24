@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { Checkbox, Dialog, DropdownMenu, useKumoToastManager } from '@cloudflare/kumo'
 import type { PortalContainer } from '@cloudflare/kumo'
-import { CaretDown, Check, Copy, Link, PencilSimple, ShieldCheck, ShieldWarning, Trash, UserPlus, X } from '@phosphor-icons/react'
+import { CaretDown, CaretLeft, Check, Copy, Link, PencilSimple, Robot, ShieldCheck, ShieldWarning, Trash, UserPlus, X } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
 import {
   Overseer,
@@ -565,7 +565,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
     try {
       const result = await overseer.addCollaborator(username, addRole, undefined)
       if (result === null) {
-        toasts.add({ title: 'No account found for that username.', variant: 'error' })
+        toasts.add({ title: 'Пользователь с таким именем не найден.', variant: 'error' })
       } else {
         const landedId = result.profile.id
         setAddUsername('')
@@ -749,29 +749,35 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <Dialog
-        className="!z-[1000] !top-[clamp(24px,10vh,80px)] !flex !max-h-[calc(100vh-clamp(24px,10vh,80px)-24px)] !w-[min(640px,calc(100vw-32px))] !-translate-y-0 flex-col overflow-hidden bg-kumo-base p-0 !outline-none"
+        // Панель справа шириной 640 (макет «Поделиться»): от краёв окна 12 px, радиус 20, тень гаджета.
+        className="!z-[1000] !top-3 !bottom-3 !right-3 !left-auto !flex !max-h-none !w-[min(616px,calc(100vw-24px))] !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden !rounded-[20px] bg-kumo-overlay p-0 !shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)] !ring-0 !outline-none"
         size="lg"
       >
-        <div className="flex shrink-0 items-start justify-between gap-4 overflow-hidden px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
-          <div className="min-w-0">
-            <Dialog.Title className="truncate text-[18px] leading-6 font-medium tracking-[-0.4px] text-kumo-default">
-              Доступ к «{metadata.title}»
-            </Dialog.Title>
-            <Dialog.Description className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-              Пригласите участников или создайте ссылку.
-            </Dialog.Description>
-          </div>
+        <div className="flex shrink-0 items-start gap-3 overflow-hidden px-5 pb-5 pt-6 sm:px-7">
           <Dialog.Close
             render={(props) => (
-              <WorkshopIconButton {...props} aria-label="Закрыть">
-                <X size={18} />
-              </WorkshopIconButton>
+              <button
+                {...props}
+                type="button"
+                aria-label="Закрыть"
+                className="mt-0.5 inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+              >
+                <CaretLeft size={16} />
+              </button>
             )}
           />
+          <div className="min-w-0">
+            <Dialog.Title className="truncate text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">
+              Кто видит «{metadata.title}»
+            </Dialog.Title>
+            <Dialog.Description className="mt-0.5 text-[14px] leading-5 text-kumo-subtle">
+              Пригласите коллег поработать вместе или создайте ссылку.
+            </Dialog.Description>
+          </div>
         </div>
 
         <div
-          className="chat-panel min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 sm:px-6"
+          className="chat-panel min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 sm:px-7"
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
           {sharingProhibited ? (
@@ -791,9 +797,9 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
             </div>
           ) : (
           <>
-          <div className={`sticky top-0 z-10 bg-kumo-base pb-3 transition-shadow duration-200 ${scrolled ? 'themed-bottom-shadow border-b border-kumo-line/60' : ''}`}>
+          <div className={`sticky top-0 z-10 bg-kumo-overlay pb-3 transition-shadow duration-200 ${scrolled ? 'themed-bottom-shadow border-b border-kumo-line/60' : ''}`}>
           <div
-            className="themed-compact-shadow grid min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-kumo-line/80 bg-kumo-base p-1.5 pl-3 transition-[border-color,box-shadow] focus-within:border-kumo-fill sm:flex sm:overflow-hidden"
+            className="grid min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border border-kumo-fill-hover bg-kumo-overlay p-1.5 pl-3 transition-[border-color,box-shadow] focus-within:border-kumo-fill sm:flex sm:overflow-hidden"
             data-keeper-ignore="true"
             data-1p-ignore="true"
             data-lpignore="true"
@@ -944,7 +950,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
 
           <section aria-labelledby="people-heading" className="mt-4">
             <div className="mb-2 px-1">
-              <h3 id="people-heading" className="text-[12px] leading-4 font-medium tracking-[-0.15px] text-kumo-subtle">
+              <h3 id="people-heading" className="text-[15px] leading-5 font-semibold text-kumo-default">
                 Участники
               </h3>
             </div>
@@ -1012,13 +1018,25 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                   </div>
                 )
               })}
+              {/* Агент — не участник доступа: его право всегда пересечение прав человека и его поручения. */}
+              <div className="border-t border-kumo-line/70 px-3 py-2.5">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-kumo-tint text-kumo-default" aria-hidden="true">
+                    <Robot size={17} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] leading-[17px] font-medium tracking-[-0.25px] text-kumo-default">Агент</p>
+                    <p className="text-[12px] leading-[15px] tracking-[-0.15px] text-kumo-subtle">Работает только по вашей просьбе и не шире ваших прав</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
 
           {shareLinks.length > 0 && (
           <section aria-labelledby="links-heading" className="mt-4">
             <div className="mb-2 px-1">
-              <h3 id="links-heading" className="text-[12px] leading-4 font-medium tracking-[-0.15px] text-kumo-subtle">
+              <h3 id="links-heading" className="text-[15px] leading-5 font-semibold text-kumo-default">
                 Ссылки доступа
               </h3>
             </div>

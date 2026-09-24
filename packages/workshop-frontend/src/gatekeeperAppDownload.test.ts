@@ -17,7 +17,7 @@ it('checks exact body hash/size and rejects truncation, oversize and malformed U
     vi.stubGlobal('fetch', request)
     const operation = downloadGatekeeperText(origin, { url: origin + '/object', method: 'GET', size_bytes: size, sha256_hex }, new AbortController().signal)
     if (valid) await expect(operation).resolves.toBe('Текст')
-    else await expect(operation).rejects.toThrow('Document download failed.')
+    else await expect(operation).rejects.toThrow('Не удалось скачать документ.')
   }
 })
 
@@ -27,7 +27,7 @@ it('does not fetch a foreign destination and masks a checksum mismatch', async (
   const ticket = { url: 'https://evil.example/object', method: 'GET', size_bytes: 1, sha256_hex: '0'.repeat(64) }
   await expect(downloadGatekeeperText(origin, ticket, new AbortController().signal)).rejects.toThrow()
   expect(request).not.toHaveBeenCalled()
-  await expect(downloadGatekeeperText(origin, { ...ticket, url: origin + '/object' }, new AbortController().signal)).rejects.toThrow('Document download failed.')
+  await expect(downloadGatekeeperText(origin, { ...ticket, url: origin + '/object' }, new AbortController().signal)).rejects.toThrow('Не удалось скачать документ.')
 })
 
 async function nativeTicket(snapshot: unknown) {
@@ -73,7 +73,7 @@ it('does not release native data after revocation or cancellation and rejects mi
   const snapshot = { format: 'cloudflareos.document', formatVersion: 1, document: { blocks: [] } }
   const ticket = await nativeTicket(snapshot)
   const revoked = async () => { throw new Error('private access detail') }
-  await expect(downloadGatekeeperNativeDocument(origin, ticket, 'cloudflareos.document', new AbortController().signal, revoked)).rejects.toThrow('Native document download failed.')
+  await expect(downloadGatekeeperNativeDocument(origin, ticket, 'cloudflareos.document', new AbortController().signal, revoked)).rejects.toThrow('Не удалось скачать документ.')
   const cancel = new AbortController()
   await expect(downloadGatekeeperNativeDocument(origin, ticket, 'cloudflareos.document', cancel.signal, async () => { cancel.abort() })).rejects.toThrow()
   const validate = vi.fn(async () => {})
@@ -148,6 +148,6 @@ it('снимок шаблона имеет отдельный предел, об
  vi.stubGlobal('fetch',vi.fn<typeof fetch>(async()=>new Response(bytes)))
  const signal=new AbortController().signal
  await expect(downloadGatekeeperTemplateText(origin,ticket,signal)).resolves.toBe(text)
- await expect(downloadGatekeeperText(origin,ticket,signal)).rejects.toThrow('Document download failed.')
- await expect(downloadGatekeeperTemplateText(origin,{...ticket,size_bytes:49*1024*1024},signal)).rejects.toThrow('Document download failed.')
+ await expect(downloadGatekeeperText(origin,ticket,signal)).rejects.toThrow('Не удалось скачать документ.')
+ await expect(downloadGatekeeperTemplateText(origin,{...ticket,size_bytes:49*1024*1024},signal)).rejects.toThrow('Не удалось скачать документ.')
 })

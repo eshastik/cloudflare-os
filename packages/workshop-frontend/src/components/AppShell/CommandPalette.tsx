@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
+  ArrowRight,
   Blueprint,
+  ChatCircle,
+  FileText,
+  FolderSimple,
   MagnifyingGlass,
   Plus,
-  SquaresFour,
+  Stack,
 } from '@phosphor-icons/react'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../../AuthContext'
-import type { GadgetMetadataWithTimestamps, OutputFormatOffer } from '@gadgets/workshop-shared/api'
+import type { ChatProjectChoice, GadgetMetadataWithTimestamps, OutputFormatOffer, OutputSummary } from '@gadgets/workshop-shared/api'
+import { displayName } from '@gadgets/workshop-shared/code-work'
 import { FormatGlyph } from '../format/FormatVisuals'
+import { localizedNoun } from '../format/formats'
 import { createFromFormat } from '../format/useOutputFormats'
 
+// Поиск ⌘K (макет Search): поле, первым пунктом «Спросить агента», ниже группы — проекты, беседы,
+// файлы (результаты бесед), шаблоны и действия. Заменяет раздел «Материалы» в меню.
 // A ⌘K command palette: jump to a workspace or a primary destination. Because it's keyboard-driven
 // and opened many times a day, it deliberately has *no* open/close animation (instant feels faster
 // than any transition here — see the Raycast example in our motion guidance). Results stream in as
@@ -23,6 +31,8 @@ type Command = {
   hint?: string
   icon: ReactNode
   run: () => void
+  // Главный пункт («Спросить агента»): иконка на акцентной плашке, подсказка Enter.
+  primary?: boolean
 }
 
 type BlueprintEntry = { id: string; title: string; recency: number }
@@ -30,6 +40,8 @@ type PaletteData = {
   gadgets: GadgetMetadataWithTimestamps[]
   blueprints: BlueprintEntry[]
   formats: OutputFormatOffer[]
+  projects: ChatProjectChoice[]
+  outputs: OutputSummary[]
 }
 
 // Module-level cache shared across opens for the lifetime of the page. The palette serves this
@@ -112,7 +124,7 @@ function highlight(label: string, indices: number[]): ReactNode {
     if (!buf) return
     out.push(
       bufMatched ? (
-        <span key={out.length} className="font-semibold text-kumo-strong">
+        <span key={out.length} className="font-semibold text-kumo-default">
           {buf}
         </span>
       ) : (
@@ -155,6 +167,12 @@ export default function CommandPalette({
   const [formats, setFormats] = useState<OutputFormatOffer[]>(
     () => paletteCache?.data.formats ?? [],
   )
+  const [projects, setProjects] = useState<ChatProjectChoice[]>(
+    () => paletteCache?.data.projects ?? [],
+  )
+  const [outputs, setOutputs] = useState<OutputSummary[]>(
+    () => paletteCache?.data.outputs ?? [],
+  )
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -173,28 +191,37 @@ export default function CommandPalette({
       setGadgets(paletteCache.data.gadgets)
       setBlueprints(paletteCache.data.blueprints)
       setFormats(paletteCache.data.formats)
+      setProjects(paletteCache.data.projects)
+      setOutputs(paletteCache.data.outputs)
     }
 
     let cancelled = false
     const isFresh = paletteCache && Date.now() - paletteCache.fetchedAt < PALETTE_CACHE_TTL_MS
     if (!isFresh) {
+      // Проекты и файлы — дополнительные источники: их сбой не должен гасить беседы и действия.
       Promise.all([
         authenticatedApi.listGadgets(),
         authenticatedApi.listOwnBlueprints(),
         authenticatedApi.listLibraryBlueprints(),
         authenticatedApi.listOutputFormats(),
+        Promise.resolve().then(() => authenticatedApi.listChatProjects()).catch(() => [] as ChatProjectChoice[]),
+        Promise.resolve().then(() => authenticatedApi.listOutputs()).then(r => r.outputs).catch(() => [] as OutputSummary[]),
       ])
-        .then(([gadgetList, own, library, formatList]) => {
+        .then(([gadgetList, own, library, formatList, projectList, outputList]) => {
           const data: PaletteData = {
             gadgets: gadgetList,
             blueprints: mergeBlueprints(own, library),
             formats: formatList,
+            projects: projectList,
+            outputs: outputList,
           }
           paletteCache = { data, fetchedAt: Date.now() }
           if (cancelled) return
           setGadgets(data.gadgets)
           setBlueprints(data.blueprints)
           setFormats(data.formats)
+          setProjects(data.projects)
+          setOutputs(data.outputs)
         })
         .catch((err) => console.error('Command palette: failed to load items', err))
     }
@@ -227,8 +254,8 @@ export default function CommandPalette({
     // general starting point; the format shortcuts follow it in the admin's configured order.
     const formatCommands: Command[] = formats.map((format) => ({
       id: `format-${format.blueprintId}`,
-      label: `Создать: ${format.output.noun}`,
-      hint: 'Формат',
+      label: `Создать: ${localizedNoun(format.output.noun)}`,
+      hint: 'формат',
       icon: <FormatGlyph output={format.output} size="md" />,
       run: () => { void createFormat(format) },
     }))
@@ -236,21 +263,27 @@ export default function CommandPalette({
     const nav: Command[] = [
       {
         id: 'nav-new',
-        label: 'Новое пространство',
-        icon: <Plus size={15} weight="bold" />,
+        label: 'Новая беседа',
+        icon: <Plus size={18} />,
         run: () => navigate({ to: '/' }),
       },
       ...formatCommands,
       {
         id: 'nav-workspaces',
-        label: 'Пространства',
-        icon: <SquaresFour size={15} />,
+        label: 'Все беседы',
+        icon: <ChatCircle size={18} />,
         run: () => navigate({ to: '/workspaces' }),
+      },
+      {
+        id: 'nav-outputs',
+        label: 'Результаты бесед',
+        icon: <Stack size={18} />,
+        run: () => navigate({ to: '/outputs' }),
       },
       {
         id: 'nav-blueprints',
         label: 'Шаблоны',
-        icon: <Blueprint size={15} />,
+        icon: <Blueprint size={18} />,
         run: () => navigate({ to: '/explore' }),
       },
     ]
@@ -259,10 +292,32 @@ export default function CommandPalette({
       .toSorted((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
       .map((g) => ({
         id: `ws-${g.id}`,
-        label: g.title || 'Пространство без названия',
-        hint: 'Пространство',
-        icon: <SquaresFour size={15} className="text-kumo-inactive" />,
+        label: g.title || 'Беседа без названия',
+        hint: g.owner ? `поделился ${g.owner.name}` : undefined,
+        icon: <ChatCircle size={18} />,
         run: () => navigate({ to: '/workspace/$id', params: { id: g.id } }),
+      }))
+
+    // Проект открывается новой беседой, привязанной к нему, — как «Начать беседу» на странице
+    // проекта. Проекты без человеческого названия не показываются: в поиске нечего сравнивать.
+    const projectBase: Command[] = projects
+      .filter((p) => displayName(p.title, '') !== '')
+      .map((p) => ({
+        id: `project-${p.accountId}-${p.projectId}`,
+        label: p.title.trim(),
+        hint: p.hasCode ? 'проект с кодом' : 'проект',
+        icon: <FolderSimple size={18} />,
+        run: () => navigate({ to: '/', search: { projectContext: { accountId: p.accountId, projectId: p.projectId, title: p.title.trim() } } }),
+      }))
+
+    const fileBase: Command[] = outputs
+      .toSorted((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
+      .map((o) => ({
+        id: `file-${o.workspaceId}-${o.workpieceId}`,
+        label: o.title || 'Без названия',
+        hint: o.workspaceTitle || undefined,
+        icon: <FileText size={18} />,
+        run: () => navigate({ to: '/workspace/$id', params: { id: o.workspaceId }, search: { w: o.workpieceId } }),
       }))
 
     const bpBase: Command[] = blueprints
@@ -270,8 +325,8 @@ export default function CommandPalette({
       .map((b) => ({
         id: `bp-${b.id}`,
         label: b.title,
-        hint: 'Шаблон',
-        icon: <Blueprint size={15} className="text-kumo-inactive" />,
+        hint: 'шаблон',
+        icon: <Blueprint size={18} />,
         run: () => navigate({ to: '/blueprint/$id', params: { id: b.id } }),
       }))
 
@@ -288,21 +343,34 @@ export default function CommandPalette({
       return scored.slice(0, limit)
     }
 
+    // Первым пунктом при непустом запросе — «Спросить агента»: текст уходит в поле новой беседы.
+    const ask: Command[] = searching ? [{
+      id: 'ask-agent',
+      label: `Спросить агента: «${needle}»`,
+      icon: <ArrowRight size={16} weight="bold" />,
+      primary: true,
+      run: () => navigate({ to: '/', search: { prompt: needle } }),
+    }] : []
+
     const built: Group[] = searching
       ? [
+          { heading: '', items: ask.map((c) => ({ ...c, indices: [] })) },
+          { heading: 'В проектах', items: refine(projectBase, 5) },
+          { heading: 'В беседах', items: refine(wsBase, 6) },
+          { heading: 'Файлы', items: refine(fileBase, 6) },
+          { heading: 'Шаблоны', items: refine(bpBase, 4) },
           { heading: 'Действия', items: refine(nav, nav.length) },
-          { heading: 'Пространства', items: refine(wsBase, 8) },
-          { heading: 'Шаблоны', items: refine(bpBase, 8) },
         ]
       : [
           { heading: 'Действия', items: refine(nav, nav.length) },
-          { heading: 'Недавние пространства', items: refine(wsBase, 4) },
+          { heading: 'Недавние беседы', items: refine(wsBase, 4) },
+          { heading: 'Проекты', items: refine(projectBase, 4) },
         ]
 
     const groups = built.filter((g) => g.items.length > 0)
     const flat = groups.flatMap((g) => g.items)
     return { groups, flat }
-  }, [query, gadgets, blueprints, formats, navigate, createFormat])
+  }, [query, gadgets, blueprints, formats, projects, outputs, navigate, createFormat])
 
   // Keep the active index in range as the result set changes.
   useEffect(() => {
@@ -342,40 +410,42 @@ export default function CommandPalette({
       className="fixed inset-0 z-[1500] flex items-start justify-center px-4 pt-[12vh]"
       role="dialog"
       aria-modal="true"
-      aria-label="Палитра команд"
+      aria-label="Поиск"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="absolute inset-0 bg-black/20" aria-hidden="true" onMouseDown={onClose} />
-      <div className="themed-floating-shadow-lg relative w-full max-w-xl overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
-        <div className="flex items-center gap-2.5 border-b border-kumo-line px-3.5">
-          <MagnifyingGlass size={16} className="shrink-0 text-kumo-inactive" />
+      <div className="absolute inset-0 bg-black/30" aria-hidden="true" onMouseDown={onClose} />
+      <div className="relative w-full max-w-[680px] overflow-hidden rounded-[20px] bg-kumo-overlay shadow-[0_24px_64px_rgba(24,32,28,0.22)]">
+        <div className="flex items-center gap-3 border-b border-kumo-tint px-5 py-[18px]">
+          <MagnifyingGlass size={20} className="shrink-0 text-kumo-subtle" />
+          <label htmlFor="palette-query" className="sr-only">Искать по проектам и беседам</label>
           <input
+            id="palette-query"
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Поиск по пространствам и действиям…"
-            className="h-12 w-full bg-transparent text-[14px] leading-5 tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive focus:outline-none"
+            placeholder="Найти беседу, проект или файл"
+            className="w-full bg-transparent text-[18px] leading-6 text-kumo-default placeholder:text-kumo-inactive focus:outline-none"
           />
-          <kbd className="shrink-0 rounded border border-kumo-line px-1.5 py-0.5 font-sans text-[10px] leading-none text-kumo-inactive">
-            ESC
+          <kbd className="shrink-0 rounded-md border border-kumo-fill-hover px-1.5 py-0.5 font-sans text-[12px] leading-4 text-kumo-subtle">
+            Esc
           </kbd>
         </div>
 
-        <div ref={listRef} className="sidebar-scroll max-h-[min(60vh,420px)] overflow-y-auto p-1.5">
+        <div ref={listRef} className="sidebar-scroll max-h-[min(60vh,480px)] overflow-y-auto p-2">
           {flat.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[13px] text-kumo-inactive">Ничего не найдено.</p>
+            <p className="m-0 px-3 py-8 text-center text-[15px] text-kumo-subtle">Ничего не найдено.</p>
           ) : (
             groups.map((group, gi) => {
               // Compute the flat index offset for this group so keyboard nav stays in sync.
               const start = groups.slice(0, gi).reduce((n, g) => n + g.items.length, 0)
               return (
-                <div key={group.heading} className="mb-1 last:mb-0">
-                  <p className="px-2.5 pt-1.5 pb-1 text-[11px] font-medium uppercase tracking-[0.4px] text-kumo-inactive">
-                    {group.heading}
-                  </p>
+                <div key={group.heading || 'ask'} role="group" aria-label={group.heading || undefined}>
+                  {group.heading && (
+                    <p className="m-0 px-3 pt-3 pb-1 text-[13px] leading-4 text-kumo-subtle">{group.heading}</p>
+                  )}
                   {group.items.map((cmd, j) => {
                     const i = start + j
                     return (
@@ -386,16 +456,25 @@ export default function CommandPalette({
                         onMouseMove={() => setActiveIndex(i)}
                         onClick={() => go(cmd.run)}
                         className={[
-                          'flex h-10 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] leading-[18px] tracking-[-0.25px] transition-colors',
-                          i === activeIndex ? 'bg-kumo-fill text-kumo-strong' : 'text-kumo-default',
+                          'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 text-left text-[15px] leading-5 text-kumo-default transition-colors',
+                          cmd.primary ? 'py-3' : 'py-2.5',
+                          i === activeIndex ? 'bg-kumo-tint' : '',
                         ].join(' ')}
                       >
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-kumo-subtle">
-                          {cmd.icon}
-                        </span>
+                        {cmd.primary ? (
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-kumo-brand text-white">
+                            {cmd.icon}
+                          </span>
+                        ) : (
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center text-kumo-default">
+                            {cmd.icon}
+                          </span>
+                        )}
                         <span className="min-w-0 flex-1 truncate">{highlight(cmd.label, cmd.indices)}</span>
-                        {cmd.hint && (
-                          <span className="shrink-0 text-[11px] text-kumo-inactive">{cmd.hint}</span>
+                        {cmd.primary ? (
+                          <span className="shrink-0 text-[12px] text-kumo-subtle">Enter</span>
+                        ) : cmd.hint && (
+                          <span className="max-w-[40%] shrink-0 truncate text-[13px] text-kumo-subtle">{cmd.hint}</span>
                         )}
                       </button>
                     )
@@ -404,23 +483,6 @@ export default function CommandPalette({
               )
             })
           )}
-        </div>
-
-        {/* Footer hint strip — standard command-palette keyboard legend. */}
-        <div className="flex items-center gap-3 border-t border-kumo-line px-3.5 py-2 text-[11px] text-kumo-inactive">
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↑</kbd>
-            <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↓</kbd>
-            перейти
-          </span>
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">↵</kbd>
-            открыть
-          </span>
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-kumo-line px-1 py-0.5 font-sans leading-none">esc</kbd>
-            закрыть
-          </span>
         </div>
       </div>
     </div>

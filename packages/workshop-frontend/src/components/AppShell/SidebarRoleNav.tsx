@@ -1,28 +1,28 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
-  BookOpen, CaretRight, Cpu, FolderOpen, Plugs, Pulse, Robot, Scales, Tray, UsersThree, UserCircleGear,
+  FolderSimple, Plugs, Pulse, Robot, Scales, Tray, UsersThree, UserCircleGear,
 } from '@phosphor-icons/react'
 import SidebarItem, { type SidebarItemProps } from './SidebarItem'
 import { SectionCount } from './SectionCount'
 import type { NavIcon, NavLink } from '../../roleNavigation'
 
 const ICONS: Record<NavIcon, ReactNode> = {
-  inbox: <Tray size={14} />,
-  projects: <FolderOpen size={14} />,
-  documents: <BookOpen size={14} />,
-  team: <UsersThree size={14} />,
-  people: <UserCircleGear size={14} />,
-  rules: <Scales size={14} />,
-  connections: <Plugs size={14} />,
-  agents: <Robot size={14} />,
-  journal: <Pulse size={14} />,
-  models: <Cpu size={14} />,
+  inbox: <Tray size={18} />,
+  projects: <FolderSimple size={18} />,
+  team: <UsersThree size={18} />,
+  people: <UserCircleGear size={16} />,
+  rules: <Scales size={16} />,
+  connections: <Plugs size={16} />,
+  agents: <Robot size={16} />,
+  journal: <Pulse size={16} />,
 }
 
-// Один пункт меню: раздел приложения или страница оболочки.
-export function NavLinkItem({ link, collapsed }: { link: NavLink; collapsed: boolean }) {
+// Один пункт меню: раздел приложения или страница оболочки. compact — малый пункт без иконки
+// (разделы администратора в развёрнутой панели).
+export function NavLinkItem({ link, collapsed, compact = false }: { link: NavLink; collapsed: boolean; compact?: boolean }) {
+  const icon = compact && !collapsed ? null : ICONS[link.icon]
   if (link.to) {
-    return <SidebarItem to={link.to as SidebarItemProps['to']} label={link.label} icon={ICONS[link.icon]} collapsed={collapsed} />
+    return <SidebarItem to={link.to as SidebarItemProps['to']} label={link.label} icon={icon} collapsed={collapsed} compact={compact} />
   }
   return (
     <SidebarItem
@@ -33,53 +33,24 @@ export function NavLinkItem({ link, collapsed }: { link: NavLink; collapsed: boo
       account={link.accountId}
       matchDefaultAccount={link.matchDefaultAccount}
       label={link.label}
-      icon={ICONS[link.icon]}
+      icon={icon}
       trailing={<SectionCount count={link.count} />}
       collapsed={collapsed}
+      compact={compact}
     />
   )
 }
 
-// «Управление» администратора внизу меню. Раскрывается по щелчку. Вложенные ссылки (например,
-// «Модели» под «Агентами и расходами») идут с отступом под своим разделом.
+// Разделы администратора внизу меню: под тонкой линией, плоским списком, без раскрывающегося
+// пункта. Один пункт — одна страница.
 export function SidebarManagement({ management, collapsed }: {
   management: NavLink[]
   collapsed: boolean
 }) {
-  const [open, setOpen] = useState(false)
-  const toggleClass = 'flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring'
-
-  if (collapsed) {
-    // В узкой панели подписей нет: разделы управления — иконками.
-    return (
-      <nav aria-label="Управление" className="flex shrink-0 flex-col gap-0.5 border-t border-kumo-line px-2 py-2">
-        {management.map(link => <NavLinkItem key={link.key} link={link} collapsed />)}
-      </nav>
-    )
-  }
-
   return (
-    <nav aria-label="Управление" className="max-h-[50vh] shrink-0 overflow-y-auto border-t border-kumo-line px-2 py-2">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(v => !v)} className={toggleClass}>
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-kumo-subtle">
-          <CaretRight size={12} weight="bold" className={`transition-transform duration-150 ${open ? 'rotate-90' : ''}`} />
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium">Управление</span>
-      </button>
-      {open && (
-        <div className="flex flex-col gap-0.5">
-          {management.map(link => (
-            <div key={link.key} className="flex flex-col gap-0.5">
-              <NavLinkItem link={link} collapsed={false} />
-              {link.children && link.children.length > 0 && (
-                <div className="flex flex-col gap-0.5 pl-5">
-                  {link.children.map(child => <NavLinkItem key={child.key} link={child} collapsed={false} />)}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+    <nav aria-label="Управление" className={`flex shrink-0 flex-col gap-0.5 border-t border-kumo-fill py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
+      {!collapsed && <p className="m-0 px-3 pt-1 pb-1.5 text-[13px] leading-4 text-kumo-subtle">Управление</p>}
+      {management.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} compact />)}
     </nav>
   )
 }

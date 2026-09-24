@@ -5,7 +5,8 @@ import { useState, useEffect, useRef } from 'react'
 import { AiChatAuthorInfo } from '@gadgets/workshop-shared/api'
 import { hashPassword } from './passwordHash'
 import { CF_ACCESS_MODE } from './useAuth'
-import { User, Pencil, Check, X, Lock, Camera, Copy, Eye, EyeSlash } from '@phosphor-icons/react'
+import { User, Pencil, Check, X, Lock, Camera, Eye, EyeSlash, CaretLeft } from '@phosphor-icons/react'
+import { Link } from '@tanstack/react-router'
 import { useAvatar, invalidateAvatarCache } from './useAvatar'
 import { compressAvatar, avatarBlobUrl } from './avatarUtils'
 import UsageSettings from './components/billing/UsageSettings'
@@ -15,15 +16,15 @@ import { useDocumentTitle } from './useDocumentTitle'
 // the gatekeepers toolbar, the command palette). Kept here so the profile page reads as part of the
 // system rather than a stack of default Kumo cards.
 const PRIMARY_BTN =
-  'press inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-kumo-brand px-3.5 text-[13px] font-medium tracking-[-0.25px] text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60'
+  'press inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-kumo-brand px-4 text-[14px] font-medium text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60'
 const ICON_BTN =
-  'press grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default'
+  'press grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default'
 const INPUT =
-  'h-9 w-full rounded-lg border border-kumo-line bg-kumo-base px-3 text-[14px] tracking-[-0.25px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15'
+  'h-10 w-full rounded-xl border border-kumo-fill-hover bg-kumo-overlay px-3 text-[15px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15'
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="px-1 text-[12px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
+    <h2 className="m-0 text-[17px] leading-6 font-semibold text-kumo-default">
       {children}
     </h2>
   )
@@ -31,7 +32,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[12px] font-medium tracking-[-0.1px] text-kumo-subtle">{children}</p>
+    <p className="m-0 text-[13px] text-kumo-subtle">{children}</p>
   )
 }
 
@@ -171,16 +172,6 @@ export default function SettingsPage() {
     setIsEditingName(false)
   }
 
-  const handleCopyId = async () => {
-    if (!userInfo?.id) return
-    try {
-      await navigator.clipboard.writeText(userInfo.id)
-      toasts.add({ title: 'Идентификатор скопирован', variant: 'success' })
-    } catch {
-      toasts.add({ title: 'Не удалось скопировать', variant: 'error' })
-    }
-  }
-
   const handleAvatarUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       toasts.add({ title: 'Выберите изображение', variant: 'error' })
@@ -248,19 +239,22 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col px-6 pb-16 sm:px-10">
-      <header className="px-1 pb-2 pt-10">
-        <h1 className="text-2xl font-semibold tracking-tight text-kumo-default">Профиль</h1>
-        <p className="mt-1 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-subtle">
-          Имя, фотография и безопасность вашего аккаунта.
+    <div className="mx-auto flex w-full max-w-[640px] flex-col px-4 py-11 sm:px-0">
+      <header>
+        <Link to="/settings" className="mb-3 inline-flex items-center gap-1 text-[14px] text-kumo-link hover:underline">
+          <CaretLeft size={12} /> Настройки
+        </Link>
+        <h1 className="m-0 text-[34px] leading-10 font-semibold tracking-[-1px] text-kumo-default">Профиль</h1>
+        <p className="mt-2 mb-0 text-[15px] text-kumo-subtle">
+          Имя, фотография и пароль вашей учётной записи.
         </p>
       </header>
 
-      <div className="mt-6 flex flex-col gap-9">
+      <div className="mt-[26px] flex flex-col gap-[26px]">
         {/* Account */}
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-2.5">
           <SectionLabel>Учётная запись</SectionLabel>
-          <div className="divide-y divide-kumo-line overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
+          <div className="divide-y divide-kumo-tint overflow-hidden rounded-[18px] border border-kumo-fill bg-kumo-overlay">
             {/* Avatar */}
             <div className="flex items-center gap-4 px-5 py-4">
               <button
@@ -268,12 +262,12 @@ export default function SettingsPage() {
                 aria-label="Выбрать фотографию"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={avatarUploading}
-                className="press group relative flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-kumo-fill disabled:cursor-wait"
+                className="press group relative flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-selection-bg disabled:cursor-wait"
               >
                 {displayAvatarUrl ? (
                   <img src={displayAvatarUrl} alt="Фотография профиля" className="h-full w-full object-cover" />
                 ) : (
-                  <User size={28} className="text-kumo-subtle" />
+                  <User size={26} className="text-selection-text" />
                 )}
                 <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
                   <Camera size={18} className="text-white" />
@@ -296,10 +290,10 @@ export default function SettingsPage() {
                 }}
               />
               <div className="min-w-0">
-                <p className="truncate text-[15px] font-medium tracking-[-0.25px] text-kumo-default">
+                <p className="m-0 truncate text-[17px] leading-6 font-semibold text-kumo-default">
                   {userInfo?.name}
                 </p>
-                <p className="mt-0.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
+                <p className="mt-[3px] mb-0 text-[14px] text-kumo-subtle">
                   Нажмите на фотографию, чтобы заменить её
                 </p>
               </div>
@@ -323,7 +317,7 @@ export default function SettingsPage() {
                     className={`mt-1.5 ${INPUT}`}
                   />
                 ) : (
-                  <p className="mt-1 text-[14px] tracking-[-0.25px] text-kumo-default">
+                  <p className="mt-1 mb-0 text-[15px] text-kumo-default">
                     {userInfo?.name}
                   </p>
                 )}
@@ -360,24 +354,6 @@ export default function SettingsPage() {
                 </button>
               )}
             </div>
-
-            {/* User ID */}
-            <div className="flex items-center gap-2 px-5 py-4">
-              <div className="min-w-0 flex-1">
-                <FieldLabel>Идентификатор пользователя</FieldLabel>
-                <p className="mt-1 truncate font-mono text-[12px] tracking-[-0.1px] text-kumo-subtle">
-                  {userInfo?.id}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCopyId}
-                aria-label="Скопировать идентификатор"
-                className={ICON_BTN}
-              >
-                <Copy size={14} />
-              </button>
-            </div>
           </div>
         </section>
 
@@ -387,9 +363,9 @@ export default function SettingsPage() {
 
         {/* Security — only for password accounts (hidden under CF Access or gatekeeper sign-in) */}
         {!CF_ACCESS_MODE && hasPassword === true && (
-          <section className="flex flex-col gap-3">
-            <SectionLabel>Безопасность</SectionLabel>
-            <div className="rounded-xl border border-kumo-line bg-kumo-base p-5">
+          <section className="flex flex-col gap-2.5">
+            <SectionLabel>Пароль</SectionLabel>
+            <div className="rounded-[18px] border border-kumo-fill bg-kumo-overlay p-5">
               <div className="flex max-w-sm flex-col gap-4">
                 <PasswordField
                   label="Текущий пароль"

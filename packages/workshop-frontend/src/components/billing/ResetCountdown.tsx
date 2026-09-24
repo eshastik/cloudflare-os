@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 
 // Format the milliseconds remaining until `resetAt` as a compact "Hh Mm Ss" string.
 function formatRemaining(ms: number): string {
-  if (ms <= 0) return '0s'
+  if (ms <= 0) return '0 с'
   const totalSeconds = Math.floor(ms / 1000)
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
   const parts: string[] = []
-  if (hours > 0) parts.push(`${hours}h`)
-  if (hours > 0 || minutes > 0) parts.push(`${minutes}m`)
-  parts.push(`${seconds}s`)
+  if (hours > 0) parts.push(`${hours} ч`)
+  if (hours > 0 || minutes > 0) parts.push(`${minutes} мин`)
+  parts.push(`${seconds} с`)
   return parts.join(' ')
 }
 

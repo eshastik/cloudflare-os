@@ -11,16 +11,17 @@ test('permissions hide modules; refreshing exposes authorized project creation a
  });
  try{
   await app.open('Проекты');await app.until(()=>app.text().includes('Доступных проектов нет.'),'empty projects');
-  assert.equal(app.button('Создать проект'),undefined);
+  const create=()=>app.document.querySelector('#root button[aria-label="Новый проект"]');const refresh=()=>app.document.querySelector('#root button[aria-label="Обновить"]');
+  assert.equal(create(),null);
   // Сотрудник без полномочия: кнопку открывает правило организации «создают все».
-  roles={department_head:false,project_responsible:false,can_create_projects:true,responsible_projects:[]};app.button('Обновить').click();
-  await app.until(()=>app.button('Создать проект'),'organization rule allows creation');
-  roles=undefined;capabilities=['project.create','platform.metrics.read'];app.button('Обновить').click();
-  await app.until(()=>app.button('Создать проект'),'permission refreshed');
-  app.button('Создать проект').click();await app.until(()=>app.document.querySelector('[role="form"][aria-label="Новый проект"]'),'create form');
+  roles={department_head:false,project_responsible:false,can_create_projects:true,responsible_projects:[]};refresh().click();
+  await app.until(()=>create(),'organization rule allows creation');
+  roles=undefined;capabilities=['project.create','platform.metrics.read'];refresh().click();
+  await app.until(()=>create(),'permission refreshed');
+  create().click();await app.until(()=>app.document.querySelector('[role="form"][aria-label="Новый проект"]'),'create form');
   const inputs=app.document.querySelectorAll('[role="form"][aria-label="Новый проект"] input');
   assert.equal(inputs.length,1,'служебный код проекта человеку не показывается');app.type(inputs[0],'Новый проект команды');
-  await app.until(()=>!app.button('Создать').disabled,'name accepted');app.button('Создать').click();
+  await app.until(()=>!app.button('Создать проект').disabled,'name accepted');app.button('Создать проект').click();
   await app.until(()=>app.calls.some(c=>c[0]==='createProject')&&app.text().includes('Новый проект команды')&&!app.document.querySelector('[role="form"][aria-label="Новый проект"]'),'created project loaded');
   assert.deepEqual(app.calls.find(c=>c[0]==='createProject'),['createProject','Новый проект команды','']);
   // Наблюдатель состояния видит панель состояния, но не журнал действий и не управление людьми.

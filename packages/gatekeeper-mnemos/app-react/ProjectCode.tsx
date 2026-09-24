@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button } from "@cloudflare/kumo";
 import { CaretRight, FileText, Folder, GitBranch } from "@phosphor-icons/react";
 import type { WorkspaceTaskView } from "../src/workspace-tasks.ts";
 import type { GitBranch as Branch, GitChangedFile, GitComparison, GitProjectRepository, GitTreeEntry } from "../src/git-connections.ts";
 import { useUi } from "./host.ts";
 import { useLoad } from "./data.ts";
-import { AdminDetails, Block, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { Button, AdminDetails, Block, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
 
 const AGENT_PREFIX = "agents/";
 const DIFF_LINES = 400;
@@ -34,7 +33,7 @@ export default function ProjectCode({ projectId, repositories, compareTo, action
   return (
     <div>
       {repositories.length > 1 && (
-        <label className="mb-3 flex items-center gap-2 text-[13px] text-kumo-subtle">
+        <label className="mb-3 flex items-center gap-2 text-[14px] text-kumo-subtle">
           Код
           <Select aria-label="Репозиторий" value={key(repo)} onChange={e => setRepoKey(e.target.value)}>
             {repositories.map(r => <option key={key(r)} value={key(r)}>{r.repository_name}</option>)}
@@ -78,7 +77,7 @@ function Repository({ admin, projectId, repo, compareBranch, actions }: { admin:
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-[13px] font-medium text-kumo-default">{repo.repository_name}</span>
+        <span className="text-[14px] font-medium text-kumo-default">{repo.repository_name}</span>
         <Select aria-label="Версия кода" value={branch.name} onChange={e => setSelected(e.target.value)}>
           {all.map(b => <option key={b.name} value={b.name}>{label(b.name)}</option>)}
         </Select>
@@ -119,7 +118,7 @@ function Browser({ projectId, repo, branch }: { projectId: string; repo: GitProj
 
   return (
     <section aria-label="Файлы репозитория" className="mb-6">
-      <div className="mb-2 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[13px]">
+      <div className="mb-2 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[14px]">
         <nav aria-label="Путь" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           <button type="button" className="text-kumo-link hover:underline" onClick={() => go(0)}>{repo.repository_name.split("/").at(-1)}</button>
           {crumbs.map((part, index) => (
@@ -131,7 +130,7 @@ function Browser({ projectId, repo, branch }: { projectId: string; repo: GitProj
             </span>
           ))}
         </nav>
-        {commit.value && <span className="text-[12px] text-kumo-subtle">{commit.value.message.split("\n")[0].slice(0, 72)} · {new Date(commit.value.committed_at).toLocaleDateString("ru-RU")}</span>}
+        {commit.value && <span className="text-[13px] text-kumo-subtle">{commit.value.message.split("\n")[0].slice(0, 72)} · {new Date(commit.value.committed_at).toLocaleDateString("ru-RU")}</span>}
       </div>
       {file
         ? <FileView projectId={projectId} repo={repo} commit={branch.sha} path={file} onClose={() => setFile("")} />
@@ -146,14 +145,14 @@ function Browser({ projectId, repo, branch }: { projectId: string; repo: GitProj
                     ? <Folder size={16} className="shrink-0 text-kumo-subtle" aria-hidden="true" />
                     : <FileText size={16} className="shrink-0 text-kumo-subtle" aria-hidden="true" />}
                   <button type="button" disabled={entry.type !== "dir" && entry.type !== "file"} onClick={() => open(entry)}
-                    className="min-w-0 flex-1 truncate text-left text-[13px] text-kumo-default hover:underline disabled:no-underline disabled:text-kumo-subtle">{entry.name}</button>
-                  {entry.type === "file" && <span className="text-[12px] text-kumo-subtle">{size(entry.size_bytes)}</span>}
-                  {entry.type === "symlink" && <span className="text-[12px] text-kumo-subtle">ссылка</span>}
-                  {entry.type === "submodule" && <span className="text-[12px] text-kumo-subtle">подмодуль</span>}
+                    className="min-w-0 flex-1 truncate text-left text-[14px] text-kumo-default hover:underline disabled:no-underline disabled:text-kumo-subtle">{entry.name}</button>
+                  {entry.type === "file" && <span className="text-[13px] text-kumo-subtle">{size(entry.size_bytes)}</span>}
+                  {entry.type === "symlink" && <span className="text-[13px] text-kumo-subtle">ссылка</span>}
+                  {entry.type === "submodule" && <span className="text-[13px] text-kumo-subtle">подмодуль</span>}
                 </Row>
               ))}
             </RowList>
-            {tree.value?.truncated && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Показаны первые {entries.length} записей каталога.</p>}
+            {tree.value?.truncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показаны первые {entries.length} записей каталога.</p>}
           </>}
     </section>
   );
@@ -166,13 +165,13 @@ function FileView({ projectId, repo, commit, path, onClose }: { projectId: strin
   return (
     <div aria-label={`Файл ${path}`} role="region">
       <div className="mb-2 flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[12px] text-kumo-subtle">{file.value ? `${lines.length} строк · ${size(file.value.size_bytes)}` : ""}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] text-kumo-subtle">{file.value ? `${lines.length} строк · ${size(file.value.size_bytes)}` : ""}</span>
         <Button variant="ghost" size="sm" onClick={onClose}>К списку файлов</Button>
       </div>
       {file.loading ? <Notice>Загружаем файл…</Notice>
         : file.error ? <Notice tone="danger">{file.error}</Notice>
         : (
-          <div className="overflow-x-auto rounded-xl border border-kumo-line bg-kumo-elevated">
+          <div className="overflow-x-auto rounded-[16px] border border-kumo-fill bg-kumo-overlay">
             <table className="w-full border-collapse font-mono text-[12.5px] leading-5">
               <tbody>
                 {lines.map((line, index) => (
@@ -198,7 +197,7 @@ function Comparison({ admin, projectId, repo, base, head, title, onBack }: { adm
       <div className="mb-3 flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="m-0 text-[15px] font-semibold text-kumo-strong">{title}</h3>
-          <p className="mt-0.5 mb-0 text-[12px] text-kumo-subtle">по сравнению с основной версией{value ? ` · сохранений: ${value.total_commits}` : ""}</p>
+          <p className="mt-0.5 mb-0 text-[13px] text-kumo-subtle">по сравнению с основной версией{value ? ` · сохранений: ${value.total_commits}` : ""}</p>
           <AdminDetails show={admin} items={[["Ветка", head.name], ["Основа", base.name]]} />
         </div>
         <Button variant="ghost" size="sm" onClick={onBack}>К коду проекта</Button>
@@ -220,14 +219,14 @@ function ComparisonBody({ value }: { value: GitComparison }) {
           {value.files.map(f => (
             <Row key={f.path} className="py-2">
               <RowText title={f.path} note={f.old_path ? `было: ${f.old_path}` : undefined} />
-              {f.binary ? <span className="text-[12px] text-kumo-subtle">двоичный</span> : (
-                <span className="whitespace-nowrap text-[12px]"><span className="text-kumo-success">+{f.additions}</span> <span className="text-kumo-danger">−{f.deletions}</span></span>
+              {f.binary ? <span className="text-[13px] text-kumo-subtle">двоичный</span> : (
+                <span className="whitespace-nowrap text-[13px]"><span className="text-kumo-success">+{f.additions}</span> <span className="text-kumo-danger">−{f.deletions}</span></span>
               )}
               <StatusBadge tone={CHANGE[f.status].tone}>{CHANGE[f.status].label}</StatusBadge>
             </Row>
           ))}
         </RowList>
-        {!value.files_complete && <p className="mt-2 mb-0 text-[12px] text-kumo-subtle">Список неполный: изменения слишком большие для показа целиком.</p>}
+        {!value.files_complete && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Список неполный: изменения слишком большие для показа целиком.</p>}
       </Block>
       <section aria-label="Изменения по строкам">
         {sections.map((s, index) => <DiffFile key={index} section={s} open={index < 5} />)}
@@ -258,9 +257,9 @@ function DiffFile({ section, open }: { section: DiffSection; open: boolean }) {
   useEffect(() => setExpanded(open), [open]);
   const shown = section.lines.slice(0, limit);
   return (
-    <details open={expanded} onToggle={e => setExpanded((e.target as HTMLDetailsElement).open)} className="mb-3 overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
-      <summary className="cursor-pointer px-3 py-2 text-[13px] font-medium text-kumo-default">{section.path}</summary>
-      <div className="overflow-x-auto border-t border-kumo-line">
+    <details open={expanded} onToggle={e => setExpanded((e.target as HTMLDetailsElement).open)} className="mb-3 overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay">
+      <summary className="cursor-pointer px-3 py-2 text-[14px] font-medium text-kumo-default">{section.path}</summary>
+      <div className="overflow-x-auto border-t border-kumo-fill">
         <pre className="m-0 font-mono text-[12.5px] leading-5">
           {shown.map((line, index) => (
             <div key={index} className={`whitespace-pre px-3 ${line.startsWith("+") ? "bg-kumo-success-tint" : line.startsWith("-") ? "bg-kumo-danger-tint" : line.startsWith("@@") ? "text-kumo-subtle" : "text-kumo-default"}`}>{line || " "}</div>
@@ -268,7 +267,7 @@ function DiffFile({ section, open }: { section: DiffSection; open: boolean }) {
         </pre>
       </div>
       {section.lines.length > limit && (
-        <div className="border-t border-kumo-line px-3 py-2">
+        <div className="border-t border-kumo-fill px-3 py-2">
           <Button variant="ghost" size="sm" onClick={() => setLimit(n => n + DIFF_LINES)}>Показать ещё {Math.min(DIFF_LINES, section.lines.length - limit)} строк</Button>
         </div>
       )}

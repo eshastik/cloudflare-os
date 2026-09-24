@@ -153,7 +153,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       maxCallsPerMinute: 600,
       maxPendingCalls: 128,
       onRateLimit: 'throttle',
-      label: 'Gatekeeper app',
+      label: 'Приложение подключения',
     })
     this.#ui = ui
     this.#disposeRateLimiter = dispose
@@ -221,12 +221,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
   }
 
   async createCalendarDraft(id:string,sha256:string){
-    if(!this.#calendarDraftCreator||this.#uploadLifetime.signal.aborted)throw Error('Calendar creation unavailable.');
+    if(!this.#calendarDraftCreator||this.#uploadLifetime.signal.aborted)throw Error('Создание события недоступно.');
     return this.#calendarDraftCreator.create(id,sha256);
   }
 
   async sendMailDraft(id:string,sha256:string){
-    if(!this.#mailDraftSender||this.#uploadLifetime.signal.aborted)throw Error('Mail sending unavailable.');
+    if(!this.#mailDraftSender||this.#uploadLifetime.signal.aborted)throw Error('Отправка письма недоступна.');
     return this.#mailDraftSender.send(id,sha256);
   }
 
@@ -245,7 +245,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
   async uploadText(scope: string, text: string): Promise<string> {
     if (!this.#uploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted ||
         typeof scope !== 'string' || !scope || scope.length > 255) {
-      throw new Error('Document upload unavailable.')
+      throw new Error('Загрузка документа недоступна.')
     }
     this.#uploadBusy = true
     try {
@@ -318,21 +318,21 @@ class GatekeeperAppHostImpl extends RpcTarget {
   async downloadFile(scope:string,resource:string,version:string,filename:string):Promise<void> {
     if(!this.#downloads||this.#downloadBusy||this.#uploadLifetime.signal.aborted||
        [scope,resource,version].some(value=>typeof value!=='string'||!value||value.length>255)||
-       typeof filename!=='string'||filename.length>4096)throw new Error('Document download unavailable.')
+       typeof filename!=='string'||filename.length>4096)throw new Error('Скачивание документа недоступно.')
     this.#downloadBusy=true
     try {
       const downloads=this.#downloads
       const ticket=await downloads.issuer.issue(scope,resource,version,0)
       const bytes=await downloadGatekeeperFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
       saveDocumentFile(bytes,filename)
-    }catch{throw new Error('Document download failed.')}
+    }catch{throw new Error('Не удалось скачать документ.')}
     finally{this.#downloadBusy=false}
   }
 
   async downloadText(scope: string, resource: string, version: string, side: number): Promise<string> {
     if (!this.#downloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
         [scope, resource, version].some(value => typeof value !== 'string' || !value || value.length > 255) ||
-        !Number.isSafeInteger(side) || side < 0) throw new Error('Document download unavailable.')
+        !Number.isSafeInteger(side) || side < 0) throw new Error('Скачивание документа недоступно.')
     this.#downloadBusy = true
     try {
       const downloads = this.#downloads
@@ -342,7 +342,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       await downloads.issuer.validate(scope, resource, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text
-    } catch { throw new Error('Document download failed.') }
+    } catch { throw new Error('Не удалось скачать документ.') }
     finally { this.#downloadBusy = false }
   }
 
@@ -351,7 +351,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
   async downloadNativeDocument(scope: string, resource: string, publication: string, format: NativeDocumentFormat): Promise<NativeDocumentSnapshot> {
     if (!this.#nativeDownloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
         [scope, resource, publication].some(value => typeof value !== 'string' || !value || value.length > 255) ||
-        (format !== 'cloudflareos.document' && format !== 'cloudflareos.spreadsheet')) throw new Error('Document download unavailable.')
+        (format !== 'cloudflareos.document' && format !== 'cloudflareos.spreadsheet')) throw new Error('Скачивание документа недоступно.')
     this.#downloadBusy = true
     try {
       const downloads = this.#nativeDownloads
@@ -360,14 +360,14 @@ class GatekeeperAppHostImpl extends RpcTarget {
         return await downloadGatekeeperNativeDocument(downloads.storageOrigin, await selected.issue(),
           format, this.#uploadLifetime.signal, () => selected.validate())
       } finally { selected[Symbol.dispose]() }
-    } catch { throw new Error('Native document download failed.') }
+    } catch { throw new Error('Не удалось скачать документ.') }
     finally { this.#downloadBusy = false }
   }
 
   async downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null> {
     if (!this.#reviewDownloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
         [review, node].some(value => typeof value !== 'string' || !value || value.length > 255) ||
-        !Number.isSafeInteger(version) || version < 0 || (side !== 'before' && side !== 'after')) throw new Error('Document download unavailable.')
+        !Number.isSafeInteger(version) || version < 0 || (side !== 'before' && side !== 'after')) throw new Error('Скачивание документа недоступно.')
     this.#downloadBusy = true
     try {
       const downloads = this.#reviewDownloads
@@ -376,7 +376,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       await downloads.issuer.validate(review, node, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text
-    } catch { throw new Error('Document download failed.') }
+    } catch { throw new Error('Не удалось скачать документ.') }
     finally { this.#downloadBusy = false }
   }
 
@@ -783,7 +783,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       // origin), and the app's CSP keeps connect-src 'none'.
       sandbox="allow-scripts allow-modals allow-forms"
       allow="clipboard-write"
-      title="Gatekeeper app"
+      title="Приложение подключения"
       style={iframeStyleForOverlay(overlay)}
     /></div></div>
   )

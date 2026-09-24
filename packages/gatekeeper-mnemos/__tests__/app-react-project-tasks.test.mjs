@@ -99,7 +99,7 @@ test("Страница проекта одна: ссылка на блок от�
   for (const view of ["code", "members", "nonsense"]) {
     const app = await mountMemoryApp(methods([]), { section: "projects", project: "one", view });
     try {
-      await app.until(() => app.document.querySelector('#root section[aria-label="Код"]') && app.document.querySelector('#root section[aria-label="Участники"]'), `страница по ссылке ${view}`);
+      await app.until(() => app.document.querySelector('#root section[aria-label="Код"]') && app.document.querySelector('#root section[aria-label="Кто видит"]'), `страница по ссылке ${view}`);
       assert.equal(app.tabs().length, 0, "без вкладок");
     } finally { app.dispose(); }
   }

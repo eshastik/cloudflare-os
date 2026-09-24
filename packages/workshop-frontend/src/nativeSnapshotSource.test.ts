@@ -20,9 +20,9 @@ it('cancels on editor replacement and rejects failed flushes instead of reading 
   const operation = requestNativeSnapshot({ postMessage(_message: unknown, _origin: string, ports: MessagePort[]) { reply = ports[0] } } as Window,
     'cloudflareos.document', controller.signal)
   controller.abort()
-  await expect(operation).rejects.toThrow('Editor snapshot unavailable.')
+  await expect(operation).rejects.toThrow('Редактор не отдал документ.')
   reply?.close()
   await expect(requestNativeSnapshot({ postMessage(_message: unknown, _origin: string, ports: MessagePort[]) {
     ports[0].postMessage({ error: true })
-  } } as Window, 'cloudflareos.document', new AbortController().signal)).rejects.toThrow('Editor could not save a current snapshot.')
+  } } as Window, 'cloudflareos.document', new AbortController().signal)).rejects.toThrow('Редактор не смог сохранить текущую версию.')
 })

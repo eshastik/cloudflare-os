@@ -81,10 +81,10 @@ test("Изменения агента сравниваются с основно
   } finally { app.dispose(); }
 });
 
-test("Без привязанного репозитория блока «Код» нет: страница проекта — обзор, материалы, участники", async () => {
+test("Без привязанного репозитория блока «Код» нет: страница проекта — файлы, кто видит, согласование", async () => {
   const app = await mountMemoryApp(codeMethods([]), { section: "projects", project: "two" });
   try {
-    await app.until(() => app.document.querySelector('#root section[aria-label="Участники"]'), "блоки проекта");
+    await app.until(() => app.document.querySelector('#root section[aria-label="Кто видит"]'), "блоки проекта");
     assert.equal(app.document.querySelector('#root section[aria-label="Код"]'), null);
     assert.equal(app.tabs().length, 0, "без вкладок");
   } finally { app.dispose(); }
@@ -102,8 +102,8 @@ test("Описания L0/L1 проекта, папок и файлов пока
     await app.until(() => app.text().includes("Материалы команды по запуску продукта."), "L0 под названием проекта");
     assert.ok(app.text().includes("Проект собирает заметки, планы и решения по запуску."), "L1 в обзоре");
     const section = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
-    await app.until(() => section("Материалы")?.textContent.includes("Короткая заметка о договорённостях."), "описание файла");
-    assert.ok(section("Папки").textContent.includes("Черновики дизайна."), "описание папки");
+    await app.until(() => section("Файлы")?.textContent.includes("Короткая заметка о договорённостях."), "описание файла");
+    assert.ok(section("Файлы").textContent.includes("Черновики дизайна."), "описание папки");
   } finally { app.dispose(); }
 });
 

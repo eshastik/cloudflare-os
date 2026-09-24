@@ -46,7 +46,7 @@ export function createRateLimitedCapability(
     while (inFlight < options.maxConcurrency && queue.length > 0) {
       if (startedCalls.length >= options.maxCallsPerMinute) {
         if (options.onRateLimit === 'reject') {
-          queue.shift()?.reject(new Error(`${options.label} made too many requests.`))
+          queue.shift()?.reject(new Error(`${options.label}: слишком много запросов.`))
           continue
         }
         // Throttle: pause and resume once the oldest call ages out of the window (a completion may
@@ -81,7 +81,7 @@ export function createRateLimitedCapability(
       if (typeof property !== 'string') return undefined
       return (...args: unknown[]) => new Promise((resolve, reject) => {
         if (queue.length + inFlight >= options.maxPendingCalls) {
-          reject(new Error(`${options.label} has too many pending requests.`))
+          reject(new Error(`${options.label}: слишком много запросов в очереди.`))
           return
         }
         queue.push({ method: property, args, resolve, reject })

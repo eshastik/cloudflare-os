@@ -16,7 +16,7 @@ async function click(el,text){const button=find(el,text);assert.ok(button,text);
 async function type(el,label,value){const input=[...el.querySelectorAll('label')].find(l=>l.textContent.startsWith(label))?.querySelector('input,select')??el.querySelector(`[aria-label="${label}"]`);assert.ok(input,label);await act(async()=>{const proto=input.tagName==='SELECT'?dom.window.HTMLSelectElement.prototype:dom.window.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(input,value);input.dispatchEvent(new dom.window.Event(input.tagName==='SELECT'?'change':'input',{bubbles:true}));});}
 const units=[{org_unit_id:'unit-sales',name:'Продажи',members:[{principal_id:'head',display_name:'Ольга',is_head:true},{principal_id:'ivan',display_name:'Иван',is_head:false}]}];
 
-test('администратор приглашает сразу в отдел и с ролью; идентификаторы видны только под «Подробнее»',async()=>{
+test('администратор приглашает сразу в отдел и с ролью; приглашённый виден в списке людей без идентификаторов',async()=>{
  const created=[];let invitations=[];
  const ui={listPeople:async()=>({users:[]}),listOrgUnits:async()=>units,listInvitations:async()=>invitations,
   createInvitation:async(email,name,unit,role)=>{created.push([email,name,unit,role]);const invitation={invitation_id:'inv-1',email,display_name:name,org_unit_id:unit,org_unit_name:'Продажи',role,created_by:'owner',created_by_name:'Анна',created_at:'2026-09-24T10:00:00Z',expires_at:'2026-10-01T10:00:00Z',status:'open'};invitations=[invitation];return {invitation,link:'https://os.example/gatekeeper/mnemos/oauth/invite/'+'c'.repeat(43)};},
@@ -31,10 +31,11 @@ test('администратор приглашает сразу в отдел �
  assert.deepEqual(created,[['new@company.ru','Пётр','unit-sales','head']]);
  assert.match(view.el.textContent,/руководитель отдела/,'роль в списке приглашений словами');
  assert.equal(view.el.querySelector('input[aria-label="Ссылка-приглашение"]').value,'https://os.example/gatekeeper/mnemos/oauth/invite/'+'c'.repeat(43));
- assert.match(view.el.textContent,/Ждёт входа/);assert.match(view.el.textContent,/отдел «Продажи»/);
- const details=view.el.querySelector('[data-admin-details]');assert.ok(details,'служебное свёрнуто под «Подробнее»');
- const visible=view.el.textContent.replace(details.textContent,'');assert.doesNotMatch(visible,/inv-1/);
- await click(view.el,'Отозвать приглашение: Пётр');assert.match(view.el.textContent,/Отозвано/);
+ assert.match(view.el.textContent,/ждёт входа/);assert.match(view.el.textContent,/отдел «Продажи»/);
+ assert.ok(view.el.querySelector('section[aria-label="Люди"] [data-invitation]'),'приглашённый — строкой в списке людей');
+ assert.equal(view.el.querySelector('[data-admin-details]'),null,'«Подробнее» с идентификаторами нет');assert.doesNotMatch(view.el.textContent,/inv-1/);
+ await click(view.el,'Отозвать приглашение: Пётр');assert.match(view.el.textContent,/Приглашение для Пётр отозвано/);
+ assert.equal(view.el.querySelector('[data-invitation]'),null,'отозванное приглашение ушло из списка');
  await view.close();
 });
 

@@ -1,7 +1,6 @@
 import {useEffect, useRef, useState} from "react";
-import {Button} from "@cloudflare/kumo";
 import {useUi} from "./host.ts";
-import {Block, Notice, TextInput} from "./ui.tsx";
+import { Button, Block, Notice, TextInput } from "./ui.tsx";
 import {intakePlacement, type IntakeAlert, type IntakeStatus} from "../src/intake.ts";
 
 export default function ProjectIntake({projectId, onPlaced}:{projectId:string;onPlaced():Promise<void>}) {
@@ -71,7 +70,7 @@ export default function ProjectIntake({projectId, onPlaced}:{projectId:string;on
     <label className="w-48 text-xs text-kumo-subtle">Область выбранных файлов<TextInput aria-label="Область выбранных файлов" value={bulkDomain} onChange={e=>setBulkDomain(e.target.value)}/></label>
     <Button size="sm" variant="secondary" disabled={!bulkDomain.trim()} onClick={()=>{setDomains(previous=>({...previous,...Object.fromEntries(selected.map(a=>[a.id,bulkDomain.trim()]))}));setError("");}}>Применить к выбранным</Button>
    </div>}
-   <div className="divide-y divide-kumo-line">{files.map(file=><div key={file.id} className="flex flex-wrap items-center gap-3 py-3">
+   <div className="divide-y divide-kumo-fill">{files.map(file=><div key={file.id} className="flex flex-wrap items-center gap-3 py-3">
     <label className="flex min-w-0 flex-1 items-center gap-3 text-sm"><input type="checkbox" checked={!excluded.has(file.id)} onChange={()=>setExcluded(previous=>{const next=new Set(previous);if(next.has(file.id))next.delete(file.id);else next.add(file.id);return next;})}/><span className="break-all">{file.paths[0]||"Материал"}</span></label>
     <label className="w-48 text-xs text-kumo-subtle">Предметная область<TextInput aria-label={`Область: ${file.paths[0]}`} value={domains[file.id]??""} onChange={e=>setDomains(previous=>({...previous,[file.id]:e.target.value}))}/></label>
    </div>)}</div>

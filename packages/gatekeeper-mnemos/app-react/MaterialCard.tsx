@@ -1,8 +1,7 @@
-import { Button } from "@cloudflare/kumo";
 import { ChatCircleText, FileText, ListChecks } from "@phosphor-icons/react";
 import type { DocumentRow } from "./data.ts";
 import { relativeTime } from "./time.ts";
-import { StatusBadge } from "./ui.tsx";
+import { Button, StatusBadge } from "./ui.tsx";
 
 /** Сколько символов фрагмента показывать в карточке: дальше человек открывает документ. */
 const SNIPPET_LENGTH = 240;
@@ -30,15 +29,15 @@ export function MaterialCard({ row, at, fragment, selected, onOpen, onChat }: {
 }) {
   return (
     <article data-document={row.nodeId} aria-current={selected ? "true" : undefined}
-      className={`rounded-xl border border-kumo-line p-4 ${selected ? "bg-kumo-tint" : "bg-kumo-base"}`}>
+      className={`rounded-[16px] border border-kumo-fill bg-kumo-overlay p-4 ${selected ? "bg-kumo-tint" : "bg-kumo-base"}`}>
       <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-kumo-line bg-kumo-elevated text-kumo-subtle"><FileText size={16} aria-hidden="true" /></span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] border border-kumo-fill bg-kumo-overlay text-kumo-subtle"><FileText size={16} aria-hidden="true" /></span>
         <div className="min-w-0 flex-1">
-          <button type="button" onClick={onOpen} className="m-0 block max-w-full bg-transparent p-0 text-left text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default [overflow-wrap:anywhere] hover:text-kumo-strong">{row.name}</button>
-          <div className="mt-0.5 text-[12px] text-kumo-subtle">
+          <button type="button" onClick={onOpen} className="m-0 block max-w-full bg-transparent p-0 text-left text-[14px] leading-5 font-medium text-kumo-default [overflow-wrap:anywhere] hover:text-kumo-strong">{row.name}</button>
+          <div className="mt-0.5 text-[13px] text-kumo-subtle">
             {row.projectName}{at && <> · изменён <time dateTime={at}>{relativeTime(at)}</time></>}
           </div>
-          {fragment && <p className="mt-2 mb-0 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default [overflow-wrap:anywhere]">{snippet(fragment)}</p>}
+          {fragment && <p className="mt-2 mb-0 text-[14px] leading-5 text-kumo-default [overflow-wrap:anywhere]">{snippet(fragment)}</p>}
         </div>
         <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>
       </div>

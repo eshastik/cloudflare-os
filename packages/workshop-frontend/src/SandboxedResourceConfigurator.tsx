@@ -37,7 +37,7 @@ class ResourceConfiguratorHostImpl extends RpcTarget implements ResourceConfigur
       maxCallsPerMinute: 120,
       maxPendingCalls: 32,
       onRateLimit: 'reject',
-      label: 'Resource configurator',
+      label: 'Настройка ресурса',
     }).capability
   }
 
@@ -247,16 +247,16 @@ export default function SandboxedResourceConfigurator({
   }
 
   const collectResourceUrl = () => {
-    if (iframeInvalidatedRef.current) return Promise.reject(new Error('Configurator is no longer available.'))
+    if (iframeInvalidatedRef.current) return Promise.reject(new Error('Настройка больше недоступна.'))
     const iframe = iframeRpcRef.current
-    if (!iframe || !iframeConnectedRef.current) return Promise.reject(new Error('Configurator is not ready.'))
+    if (!iframe || !iframeConnectedRef.current) return Promise.reject(new Error('Настройка ещё не готова.'))
 
     let timeout: number | null = null
     return Promise.race([
       iframe.collectResourceUrl(),
       new Promise<never>((_, reject) => {
         timeout = window.setTimeout(() => {
-          reject(new Error('Configurator did not provide its resource URL. Please try again.'))
+          reject(new Error('Настройка не вернула адрес ресурса. Попробуйте ещё раз.'))
         }, COLLECT_VALUES_TIMEOUT_MS)
       }),
     ]).finally(() => {
@@ -389,7 +389,7 @@ export default function SandboxedResourceConfigurator({
         srcDoc={frame.iframeHtml}
         onLoad={handleIframeLoad}
         sandbox="allow-scripts"
-        title="Resource configurator"
+        title="Настройка ресурса"
         scrolling="no"
         style={{
           position: 'fixed',

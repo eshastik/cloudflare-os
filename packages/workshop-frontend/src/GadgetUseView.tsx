@@ -43,8 +43,9 @@ type Props = {
   currentUserId: string | null
 }
 
-// Matches the top bar height used by the full editor (and the home page header).
-const TOPBAR_H = 56
+// Та же высота шапки, что у беседы в полном редакторе; гаджет — белая карточка с отступом 12.
+const TOPBAR_H = 64
+const CARD_GAP = 12
 
 export default function GadgetUseView({
   overseer,
@@ -62,13 +63,13 @@ export default function GadgetUseView({
     <div className="flex flex-col h-full overflow-hidden bg-kumo-base relative">
       {/* ═══ TOP BAR ════════════════════════════════════════════════════════════ */}
       <div
-        className="relative flex items-center justify-between px-4 sm:px-6 backdrop-blur-md border-b border-kumo-line flex-shrink-0 gap-3"
-        style={{ height: TOPBAR_H, backgroundColor: 'color-mix(in srgb, var(--color-kumo-base) 80%, transparent)' }}
+        className="relative flex items-center justify-between px-5 sm:px-7 flex-shrink-0 gap-3"
+        style={{ height: TOPBAR_H }}
       >
         <TopBarNotice />
         {/* Left: logo / title */}
         <div className="flex items-center gap-2 min-w-0">
-          <Link to="/" aria-label="Home" className="flex-shrink-0 hover:opacity-80 transition-opacity">
+          <Link to="/" aria-label="На главную" className="flex-shrink-0 hover:opacity-80 transition-opacity">
             <SiteLogo size={22}>
               <Hexagon size={22} className="text-kumo-brand" weight="bold" />
             </SiteLogo>
@@ -76,13 +77,13 @@ export default function GadgetUseView({
 
           <span className="text-kumo-inactive flex-shrink-0">/</span>
 
-          <span className="text-[14px] leading-5 font-medium tracking-[-0.25px] text-kumo-default truncate">
+          <h1 className="m-0 truncate text-[16px] leading-6 font-semibold text-kumo-default">
             {metadata.title}
-          </span>
+          </h1>
 
           {metadata.owner && (
-            <span className="text-xs text-kumo-inactive flex-shrink-0">
-              by {metadata.owner.name}
+            <span className="flex-shrink-0 text-[14px] leading-5 text-kumo-subtle">
+              автор: {metadata.owner.name}
             </span>
           )}
         </div>
@@ -96,10 +97,10 @@ export default function GadgetUseView({
                 type="button"
                 onClick={() => onSelectGadget(g.id)}
                 aria-current={g.id === selectedGadgetId ? 'true' : undefined}
-                className={`flex-shrink-0 cursor-pointer rounded-full px-3 py-1 text-[12px] leading-4 tracking-[-0.2px] transition-colors duration-150 ease-out ${
+                className={`h-8 flex-shrink-0 cursor-pointer rounded-full px-3 text-[13px] leading-4 transition-colors duration-150 ease-out ${
                   g.id === selectedGadgetId
-                    ? 'bg-kumo-contrast font-medium text-kumo-inverse'
-                    : 'bg-kumo-tint text-kumo-subtle hover:text-kumo-default'
+                    ? 'bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]'
+                    : 'text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default'
                 }`}
               >
                 <span className="flex items-center gap-1.5">
@@ -116,7 +117,7 @@ export default function GadgetUseView({
           <GadgetExportMenu
             canImport={false}
             gadget={gadget}
-            gadgetTitle={gadgets.find(g => g.id === selectedGadgetId)?.title ?? 'Gadget'}
+            gadgetTitle={gadgets.find(g => g.id === selectedGadgetId)?.title ?? 'Гаджет'}
             outputId={gadgets.find(g => g.id === selectedGadgetId)?.output?.id}
             snapshotSource={nativeSnapshotSource}
           />
@@ -130,12 +131,14 @@ export default function GadgetUseView({
       </div>
 
       {/* ═══ GADGET UI ══════════════════════════════════════════════════════════ */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div
+        className="mx-3 mb-3 flex-1 min-h-0 overflow-hidden rounded-[20px] bg-kumo-overlay shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]"
+      >
         {gadget ? (
           <GadgetUI
             key={selectedGadgetId}
             gadget={gadget}
-            height={`calc(100vh - ${TOPBAR_H}px)`}
+            height={`calc(100vh - ${TOPBAR_H}px - ${CARD_GAP}px)`}
             isVisible={true}
             nativeSnapshotSource={nativeSnapshotSource}
             readinessApi={authenticatedApi}
@@ -143,7 +146,7 @@ export default function GadgetUseView({
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">
-            <p className="text-sm text-kumo-subtle">This workspace has no gadgets yet.</p>
+            <p className="text-sm text-kumo-subtle">В этой беседе пока нет гаджетов.</p>
           </div>
         )}
       </div>

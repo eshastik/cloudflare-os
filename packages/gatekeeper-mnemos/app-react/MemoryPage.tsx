@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { useHost, useUi } from "./host.ts";
 import { useMemoryData } from "./data.ts";
 import DocumentsTab from "./DocumentsTab.tsx";
@@ -13,6 +12,11 @@ import RulesTab from "./RulesTab.tsx";
 import JournalTab from "./JournalTab.tsx";
 import TeamTab from "./TeamTab.tsx";
 import { sections, resolveSection, type SectionId } from "./navigation.ts";
+import { PageHeader } from "./ui.tsx";
+
+/** Разделы, которые сами рисуют заголовок: в нём живые числа и действия раздела. */
+const OWN_HEADER: ReadonlySet<SectionId> = new Set<SectionId>(["my-work", "projects", "team"]);
+const WIDTH: Partial<Record<SectionId, string>> = { "my-work": "max-w-[768px]", team: "max-w-[928px]" };
 
 export default function MemoryPage() {
   const ui = useUi();
@@ -62,25 +66,23 @@ export default function MemoryPage() {
   // «Люди и отделы» решают сами: руководителю отдела без полномочия там доступно приглашение в свой отдел.
   const denied = (section === "rules" && !admin) || (section === "journal" && !admin && !capabilities.includes("platform.metrics.read"));
 
-  if (section === undefined) return <p role="status" className="p-8">Загрузка раздела…</p>;
+  if (section === undefined) return <p role="status" className="m-0 p-10 text-[15px] text-kumo-subtle">Загрузка раздела…</p>;
   if (panelIntake) return <div className="flex w-full flex-col px-4 py-4"><IntakeTab data={data} compact /></div>;
 
-  return <div className={compact?"flex w-full flex-col px-4 py-4":"mx-auto flex w-full max-w-[1120px] flex-col px-4 py-6 sm:px-8 sm:py-8"}>
-    {!compact && <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <p className="m-0 mb-1 text-xs text-kumo-subtle">{data.identity?.tenant_name || "Mnemos"}</p>
-        <h1 className="m-0 text-2xl font-semibold tracking-tight text-kumo-default">{page ? page.title : "Раздел не найден"}</h1>
-        {page && <p className="mt-2 mb-0 max-w-[650px] text-sm text-kumo-subtle">{page.description}</p>}
-      </div>
-      {section!=="people"&&section!=="rules"&&<Button variant="ghost" size="sm" onClick={() => void data.reloadProjects()}>Обновить</Button>}
-    </header>}
-    {notice && <p role="alert">{notice}</p>}
-    {!section && <p>Выберите нужный раздел в основном меню.</p>}
-    {denied ? <p role="status">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>
+  if (section === "projects" && !compact) return <>
+    {notice && <p role="alert" className="m-0 px-10 pt-4 text-[14px] text-kumo-danger">{notice}</p>}
+    <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />
+  </>;
+
+  return <div className={compact ? "flex w-full flex-col px-4 py-4" : `mx-auto flex w-full ${(section && WIDTH[section]) ?? "max-w-[1120px]"} flex-col px-4 py-8 sm:px-6 sm:py-12`}>
+    {!compact && !(section && OWN_HEADER.has(section)) && <PageHeader title={page ? page.title : "Раздел не найден"} subtitle={page?.description} />}
+    {notice && <p role="alert" className="m-0 mb-4 text-[14px] text-kumo-danger">{notice}</p>}
+    {!section && <p className="m-0 text-[15px] text-kumo-subtle">Выберите нужный раздел в основном меню.</p>}
+    {denied ? <p role="status" className="m-0 text-[15px] text-kumo-subtle">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>
       {section === "my-work" && <MyWorkTab data={data} />}
       {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />}
       {section === "documents" && <DocumentsTab key={documentsProject} data={data} initialProject={documentsProject} />}
-      {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} />}
+      {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} onInvite={() => open("people")} />}
       {section === "people" && <PeopleTab data={data} />}
       {section === "rules" && <RulesTab />}
       {section === "connections" && <ConnectionsTab data={data} />}

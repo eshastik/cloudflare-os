@@ -53,7 +53,7 @@ export async function uploadGatekeeperBlueprintTemplate(bytes: Uint8Array, stora
 async function uploadVerifiedText(
   text: string, storageOrigin: string, issue: IssueGatekeeperUpload, signal: AbortSignal, maxBytes: number,
 ): Promise<string> {
-  const failed = () => new Error('Document upload failed.')
+  const failed = () => new Error('Не удалось загрузить документ.')
   let origin: URL
   try { origin = new URL(storageOrigin) } catch { throw failed() }
   if (origin.protocol !== 'https:' || origin.origin !== storageOrigin) throw failed()

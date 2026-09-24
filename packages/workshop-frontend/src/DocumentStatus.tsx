@@ -100,22 +100,21 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
   model: DocumentStatusModel | null; bound?: boolean; busy?: boolean; disabled?: boolean; versionOpen: boolean
   onPrimary(kind: PrimaryKind): void; onSecondary(): void; onOpenVersion(): void
 }) {
+  // Шапка гаджета по макету: одна строка состояния некрупным серым текстом и пилюли действий.
+  // Полный текст состояния — во всплывающей подсказке, если строка не помещается.
+  const statusText = model ? `${model.version} · ${model.audience} · ${model.saved}` : undefined
   return <div className="flex min-w-0 items-center gap-2">
-    <span data-document-status className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap rounded-lg border border-kumo-line bg-kumo-elevated px-2.5 py-1 text-[12px] leading-4 tracking-[-0.2px] text-kumo-subtle">
+    <span data-document-status title={statusText} className="flex min-w-0 max-w-[340px] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[13px] leading-4 text-kumo-subtle">
       {model ? <>
-        <b className="truncate font-medium text-kumo-default">{model.version}</b>
-        <i className="h-3.5 w-px shrink-0 bg-kumo-line" />
-        <span className="truncate">{model.audience}</span>
-        <i className="h-3.5 w-px shrink-0 bg-kumo-line" />
-        <span className={`flex min-w-0 items-center gap-1.5 ${model.tone === 'warning' ? 'text-kumo-warning' : model.tone === 'neutral' ? '' : 'text-kumo-default'}`}>
-          <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone[model.tone]}`} />
-          <span className="truncate">{model.saved}</span>
-        </span>
+        <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone[model.tone]}`} />
+        <span className={`min-w-0 max-w-full shrink truncate ${model.tone === 'warning' ? 'text-kumo-warning' : model.tone === 'neutral' ? '' : 'text-kumo-default'}`}>{model.saved}</span>
+        <span className="min-w-0 flex-1 truncate text-kumo-inactive">· {model.version} · {model.audience}</span>
       </> : <span className="truncate">{busy ? 'Читаю состояние в Mnemos…' : bound ? 'Состояние документа не прочитано' : 'Документ не привязан к Mnemos'}</span>}
     </span>
-    <WorkshopButton disabled={disabled} className={versionOpen ? 'bg-kumo-fill' : ''} onClick={onOpenVersion}><ClockCounterClockwise size={15} className="mr-1.5" />Версия</WorkshopButton>
-    {model?.secondary && <WorkshopButton disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
-    {model?.primary && <WorkshopButton tone="primary" className="!h-8" data-primary-action title={model.primary.hint} disabled={disabled || busy} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
+    <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
+      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>
+    {model?.secondary && <WorkshopButton className="!h-8 !rounded-full" disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
+    {model?.primary && <WorkshopButton tone="primary" className="!h-8 !rounded-full" data-primary-action title={model.primary.hint} disabled={disabled || busy} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
   </div>
 }
 
@@ -357,7 +356,7 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
     status={status} section={panel.section} onSection={section => setPanel({ open: true, section })}
     onClose={() => setPanel({ open: false, section: null })} onCollapseChat={onCollapseChat} /> : null
   return <>
-    {status.projectLink && <a className="text-xs text-kumo-default" href={status.projectLink.href}>Проект: {status.projectLink.name}</a>}
+    {status.projectLink && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
     <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open}
       onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))} />
     {panelHost ? createPortal(panelNode, panelHost) : panelNode}

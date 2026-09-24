@@ -56,12 +56,12 @@ it.each(table)('состояние %s: блок состояния и главн
     expect(status.textContent).toContain(want.version)
     expect(status.textContent).toContain(want.audience)
     expect(status.textContent).toContain(want.saved)
-    expect(button('Версия')).toBeDefined()
+    expect(button('Версии')).toBeDefined()
     const primary = host.querySelector('button[data-primary-action]') as HTMLButtonElement | null
     expect(primary?.textContent ?? null).toBe(want.primary)
     const secondary = want.secondary ? button(want.secondary) : undefined
     expect(secondary !== undefined).toBe(want.secondary !== undefined)
-    await act(async () => { primary?.click(); secondary?.click(); button('Версия')!.click() })
+    await act(async () => { primary?.click(); secondary?.click(); button('Версии')!.click() })
     expect(onPrimary.mock.calls).toEqual(want.primary ? [[model.primary!.kind]] : [])
     expect(onSecondary).toHaveBeenCalledTimes(want.secondary ? 1 : 0)
     expect(onOpenVersion).toHaveBeenCalledOnce()
@@ -117,7 +117,7 @@ async function mountStatus({ faults = {}, savedRevision, revision, pollMs }: { f
   const gadget = new RpcStub(new Gadget())
   sessionStorage.setItem('mnemos-native-binding:/:native-doc:cloudflareos.document', JSON.stringify({ accountId: null, scope: 'project', resource: 'doc', savedRevision }))
   const snapshotSource = { current: async () => {
-    if (faults.snapshot) throw new Error('Editor snapshot unavailable.')
+    if (faults.snapshot) throw new Error('Редактор не отдал документ.')
     return { format: 'cloudflareos.document' as const, formatVersion: 1 as const, document: { revision: revision.current, title: 'План', blocks: [] } }
   } }
   const container = document.createElement('div'); document.body.append(container)

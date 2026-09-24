@@ -414,7 +414,7 @@ function FormatRow({
             <div className="flex justify-end">
               <Button variant="secondary" disabled={busy} onClick={onRemove}>
                 <Trash size={13} className="mr-1.5" />
-                Remove
+                Удалить
               </Button>
             </div>
           )}
@@ -522,7 +522,7 @@ function IconPicker({
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-kumo-inactive">
-        Icon
+        Значок
       </span>
       <DropdownMenu>
         <DropdownMenu.Trigger

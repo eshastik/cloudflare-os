@@ -41,16 +41,21 @@ export default function PendingActions() {
     } catch { setNotice('Результат не подтверждён. Обновите список: могли измениться права или состояние действия.') }
     finally { setBusy(false) }
   }
+  // Карточки подтверждения в том же виде, что в беседе: янтарная рамка и пилюли решения.
   return <section className="overflow-auto p-3" aria-label="Действия агентов">
-    <h2>Ждут моего разрешения</h2>
-    <button onClick={() => setEpoch(n => n + 1)} disabled={busy}>Обновить</button>
-    {notice && <p role="status">{notice}</p>}
-    {rows.map(row => <article className="my-3 rounded-lg border p-4" key={`${row.workspace}/${row.action.id}`}>
-      <h3>{row.title}: {row.action.description.title}</h3>
-      <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-sm">{row.action.description.description}</pre>
-      <button disabled={busy} onClick={() => void decide(row, false)}>Отклонить</button>{' '}
-      <button disabled={busy} onClick={() => void decide(row, true)}>Разрешить</button>
+    <div className="mb-3 flex items-center gap-3">
+      <h2 className="m-0 flex-1 text-[16px] leading-6 font-semibold text-kumo-default">Ждут моего разрешения</h2>
+      <button type="button" className="h-8 cursor-pointer rounded-full border border-kumo-fill-hover bg-kumo-overlay px-3 text-[13px] text-kumo-default hover:bg-kumo-tint disabled:opacity-40" onClick={() => setEpoch(n => n + 1)} disabled={busy}>Обновить</button>
+    </div>
+    {notice && <p role="status" className="m-0 text-[14px] text-kumo-subtle">{notice}</p>}
+    {rows.map(row => <article className="my-3 overflow-hidden rounded-[18px] border border-kumo-warning/35 bg-kumo-overlay" key={`${row.workspace}/${row.action.id}`}>
+      <h3 className="m-0 border-b border-kumo-warning/15 px-[18px] py-3.5 text-[15px] leading-5 font-semibold text-kumo-default">{row.title}: {row.action.description.title}</h3>
+      <pre className="m-0 max-h-96 overflow-auto whitespace-pre-wrap break-words px-[18px] py-4 font-sans text-[15px] leading-6 text-kumo-default">{row.action.description.description}</pre>
+      <div className="flex gap-2 border-t border-kumo-warning/15 px-[18px] py-3">
+        <button type="button" className="h-[38px] cursor-pointer rounded-full bg-kumo-brand px-[18px] text-[14px] font-semibold text-white hover:bg-kumo-brand-hover disabled:opacity-40" disabled={busy} onClick={() => void decide(row, true)}>Разрешить</button>
+        <button type="button" className="h-[38px] cursor-pointer rounded-full px-4 text-[14px] text-kumo-subtle hover:text-kumo-default disabled:opacity-40" disabled={busy} onClick={() => void decide(row, false)}>Отклонить</button>
+      </div>
     </article>)}
-    {total > limit && <button onClick={() => setLimit(n => n + 20)}>Проверить следующие пространства ({Math.min(limit,total)} из {total})</button>}
+    {total > limit && <button type="button" className="h-8 cursor-pointer rounded-full border border-kumo-fill-hover bg-kumo-overlay px-3 text-[13px] text-kumo-default hover:bg-kumo-tint" onClick={() => setLimit(n => n + 20)}>Проверить следующие пространства ({Math.min(limit,total)} из {total})</button>}
   </section>
 }

@@ -11,12 +11,6 @@ import {
   type ReactNode,
 } from 'react'
 import { Link } from '@tanstack/react-router'
-import {
-  CaretDown,
-  MagnifyingGlass,
-  Star,
-} from '@phosphor-icons/react'
-import { openCommandPalette } from './commandPaletteBus'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import type { RpcStub } from 'capnweb'
 import {
@@ -33,8 +27,7 @@ import SidebarGadgetRow from './SidebarGadgetRow'
 const RECENT_INITIAL_LIMIT = 5
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shape of the workspaces state shared between the rail's pinned tools (search) and the scrolling
-// lists (Favorites / Recent workspaces). Centralized here so both sibling components subscribe to
+// Shape of the workspaces state shared by the rail's scrolling lists (Favorites / Recent chats). Centralized here so both sibling components subscribe to
 // the same data and the dialog state has a single owner.
 // ─────────────────────────────────────────────────────────────────────────────
 type WorkspacesContextValue = {
@@ -44,6 +37,7 @@ type WorkspacesContextValue = {
 
   gadgets: GadgetMetadataWithTimestamps[]
   gadgetsLoading: boolean
+  gadgetsFailed: boolean
   favorites: GadgetMetadataWithTimestamps[]
   recent: GadgetMetadataWithTimestamps[]
 
@@ -55,7 +49,9 @@ type WorkspacesContextValue = {
 
 const WorkspacesContext = createContext<WorkspacesContextValue | null>(null)
 
-function useWorkspacesContext(): WorkspacesContextValue {
+// Тот же список бесед с действиями (избранное, переименовать, поделиться, удалить) нужен странице
+// «Все беседы»; она ставит свой SidebarWorkspacesProvider и читает его через этот хук.
+export function useWorkspacesContext(): WorkspacesContextValue {
   const ctx = useContext(WorkspacesContext)
   if (!ctx) throw new Error('Sidebar workspaces components must be rendered inside SidebarWorkspacesProvider')
   return ctx
@@ -166,7 +162,7 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     } catch (err) {
       console.error('Failed to rename:', err)
       setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, title: g.title } : x)))
-      toasts.add({ title: 'Не удалось переименовать пространство. Попробуйте ещё раз.', variant: 'error' })
+      toasts.add({ title: 'Не удалось переименовать беседу. Попробуйте ещё раз.', variant: 'error' })
     } finally {
       overseer[Symbol.dispose]()
     }
@@ -203,12 +199,12 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
       }
       setGadgets((prev) => prev.filter((x) => x.id !== deleteTarget.id))
       toasts.add({
-        title: deleteTarget.owner ? 'Пространство убрано из списка' : 'Пространство удалено',
+        title: deleteTarget.owner ? 'Беседа убрана из списка' : 'Беседа удалена',
         variant: 'success',
       })
     } catch (err) {
       console.error('Failed to delete workspace:', err)
-      toasts.add({ title: 'Не удалось удалить пространство. Попробуйте ещё раз.', variant: 'error' })
+      toasts.add({ title: 'Не удалось удалить беседу. Попробуйте ещё раз.', variant: 'error' })
     } finally {
       setIsDeleting(false)
       setDeleteTarget(null)
@@ -220,6 +216,7 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     setSearch,
     gadgets,
     gadgetsLoading,
+    gadgetsFailed: initialization?.api === authenticatedApi && initialization.state === 'error',
     favorites,
     recent,
     onTogglePin,
@@ -237,11 +234,11 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
         open={deleteTarget !== null}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
         isDeleting={isDeleting}
-        title={deleteTarget?.owner ? 'Убрать пространство' : 'Удалить пространство'}
+        title={deleteTarget?.owner ? 'Убрать беседу' : 'Удалить беседу'}
         description={
           deleteTarget?.owner
-            ? `Убрать «${deleteTarget?.title || 'Пространство без названия'}» из списка? Оно останется доступным по ссылке.`
-            : `Удалить «${deleteTarget?.title || 'Пространство без названия'}»? Отменить это нельзя.`
+            ? `Убрать «${deleteTarget?.title || 'Беседа без названия'}» из списка? Она останется доступной по ссылке.`
+            : `Удалить «${deleteTarget?.title || 'Беседа без названия'}»? Отменить это нельзя.`
         }
         confirmLabel={deleteTarget?.owner ? 'Убрать' : 'Удалить'}
         confirmingLabel={deleteTarget?.owner ? 'Убираем…' : 'Удаляем…'}
@@ -264,31 +261,6 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tools (search). Lives in the rail's pinned-top area so it stays put while the lists below scroll.
-// Only renders in collapsed mode — see the note below.
-// ─────────────────────────────────────────────────────────────────────────────
-export function SidebarWorkspacesTools({ collapsed = false }: { collapsed?: boolean }) {
-  // No "New workspace" button: Home *is* the new-workspace launcher, so it would be redundant.
-  // Search lives as a magnifying-glass icon in the brand row when expanded; when collapsed the
-  // brand-row buttons are hidden, so we surface a compact search icon here instead.
-  if (!collapsed) return null
-
-  return (
-    <div className="flex flex-col items-center px-2">
-      <button
-        type="button"
-        onClick={() => openCommandPalette()}
-        aria-label="Поиск"
-        title="Поиск (⌘K)"
-        className="press flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
-      >
-        <MagnifyingGlass size={15} />
-      </button>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Lists (Favorites / Recent workspaces). Lives in the rail's scrolling middle
 // region. In collapsed mode shows a compact avatar stack.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,9 +275,6 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
     onShare,
     onDelete,
   } = useWorkspacesContext()
-
-  const [favOpen, setFavOpen] = useState(true)
-  const [recentOpen, setRecentOpen] = useState(true)
 
   if (collapsed) {
     const compact = [...favorites, ...recent].slice(0, 8)
@@ -328,66 +297,41 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
 
   const recentShown = recent.slice(0, RECENT_INITIAL_LIMIT)
   const recentHidden = Math.max(0, recent.length - RECENT_INITIAL_LIMIT)
+  const row = (g: GadgetMetadataWithTimestamps) => (
+    <SidebarGadgetRow
+      key={g.id}
+      gadget={g}
+      onTogglePin={onTogglePin}
+      onRename={onRename}
+      onShare={onShare}
+      onDelete={onDelete}
+    />
+  )
 
   return (
-    <div className="flex flex-col pb-3">
-      {/* Favorites appear only once something is pinned: an empty group is noise in the rail. */}
+    <div className="flex flex-col gap-4 px-3.5 pb-3">
+      {/* Избранное появляется, только когда что-то закреплено: пустая группа — лишний шум. */}
       {favorites.length > 0 && (
-      <SidebarSection
-        label="Избранное"
-        count={favorites.length}
-        open={favOpen}
-        onToggle={() => setFavOpen((o) => !o)}
-        icon={<Star size={12} weight="regular" className="text-kumo-inactive" />}
-      >
-          <div className="flex flex-col">
-            {favorites.map((g) => (
-              <SidebarGadgetRow
-                key={g.id}
-                gadget={g}
-                onTogglePin={onTogglePin}
-                onRename={onRename}
-                onShare={onShare}
-                onDelete={onDelete}
-              />
-            ))}
-          </div>
-      </SidebarSection>
+        <SidebarSection label="Избранное">{favorites.map(row)}</SidebarSection>
       )}
 
-      {/* Recent workspaces — no count here; the "Show all (N)" link already carries it. */}
-      <SidebarSection
-        label="Беседы"
-        open={recentOpen}
-        onToggle={() => setRecentOpen((o) => !o)}
-      >
+      <SidebarSection label="Беседы">
         {gadgetsLoading ? (
-          <div className="flex flex-col gap-1 px-1">
+          <div className="flex flex-col gap-1">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-7 rounded-md bg-kumo-elevated animate-pulse" />
+              <div key={i} className="h-8 animate-pulse rounded-[10px] bg-kumo-tint" />
             ))}
           </div>
         ) : recent.length === 0 ? (
-          <p className="px-2.5 py-1.5 text-[12px] leading-4 tracking-[-0.2px] text-kumo-inactive">
+          <p className="m-0 px-3 py-1.5 text-[13px] leading-5 text-kumo-inactive">
             {search ? 'Ничего не найдено.' : 'Бесед пока нет.'}
           </p>
         ) : (
           <>
-            <div className="flex flex-col">
-              {recentShown.map((g) => (
-                <SidebarGadgetRow
-                  key={g.id}
-                  gadget={g}
-                  onTogglePin={onTogglePin}
-                  onRename={onRename}
-                  onShare={onShare}
-                  onDelete={onDelete}
-                />
-              ))}
-            </div>
+            {recentShown.map(row)}
             <Link
               to="/workspaces"
-              className="mt-0.5 flex h-7 items-center gap-1 rounded-md px-2.5 text-[12px] font-medium tracking-[-0.2px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+              className="flex h-8 items-center rounded-[10px] px-3 text-[14px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
             >
               {recentHidden > 0 ? `Все беседы (${recent.length})` : 'Все беседы'}
             </Link>
@@ -398,39 +342,12 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
   )
 }
 
-// A collapsible group header used by SidebarWorkspacesLists.
-function SidebarSection({
-  label,
-  count,
-  icon,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string
-  count?: number
-  icon?: ReactNode
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
+// Подпись группы в списке бесед — без сворачивания: один уровень, как в макете.
+function SidebarSection({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="mt-3 flex flex-col px-2">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex h-6 cursor-pointer items-center gap-1 px-1.5 text-[12px] font-medium text-kumo-subtle transition-colors hover:text-kumo-default"
-      >
-        <CaretDown
-          size={10}
-          weight="bold"
-          className={['transition-transform', open ? '' : '-rotate-90'].join(' ')}
-        />
-        {icon}
-        <span>{label}</span>
-        {count !== undefined && <span className="ml-1 text-kumo-inactive">{count}</span>}
-      </button>
-      {open && <div className="mt-0.5">{children}</div>}
-    </div>
+    <section aria-label={label} className="flex flex-col gap-0.5">
+      <h2 className="m-0 px-3 pb-1.5 text-[13px] leading-4 font-normal text-kumo-subtle">{label}</h2>
+      {children}
+    </section>
   )
 }

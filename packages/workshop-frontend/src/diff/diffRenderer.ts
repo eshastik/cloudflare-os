@@ -345,7 +345,7 @@ function createDeletionZoneNodes({
       button.type = 'button'
       button.className = 'gadgets-deleted-code-row gadgets-deleted-omitted-row'
       const hidden = total - 2 * DELETED_HEAD_TAIL
-      button.textContent = `Show ${hidden} hidden deleted line${hidden === 1 ? '' : 's'}`
+      button.textContent = `Показать скрытые удалённые строки: ${hidden}`
       button.addEventListener("click", onExpand)
       code.append(button)
     }

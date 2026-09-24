@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { Button } from "@cloudflare/kumo";
 import { PROJECT_VISIBILITIES, VISIBILITY_TITLES, type ProjectSharingSettings, type ProjectVisibility, type ShareRequest } from "../src/project-sharing.ts";
 import { useUi } from "./host.ts";
 import { useLoad, type ProjectData } from "./data.ts";
-import { Notice, Select, StatusBadge } from "./ui.tsx";
+import { Button, Notice, Select, StatusBadge } from "./ui.tsx";
 
-const VISIBILITY_NOTES: Record<ProjectVisibility, string> = {
+export const VISIBILITY_NOTES: Record<ProjectVisibility, string> = {
   private: "Проект видите вы и те, кого вы пригласили.",
   department: "Проект видят коллеги по вашему отделу.",
   organization: "Проект видят все сотрудники организации.",
@@ -48,25 +47,25 @@ export function SharePanel({ project, onClose, onChanged }: { project: ProjectDa
   }
 
   return (
-    <section aria-label="Поделиться проектом" className="mb-5 rounded-xl border border-kumo-line bg-kumo-base p-4">
-      <h3 className="m-0 mb-1 text-[15px] font-semibold text-kumo-strong">Кто видит проект «{project.name}»</h3>
-      {project.pendingShare && <p className="mt-0 mb-2 text-[12px] text-kumo-warning">Ждёт подтверждения руководителя: «{VISIBILITY_TITLES[project.pendingShare]}».</p>}
+    <section aria-label="Поделиться проектом" className="mb-7 rounded-[16px] border border-kumo-fill bg-kumo-overlay p-5">
+      <h3 className="m-0 mb-1 text-[17px] font-semibold text-kumo-default">Кто видит проект «{project.name}»</h3>
+      {project.pendingShare && <p className="mt-0 mb-2 text-[13px] text-kumo-warning">Ждёт подтверждения руководителя: «{VISIBILITY_TITLES[project.pendingShare]}».</p>}
       <div role="radiogroup" aria-label="Кто видит проект" className="mt-2 grid gap-2">
         {PROJECT_VISIBILITIES.map(value => (
-          <label key={value} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 text-[13px] ${level === value ? "border-kumo-ring bg-kumo-tint" : "border-kumo-line"}`}>
-            <input type="radio" name={`visibility-${project.id}`} value={value} checked={level === value} disabled={busy} onChange={() => setLevel(value)} className="mt-0.5" />
-            <span><span className="block font-medium text-kumo-default">{VISIBILITY_TITLES[value]}</span><span className="block text-kumo-subtle">{VISIBILITY_NOTES[value]}</span></span>
+          <label key={value} className={`flex cursor-pointer items-start gap-3 rounded-[12px] border px-3.5 py-3 text-[14px] ${level === value ? "border-kumo-brand bg-kumo-tint" : "border-kumo-fill"}`}>
+            <input type="radio" name={`visibility-${project.id}`} value={value} checked={level === value} disabled={busy} onChange={() => setLevel(value)} className="mt-1 accent-kumo-brand" />
+            <span><span className="block font-medium text-kumo-default">{VISIBILITY_TITLES[value]}</span><span className="block text-[13px] text-kumo-subtle">{VISIBILITY_NOTES[value]}</span></span>
           </label>
         ))}
       </div>
-      {level !== "private" && <label className="mt-3 flex items-center gap-2 text-[13px] text-kumo-default">
-        <input type="checkbox" role="switch" aria-checked={canEdit} checked={canEdit} disabled={busy} onChange={e => setCanEdit(e.target.checked)} />
+      {level !== "private" && <label className="mt-3 flex items-center gap-2 text-[14px] text-kumo-default">
+        <input type="checkbox" role="switch" aria-checked={canEdit} checked={canEdit} disabled={busy} onChange={e => setCanEdit(e.target.checked)} className="h-4 w-4 accent-kumo-brand" />
         Могут править
         <span className="text-kumo-subtle">— без этого видящие только читают</span>
       </label>}
       {result && <div className="mt-3"><Notice tone={result.tone}>{result.text}</Notice></div>}
       <div className="mt-3 flex gap-2">
-        <Button variant="primary" size="sm" disabled={busy || unchanged} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</Button>
+        <Button size="sm" disabled={busy || unchanged} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>Закрыть</Button>
       </div>
     </section>

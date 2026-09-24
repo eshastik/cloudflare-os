@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Dialog } from "@cloudflare/kumo";
+import { Dialog } from "@cloudflare/kumo";
 import { CheckCircle, CircleNotch, WarningCircle } from "@phosphor-icons/react";
 import type { GitProjectRepository } from "../src/git-connections.ts";
 import type { WorkspaceState, WorkspaceTaskDetails, WorkspaceTaskView } from "../src/workspace-tasks.ts";
 import type { WorkspaceStep } from "../src/workspace-steps.ts";
 import { useUi } from "./host.ts";
-import { ActionForm, AdminDetails, Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
+import { Button, textAreaClass, ActionForm, AdminDetails, Block, EmptyTab, Notice, Row, RowList, RowText, Select, StatusBadge, type BadgeTone } from "./ui.tsx";
 
 /** Опрос хода задачи, пока агент работает. */
 export const TASK_POLL_MS = 2000;
@@ -76,9 +76,9 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
   }
   return (
     <Dialog.Root open={open} onOpenChange={value => { if (!value && !busy) onClose(); }}>
-      <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto bg-kumo-base p-6">
-        <Dialog.Title className="text-lg font-semibold">Поручить агенту</Dialog.Title>
-        <Dialog.Description className="mt-2 text-sm text-kumo-subtle">Агент работает в отдельной копии кода проекта. Основная версия меняется только после вашего решения.</Dialog.Description>
+      <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto rounded-[24px] bg-kumo-overlay p-8">
+        <Dialog.Title className="text-[24px] leading-[30px] font-semibold tracking-[-0.5px]">Поручить агенту</Dialog.Title>
+        <Dialog.Description className="mt-2 text-[15px] leading-[22px] text-kumo-subtle">Агент работает в отдельной копии кода проекта. Основная версия меняется только после вашего решения.</Dialog.Description>
         <ActionForm aria-label="Задача агенту" className="mt-5 grid gap-3 text-sm" onAction={() => void submit()}>
           {repositories.length > 1 && (
             <label className="grid gap-1.5">Код проекта
@@ -90,7 +90,7 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
           <label className="grid gap-1.5">Что сделать
             <textarea aria-label="Текст задачи" rows={6} maxLength={16000} value={prompt} disabled={busy} onChange={e => setPrompt(e.target.value)}
               placeholder="Например: добавь проверку пустого названия проекта и тест на неё"
-              className="w-full resize-y rounded-lg border border-kumo-line bg-kumo-base p-2 text-[13px] leading-[18px] text-kumo-default outline-none focus:border-kumo-ring" />
+              className={textAreaClass} />
           </label>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex justify-end gap-2">
@@ -193,7 +193,7 @@ function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: 
         <h2 className="m-0 min-w-0 flex-1 truncate text-[15px] font-semibold text-kumo-strong">{task.title}</h2>
         <StatusBadge tone={STATE[task.state].tone}>{STATE[task.state].label}</StatusBadge>
       </div>
-      {task.reason && <p className="mt-0 mb-3 text-[12px] text-kumo-subtle">{task.reason}</p>}
+      {task.reason && <p className="mt-0 mb-3 text-[13px] text-kumo-subtle">{task.reason}</p>}
       <AdminDetails show={admin} items={[["Задача", task.task_id], ["Ветка", task.branch]]} />
       {error && <div className="mb-2"><Notice tone="danger">{error}</Notice></div>}
       {details && details.steps.length > 0 && (
@@ -203,7 +203,7 @@ function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: 
       )}
       {!details && !error && <Notice>Загружаем ход работы…</Notice>}
       {details?.answer && (
-        <div aria-label="Ответ агента" className="mb-4 max-w-[650px] whitespace-pre-wrap rounded-xl border border-kumo-line bg-kumo-base p-3 text-sm leading-[1.43] text-kumo-default">{details.answer}</div>
+        <div aria-label="Ответ агента" className="mb-4 max-w-[650px] whitespace-pre-wrap rounded-[16px] border border-kumo-fill bg-kumo-overlay p-3 text-sm leading-[1.43] text-kumo-default">{details.answer}</div>
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" onClick={() => onCompare(task)}>Показать изменения</Button>
@@ -212,7 +212,7 @@ function TaskDetails({ admin, projectId, task: initial, onChanged, onCompare }: 
       {!finished && (
         <ActionForm aria-label="Сообщение агенту" className="mt-3 flex max-w-[650px] gap-2" onAction={send}>
           <input aria-label="Сообщение агенту" value={message} disabled={busy} onChange={e => setMessage(e.target.value)} placeholder="Уточните задачу или попросите доделать"
-            className="h-8 min-w-0 flex-1 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default outline-none focus:border-kumo-ring" />
+            className="h-[38px] min-w-0 flex-1 rounded-full border border-kumo-fill-hover bg-kumo-control px-4 text-[14px] text-kumo-default outline-none focus:border-kumo-ring" />
           <Button type="button" variant="secondary" size="sm" disabled={busy || !message.trim()} onClick={send}>Написать агенту</Button>
         </ActionForm>
       )}
@@ -224,5 +224,5 @@ function Step({ step }: { step: WorkspaceStep }) {
   const icon = step.status === "running" ? <CircleNotch size={14} className="shrink-0 animate-spin text-kumo-info motion-reduce:animate-none" aria-label="выполняется" />
     : step.status === "error" ? <WarningCircle size={14} className="shrink-0 text-kumo-danger" aria-label="ошибка" />
     : <CheckCircle size={14} className="shrink-0 text-kumo-subtle" aria-label="готово" />;
-  return <li data-step={step.kind} className="flex items-start gap-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">{icon}<span className="min-w-0 break-words">{step.text}</span></li>;
+  return <li data-step={step.kind} className="flex items-start gap-2 text-[14px] leading-5 text-kumo-default">{icon}<span className="min-w-0 break-words">{step.text}</span></li>;
 }
