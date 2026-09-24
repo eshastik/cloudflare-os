@@ -185,7 +185,8 @@ export function DepartmentsPanel({ people }: { people: AdminPerson[] }) {
             <span className="text-[12px] text-kumo-subtle">{unit.members.length ? `сотрудников: ${unit.members.length}` : "пока никого"}</span>
             {heads === 0 && unit.members.length > 0 && <StatusBadge tone="warning">Нет руководителя</StatusBadge>}
             <div className="flex-1" />
-            {openUnit === unit.org_unit_id && deleting !== unit.org_unit_id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setDeleting(unit.org_unit_id); setResult(""); }}>Удалить отдел</Button>}
+            {/* Кнопка видна в строке всегда: владелец не нашёл её за раскрытием отдела. */}
+            {deleting !== unit.org_unit_id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setOpenUnit(unit.org_unit_id); setDeleting(unit.org_unit_id); setResult(""); }}>Удалить отдел</Button>}
           </div>
           {openUnit === unit.org_unit_id && <div className="mt-3">
           {deleting === unit.org_unit_id && <div role="region" aria-label={`Удаление отдела ${unit.name}`} className="mb-3 grid gap-2 rounded-lg border border-kumo-line bg-kumo-elevated p-3 text-[13px]">

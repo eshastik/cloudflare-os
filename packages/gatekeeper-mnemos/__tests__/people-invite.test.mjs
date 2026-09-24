@@ -65,7 +65,8 @@ test('администратор ведёт отделы: создать, рас
 test('отмена удаления отдела ничего не удаляет',async()=>{
  const calls=[];const ui={listPeople:async()=>({users:[]}),listOrgUnits:async()=>units,listInvitations:async()=>[],deleteOrgUnit:async u=>{calls.push(u);}};
  const view=await render(ui);await act(async()=>{await new Promise(r=>setTimeout(r,0));});
- await click(view.el,'Продажи');await click(view.el,'Удалить отдел');await click(view.el,'Отмена');
+ assert.ok([...view.el.querySelectorAll('button')].some(b=>b.textContent==='Удалить отдел'),'кнопка видна без раскрытия отдела');
+ await click(view.el,'Удалить отдел');await click(view.el,'Отмена');
  assert.equal(view.el.querySelector('[aria-label="Удаление отдела Продажи"]'),null);assert.deepEqual(calls,[]);
  await view.close();
 });
