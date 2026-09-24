@@ -147,28 +147,50 @@ test("«Входящие»: просьбы агентов — письмо со�
 const SHARED = { project_id: "one", project_name: "Общий проект", node_id: "HEN4HKQ24UIOKVLJYW7SAQWKTP", owner_id: "user-FGTK3l4q5INoE4X1", owner_name: "Николай Деревцов", granted_by_name: "Николай Деревцов",
   name: "Дорожная карта перевода команды", content_type: "application/vnd.cloudflareos.document+json", head: "c".repeat(64), mode: "write", granted_at: "2026-09-23T10:00:00Z", seen: false };
 
-test("«Входящие»: «поделился с вами документом» с кнопкой «Открыть»; открытие снимает отметку, прочитанное из списка уходит", async () => {
+// Живой случай 24.09: документ другого сотрудника лежит в его ветке и ещё не опубликован. Открытие без
+// владельца читало собственный черновик приглашённого (403) и после перехода в редактор ничего не сообщало.
+test("«Входящие»: чужой документ открывается с владельцем; прочитанное из списка уходит", async () => {
   let seen = false;
-  const app = await mountMemoryApp({ ...mixed(), async listSharedDocuments() { return [{ ...SHARED, seen }]; }, async markSharedDocumentSeen() { seen = true; } }, { nativeOpen: true });
+  const app = await mountMemoryApp({ ...mixed(), async listSharedDocuments() { return [{ ...SHARED, seen }]; } }, { sharedOpen: true });
   try {
     await app.until(() => rowsOf(app).some(r => r.dataset.inbox === "document"), "запись о документе");
     const row = rowsOf(app).find(r => r.dataset.inbox === "document");
     assert.ok(row.textContent.includes("Николай Деревцов поделился с вами документом «Дорожная карта перевода команды» — можно править"), row.textContent);
     assert.ok(row.textContent.includes("Общий проект"), "проект по имени");
     for (const id of [SHARED.node_id, SHARED.owner_id, "c".repeat(64)]) assert.ok(!app.text().includes(id), "без технических опознавателей");
+    seen = true; // отметку ставит оболочка во время открытия
     [...row.querySelectorAll("button")].find(b => b.textContent === "Открыть").click();
-    await app.until(() => app.calls.some(([m]) => m === "openNativeDocument"), "документ открыт");
-    assert.deepEqual(app.calls.find(([m]) => m === "openNativeDocument"), ["openNativeDocument", "one", SHARED.node_id]);
+    await app.until(() => app.calls.some(([m]) => m === "openSharedDocument"), "документ открыт");
+    assert.deepEqual(app.calls.find(([m]) => m === "openSharedDocument"), ["openSharedDocument", "one", SHARED.owner_id, SHARED.node_id]);
+    assert.ok(!app.calls.some(([m]) => m === "openNativeDocument"), "без владельца документ другого человека не открывается");
+    assert.ok(!app.calls.some(([m]) => m === "markSharedDocumentSeen"), "отметку ставит оболочка до перехода: после перехода эта страница уже закрыта");
     await app.until(() => !rowsOf(app).some(r => r.dataset.inbox === "document"), "прочитанное ушло из «Входящих»");
+    assert.equal(app.document.querySelector('#root [role="alert"], #root .text-kumo-danger'), null, "успех без сообщения об ошибке");
   } finally { app.dispose(); }
 });
 
+test("«Входящие»: отказ открытия — понятная строка, запись остаётся", async () => {
+  for (const [options, want] of [
+    [{ sharedOpen: false }, "не открылся: у вас сейчас нет доступа к нему или к папке, где он лежит. Попросите владельца документа открыть доступ заново"],
+    [{ sharedOpenError: "Редактор этого формата пока не настроен" }, "не открылся: Редактор этого формата пока не настроен. Повторите попытку"],
+    [{ sharedOpenError: "Internal error" }, "не открылся: не удалось связаться с Mnemos. Повторите попытку"],
+  ]) {
+    const app = await mountMemoryApp({ async listSharedDocuments() { return [SHARED]; } }, options);
+    try {
+      await app.until(() => rowsOf(app).some(r => r.dataset.inbox === "document"), "запись о документе");
+      [...rowsOf(app).find(r => r.dataset.inbox === "document").querySelectorAll("button")].find(b => b.textContent === "Открыть").click();
+      await app.until(() => app.text().includes(want), want);
+      assert.ok(app.text().includes("Документ «Дорожная карта перевода команды» не открылся"), "названо, какой документ");
+      assert.ok(rowsOf(app).some(r => r.dataset.inbox === "document"), "неоткрытое не пропадает из «Входящих»");
+    } finally { app.dispose(); }
+  }
+});
+
 test("«Входящие»: право чтения подписано «можно читать»; ссылка из письма открывает документ сама", async () => {
-  const app = await mountMemoryApp({ async listSharedDocuments() { return [{ ...SHARED, mode: "read" }]; } }, { nativeOpen: true, document: SHARED.node_id, project: "one" });
+  const app = await mountMemoryApp({ async listSharedDocuments() { return [{ ...SHARED, mode: "read" }]; } }, { sharedOpen: true, document: SHARED.node_id, project: "one" });
   try {
-    await app.until(() => app.calls.some(([m]) => m === "openNativeDocument"), "документ из ссылки открыт");
-    assert.deepEqual(app.calls.find(([m]) => m === "openNativeDocument"), ["openNativeDocument", "one", SHARED.node_id]);
-    await app.until(() => app.calls.some(([m, p, o, n]) => m === "markSharedDocumentSeen" && p === "one" && o === SHARED.owner_id && n === SHARED.node_id), "открытие отмечено");
+    await app.until(() => app.calls.some(([m]) => m === "openSharedDocument"), "документ из ссылки открыт");
+    assert.deepEqual(app.calls.find(([m]) => m === "openSharedDocument"), ["openSharedDocument", "one", SHARED.owner_id, SHARED.node_id]);
   } finally { app.dispose(); }
 });
 

@@ -294,6 +294,8 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
 export interface Host extends RpcTarget {
   openTemplateProposal(project:string,node:string,proposal:string):Promise<void>;
   openNativeDocument(project: string, resource: string): Promise<boolean>;
+  /** Документ другого человека по приглашению: оболочка отмечает уведомление прочитанным и открывает редактор. */
+  openSharedDocument(project: string, owner: string, resource: string): Promise<boolean>;
   openPrompt(prompt: string, project?:{projectId:string;title:string}): void;
   setUnsavedChanges(dirty: boolean): void;
   subscribeAccent(frame: RpcTarget): string;

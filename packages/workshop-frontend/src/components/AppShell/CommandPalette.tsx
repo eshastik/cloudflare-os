@@ -17,7 +17,7 @@ import { displayName } from '@gadgets/workshop-shared/code-work'
 import { FormatGlyph } from '../format/FormatVisuals'
 import { localizedNoun } from '../format/formats'
 import { createFromFormat } from '../format/useOutputFormats'
-import { loadSharedDocuments, openSharedDocument, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
+import { loadSharedDocuments, openSharedDocument, sharedDocumentFailure, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
 
 // Поиск ⌘K (макет Search): поле, первым пунктом «Спросить агента», ниже группы — проекты, беседы,
 // файлы (результаты бесед), шаблоны и действия. Заменяет раздел «Материалы» в меню.
@@ -335,7 +335,7 @@ export default function CommandPalette({
       label: d.name,
       hint: sharedDocumentNote(d),
       icon: <FileText size={18} />,
-      run: () => { void openSharedDocument(authenticatedApi, d, async id => { await navigate({ to: '/workspace/$id', params: { id } }) }).catch(() => toasts.add({ title: `Документ «${d.name}» не открылся`, variant: 'error' })) },
+      run: () => { void openSharedDocument(authenticatedApi, d, async id => { await navigate({ to: '/workspace/$id', params: { id } }) }).then(opened => { if (!opened) toasts.add({ title: sharedDocumentFailure(d.name), variant: 'error' }) }, error => toasts.add({ title: sharedDocumentFailure(d.name, error), variant: 'error' })) },
     }))
 
     const bpBase: Command[] = blueprints

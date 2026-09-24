@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import { useAuthenticatedApi } from '../../AuthContext'
-import { loadSharedDocuments, openSharedDocument, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
+import { loadSharedDocuments, openSharedDocument, sharedDocumentFailure, sharedDocumentNote, type SharedDocumentItem } from '../../sharedDocuments'
 
 /** Сколько недавних общих документов показывать под полем ввода; остальные — в поиске ⌘K. */
 const SHOWN = 5
@@ -30,8 +30,8 @@ export default function SharedWithYou() {
     setOpening(key)
     try {
       if (!await openSharedDocument(authenticatedApi, item, async id => { await navigate({ to: '/workspace/$id', params: { id } }) }))
-        toasts.add({ title: `Документ «${item.name}» не открылся: доступ мог быть отозван.`, variant: 'error' })
-    } catch { toasts.add({ title: `Документ «${item.name}» не открылся. Повторите попытку.`, variant: 'error' }) }
+        toasts.add({ title: sharedDocumentFailure(item.name), variant: 'error' })
+    } catch (error) { toasts.add({ title: sharedDocumentFailure(item.name, error), variant: 'error' }) }
     finally { setOpening('') }
   }
   return <section aria-label="Поделились с вами" className="mt-8 flex flex-col items-center gap-3">

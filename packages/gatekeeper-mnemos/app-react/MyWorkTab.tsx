@@ -128,17 +128,19 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       setNotice({ tone: "danger", text: "Решение не записано: запрос мог быть уже решён или у вас нет права решать его. Обновите список." });
     } finally { setSharing(""); }
   }
-  /** Открыть документ, которым поделились, в его редакторе; запись во «Входящих» становится прочитанной. */
+  /** Открыть документ, которым поделились, в его редакторе. Документ лежит в ветке владельца, поэтому
+   * открытие идёт с владельцем; уведомление отмечает прочитанным оболочка до перехода в редактор —
+   * после перехода эта страница закрывается и её продолжение не выполняется. Здесь остаётся только отказ. */
   async function openShared(document: SharedDocument) {
     setNotice(null);
     try {
-      const opened = await host.openNativeDocument(document.project_id, document.node_id);
-      await ui.markSharedDocumentSeen(document.project_id, document.owner_id, document.node_id).catch(() => {});
-      await sharedDocuments.reload();
-      if (!opened) setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся: доступ мог быть отозван.` });
-    } catch {
-      setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся. Повторите попытку.` });
+      if (!await host.openSharedDocument(document.project_id, document.owner_id, document.node_id))
+        setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся: у вас сейчас нет доступа к нему или к папке, где он лежит. Попросите владельца документа открыть доступ заново.` });
+    } catch (error) {
+      const reason = error instanceof Error && /[А-Яа-яЁё]/.test(error.message) ? error.message.replace(/\.$/, "") : "не удалось связаться с Mnemos";
+      setNotice({ tone: "danger", text: `Документ «${document.name}» не открылся: ${reason}. Повторите попытку.` });
     }
+    await sharedDocuments.reload().catch(() => {});
   }
   // Ссылка из письма открывает документ один раз, когда список общих документов прочитан.
   const linked = useRef(false);

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
-import { Checkbox, Dialog, DropdownMenu, useKumoToastManager } from '@cloudflare/kumo'
-import type { PortalContainer } from '@cloudflare/kumo'
-import { CaretDown, CaretLeft, Check, Copy, Link, PencilSimple, Robot, ShieldCheck, ShieldWarning, Trash, UserPlus, X } from '@phosphor-icons/react'
+import { Checkbox, Dialog, useKumoToastManager } from '@cloudflare/kumo'
+import { CaretLeft, Check, Copy, Link, PencilSimple, ShieldCheck, ShieldWarning, X } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
 import {
   Overseer,
@@ -14,7 +13,6 @@ import {
   CollaboratorRole,
   ObserverBindingNeed,
 } from '@gadgets/workshop-shared/api'
-import { WorkshopButton, WorkshopIconButton } from './components/WorkshopControls'
 import { PersonAvatar } from './components/PersonAvatar'
 import { copyToClipboard } from './clipboard'
 
@@ -50,91 +48,66 @@ function formatRelativeTime(date: Date): string {
   return date.toLocaleDateString()
 }
 
+// Что может получатель. «use» — пользоваться гаджетами; «build» — ещё и менять их, писать агенту в
+// беседе и приглашать других. Слова — о действиях человека, а не о внутренних ролях.
 const ROLE_LABELS: Record<CollaboratorRole, string> = {
-  build: 'Беседа и гаджеты',
-  use: 'Только гаджеты',
+  use: 'может пользоваться',
+  build: 'может менять',
 }
 
 const ROLE_DESCRIPTIONS: Record<CollaboratorRole, string> = {
-  build: 'Редактирование гаджетов, чат и управление доступом.',
-  use: 'Использование гаджетов без чата с агентом и редактирования.',
+  use: 'Открывает гаджеты и работает в них. Беседу с агентом и код не видит.',
+  build: 'Меняет гаджеты, пишет агенту в беседе и приглашает других.',
 }
 
 function roleLabel(role: CollaboratorRole | undefined): string {
   return ROLE_LABELS[role ?? 'build']
 }
 
-const ROLE_OPTIONS: CollaboratorRole[] = ['build', 'use']
+const ROLE_OPTIONS: CollaboratorRole[] = ['use', 'build']
 
-function RoleMenu({
-  value,
-  onValueChange,
-  disabled,
-  ariaLabel,
-  container,
-}: {
+/** Право получателя — переключатель из двух слов; подсказка к выбранному — строкой под ним у вызывающего. */
+function RoleSwitch({ value, onValueChange, disabled, ariaLabel }: {
   value: CollaboratorRole
   onValueChange: (role: CollaboratorRole) => void
   disabled?: boolean
   ariaLabel: string
-  container?: PortalContainer
 }) {
   return (
-    <DropdownMenu>
-      <DropdownMenu.Trigger
-        disabled={disabled}
-        render={
-          <button
-            type="button"
-            className="group inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[12px] leading-4 font-medium text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-default focus-visible:bg-kumo-tint focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.97] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-default disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={ariaLabel}
-          >
-            {roleLabel(value)}
-            <CaretDown size={11} weight="bold" className="text-kumo-inactive transition-transform duration-150 ease-out group-data-[popup-open]:rotate-180" />
-          </button>
-        }
-      />
-      <DropdownMenu.Content
-        container={container}
-        align="end"
-        sideOffset={6}
-        className="themed-floating-shadow-lg !z-[1100] !w-[300px] !min-w-0 rounded-2xl border border-kumo-line/70 bg-kumo-base p-1 !ring-kumo-line"
-      >
-        {ROLE_OPTIONS.map(role => (
-          <DropdownMenu.Item
-            key={role}
-            onClick={() => onValueChange(role)}
-            className="!h-auto cursor-pointer rounded-xl !px-2.5 !py-2 text-kumo-default transition-colors data-highlighted:bg-kumo-tint/70"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block text-[12px] leading-4 font-medium">{roleLabel(role)}</span>
-              <span className="mt-0.5 block text-[11px] leading-4 font-normal text-kumo-subtle">
-                {ROLE_DESCRIPTIONS[role]}
-              </span>
-            </span>
-            <span className="ml-2 flex h-4 w-4 shrink-0 items-center justify-center">
-              {value === role && <Check size={13} weight="bold" className="text-kumo-brand" />}
-            </span>
-          </DropdownMenu.Item>
-        ))}
-      </DropdownMenu.Content>
-    </DropdownMenu>
+    <div role="radiogroup" aria-label={ariaLabel} className="inline-flex shrink-0 rounded-full bg-kumo-tint p-0.5">
+      {ROLE_OPTIONS.map(role => (
+        <button
+          key={role}
+          type="button"
+          role="radio"
+          aria-checked={value === role}
+          title={ROLE_DESCRIPTIONS[role]}
+          disabled={disabled}
+          onClick={() => onValueChange(role)}
+          className={`h-8 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed ${
+            value === role
+              ? 'bg-kumo-overlay font-medium text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]'
+              : 'bg-transparent text-kumo-subtle hover:text-kumo-default'
+          }`}
+        >
+          {roleLabel(role)}
+        </button>
+      ))}
+    </div>
   )
 }
 
-function RoleBadge({ role }: { role: CollaboratorRole | undefined }) {
-  const isBuild = (role ?? 'build') === 'build'
-  return (
-    <span
-      className={`shrink-0 rounded-full border px-2.5 py-[3px] text-[11px] leading-4 font-medium tracking-[-0.1px] ${
-        isBuild
-          ? 'border-kumo-line bg-kumo-tint/70 text-kumo-default'
-          : 'border-kumo-line/70 bg-kumo-base text-kumo-subtle'
-      }`}
-    >
-      {roleLabel(role)}
-    </span>
-  )
+/** Недавно приглашённые в этом браузере — подсказки для поля, не источник прав. */
+const RECENT_KEY = 'workshop-share-recent-people'
+type RecentPerson = { id: string; name: string }
+function readRecentPeople(): RecentPerson[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+    return Array.isArray(value) ? value.filter((p): p is RecentPerson => typeof p?.id === 'string' && typeof p?.name === 'string').slice(0, 12) : []
+  } catch { return [] }
+}
+function rememberRecentPerson(person: RecentPerson) {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify([person, ...readRecentPeople().filter(p => p.id !== person.id)].slice(0, 12))) } catch { /* без памяти браузера подсказок просто нет */ }
 }
 
 function InlineConfirm({
@@ -251,8 +224,8 @@ function RecipientVerification({
       <div className="rounded-2xl border border-kumo-line/80 bg-kumo-base px-3 py-2.5">
         <p className="text-[12px] leading-[16px] tracking-[-0.15px] text-kumo-subtle">
           {role ? (
-            <>Получателям с доступом <span className="font-medium text-kumo-default">{roleLabel(role)}</span> нужно</>
-          ) : 'Получателям нужно'} подтвердить доступ своей учётной записи к следующим ресурсам:
+            <>Тем, кто <span className="font-medium text-kumo-default">{roleLabel(role)}</span>, нужно</>
+          ) : 'Получателям нужно'} подтвердить своей учётной записью доступ к ресурсам:
         </p>
         <ul className="mt-1.5 max-h-32 space-y-1 overflow-y-auto">
           {requirements.map(requirement => (
@@ -318,8 +291,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   const creatingLinkRef = useRef(false)
   const addingRef = useRef(false)
   const landedTimerRef = useRef<number | null>(null)
-  const [menuContainer, setMenuContainer] = useState<PortalContainer>(null)
-  const [scrolled, setScrolled] = useState(false)
+  const [recentPeople, setRecentPeople] = useState<RecentPerson[]>(() => readRecentPeople())
   const [landedPersonId, setLandedPersonId] = useState<string | null>(null)
   const [landedShareLinkId, setLandedShareLinkId] = useState<string | null>(null)
   const [editingShareLinkId, setEditingShareLinkId] = useState<string | null>(null)
@@ -355,18 +327,6 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
     return () => {
       if (landedTimerRef.current !== null) window.clearTimeout(landedTimerRef.current)
       if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    const element = document.createElement('div')
-    element.style.position = 'relative'
-    element.style.zIndex = '1100'
-    document.body.appendChild(element)
-    setMenuContainer(element)
-    return () => {
-      setMenuContainer(null)
-      element.remove()
     }
   }, [])
 
@@ -568,6 +528,8 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
         toasts.add({ title: 'Пользователь с таким именем не найден.', variant: 'error' })
       } else {
         const landedId = result.profile.id
+        rememberRecentPerson({ id: result.profile.id, name: result.profile.name })
+        setRecentPeople(readRecentPeople())
         setAddUsername('')
         setInvitedName(result.profile.name)
         setInvitedLinkCopied(false)
@@ -746,398 +708,317 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
     }
   }
 
+  const collaboratorIds = new Set(collaborators.map(info => info.profile.id))
+  const suggestions = recentPeople.filter(p => !collaboratorIds.has(p.id) && p.id !== currentUser?.id).slice(0, 5)
+  const canInvite = !!addUsername.trim() && !adding && !sharingProhibited
+  const rowClass = (landed: boolean, first: boolean) =>
+    `group ${first ? '' : 'border-t border-kumo-fill'} ${landed ? 'share-row-land' : ''} py-2.5`
+  const quietAction = 'h-8 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle transition-colors hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed'
+  const hiddenAction = 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
+  // В строке ссылки действия не занимают место, пока строку не навели или не выбрали с клавиатуры (кнопка копирования видна всегда).
+  const collapsedAction = 'hidden group-hover:inline-flex group-focus-within:inline-flex items-center'
+  const pill = 'inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover bg-transparent px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-50'
+  const primary = (enabled: boolean) => `inline-flex h-[38px] shrink-0 items-center justify-center rounded-full border-0 px-5 text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring ${
+    enabled ? 'cursor-pointer bg-kumo-brand text-white hover:bg-kumo-brand-hover' : 'cursor-not-allowed bg-kumo-tint text-kumo-inactive'}`
+
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       <Dialog
-        // Панель справа шириной 640 (макет «Поделиться»): от краёв окна 12 px, радиус 20, тень гаджета.
-        className="!z-[1000] !top-3 !bottom-3 !right-3 !left-auto !flex !max-h-none !w-[min(616px,calc(100vw-24px))] !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden !rounded-[20px] bg-kumo-overlay p-0 !shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)] !ring-0 !outline-none"
+        // Панель справа по макету «Поделиться»: высота по содержимому, не выше окна; радиус 20, тень гаджета.
+        className="!z-[1000] !top-3 !bottom-auto !right-3 !left-auto !flex !max-h-[calc(100dvh-24px)] !w-[min(616px,calc(100vw-24px))] !min-w-0 !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-hidden !rounded-[20px] bg-kumo-overlay p-0 !shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)] !ring-0 !outline-none"
         size="lg"
       >
-        <div className="flex shrink-0 items-start gap-3 overflow-hidden px-5 pb-5 pt-6 sm:px-7">
+        <header className="flex shrink-0 items-center gap-3 px-5 pt-[26px] pb-5 sm:px-7">
           <Dialog.Close
             render={(props) => (
               <button
                 {...props}
                 type="button"
                 aria-label="Закрыть"
-                className="mt-0.5 inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+                className="inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
               >
                 <CaretLeft size={16} />
               </button>
             )}
           />
-          <div className="min-w-0">
-            <Dialog.Title className="truncate text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">
-              Кто видит «{metadata.title}»
+          <div className="min-w-0 flex-1">
+            <Dialog.Title className="m-0 text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">
+              Поделиться
             </Dialog.Title>
-            <Dialog.Description className="mt-0.5 text-[14px] leading-5 text-kumo-subtle">
-              Пригласите коллег поработать вместе или создайте ссылку.
+            <Dialog.Description title={metadata.title} className="m-0 truncate text-[14px] leading-5 text-kumo-subtle">
+              {metadata.title}
             </Dialog.Description>
           </div>
-        </div>
+        </header>
 
-        <div
-          className="chat-panel min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-6 sm:px-7"
-          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
-        >
+        <div className="chat-panel flex min-h-0 flex-col gap-6 overflow-y-auto overscroll-contain px-5 pb-[26px] text-[14px] text-kumo-default sm:px-7">
           {sharingProhibited ? (
-            <div className="flex h-full flex-col items-center justify-center px-6 py-12 text-center">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-kumo-warning-tint text-kumo-warning">
-                <ShieldWarning size={22} weight="duotone" />
+            <div className="flex items-start gap-3 rounded-2xl bg-kumo-warning-tint px-4 py-3.5">
+              <ShieldWarning size={20} className="mt-px shrink-0 text-kumo-warning" />
+              <div className="min-w-0">
+                <p className="m-0 text-[15px] leading-5 font-medium">Эту беседу нельзя открыть другим</p>
+                <p className="m-0 mt-1 text-[13px] leading-[18px] text-kumo-subtle">
+                  В беседе использованы личные данные, доступные только вам. Для совместной работы создайте шаблон из гаджета и начните с него новую беседу.
+                </p>
               </div>
-              <p className="mt-3 text-[14px] leading-5 font-medium tracking-[-0.3px] text-kumo-default">
-                Эту беседу нельзя открыть другим
-              </p>
-              <p className="mt-1.5 max-w-[320px] text-balance text-[12px] leading-[18px] tracking-[-0.1px] text-kumo-subtle">
-                В беседе использованы личные данные, доступные только вам.
-              </p>
-              <p className="mt-2 max-w-[320px] text-balance text-[12px] leading-[18px] tracking-[-0.1px] text-kumo-subtle">
-                Для совместной работы создайте шаблон из гаджета и начните с него новую беседу.
-              </p>
             </div>
           ) : (
           <>
-          <div className={`sticky top-0 z-10 bg-kumo-overlay pb-3 transition-shadow duration-200 ${scrolled ? 'themed-bottom-shadow border-b border-kumo-line/60' : ''}`}>
-          <div
-            className="grid min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border border-kumo-fill-hover bg-kumo-overlay p-1.5 pl-3 transition-[border-color,box-shadow] focus-within:border-kumo-fill sm:flex sm:overflow-hidden"
-            data-keeper-ignore="true"
-            data-1p-ignore="true"
-            data-lpignore="true"
-            data-bwignore="true"
-          >
-            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-subtle">
-              <UserPlus size={15} weight="duotone" />
-            </div>
-            <input
-              type="search"
-              placeholder="Имя пользователя или почта"
-              aria-label="Имя пользователя или почта"
-              value={addUsername}
-              onChange={(e) => setAddUsername(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddCollaborator() }}
-              name="gadget-share-people-search"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              data-keeper-ignore="true"
-              data-1p-ignore="true"
-              data-lpignore="true"
-              data-bwignore="true"
-              data-form-type="other"
-              className="h-9 min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-[14px] leading-5 tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive disabled:cursor-not-allowed [&::-webkit-search-cancel-button]:hidden"
-              disabled={sharingProhibited}
-            />
-            <RoleMenu
-              ariaLabel="Уровень доступа"
-              value={addRole}
-              onValueChange={setAddRole}
-              disabled={sharingProhibited}
-              container={menuContainer}
-            />
-            <WorkshopButton
-              tone="primary"
-              className="col-span-3 w-full !rounded-xl sm:col-span-1 sm:w-auto sm:min-w-[68px]"
-              onClick={handleAddCollaborator}
-              disabled={!addUsername.trim() || adding || sharingProhibited}
-            >
-              {adding ? 'Приглашаем…' : 'Пригласить'}
-            </WorkshopButton>
-          </div>
-
-          {invitedName && (
-            <div className="themed-compact-shadow mt-2 flex flex-wrap items-center gap-3 rounded-2xl border border-kumo-line/80 bg-kumo-base px-3 py-2.5 share-fade-in">
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-subtle">
-                {invitedLinkCopied ? <Check size={15} weight="bold" /> : <UserPlus size={15} weight="duotone" />}
-              </div>
-              <div className="min-w-[160px] flex-1">
-                <div className="flex items-baseline gap-1.5">
-                  <p className="text-[13px] leading-[18px] font-medium text-kumo-default">
-                    Добавлен участник: {invitedName}
-                  </p>
-                  <span className="text-[11px] leading-4 text-kumo-inactive">
-                    {invitedLinkCopied ? 'Ссылка скопирована' : 'Отправьте участнику эту ссылку'}
-                  </span>
-                </div>
-                <p className="truncate font-mono text-[11px] leading-4 text-kumo-subtle">{workspaceUrl}</p>
-              </div>
-              <WorkshopButton tone="primary" onClick={copyWorkspaceUrl} className="gap-1.5 !rounded-xl">
-                {invitedLinkCopied ? <Check size={13} weight="bold" /> : <Copy size={13} />}
-                {invitedLinkCopied ? 'Скопировано' : 'Скопировать ссылку'}
-              </WorkshopButton>
-              <WorkshopIconButton
-                aria-label="Закрыть сообщение о приглашении"
-                onClick={() => { setInvitedName(null); setInvitedLinkCopied(false) }}
-              >
-                <X size={14} />
-              </WorkshopIconButton>
-            </div>
-          )}
-
-          <div className="mt-2">
-            {(showLinkComposer || newShareLink) ? (
-              newShareLink ? (
-                <div className="themed-compact-shadow flex flex-wrap items-center gap-3 rounded-2xl border border-kumo-line/80 bg-kumo-base px-3 py-2.5 share-fade-in">
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-subtle">
-                      {newShareLinkCopied ? <Check size={15} weight="bold" /> : <Link size={15} />}
-                    </div>
-                    <div className="min-w-[160px] flex-1">
-                      <div className="flex items-baseline gap-1.5">
-                        <p className="text-[13px] leading-[18px] font-medium text-kumo-default">
-                          {newShareLinkCopied ? 'Ссылка скопирована' : 'Ссылка готова'}
-                        </p>
-                        <span className="text-[11px] leading-4 text-kumo-inactive">
-                          Ссылку можно снова скопировать в разделе «Ссылки доступа»
-                        </span>
-                      </div>
-                      <p className="truncate font-mono text-[11px] leading-4 text-kumo-subtle">{newShareLink}</p>
-                    </div>
-                    <WorkshopButton tone="primary" onClick={copyNewLink} className="w-[78px] gap-1.5 !rounded-xl">
-                      {newShareLinkCopied ? <Check size={13} weight="bold" /> : <Copy size={13} />}
-                      {newShareLinkCopied ? 'Скопировано' : 'Скопировать'}
-                    </WorkshopButton>
-                    <WorkshopIconButton
-                      aria-label="Закрыть сообщение о ссылке"
-                      onClick={() => { setNewShareLink(null); setNewShareLinkId(null); setNewShareLinkCopied(false); setShowLinkComposer(false) }}
-                    >
-                      <X size={14} />
-                    </WorkshopIconButton>
-                </div>
-              ) : (
-                <div className="themed-compact-shadow flex h-12 items-center gap-2 overflow-hidden rounded-2xl border border-kumo-line/80 bg-kumo-base p-1.5 pl-3 transition-[border-color,box-shadow] focus-within:border-kumo-fill share-fade-in">
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-subtle">
-                      <Link size={15} />
-                    </div>
-                    <input
-                      ref={linkNameRef}
-                      value={newLinkNote}
-                      onChange={(e) => setNewLinkNote(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShareLink() }}
-                      placeholder="Название ссылки (необязательно)…"
-                      aria-label="Название ссылки (необязательно)"
-                      className="h-9 min-w-0 flex-1 border-0 bg-transparent p-0 text-[14px] leading-5 tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
-                      disabled={creatingLink || sharingProhibited}
-                    />
-                    <RoleMenu
-                      ariaLabel="Доступ по ссылке"
-                      value={newLinkRole}
-                      onValueChange={setNewLinkRole}
-                      disabled={creatingLink || sharingProhibited}
-                      container={menuContainer}
-                    />
-                    <WorkshopButton tone="primary" className="shrink-0 !rounded-xl" onClick={handleCreateShareLink} disabled={creatingLink || sharingProhibited}>
-                      {creatingLink ? 'Создаём…' : 'Создать ссылку'}
-                    </WorkshopButton>
-                    <WorkshopIconButton aria-label="Отменить создание ссылки" onClick={() => setShowLinkComposer(false)}>
-                      <X size={14} />
-                    </WorkshopIconButton>
-                </div>
-              )
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowLinkComposer(true)}
-                disabled={sharingProhibited}
-                className="themed-compact-shadow flex h-12 w-full cursor-pointer items-center justify-center gap-1.5 rounded-2xl border border-kumo-line/80 bg-kumo-base px-3 text-[13px] font-medium text-kumo-subtle transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-elevated/60 hover:text-kumo-default active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Link size={14} /> Создать ссылку доступа
+          <section aria-label="Пригласить" className="flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center gap-2" data-keeper-ignore="true" data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
+              <input
+                type="search"
+                placeholder="Имя пользователя или почта"
+                aria-label="Имя пользователя или почта"
+                value={addUsername}
+                onChange={(e) => setAddUsername(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddCollaborator() }}
+                name="gadget-share-people-search"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                data-keeper-ignore="true"
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-bwignore="true"
+                data-form-type="other"
+                className="h-10 min-w-[200px] flex-1 appearance-none rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[15px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30 [&::-webkit-search-cancel-button]:hidden"
+              />
+              <button type="button" className={primary(canInvite)} onClick={handleAddCollaborator} disabled={!canInvite}>
+                {adding ? 'Приглашаю…' : 'Пригласить'}
               </button>
+            </div>
+            {suggestions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5" aria-label="Недавние">
+                <span className="px-1 text-[13px] text-kumo-subtle">Недавние</span>
+                {suggestions.map(p => (
+                  <button key={p.id} type="button" className="h-7 cursor-pointer rounded-full border-0 bg-kumo-tint px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-fill-hover" title={p.id}
+                    onClick={() => setAddUsername(p.id)}>{p.name}</button>
+                ))}
+              </div>
             )}
-          </div>
-          </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <RoleSwitch ariaLabel="Право приглашённого" value={addRole} onValueChange={setAddRole} />
+              <p className="m-0 min-w-0 flex-1 text-[13px] leading-[18px] text-kumo-subtle">{ROLE_DESCRIPTIONS[addRole]}</p>
+            </div>
+
+            {invitedName && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-kumo-tint px-4 py-2.5 share-fade-in">
+                <p className="m-0 min-w-0 flex-1 text-[14px] leading-5">
+                  Добавлен участник: {invitedName}.{' '}
+                  <span className="text-kumo-subtle">{invitedLinkCopied ? 'Ссылка скопирована' : 'Отправьте ему ссылку на беседу'}</span>
+                  <span className="block truncate text-[12px] leading-4 text-kumo-subtle">{workspaceUrl}</span>
+                </p>
+                <button type="button" className={pill} onClick={copyWorkspaceUrl}>
+                  {invitedLinkCopied ? <Check size={13} weight="bold" /> : <Copy size={13} />}
+                  {invitedLinkCopied ? 'Скопировано' : 'Скопировать ссылку'}
+                </button>
+                <button type="button" aria-label="Закрыть сообщение о приглашении" className={`${quietAction} !px-2`}
+                  onClick={() => { setInvitedName(null); setInvitedLinkCopied(false) }}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section aria-label="Ссылка доступа" className="flex flex-col gap-2.5">
+            {newShareLink ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-kumo-tint px-4 py-2.5 share-fade-in">
+                <p className="m-0 min-w-0 flex-1 text-[14px] leading-5">
+                  {newShareLinkCopied ? 'Ссылка скопирована.' : 'Ссылка готова.'}{' '}
+                  <span className="text-kumo-subtle">Скопировать её снова можно в списке ссылок ниже.</span>
+                  <span className="block truncate text-[12px] leading-4 text-kumo-subtle">{newShareLink}</span>
+                </p>
+                <button type="button" className={pill} onClick={copyNewLink}>
+                  {newShareLinkCopied ? <Check size={13} weight="bold" /> : <Copy size={13} />}
+                  {newShareLinkCopied ? 'Скопировано' : 'Скопировать'}
+                </button>
+                <button type="button" aria-label="Закрыть сообщение о ссылке" className={`${quietAction} !px-2`}
+                  onClick={() => { setNewShareLink(null); setNewShareLinkId(null); setNewShareLinkCopied(false); setShowLinkComposer(false) }}>
+                  <X size={14} />
+                </button>
+              </div>
+            ) : showLinkComposer ? (
+              <div className="flex flex-col gap-2.5 rounded-2xl border border-kumo-fill px-4 py-3 share-fade-in">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={linkNameRef}
+                    value={newLinkNote}
+                    onChange={(e) => setNewLinkNote(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShareLink() }}
+                    placeholder="Название ссылки, например «Для отдела продаж»"
+                    aria-label="Название ссылки (необязательно)"
+                    className="h-9 min-w-[200px] flex-1 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30"
+                    disabled={creatingLink}
+                  />
+                  <button type="button" className={`${primary(!creatingLink)} !h-9`} onClick={handleCreateShareLink} disabled={creatingLink}>
+                    {creatingLink ? 'Создаю…' : 'Создать ссылку'}
+                  </button>
+                  <button type="button" aria-label="Отменить создание ссылки" className={`${quietAction} !px-2`} onClick={() => setShowLinkComposer(false)}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <RoleSwitch ariaLabel="Право по ссылке" value={newLinkRole} onValueChange={setNewLinkRole} disabled={creatingLink} />
+                  <p className="m-0 min-w-0 flex-1 text-[13px] leading-[18px] text-kumo-subtle">Кто откроет ссылку, {roleLabel(newLinkRole)}.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <button type="button" className={pill} onClick={() => setShowLinkComposer(true)}>
+                  <Link size={14} /> Создать ссылку доступа
+                </button>
+                <span className="text-[13px] text-kumo-subtle">для тех, кого нет в списке</span>
+              </div>
+            )}
+          </section>
 
           {recipientVerification}
 
-          <section aria-labelledby="people-heading" className="mt-4">
-            <div className="mb-2 px-1">
-              <h3 id="people-heading" className="text-[15px] leading-5 font-semibold text-kumo-default">
-                Участники
-              </h3>
-            </div>
-            <div className="overflow-hidden rounded-2xl border border-kumo-line/80 bg-kumo-base">
-              {collaboratorRows.map((row, index) => {
-                const profile = row.kind === 'owner' ? row.profile : row.info.profile
-                const key = row.kind === 'owner' ? '__owner__' : row.info.profile.id
-                const isRemoving = row.kind === 'collaborator' && removeTarget?.profileId === row.info.profile.id
-                const downstreamDependents = isRemoving && removeTarget
-                  ? removeTarget.dependents.filter(dep => dep.profile.id !== profile.id)
-                  : []
-                return (
-                  <div key={key} className={`group ${index > 0 ? 'border-t border-kumo-line/70' : ''} ${landedPersonId === profile.id ? 'share-row-land' : 'transition-colors duration-150 hover:bg-kumo-elevated/50'} px-3 py-2.5`}>
-                    <div className="flex items-center gap-3">
-                      <PersonAvatar api={authenticatedApi} userId={profile.id} name={profile.name} size={32} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] leading-[17px] font-medium tracking-[-0.25px] text-kumo-default">
-                          {profile.name}{profile.id === currentUser?.id ? ' (вы)' : ''}
-                        </p>
-                        <p className="truncate text-[12px] leading-[15px] tracking-[-0.15px] text-kumo-subtle">
-                          {row.kind === 'owner' ? profile.id : describeAccess(row.info)}
-                        </p>
-                      </div>
-                      {row.kind === 'owner' ? (
-                        <span className="px-2 text-[12px] text-kumo-subtle">Владелец</span>
-                      ) : isRemoving ? (
-                        <InlineConfirm
-                          label="Убрать"
-                          busy={removeTarget.previewing || confirmationBusy}
-                          busyLabel={removeTarget.previewing ? 'Проверяем…' : undefined}
-                          onConfirm={handleConfirmRemoveCollaborator}
-                          onCancel={() => setConfirmationTarget(null)}
-                        />
-                      ) : (
-                        <>
-                          <RoleBadge role={row.info.role} />
-                          <WorkshopIconButton
-                            danger
-                            className="!h-7 !w-7 opacity-35 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                            onClick={() => handleStartRemoveCollaborator(row.info.profile.id)}
-                            aria-label={`Убрать участника: ${profile.name}`}
-                            disabled={confirmationBusy}
-                          >
-                            <Trash size={13} />
-                          </WorkshopIconButton>
-                        </>
-                      )}
+          <section aria-labelledby="people-heading" className="flex flex-col">
+            <h3 id="people-heading" className="m-0 pb-1 text-[15px] leading-5 font-semibold">Имеют доступ</h3>
+            {collaboratorRows.map((row, index) => {
+              const profile = row.kind === 'owner' ? row.profile : row.info.profile
+              const key = row.kind === 'owner' ? '__owner__' : row.info.profile.id
+              const me = profile.id === currentUser?.id
+              const isRemoving = row.kind === 'collaborator' && removeTarget?.profileId === row.info.profile.id
+              const downstreamDependents = isRemoving && removeTarget
+                ? removeTarget.dependents.filter(dep => dep.profile.id !== profile.id)
+                : []
+              return (
+                <div key={key} data-share-person="" className={rowClass(landedPersonId === profile.id, index === 0)}>
+                  <div className="flex items-center gap-3">
+                    <PersonAvatar api={authenticatedApi} userId={profile.id} name={profile.name} size={36} />
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 truncate text-[15px] leading-5">{me ? 'Вы' : profile.name}</p>
+                      {row.kind === 'collaborator' && <p className="m-0 truncate text-[13px] leading-[18px] text-kumo-subtle">{describeAccess(row.info)}</p>}
                     </div>
-                    {isRemoving && downstreamDependents.length > 0 && (
-                      <div className="mt-2.5 share-expand-in">
-                        <p className="mb-1.5 text-[12px] leading-4 text-kumo-subtle">
-                          Доступ через {profile.name} потеряют ещё {downstreamDependents.length} чел. Отметьте тех, кому нужно сохранить доступ.
-                        </p>
-                        <DependentKeepList
-                          dependents={downstreamDependents}
-                          keepSet={removeTarget.keepSet}
-                          onKeepSetChange={(keepSet) => setConfirmationTarget(current =>
-                            current?.kind === 'remove' && current.profileId === removeTarget.profileId
-                              ? { ...current, keepSet }
-                              : current
-                          )}
-                        />
-                      </div>
+                    {row.kind === 'owner' ? (
+                      <span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span>
+                    ) : isRemoving ? (
+                      <InlineConfirm
+                        label="Убрать"
+                        busy={removeTarget.previewing || confirmationBusy}
+                        busyLabel={removeTarget.previewing ? 'Проверяю…' : undefined}
+                        onConfirm={handleConfirmRemoveCollaborator}
+                        onCancel={() => setConfirmationTarget(null)}
+                      />
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={`${quietAction} ${hiddenAction} hover:!text-kumo-danger`}
+                          onClick={() => handleStartRemoveCollaborator(row.info.profile.id)}
+                          aria-label={`Убрать участника: ${profile.name}`}
+                          disabled={confirmationBusy}
+                        >
+                          Убрать
+                        </button>
+                        <span className="px-2.5 text-[14px] text-kumo-subtle" title={ROLE_DESCRIPTIONS[row.info.role ?? 'build']}>{roleLabel(row.info.role)}</span>
+                      </>
                     )}
                   </div>
-                )
-              })}
-              {/* Агент — не участник доступа: его право всегда пересечение прав человека и его поручения. */}
-              <div className="border-t border-kumo-line/70 px-3 py-2.5">
-                <div className="flex items-center gap-3">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-kumo-tint text-kumo-default" aria-hidden="true">
-                    <Robot size={17} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] leading-[17px] font-medium tracking-[-0.25px] text-kumo-default">Агент</p>
-                    <p className="text-[12px] leading-[15px] tracking-[-0.15px] text-kumo-subtle">Работает только по вашей просьбе и не шире ваших прав</p>
-                  </div>
+                  {isRemoving && downstreamDependents.length > 0 && (
+                    <div className="mt-2.5 share-expand-in">
+                      <p className="m-0 mb-1.5 text-[13px] leading-[18px] text-kumo-subtle">
+                        Доступ через {profile.name} потеряют ещё {downstreamDependents.length} чел. Отметьте тех, кому нужно сохранить доступ.
+                      </p>
+                      <DependentKeepList
+                        dependents={downstreamDependents}
+                        keepSet={removeTarget.keepSet}
+                        onKeepSetChange={(keepSet) => setConfirmationTarget(current =>
+                          current?.kind === 'remove' && current.profileId === removeTarget.profileId
+                            ? { ...current, keepSet }
+                            : current
+                        )}
+                      />
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
+              )
+            })}
           </section>
 
           {shareLinks.length > 0 && (
-          <section aria-labelledby="links-heading" className="mt-4">
-            <div className="mb-2 px-1">
-              <h3 id="links-heading" className="text-[15px] leading-5 font-semibold text-kumo-default">
-                Ссылки доступа
-              </h3>
-            </div>
-
-              <div className="overflow-hidden rounded-2xl border border-kumo-line/80 bg-kumo-base">
-                {sortedShareLinks.map((sk, index) => {
-                  const isRevoking = revokeTarget?.linkId === sk.linkId
-                  const isRenaming = editingShareLinkId === sk.linkId
-                  return (
-                    <div key={sk.linkId} className={`group ${index > 0 ? 'border-t border-kumo-line/70' : ''} ${landedShareLinkId === sk.linkId ? 'share-row-land' : 'transition-colors duration-150 hover:bg-kumo-elevated/50'} px-3 py-2.5`}>
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-kumo-tint to-kumo-elevated text-kumo-subtle ring-1 ring-inset ring-kumo-line/60">
-                          <Link size={14} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          {isRenaming ? (
-                            <input
-                              ref={renameInputRef}
-                              value={editingShareLinkNote}
-                              onChange={(e) => setEditingShareLinkNote(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveShareLinkNote()
-                                if (e.key === 'Escape') cancelRenameShareLink()
-                              }}
-                              placeholder="Название ссылки…"
-                              aria-label="Название ссылки"
-                              className="block w-full border-0 bg-transparent p-0 text-[13px] leading-[17px] font-medium tracking-[-0.25px] text-kumo-default outline-none shadow-[inset_0_-1px_0_0_var(--color-kumo-line)] transition-shadow placeholder:font-normal placeholder:text-kumo-inactive focus:shadow-[inset_0_-1px_0_0_var(--color-kumo-fill)]"
-                              disabled={savingShareLinkNote}
-                            />
-                          ) : (
-                            <p className="truncate text-[13px] leading-[17px] font-medium tracking-[-0.25px] text-kumo-default">{sk.note || 'Ссылка без названия'}</p>
-                          )}
-                          <p className="truncate text-[12px] leading-[15px] tracking-[-0.15px] text-kumo-subtle">Создал: {sk.createdBy.name} · {formatRelativeTime(sk.created)}</p>
-                        </div>
-                        {isRenaming ? (
-                          <InlineConfirm
-                            label="Сохранить"
-                            tone="brand"
-                            busy={savingShareLinkNote}
-                            onConfirm={handleSaveShareLinkNote}
-                            onCancel={cancelRenameShareLink}
-                          />
-                        ) : isRevoking ? (
-                          <InlineConfirm
-                            label="Отозвать"
-                            busy={revokeTarget.previewing || confirmationBusy}
-                            busyLabel={revokeTarget.previewing ? 'Проверяем…' : undefined}
-                            onConfirm={handleConfirmRevokeShareLink}
-                            onCancel={() => setConfirmationTarget(null)}
-                          />
-                        ) : (
-                          <>
-                            <RoleBadge role={sk.role} />
-                            <WorkshopIconButton
-                              className="!h-7 !w-7"
-                              onClick={() => handleCopyShareLink(sk.linkId)}
-                              aria-label={`Скопировать ${sk.note || 'ссылку'}`}
-                              disabled={confirmationBusy || copyingLinkId === sk.linkId || sharingProhibited}
-                            >
-                              {copiedLinkId === sk.linkId ? <Check size={13} weight="bold" /> : <Copy size={13} />}
-                            </WorkshopIconButton>
-                            <WorkshopIconButton
-                              className="!h-7 !w-7 opacity-35 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                              onClick={() => startRenameShareLink(sk)}
-                              aria-label={`Переименовать ${sk.note || 'ссылку'}`}
-                              disabled={confirmationBusy}
-                            >
-                              <PencilSimple size={13} />
-                            </WorkshopIconButton>
-                            <WorkshopIconButton
-                              danger
-                              className="!h-7 !w-7 opacity-35 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                              onClick={() => handleStartRevokeShareLink(sk.linkId)}
-                              aria-label={`Отозвать ${sk.note || 'ссылку'}`}
-                              disabled={confirmationBusy}
-                            >
-                              <Trash size={13} />
-                            </WorkshopIconButton>
-                          </>
-                        )}
-                      </div>
-                      {isRevoking && revokeTarget.dependents.length > 0 && (
-                        <div className="mt-2.5 share-expand-in">
-                          <p className="mb-1.5 text-[12px] leading-4 text-kumo-subtle">
-                            Доступ по этой ссылке потеряют {revokeTarget.dependents.length} чел. Отметьте тех, кому нужно сохранить доступ.
-                          </p>
-                          <DependentKeepList
-                            dependents={revokeTarget.dependents}
-                            keepSet={revokeTarget.keepSet}
-                            onKeepSetChange={(keepSet) => setConfirmationTarget(current =>
-                              current?.kind === 'revoke' && current.linkId === revokeTarget.linkId
-                                ? { ...current, keepSet }
-                                : current
-                            )}
-                          />
-                        </div>
+          <section aria-labelledby="links-heading" className="flex flex-col">
+            <h3 id="links-heading" className="m-0 pb-1 text-[15px] leading-5 font-semibold">Ссылки доступа</h3>
+            {sortedShareLinks.map((sk, index) => {
+              const isRevoking = revokeTarget?.linkId === sk.linkId
+              const isRenaming = editingShareLinkId === sk.linkId
+              return (
+                <div key={sk.linkId} className={rowClass(landedShareLinkId === sk.linkId, index === 0)}>
+                  <div className="flex items-center gap-3">
+                    <span aria-hidden="true" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-kumo-tint text-kumo-subtle">
+                      <Link size={15} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      {isRenaming ? (
+                        <input
+                          ref={renameInputRef}
+                          value={editingShareLinkNote}
+                          onChange={(e) => setEditingShareLinkNote(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveShareLinkNote()
+                            if (e.key === 'Escape') cancelRenameShareLink()
+                          }}
+                          placeholder="Название ссылки…"
+                          aria-label="Название ссылки"
+                          className="block w-full border-0 bg-transparent p-0 text-[15px] leading-5 text-kumo-default outline-none shadow-[inset_0_-1px_0_0_var(--color-kumo-line)] placeholder:text-kumo-inactive focus:shadow-[inset_0_-1px_0_0_var(--color-kumo-brand)]"
+                          disabled={savingShareLinkNote}
+                        />
+                      ) : (
+                        <p className="m-0 truncate text-[15px] leading-5">{sk.note || 'Ссылка без названия'}</p>
                       )}
+                      <p className="m-0 truncate text-[13px] leading-[18px] text-kumo-subtle">{sk.createdBy.id === currentUser?.id ? 'Вы создали' : `Создал ${sk.createdBy.name}`} {formatRelativeTime(sk.created)}</p>
                     </div>
-                  )
-                })}
-              </div>
+                    {isRenaming ? (
+                      <InlineConfirm label="Сохранить" tone="brand" busy={savingShareLinkNote} onConfirm={handleSaveShareLinkNote} onCancel={cancelRenameShareLink} />
+                    ) : isRevoking ? (
+                      <InlineConfirm
+                        label="Отозвать"
+                        busy={revokeTarget.previewing || confirmationBusy}
+                        busyLabel={revokeTarget.previewing ? 'Проверяю…' : undefined}
+                        onConfirm={handleConfirmRevokeShareLink}
+                        onCancel={() => setConfirmationTarget(null)}
+                      />
+                    ) : (
+                      <>
+                        <button type="button" className={`${quietAction} ${collapsedAction}`} onClick={() => startRenameShareLink(sk)}
+                          aria-label={`Переименовать ${sk.note || 'ссылку'}`} disabled={confirmationBusy}>
+                          <PencilSimple size={14} />
+                        </button>
+                        <button type="button" className={`${quietAction} ${collapsedAction} hover:!text-kumo-danger`} onClick={() => handleStartRevokeShareLink(sk.linkId)}
+                          aria-label={`Отозвать ${sk.note || 'ссылку'}`} disabled={confirmationBusy}>
+                          Отозвать
+                        </button>
+                        <span className="px-1 text-[14px] text-kumo-subtle">{roleLabel(sk.role)}</span>
+                        <button type="button" className={`${quietAction} !px-2`} onClick={() => handleCopyShareLink(sk.linkId)}
+                          aria-label={`Скопировать ${sk.note || 'ссылку'}`} disabled={confirmationBusy || copyingLinkId === sk.linkId}>
+                          {copiedLinkId === sk.linkId ? <Check size={14} weight="bold" /> : <Copy size={14} />}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {isRevoking && revokeTarget.dependents.length > 0 && (
+                    <div className="mt-2.5 share-expand-in">
+                      <p className="m-0 mb-1.5 text-[13px] leading-[18px] text-kumo-subtle">
+                        Доступ по этой ссылке потеряют {revokeTarget.dependents.length} чел. Отметьте тех, кому нужно сохранить доступ.
+                      </p>
+                      <DependentKeepList
+                        dependents={revokeTarget.dependents}
+                        keepSet={revokeTarget.keepSet}
+                        onKeepSetChange={(keepSet) => setConfirmationTarget(current =>
+                          current?.kind === 'revoke' && current.linkId === revokeTarget.linkId
+                            ? { ...current, keepSet }
+                            : current
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </section>
           )}
           </>

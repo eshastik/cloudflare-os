@@ -1,6 +1,7 @@
 import {launchTemplateProposal} from './templateProposalLaunch'
 import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
+import { launchSharedDocument } from './sharedDocuments'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
 import {MAX_UPLOAD_FILES, planIntakeDrop, planPickedFiles, type IntakeDroppedFile} from "./intakeDrop"
 import {IntakeUploadPanel, runIntakeUpload, useIntakeUploadPanel, type IntakeUploadUi} from "./intakeUploadPanel"
@@ -145,6 +146,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
     private readonly navigateView: (view: string) => void = () => {},
     uploadUi?: { ui: IntakeUploadUi; updated(): void },
+    private readonly launchShared?: (scope: string, owner: string, resource: string) => Promise<boolean>,
   ) {
     super()
     this.#uploadUi = uploadUi
@@ -176,6 +178,14 @@ class GatekeeperAppHostImpl extends RpcTarget {
     if (typeof scope !== 'string' || typeof resource !== 'string' || !scope || !resource || scope.length > 255 || resource.length > 255) throw Error('Не выбран документ')
     if (!this.launchDocument) return false
     return this.launchDocument(scope, resource)
+  }
+
+  /** Документ другого человека по приглашению: владелец нужен, чтобы отметить уведомление прочитанным до перехода в редактор. */
+  async openSharedDocument(scope: string, owner: string, resource: string): Promise<boolean> {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if ([scope, owner, resource].some(value => typeof value !== 'string' || !value || value.length > 255)) throw Error('Не выбран документ')
+    if (!this.launchShared) throw Error('Подключение Mnemos недоступно')
+    return this.launchShared(scope, owner, resource)
   }
 
   async openTemplateProposal(scope:string,resource:string,proposal:string):Promise<void> {
@@ -704,6 +714,10 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         },
         view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view }), replace: true }) },
         { ui: uploadUi, updated: () => { if (hostRef.current === host) iframeRef.current?.contentWindow?.postMessage({ type: 'mnemos-inbox-updated' }, '*') } },
+        async (scope, owner, resource) => {
+          if (accountId === undefined) throw Error('Подключение Mnemos недоступно')
+          return launchSharedDocument(authenticatedApi, frame, accountId, { scope, owner, resource }, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
+        },
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host

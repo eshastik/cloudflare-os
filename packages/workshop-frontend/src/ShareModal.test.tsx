@@ -137,7 +137,7 @@ function button(rendered: HTMLElement, label: string): HTMLButtonElement {
 }
 
 function roleOption(rendered: HTMLElement, label: string): HTMLButtonElement {
-  const found = [...rendered.querySelectorAll<HTMLButtonElement>('[data-testid="role-option"]')]
+  const found = [...rendered.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
     .find(candidate => candidate.textContent?.startsWith(label))
   if (!found) throw new Error(`No role option for “${label}”`)
   return found
@@ -224,7 +224,7 @@ describe('ShareModal', () => {
     expect(rendered.textContent).toContain('Q3 planning')
     expect(rendered.textContent).not.toContain('Pipeline dashboard')
 
-    await click(roleOption(rendered, 'Беседа и гаджеты'))
+    await click(roleOption(rendered, 'может менять'))
 
     expect(rendered.textContent).toContain('Pipeline dashboard')
   })
@@ -239,8 +239,8 @@ describe('ShareModal', () => {
     expect(rendered.querySelector('#invite-verification-heading')).toBeNull()
     expect(rendered.querySelector('#link-verification-heading')).toBeNull()
 
-    const buildOptions = [...rendered.querySelectorAll<HTMLButtonElement>('[data-testid="role-option"]')]
-      .filter(option => option.textContent?.startsWith('Беседа и гаджеты'))
+    const buildOptions = [...rendered.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+      .filter(option => option.textContent?.startsWith('может менять'))
     expect(buildOptions).toHaveLength(2)
     await click(buildOptions[1])
 
@@ -268,7 +268,7 @@ describe('ShareModal', () => {
 
     expect(rendered.textContent).toContain('Не удалось проверить')
     // The rest of the modal still works.
-    expect(rendered.textContent).toContain('Участники')
+    expect(rendered.textContent).toContain('Имеют доступ')
   })
 
   it('refreshes requirements when the modal regains focus', async () => {
@@ -284,6 +284,33 @@ describe('ShareModal', () => {
     })
 
     expect(listObserverRequirements).toHaveBeenCalledTimes(4)
+  })
+
+  it('reads as «Поделиться» with the gadget name, a plain role switch and no agent row', async () => {
+    const rendered = await render(fakeOverseer())
+    expect(rendered.querySelector('h2')?.textContent).toBe('Поделиться')
+    expect(rendered.textContent).toContain('Trip planner')
+    const roles = [...rendered.querySelectorAll('[role="radiogroup"][aria-label="Право приглашённого"] [role="radio"]')].map(r => r.textContent)
+    expect(roles).toEqual(['может пользоваться', 'может менять'])
+    expect(rendered.textContent).toContain('Беседу с агентом и код не видит')
+    expect(rendered.textContent).not.toContain('Только гаджеты')
+    expect(rendered.textContent).not.toContain('Работает только по вашей просьбе')
+    expect(rendered.textContent).toContain('Вы')
+    expect(rendered.textContent).toContain('владелец')
+    expect(rendered.textContent).not.toContain(CURRENT_USER.id)
+    const inviteButton = button(rendered, 'Пригласить')
+    expect(inviteButton.disabled).toBe(true)
+    expect(inviteButton.className).not.toContain('bg-kumo-brand')
+  })
+
+  it('offers recently invited people as suggestions', async () => {
+    localStorage.setItem('workshop-share-recent-people', JSON.stringify([{ id: 'olga', name: 'Ольга' }]))
+    try {
+      const rendered = await render(fakeOverseer())
+      await click(button(rendered, 'Ольга'))
+      expect(rendered.querySelector<HTMLInputElement>('input[aria-label="Имя пользователя или почта"]')?.value).toBe('olga')
+      expect(button(rendered, 'Пригласить').disabled).toBe(false)
+    } finally { localStorage.removeItem('workshop-share-recent-people') }
   })
 
   it('does not rename a share link when its name did not change', async () => {

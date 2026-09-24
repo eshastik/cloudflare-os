@@ -112,6 +112,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; selectedView=""; if(project!==undefined) selectedProject=project; locationChanged(); },0); }
     async openTemplateProposal(...args) { calls.push(["openTemplateProposal",...args]); }
     async openNativeDocument(project, resource) { calls.push(["openNativeDocument", project, resource]); return options.nativeOpen ?? false; }
+    async openSharedDocument(project, owner, resource) { calls.push(["openSharedDocument", project, owner, resource]); if (options.sharedOpenError) throw new Error(options.sharedOpenError); return options.sharedOpen ?? options.nativeOpen ?? false; }
     async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
     async openApprovals() { calls.push(["openApprovals"]); }
     async sendMailDraft(id, sha256) { calls.push(["sendMailDraft", id, sha256]); return { state: "accepted" }; }
