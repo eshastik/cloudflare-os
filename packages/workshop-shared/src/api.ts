@@ -1785,6 +1785,11 @@ export interface Overseer extends RpcTarget {
   addCollaborator(username: string, role: CollaboratorRole,
                   note?: string): Promise<CollaboratorInfo | null>;
 
+  // Подсказки для приглашения: до 8 пользователей установки, у которых имя, имя входа или почта
+  // начинаются с `query`. Только для того, кто может приглашать; уже имеющие доступ не возвращаются.
+  // `id` — имя входа, его и передают в addCollaborator.
+  findInvitees(query: string): Promise<{ id: string; name: string; email?: string }[]>;
+
   // Remove a collaborator (identified by profile.id).
   //
   // Owner can remove anyone. A non-owner collaborator can only remove their own edge(s)

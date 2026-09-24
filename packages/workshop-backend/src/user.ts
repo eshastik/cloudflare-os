@@ -197,6 +197,8 @@ function makeUserStorage(storage: DurableObjectStorage) {
       cloudflareBilling: <CloudflareBilling | null>null,
 
       created: false,
+      // Что уже внесено в справочник подсказок «Поделиться» (имя входа и имя); пусто — ещё ничего.
+      directoryRecorded: "",
       profile: <AiChatAuthorInfo>{
         type: "user",
         name: "User",
@@ -396,6 +398,20 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (!session) {
       throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);
     }
+    await this.#recordInDirectory();
+  }
+
+  // Внести себя в справочник подсказок «Поделиться»: один раз и заново после смены имени. Сбой
+  // справочника вход не ломает — человек просто не появится в подсказках до следующего входа.
+  async #recordInDirectory(): Promise<void> {
+    if (!this.storage.created.get()) return;
+    let profile = this.storage.profile.get();
+    let stamp = JSON.stringify([profile.id, profile.name]);
+    if (this.storage.directoryRecorded.get() === stamp) return;
+    try {
+      await this.adminSettings.getByName("").recordDirectoryUser({ id: profile.id, name: profile.name });
+      this.storage.directoryRecorded.put(stamp);
+    } catch { /* повторится при следующем входе */ }
   }
 
   // Returns true when this login created the account on first use. When the account doesn't yet
@@ -608,6 +624,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let profile = this.storage.profile.get();
     profile.name = name;
     this.storage.profile.put(profile);
+    await this.#recordInDirectory();
   }
 
   async listModels(): Promise<AiChatAuthorInfo[]> {

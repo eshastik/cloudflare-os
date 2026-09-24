@@ -607,6 +607,11 @@ export class SharingManager {
 
   // The caller's effective role, throwing if the caller has no access at all (which should not
   // happen for an authorized session).
+  /** Право делиться этим рабочим местом: роль вызывающего или ошибка, если делиться ему нельзя. */
+  requireShareRole(caller: SharingCaller): CollaboratorRole {
+    return this.#requireCallerRole(caller);
+  }
+
   #requireCallerRole(caller: SharingCaller): CollaboratorRole {
     if (caller.isOwner) return "build";
     let role = this.computeEffectiveRoles().get(caller.profileId);

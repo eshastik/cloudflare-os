@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { Checkbox, Dialog, useKumoToastManager } from '@cloudflare/kumo'
 import { CaretLeft, Check, Copy, Link, PencilSimple, ShieldCheck, ShieldWarning, X } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
@@ -65,6 +65,10 @@ function roleLabel(role: CollaboratorRole | undefined): string {
 }
 
 const ROLE_OPTIONS: CollaboratorRole[] = ['use', 'build']
+
+/** Пауза после ввода перед поиском подсказок, мс. */
+const SUGGEST_DELAY_MS = 150
+type Invitee = { id: string; name: string; email?: string }
 
 /** Право получателя — переключатель из двух слов; подсказка к выбранному — строкой под ним у вызывающего. */
 function RoleSwitch({ value, onValueChange, disabled, ariaLabel }: {
@@ -292,6 +296,13 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   const addingRef = useRef(false)
   const landedTimerRef = useRef<number | null>(null)
   const [recentPeople, setRecentPeople] = useState<RecentPerson[]>(() => readRecentPeople())
+  // Подсказки по мере ввода: люди установки, у которых имя, имя входа или почта начинаются с введённого.
+  const [matches, setMatches] = useState<Invitee[]>([])
+  const [matchesOpen, setMatchesOpen] = useState(false)
+  const [activeMatch, setActiveMatch] = useState(0)
+  const matchRequestRef = useRef(0)
+  // Имя входа, подставленное из подсказки: по нему повторно не ищем.
+  const chosenRef = useRef<string | null>(null)
   const [landedPersonId, setLandedPersonId] = useState<string | null>(null)
   const [landedShareLinkId, setLandedShareLinkId] = useState<string | null>(null)
   const [editingShareLinkId, setEditingShareLinkId] = useState<string | null>(null)
@@ -332,6 +343,50 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
 
   const isOwner = !metadata.owner
   const sharingProhibited = metadata.sharingProhibited === true
+
+  useEffect(() => {
+    const query = addUsername.trim()
+    const request = ++matchRequestRef.current
+    if (!open || !query || query === chosenRef.current || sharingProhibited) { setMatches([]); return }
+    const timer = window.setTimeout(() => {
+      Promise.resolve().then(() => overseer.findInvitees(query))
+        .then(found => {
+          if (request !== matchRequestRef.current) return
+          const taken = new Set([...collaborators.map(c => c.profile.id), currentUser?.id, metadata.owner?.id])
+          setMatches(found.filter(p => !taken.has(p.id)).slice(0, 8))
+          setActiveMatch(0)
+          setMatchesOpen(true)
+        })
+        // Без подсказок поле работает как раньше: приглашение по введённому имени входа.
+        .catch(() => { if (request === matchRequestRef.current) setMatches([]) })
+    }, SUGGEST_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [addUsername, open, overseer, collaborators, sharingProhibited])
+
+  const chooseMatch = (person: Invitee) => {
+    chosenRef.current = person.id
+    setAddUsername(person.id)
+    setMatches([])
+    setMatchesOpen(false)
+  }
+  const showMatches = matchesOpen && matches.length > 0
+  const onPeopleKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!matches.length) return
+      e.preventDefault()
+      if (!matchesOpen) { setMatchesOpen(true); return }
+      setActiveMatch(i => (i + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (showMatches && matches[activeMatch]) chooseMatch(matches[activeMatch]!)
+      else void handleAddCollaborator()
+    } else if (e.key === 'Escape' && showMatches) {
+      // Esc закрывает подсказки, а не всё окно.
+      e.preventDefault(); e.stopPropagation(); e.nativeEvent.stopImmediatePropagation()
+      setMatchesOpen(false)
+    }
+  }
+
 
   const loadData = useCallback(async () => {
     try {
@@ -766,35 +821,62 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
           <>
           <section aria-label="Пригласить" className="flex flex-col gap-2.5">
             <div className="flex flex-wrap items-center gap-2" data-keeper-ignore="true" data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
-              <input
-                type="search"
-                placeholder="Имя пользователя или почта"
-                aria-label="Имя пользователя или почта"
-                value={addUsername}
-                onChange={(e) => setAddUsername(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAddCollaborator() }}
-                name="gadget-share-people-search"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                data-keeper-ignore="true"
-                data-1p-ignore="true"
-                data-lpignore="true"
-                data-bwignore="true"
-                data-form-type="other"
-                className="h-10 min-w-[200px] flex-1 appearance-none rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[15px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30 [&::-webkit-search-cancel-button]:hidden"
-              />
+              <div className="relative min-w-[200px] flex-1">
+                <input
+                  type="search"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={showMatches}
+                  aria-controls="share-people-matches"
+                  aria-activedescendant={showMatches ? `share-match-${activeMatch}` : undefined}
+                  placeholder="Имя пользователя или почта"
+                  aria-label="Имя пользователя или почта"
+                  value={addUsername}
+                  onChange={(e) => { chosenRef.current = null; setAddUsername(e.target.value); setMatchesOpen(true) }}
+                  onKeyDown={onPeopleKey}
+                  onBlur={() => setMatchesOpen(false)}
+                  onFocus={() => setMatchesOpen(true)}
+                  name="gadget-share-people-search"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  data-keeper-ignore="true"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
+                  className="h-10 w-full appearance-none rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[15px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30 [&::-webkit-search-cancel-button]:hidden"
+                />
+                {showMatches && (
+                  <ul id="share-people-matches" role="listbox" aria-label="Подсказки"
+                    className="absolute top-[calc(100%+6px)] right-0 left-0 z-20 m-0 flex max-h-[320px] list-none flex-col overflow-y-auto rounded-2xl border border-kumo-fill bg-kumo-overlay p-1 shadow-[0_8px_24px_rgba(24,32,28,0.12)]">
+                    {matches.map((person, index) => (
+                      <li key={person.id} id={`share-match-${index}`} role="option" aria-selected={index === activeMatch}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setActiveMatch(index)}
+                        onClick={() => chooseMatch(person)}
+                        className={`flex cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 ${index === activeMatch ? 'bg-kumo-tint' : ''}`}>
+                        <PersonAvatar api={authenticatedApi} userId={person.id} name={person.name} size={32} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[15px] leading-5 text-kumo-default">{person.name}</span>
+                          <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">{person.email ?? person.id}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <button type="button" className={primary(canInvite)} onClick={handleAddCollaborator} disabled={!canInvite}>
                 {adding ? 'Приглашаю…' : 'Пригласить'}
               </button>
             </div>
-            {suggestions.length > 0 && (
+            {suggestions.length > 0 && !addUsername.trim() && (
               <div className="flex flex-wrap items-center gap-1.5" aria-label="Недавние">
                 <span className="px-1 text-[13px] text-kumo-subtle">Недавние</span>
                 {suggestions.map(p => (
                   <button key={p.id} type="button" className="h-7 cursor-pointer rounded-full border-0 bg-kumo-tint px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-fill-hover" title={p.id}
-                    onClick={() => setAddUsername(p.id)}>{p.name}</button>
+                    onClick={() => { chosenRef.current = p.id; setAddUsername(p.id) }}>{p.name}</button>
                 ))}
               </div>
             )}

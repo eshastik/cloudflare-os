@@ -101,12 +101,15 @@ type OverseerOverrides = {
   listObserverRequirements?: (role: CollaboratorRole) => Promise<ObserverBindingNeed[]>
   shareLinks?: ShareLinkInfo[]
   updateShareLink?: (linkId: string, note?: string) => Promise<void>
+  findInvitees?: (query: string) => Promise<{ id: string; name: string; email?: string }[]>
+  collaborators?: { profile: AiChatAuthorInfo; role: CollaboratorRole; addedBy: [] }[]
 }
 
 function fakeOverseer(overrides: OverseerOverrides = {}): RpcStub<Overseer> {
   const requirements = overrides.requirements ?? { use: [], build: [] }
   return {
-    listCollaborators: async () => [],
+    listCollaborators: async () => overrides.collaborators ?? [],
+    findInvitees: overrides.findInvitees ?? (async () => []),
     listShareLinks: async () => overrides.shareLinks ?? [],
     listObserverRequirements:
       overrides.listObserverRequirements ??
@@ -324,5 +327,65 @@ describe('ShareModal', () => {
 
     expect(updateShareLink).not.toHaveBeenCalled()
     expect(rendered.querySelector('input[aria-label="Название ссылки"]')).toBeNull()
+  })
+
+  describe('подсказки по мере ввода', () => {
+    const PEOPLE = [
+      { id: 'nikolay@example.ru', name: 'Николай Деревцов' },
+      { id: 'admin', name: 'Никита Орлов', email: 'nikita@example.ru' },
+      { id: 'helper', name: 'Ника Уже-участник' },
+    ]
+    async function type(rendered: HTMLElement, text: string) {
+      const input = rendered.querySelector<HTMLInputElement>('input[aria-label="Имя пользователя или почта"]')!
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      await act(async () => { input.focus(); setValue.call(input, text); input.dispatchEvent(new Event('input', { bubbles: true })) })
+      return input
+    }
+    const options = (rendered: HTMLElement) => [...rendered.querySelectorAll<HTMLElement>('[role="option"]')]
+    async function key(input: HTMLInputElement, name: string) {
+      await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })) })
+    }
+
+    it('показывает людей по введённому началу, без уже имеющих доступ; вторая строка — почта или имя входа', async () => {
+      const findInvitees = vi.fn<(q: string) => Promise<typeof PEOPLE>>(async () => PEOPLE)
+      const rendered = await render(fakeOverseer({ findInvitees, collaborators: [{ profile: { type: 'user', id: 'helper', name: 'Ника' }, role: 'use', addedBy: [] }] }))
+      await type(rendered, 'ник')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
+      expect(findInvitees).toHaveBeenLastCalledWith('ник')
+      expect(options(rendered).map(o => o.textContent)).toEqual(['Николай Деревцовnikolay@example.ru', 'Никита Орловnikita@example.ru'])
+      expect(rendered.querySelector('[aria-label="Недавние"]')).toBeNull()
+    })
+
+    it('стрелки и Enter выбирают человека, Esc закрывает, щелчок подставляет', async () => {
+      const rendered = await render(fakeOverseer({ findInvitees: async () => PEOPLE.slice(0, 2) }))
+      let input = await type(rendered, 'ник')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
+      expect(input.getAttribute('aria-expanded')).toBe('true')
+      await key(input, 'ArrowDown')
+      expect(options(rendered)[1]!.getAttribute('aria-selected')).toBe('true')
+      await key(input, 'Enter')
+      expect(input.value).toBe('admin')
+      expect(options(rendered)).toHaveLength(0)
+      expect(button(rendered, 'Пригласить').disabled).toBe(false)
+
+      input = await type(rendered, 'ни')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
+      await key(input, 'Escape')
+      expect(options(rendered)).toHaveLength(0)
+      expect(input.value).toBe('ни')
+
+      input = await type(rendered, 'ник')
+      await vi.waitFor(async () => { await act(async () => {}); expect(options(rendered)).toHaveLength(2) })
+      await click(options(rendered)[0]!)
+      expect(input.value).toBe('nikolay@example.ru')
+    })
+
+    it('сбой поиска не мешает приглашению по введённому имени', async () => {
+      const rendered = await render(fakeOverseer({ findInvitees: async () => { throw new Error('denied') } }))
+      await type(rendered, 'ада')
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)) })
+      expect(options(rendered)).toHaveLength(0)
+      expect(button(rendered, 'Пригласить').disabled).toBe(false)
+    })
   })
 })

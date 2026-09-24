@@ -13,6 +13,8 @@ import { buildGatekeeperVendorMap } from './auth/auth-vendors.js';
 import { UserDurableObject } from './user.js';
 import { formatBlueprintsManifestVersion, installFormatBlueprints } from './format-blueprints.js';
 import { FORMAT_BLUEPRINTS } from './generated/format-blueprints.js';
+import { MAX_INVITEES, matchDirectory, type DirectoryEntry, type Invitee } from './user-directory.js';
+import { parseLoginAliases } from './auth/login-aliases.js';
 
 const logger = createWorkshopLogger("workshop.admin.settings");
 
@@ -22,6 +24,12 @@ function makeAdminSettingsStorage(storage: DurableObjectStorage) {
       // Mirror of the currently-featured blueprint public records. The user DO owns the
       // authoritative featured bit; this DO keeps the publishable deployment-wide copy.
       featuredBlueprints: collection<BlueprintPublicInfo>()({
+        primaryKey: 'id',
+      }),
+
+      // Справочник для подсказок «Поделиться»: имя входа и отображаемое имя, больше ничего.
+      // Пополняется самими пользователями при входе (см. UserDurableObject.authenticate).
+      userDirectory: collection<DirectoryEntry>()({
         primaryKey: 'id',
       }),
     },
@@ -82,6 +90,21 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
   //
   // Callers are coalesced onto one run, or two isolates racing on a fresh deployment both promote
   // the same blueprints, and a duplicated id makes setFormatOrder() reject every reordering.
+  // Внести пользователя в справочник подсказок или обновить его имя. Вызывает только объект самого
+  // пользователя со своим профилем.
+  recordDirectoryUser(entry: DirectoryEntry): void {
+    if (typeof entry?.id !== "string" || !entry.id || entry.id.length > 320 || typeof entry.name !== "string" || entry.name.length > 200) return;
+    this.storage.userDirectory.put({ id: entry.id, name: entry.name });
+  }
+
+  // До MAX_INVITEES людей по началу имени, имени входа или почты. Право искать проверяет вызывающий
+  // (рабочее место: только тот, кто может приглашать).
+  findDirectoryUsers(query: string, exclude: string[]): Invitee[] {
+    let aliases: Map<string, string>;
+    try { aliases = parseLoginAliases(this.env.LOGIN_ALIASES); } catch { aliases = new Map(); }
+    return matchDirectory(this.storage.userDirectory.list(), query, aliases, new Set(exclude), MAX_INVITEES);
+  }
+
   ensureFormatBlueprintsInstalled(): Promise<boolean> {
     return this.#installInFlight ??= this.#installFormatBlueprints()
         .finally(() => { this.#installInFlight = undefined; });

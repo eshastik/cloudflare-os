@@ -17,6 +17,8 @@ export default defineConfig({
         durableObjects: {
           TEST_OVERSEER: { className: 'OverseerDurableObject', useSQLite: true },
           TEST_USER: { className: 'UserDurableObject', useSQLite: true },
+          // Справочник подсказок «Поделиться» живёт в AdminSettings; вход пользователя пишет в него.
+          TEST_ADMIN_SETTINGS: { className: 'AdminSettings', useSQLite: true },
         },
       },
     }),

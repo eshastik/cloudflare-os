@@ -1,4 +1,5 @@
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext} from "@gadgets/workshop-shared/api";
+import { findInvitees } from './user-directory.js';
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
 import {acceptChatCodeChanges, applyChatProjectChanges, chatCodeTarget, markChatAnswering, readChatCodeChanges, revertChatCodeChanges, routeChatMessage, runChatCodeWork, setChatCodeMode, setChatProjects, type ChatCodeWorkHost, type CodeWorkUser} from "./chat-code-work.js";
 import {codeWorkAlive} from "./code-work.js";
@@ -3321,6 +3322,11 @@ class OverseerImpl implements AgentHooks {
   //   the owner, who is also connected and will be disconnected) before their connection drops.
   //   Without the delay their own removeCollaborator()/revokeShareLink() call might reject with a
   //   connection error even though it succeeded.
+  // Справочник пользователей установки (подсказки «Поделиться»); право искать проверяет вызывающий.
+  async findDirectoryUsers(query: string, exclude: string[]) {
+    return this.ctx.exports.AdminSettings.getByName("").findDirectoryUsers(query, exclude);
+  }
+
   async scheduleRevocationRestart(): Promise<void> {
     await this.ctx.storage.sync();
     await scheduler.wait(100);
@@ -9219,6 +9225,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     });
   }
 
+  async findInvitees(query: string): Promise<{ id: string; name: string; email?: string }[]> {
+    let sharing = await this.impl.getSharingManager();
+    let owner = this.impl.ownerProfileId;
+    return findInvitees({
+      query,
+      canShare: () => sharing.requireShareRole(this.#sharingCaller()),
+      prohibited: !!(this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get()),
+      existing: [this.clientProfileId, ...(owner ? [owner] : []), ...sharing.listCollaborators().map(c => c.profile.id)],
+      search: (q, exclude) => this.impl.findDirectoryUsers(q, exclude),
+    });
+  }
+
   async previewRemoveCollaborator(profileId: string): Promise<AffectedCollaborator[]> {
     return (await this.impl.getSharingManager())
         .previewRemoveCollaborator(this.#sharingCaller(), profileId);
@@ -9561,6 +9579,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async listCollaborators(): Promise<CollaboratorInfo[]> { this.#deny(); }
   async addCollaborator(_username: string, _role: CollaboratorRole, _note?: string)
       : Promise<CollaboratorInfo | null> { this.#deny(); }
+  async findInvitees(_query: string): Promise<{ id: string; name: string; email?: string }[]> { this.#deny(); }
   async removeCollaborator(_profileId: string, _keepUsers: string[])
       : Promise<AffectedCollaborator[]> { this.#deny(); }
   async previewRemoveCollaborator(_profileId: string): Promise<AffectedCollaborator[]> {
