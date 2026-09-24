@@ -175,11 +175,28 @@ export function installationQuickModel(env: OpenRouterInstallConfig): AiModelCon
     openRouter: {order: QUICK_MODEL_PROVIDERS, allowFallbacks: false}} : undefined;
 }
 
+/** Модель бесед установки: есть у каждого человека без настройки (решение владельца — «сел и
+ *  поехал»). Имя модели OpenRouter — MNEMOS_CHAT_MODEL, ключ — ключ OpenRouter установки. Своя
+ *  модель человека с тем же id главнее. */
+export const INSTALLATION_CHAT_MODEL_ID = "mnemos-assistant";
+
+export function installationChatModel(env: OpenRouterInstallConfig):
+    {profile: {type: "agent"; id: string; name: string}; config: AiModelConfig} | undefined {
+  let model = env.MNEMOS_CHAT_MODEL?.trim();
+  let apiToken = installationOpenRouterKey(env);
+  if (!model || !apiToken) return undefined;
+  return {
+    profile: {type: "agent", id: INSTALLATION_CHAT_MODEL_ID, name: "Mnemos Assistant"},
+    config: {provider: "openai", model, apiToken, apiUrl: "https://openrouter.ai/api/v1"},
+  };
+}
+
 /** Настройки установки, из которых берётся ключ OpenRouter. */
 export interface OpenRouterInstallConfig {
   MNEMOS_STT_API_KEY?: string;
   MNEMOS_STT_URL?: string;
   MNEMOS_STT_PROTOCOL?: string;
+  MNEMOS_CHAT_MODEL?: string;
 }
 
 /** Ключ OpenRouter установки. Отдельной переменной ключа OpenRouter для моделей нет (модели

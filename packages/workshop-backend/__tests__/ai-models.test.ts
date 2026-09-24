@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AiChatAuthorInfo, AiModelConfig } from "@gadgets/workshop-shared/api";
 import { getModel, type ModelHandle } from "../src/ai-models.js";
-import { installationQuickModel } from "../src/code-router.js";
+import { installationChatModel, installationQuickModel } from "../src/code-router.js";
 
 // These tests exercise the real pi-ai stack: no module mocks. Routing decisions are asserted on
 // the returned handle's model descriptor (baseUrl/id/api) and log route, and request-level
@@ -283,6 +283,14 @@ describe("getModel direct routing (no gateway)", () => {
     expect(request.headers.get("x-api-key")).toBe("direct-api-token");
     expect(request.headers.get("cf-aig-metadata")).toBeNull();
   }, 15000);
+
+  it("модель бесед установки есть у каждого, только с ключом OpenRouter и именем модели", () => {
+    const shared = installationChatModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter", MNEMOS_CHAT_MODEL: "openai/gpt-5.4-nano"})!;
+    expect(shared.profile).toEqual({type: "agent", id: "mnemos-assistant", name: "Mnemos Assistant"});
+    expect(shared.config).toEqual({provider: "openai", model: "openai/gpt-5.4-nano", apiToken: "sk-or", apiUrl: "https://openrouter.ai/api/v1"});
+    expect(installationChatModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter"})).toBeUndefined();
+    expect(installationChatModel({MNEMOS_CHAT_MODEL: "openai/gpt-5.4-nano"})).toBeUndefined();
+  });
 
   it("быстрая модель установки: чат OpenRouter, провайдеры владельца без запасных, без рассуждения", async () => {
     const quick = installationQuickModel({MNEMOS_STT_API_KEY: "sk-or", MNEMOS_STT_PROTOCOL: "openrouter"})!;

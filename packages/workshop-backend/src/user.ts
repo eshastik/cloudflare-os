@@ -20,7 +20,7 @@ import type { AdminSettings } from "./admin-settings.js";
 import { isReservedBlueprintKey, readBlueprintKvRecord } from "./blueprint-archive.js";
 import { filterEnabledResources, isResourceDisabled, readAdminConfig } from "./admin-config.js";
 import { buildGatekeeperVendorMap } from "./auth/auth-vendors.js";
-import { installationQuickModel, type OpenRouterInstallConfig } from "./code-router.js";
+import { installationChatModel, installationQuickModel, type OpenRouterInstallConfig } from "./code-router.js";
 
 const logger = createWorkshopLogger("workshop.user");
 
@@ -612,6 +612,8 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         result.push(model.profile);
       }
     }
+    let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
+    if (shared && !result.some(model => model.id === shared.profile.id)) result.push(shared.profile);
     return result;
   }
 
@@ -767,6 +769,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       }
       if (!result.aiModel) {
         result.aiModel = this.storage.aiModels.get(modelId);
+      }
+      if (!result.aiModel) {
+        let shared = installationChatModel(this.env as unknown as OpenRouterInstallConfig);
+        if (shared && shared.profile.id === modelId) result.aiModel = shared;
       }
       if (!result.aiModel) throw new Error(`No such model: ${modelId}`);
     }
