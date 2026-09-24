@@ -83,6 +83,44 @@ export function AdminSwitch({ person }: { person: AdminPerson }) {
   </div>;
 }
 
+/** Полномочие Mnemos «Агент кода»: беседа человека может поручать работу агенту кода. */
+export const CODE_AGENT_RIGHT = { kind: "capability" as const, capability: "code.agent.use" };
+
+/** Переключатель «Агент кода» в строке сотрудника: сохраняется сразу выдачей или снятием полномочия.
+ * own — есть ли полномочие лично (из тех же назначений, что читает «Проекты и доступ»: одно чтение на карточку);
+ * undefined — ещё читается, null — прочитать не удалось. onChanged — перечитать назначения после изменения.
+ * У администратора организации агент кода есть через группу и отдельно не выключается. */
+export function CodeAgentSwitch({ person, own, onChanged }: { person: AdminPerson; own: boolean | null | undefined; onChanged?(): void }) {
+  const ui = useUi();
+  const [admin, setAdmin] = useState<boolean | undefined>(undefined);
+  const [local, setLocal] = useState<boolean | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { let current = true; setAdmin(undefined); void membership(ui, ADMINS_GROUP, person.userName).then(m => { if (current) setAdmin(!!m?.enabled); }); return () => { current = false; }; }, [ui, person.userName]);
+  useEffect(() => { if (typeof own === "boolean") setLocal(own); }, [own]);
+  async function change(enabled: boolean) {
+    if (local === undefined || busy) return;
+    setBusy(true); setError("");
+    const right = { ...CODE_AGENT_RIGHT, principal_id: person.userName };
+    try {
+      if (enabled) await ui.grantPersonRight(right); else await ui.removePersonRight(right);
+      setLocal(enabled);
+    } catch { setError("Изменение не сохранено. Обновите страницу и повторите."); }
+    finally { setBusy(false); onChanged?.(); }
+  }
+  if (own === null && local === undefined) return <Notice>Право «Агент кода» не прочитано. Обновите страницу.</Notice>;
+  if (admin === undefined || local === undefined) return <Notice>Проверяем агента кода…</Notice>;
+  const on = admin || local;
+  return <div className="grid gap-1">
+    <label className="flex items-center gap-2 text-[13px] text-kumo-default">
+      <input type="checkbox" role="switch" aria-label="Агент кода" aria-checked={on} checked={on} disabled={busy || admin} onChange={e => void change(e.target.checked)} />
+      Агент кода
+      <span className="text-kumo-subtle">{admin ? "— у администраторов включён всегда" : on ? "— беседа может поручать работу с кодом проектов" : "— беседа не работает с кодом"}</span>
+    </label>
+    {error && <Notice tone="danger">{error}</Notice>}
+  </div>;
+}
+
 /** Компетенции сотрудника метками: добавить и убрать. */
 export function PersonCompetencies({ person }: { person: AdminPerson }) {
   const ui = useUi();

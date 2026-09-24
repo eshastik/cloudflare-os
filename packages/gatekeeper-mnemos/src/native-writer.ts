@@ -147,6 +147,11 @@ export class NativeWriteSelector extends RpcTarget {
   async setParticipant(project: string, node: string, head: string, participant: string, expected: PrivateParticipantMode, mode: PrivateParticipantMode) {
     await this.#session.setPrivateDraftParticipant(project,node,head,participant,expected,mode);
   }
+  /** Отделы для выбора людей в «Поделиться»: у сотрудника — его отделы, у администратора — все. Только имена, без почты. */
+  async orgUnits() {
+    const units = await this.#session.listOrgUnits();
+    return units.map(u => ({ id: u.org_unit_id, name: u.name, members: u.members.map(m => ({ id: m.principal_id, name: m.display_name })) }));
+  }
   /** Документы других людей, открытые этому человеку, новые сверху. Владельца показывают по имени. */
   async sharedDocuments() {
     const documents = await this.#session.listSharedDocuments();

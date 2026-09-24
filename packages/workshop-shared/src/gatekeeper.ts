@@ -1119,6 +1119,8 @@ export interface GatekeeperUser extends WorkerEntrypoint {
 
   /** Проекты человека для набора проектов беседы; code — подключённый код проекта. */
   listChatProjects?(): Promise<{projects: Array<{projectId: string; title: string; code?: CodeWorkTarget}>}>;
+  /** Право человека «Агент кода»: без него беседа не показывает «Код» и не зовёт агента кода. */
+  codeWorkAllowed?(): Promise<boolean>;
   /** Начать работу с кодом проекта в рабочем месте от имени агента этого человека.
    * scopeExtended — область агента расширена этим вызовом (права не шире прав человека). */
   codeWorkStart?(project: string, target: CodeWorkTarget, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;

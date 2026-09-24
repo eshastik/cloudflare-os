@@ -113,4 +113,46 @@ test('карточка сотрудника: отдел словами, «Адм
  await view.close();
 });
 
+test('«Агент кода»: в приглашении выбирает администратор (по умолчанию выключен, у роли «Администратор» включён всегда), в карточке сотрудника сохраняется сразу',async()=>{
+ const created=[];const rights=[];let own=false;
+ const ui={listPeople:async()=>({users:[{userName:'ivan',displayName:'Иван',active:true},{userName:'boss',displayName:'Анна',active:true}]}),listOrgUnits:async()=>units,listInvitations:async()=>[],
+  createInvitation:async(email,name,unit,role,codeAgent)=>{created.push([email,role,codeAgent]);return {invitation:{invitation_id:'inv',email,display_name:name,created_by:'owner',created_by_name:'',created_at:'',expires_at:'',status:'open'},link:'https://os.example/x'};},
+  listPersonRights:async who=>({exists:true,rights:who==='ivan'&&own?[{kind:'capability',principal_id:'ivan',capability:'code.agent.use'}]:[]}),
+  grantPersonRight:async r=>{rights.push(['grant',r.principal_id,r.kind,r.capability]);own=true;return {right:r};},
+  removePersonRight:async r=>{rights.push(['remove',r.principal_id,r.kind,r.capability]);own=false;return {outcome:'removed',right:r};},
+  listOrganizationRoles:async()=>({roles:[],next_cursor:'',generation:1}),
+  readPrincipalMembership:async(c,m)=>({container_id:c,member_id:m,enabled:m==='boss',member_active:true,generation:1})};
+ const view=await render(ui);
+ await click(view.el,'Пригласить');
+ const toggle=()=>view.el.querySelector('section[aria-label="Пригласить сотрудника"] input[aria-label="Агент кода"]');
+ assert.equal(toggle().checked,false,'для сотрудника по умолчанию выключен');
+ await type(view.el,'Почта','dev@company.ru');await act(async()=>toggle().click());
+ await click(view.el,'Отправить приглашение');
+ await type(view.el,'Почта','plain@company.ru');await click(view.el,'Отправить приглашение');
+ await type(view.el,'Почта','adm@company.ru');await type(view.el,'Роль приглашённого','admin');
+ assert.equal(toggle().checked,true);assert.equal(toggle().disabled,true,'у администратора не выключается');
+ await click(view.el,'Отправить приглашение');
+ assert.deepEqual(created,[['dev@company.ru','employee',true],['plain@company.ru','employee',false],['adm@company.ru','admin',false]],'после отправки переключатель снова выключен; администратору право даёт группа');
+ await click(view.el,'Открыть карточку: Иван');await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+ const card=view.el.querySelector('[aria-label="Сотрудник: Иван"]');
+ const sw=card.querySelector('input[aria-label="Агент кода"]');assert.equal(sw.checked,false);
+ await act(async()=>sw.click());await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+ assert.equal(card.querySelector('input[aria-label="Агент кода"]').checked,true);
+ await act(async()=>card.querySelector('input[aria-label="Агент кода"]').click());await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+ assert.deepEqual(rights,[['grant','ivan','capability','code.agent.use'],['remove','ivan','capability','code.agent.use']],'сохраняется сразу, без подтверждения');
+ assert.doesNotMatch(card.querySelector('section[aria-label="Проекты и доступ"]').textContent,/Агент кода/,'в списке назначений не дублируется');
+ await click(view.el,'Открыть карточку: Анна');await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+ const bossSwitch=view.el.querySelector('[aria-label="Сотрудник: Анна"] input[aria-label="Агент кода"]');
+ assert.equal(bossSwitch.checked,true);assert.equal(bossSwitch.disabled,true,'администратору агента кода не выключить');
+ await view.close();
+});
+
+test('руководитель отдела не выдаёт агента кода в приглашении',async()=>{
+ const ui={listOrgUnits:async()=>units,listInvitations:async()=>[]};
+ const head=await render(ui,{identity:{subject:{tenant_id:'t',user_id:'head'},capabilities:[]},projects:[]});
+ assert.ok(head.el.querySelector('[aria-label="Роль приглашённого"]'),'форма приглашения показана');
+ assert.equal(head.el.querySelector('input[aria-label="Агент кода"]'),null);
+ await head.close();
+});
+
 after(()=>{dom.window.close();for(const channel of channels){channel.port1.close();channel.port2.close();}globalThis.MessageChannel=OriginalMessageChannel;});

@@ -46,7 +46,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  deleteOrgUnit:MnemosAccountSession["deleteOrgUnit"];
  listInvitations:MnemosAccountSession["listInvitations"];
  /** Ссылку собирает подключение: код приглашения во фрейм отдельно не попадает. */
- createInvitation(email:string,displayName:string,orgUnit:string,role?:import("../src/mnemos-api.ts").InvitationRole):Promise<{invitation:import("../src/mnemos-api.ts").OrganizationInvitation;link:string}>;
+ createInvitation(email:string,displayName:string,orgUnit:string,role?:import("../src/mnemos-api.ts").InvitationRole,codeAgent?:boolean):Promise<{invitation:import("../src/mnemos-api.ts").OrganizationInvitation;link:string}>;
  revokeInvitation:MnemosAccountSession["revokeInvitation"];
  readWorkshopAgentScope:MnemosAccountSession["readWorkshopAgentScope"];
  updateWorkshopAgentScope:MnemosAccountSession["updateWorkshopAgentScope"];

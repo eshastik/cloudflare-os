@@ -516,3 +516,19 @@ test("Файл в рабочее место: только своя задача,
   await assert.rejects(tasks.putFile("p", TASK, ".mnemos/context.md", "YQ=="), (e: WorkspaceError) => e.code === "stopped");
   assert.equal(control.calls.length, calls, "остановленной задаче файл не отправляется");
 });
+
+test("Без права «Агент кода» служба отказывает: запуск и сообщение дают понятную ошибку, задача становится остановленной", async () => {
+  const refused = new WorkspaceClient("https://localhost:9452", "t", async () => Response.json({ error: "code_agent_disabled" }, { status: 403 }));
+  await assert.rejects(refused.create({ binding_id: "b", agent_credential: "k", project_id: "p", repositories: [], prompt: "x", title: "x" }),
+    (e: WorkspaceError) => e.code === "disabled" && /включает администратор/.test(e.message));
+  await assert.rejects(refused.credential(TASK, "k"), (e: WorkspaceError) => e.code === "disabled");
+
+  const { control, tasks } = setup();
+  await tasks.start("p", "c", "1", "задача");
+  control.credential = async () => { throw new WorkspaceError("disabled", "Агент кода выключен"); };
+  await assert.rejects(tasks.message("p", TASK, "ещё"), (e: WorkspaceError) => e.code === "disabled");
+  const task = tasks.list("p")[0];
+  assert.equal(task.state, "stopped");
+  assert.equal(task.reason, "агент кода выключен администратором");
+  assert.equal(control.calls.some(c => c[0] === "message"), false, "сообщение без права не отправляется");
+});

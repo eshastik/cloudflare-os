@@ -2081,6 +2081,23 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return false;
   }
 
+  /** Право «Агент кода»: хотя бы одно действующее подключение памяти ответило «да». Отказ или сбой
+   * подключения — «нет» от него. Без подключений памяти работы с кодом нет вовсе, и здесь она не
+   * ограничивается; окончательно право проверяет служба рабочих мест по Mnemos. */
+  async codeWorkAllowed(): Promise<boolean> {
+    let asked = false;
+    for (const record of [...this.storage.connectedAccounts.list()]) {
+      if (!areCredentialsValid(record) || !record.description?.providesUi) continue;
+      const account = record.account as Fetcher<GatekeeperUser>;
+      try {
+        const allowed = await (account as unknown as Required<Pick<GatekeeperUser, "codeWorkAllowed">>).codeWorkAllowed();
+        if (allowed === true) return true;
+        asked = true;
+      } catch { asked = true; /* подключение без права или без метода — «нет» от него */ }
+    }
+    return !asked;
+  }
+
   /** Работа с кодом беседы через подключение человека: только его собственное действующее подключение. */
   #codeWorkAccount(accountId: number): Fetcher<GatekeeperUser> & Required<Pick<GatekeeperUser,
       "listChatProjects" | "codeWorkStart" | "codeWorkMessage" | "codeWorkEvents" | "codeWorkAbort" | "codeWorkInterrupt" | "codeWorkChanges" | "codeWorkAccept" | "codeWorkRevert" | "codeWorkPutFile">> {

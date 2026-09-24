@@ -8,7 +8,7 @@ import { ProjectChips } from "./components/chat/ProjectChips";
 import { CodeChangesCard, splitDiff } from "./components/chat/CodeChangesCard";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { chatListState, codeAnsweredMessageSeqs, summarizeAgentSteps, upsertAgentStep } from "./codeWorkSteps";
-import { CodeModeSwitch } from "./components/chat/CodeModeSwitch";
+import { CodeModeSwitch, useCodeWorkAllowed } from "./components/chat/CodeModeSwitch";
 import chatInterfaceSource from "./ChatInterface.tsx?raw";
 import { homeProjectFromSearch, projectContextFromProjects } from "./homePrompt";
 
@@ -233,6 +233,35 @@ describe("переключатель «Код» у поля ввода", () => {
     expect(chatInterfaceSource).not.toContain("Сейчас отвечает");
     expect(chatInterfaceSource).not.toContain("leaveCodeWork");
     expect(chatInterfaceSource).toContain("<CodeModeSwitch");
+  });
+
+  it("без права «Агент кода» переключателя нет: и при отказе, и при сбое чтения, и пока право не прочитано", async () => {
+    function Row({ load }: { load: () => Promise<boolean> }) {
+      const allowed = useCodeWorkAllowed(load);
+      return <ProjectChips projects={[]} onChange={() => {}} loadChoices={async () => []}
+        trailing={allowed ? <CodeModeSwitch mode="auto" onChange={() => {}} /> : undefined} />;
+    }
+    let resolve!: (value: boolean) => void;
+    const pending = new Promise<boolean>(r => { resolve = r; });
+    const loadPending = () => pending;
+    const view = render(<Row load={loadPending} />);
+    expect(view.querySelector('[role="radiogroup"]')).toBeNull();
+    await act(async () => { resolve(true); await pending; });
+    expect(view.querySelector('[role="radiogroup"]')).not.toBeNull();
+    act(() => root?.unmount()); container?.remove();
+
+    const denied = async () => false;
+    const offView = render(<Row load={denied} />);
+    await flush();
+    expect(offView.querySelector('[role="radiogroup"]')).toBeNull();
+    act(() => root?.unmount()); container?.remove();
+
+    const broken = async () => { throw new Error("нет связи"); };
+    const brokenView = render(<Row load={broken} />);
+    await flush();
+    expect(brokenView.querySelector('[role="radiogroup"]')).toBeNull();
+    // Беседа показывает переключатель только по праву.
+    expect(chatInterfaceSource).toContain("codeWorkAllowed ? <CodeModeSwitch");
   });
 });
 

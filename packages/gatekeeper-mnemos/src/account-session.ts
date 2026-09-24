@@ -778,7 +778,7 @@ export class MnemosAccountSession {
   async deleteOrgUnit(unit: string) { this.#check(); const out = await this.#client.deleteOrgUnit(unit, this.#lifetime.signal); this.#check(); return out; }
   async setOrgUnitMember(unit: string, principal: string, member: boolean, head: boolean) { this.#check(); await this.#client.setOrgUnitMember(unit, principal, member, head, this.#lifetime.signal); this.#check(); }
   async listInvitations() { this.#check(); const out = await this.#client.listInvitations(this.#lifetime.signal); this.#check(); return out; }
-  async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee") { this.#check(); const out = await this.#client.createInvitation(email, displayName, orgUnit, role, this.#lifetime.signal); this.#check(); return out; }
+  async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee", codeAgent = false) { this.#check(); const out = await this.#client.createInvitation(email, displayName, orgUnit, role, this.#lifetime.signal, codeAgent); this.#check(); return out; }
   async revokeInvitation(id: string) { this.#check(); const out = await this.#client.revokeInvitation(id, this.#lifetime.signal); this.#check(); return out; }
   async readProjectSharingSettings() {
     this.#check(); const out = await this.#client.readProjectSharingSettings(this.#lifetime.signal); this.#check(); return out;

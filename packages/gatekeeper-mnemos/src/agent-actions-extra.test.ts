@@ -252,3 +252,28 @@ test("сведения: правила, согласование, права, к
   assert.throws(() => checkedAgentRead({ kind: "sources", type: "fax" }), /type/);
   assert.deepEqual(s.calls, [], "чтения ничего не меняют");
 });
+
+test("агент кода сотрудника: включение и выключение полномочием через карточку; у администратора не меняется", async () => {
+  const s = Object.assign(session(), {
+    async grantPersonRight(right: { principal_id: string; capability?: string }) { s.calls.push(`grant-right:${right.principal_id}:${right.capability}`); return {}; },
+  });
+  const on = await run(s, { kind: "set_person_code_agent", person: "Николай Деревцов", enabled: true });
+  assert.equal(on.prepared.title, "Включить агента кода для Николай Деревцов");
+  assert.equal(on.prepared.ownerOnly, true, "меняет права человека — только с подтверждением владельца беседы");
+  assert.deepEqual(s.calls, ["grant-right:u-nik:code.agent.use"]);
+  assert.equal(on.outcome.summary, "Агент кода у Николай Деревцов включён");
+  // Уже выключен — предлагать нечего.
+  await assert.rejects(prepareAgentAction(s as any, SCOPE, { kind: "set_person_code_agent", person: "u-nik", enabled: false }), /уже выключен/);
+  const held = Object.assign(session(), {
+    async listPersonRights(principal: string) { return { principal_id: principal, exists: true, deactivated: false, rights: [{ kind: "capability", principal_id: principal, capability: "code.agent.use" }] }; },
+    async removePersonRight(right: { principal_id: string; kind: string; capability?: string }) { held.calls.push(`remove-right:${right.principal_id}:${right.kind}:${right.capability}`); return { outcome: "removed" }; },
+  });
+  const off = await run(held, { kind: "set_person_code_agent", person: "u-nik", enabled: false });
+  assert.equal(off.prepared.title, "Выключить агента кода для Николай Деревцов");
+  assert.deepEqual(held.calls, ["remove-right:u-nik:capability:code.agent.use"], "снимается полномочие, а не право на проект");
+  const admin = Object.assign(session(), {
+    async readPrincipalMembership(container: string, member: string) { return { container_id: container, member_id: member, enabled: true, generation: 1 }; },
+  });
+  await assert.rejects(prepareAgentAction(admin as any, SCOPE, { kind: "set_person_code_agent", person: "u-nik", enabled: false }), /у администраторов агент кода включён всегда/);
+  assert.throws(() => checkedAgentAction({ kind: "set_person_code_agent", person: "u-nik", enabled: "да" }), /enabled/);
+});

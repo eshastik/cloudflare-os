@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber, GadgetClient } from '@gadgets/workshop-shared/api'
 import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT } from './DocumentStatus'
-import { versionAuthor, versionRows } from './DocumentVersionPanel'
+import { versionAuthor, versionLine, versionRows } from './DocumentVersionPanel'
 
 const { api, download } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(subscriber: ConnectedAccountsSubscriber) => Promise<unknown>>() }, download: vi.fn<(...args: any[]) => Promise<unknown>>() }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
@@ -18,13 +18,15 @@ const head = 'a'.repeat(64), shared = 'b'.repeat(64)
 class Empty extends RpcTarget {}
 const accounts = async (subscriber: ConnectedAccountsSubscriber) => { subscriber.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); subscriber.ready(); return new RpcStub(new Empty()) }
 
-function mount(selector: RpcTarget, downloads: RpcTarget, binding: object) {
+function mount(selector: RpcTarget, downloads: RpcTarget, binding: object, extra: Record<string, unknown> = {}) {
   api.getGatekeeperApp.mockImplementation(async () => ({ iframeHtml: '', ui: new RpcStub(new Empty()),
     nativeWrites: { storageOrigin: 'https://objects.example', selector: new RpcStub(selector) },
     nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(downloads) } }))
   api.subscribeConnectedAccounts.mockImplementation(accounts)
   class Gadget extends RpcTarget { async getId() { return 'native-doc' } async getNativeEditorUpdate() { return null } }
-  const gadget = new RpcStub(new Gadget())
+  class Extended extends Gadget {}
+  Object.assign(Extended.prototype, extra)
+  const gadget = new RpcStub(new Extended())
   const key = 'mnemos-native-binding:/:native-doc:cloudflareos.document'
   sessionStorage.setItem(key, JSON.stringify(binding))
   const snapshotSource = { current: async () => ({ format: 'cloudflareos.document' as const, formatVersion: 1 as const, document: { revision: 7, title: 'План запуска', blocks: [] } }) }
@@ -44,10 +46,20 @@ it('версии: номера от старой к новой, автор од�
     { id: 'event-2', label: 'v2', recordedAt: '2026-09-02T10:00:00Z', actor: 'Агент', onBehalfOf: 'Анна', personal: false },
   ])
   expect(rows.map(r => [r.id, r.number])).toEqual([['private:x', 3], ['event-2', 2], ['event-1', 1]])
-  expect(rows.map(versionAuthor)).toEqual(['Николай Деревцов', 'Агент по просьбе: Анна', 'Павел'])
+  expect(rows.map(r => versionAuthor(r))).toEqual(['Николай Деревцов', 'Агент по просьбе: Анна', 'Павел'])
+  expect(versionAuthor(rows[1]!, 'Анна')).toBe('Агент по вашей просьбе')
+  expect(versionLine(rows[0]!, 'изменён текст раздела «Сроки»')).toBe('Николай Деревцов: изменён текст раздела «Сроки»')
+  expect(versionLine(rows[2]!, undefined)).toBe('Павел')
 })
 
-it('панель «Версии» по макету: список версий, выбор строкой, «Сравнить N−1 и N», «Вернуть версию», без выпадающих списков и участников', async () => {
+const paragraphs: Record<string, string[]> = {
+  'event-1': ['Сроки', 'Поставка до 1 октября.'],
+  'event-2': ['Сроки', 'Поставка до 1 октября.', 'Таможню оформляет поставщик.'],
+  ['private:' + 'd'.repeat(64)]: ['Сроки', 'Поставка до 15 октября.', 'Таможню оформляет поставщик.'],
+}
+const snapshotOf = (id: string) => ({ format: 'cloudflareos.document', formatVersion: 1, document: { title: 'План запуска', blocks: paragraphs[id]!.map((t, i) => ({ html: i === 0 ? `<h2>${t}</h2>` : `<p>${t}</p>` })) } })
+
+it('панель «Версии» по макету: строка «что изменилось», пилюли статуса, сравнение с выделенными правками, «Вернуть версию», без выпадающих списков и участников', async () => {
   const mine = { candidate_id: 'proposal', project_id: 'project', author_id: 'owner', personal_head: head, shared_head: shared, decision_version: 3, stale: false, ready: false,
     domains: [{ domain_id: 'Разработка', node_ids: ['doc'], approvers: ['ivan'], decisions: [] }] }
   class Writer extends RpcTarget { async head() { return head } }
@@ -60,7 +72,12 @@ it('панель «Версии» по макету: список версий, 
     async review() { return mine }
     async reviewerIdentity() { return 'owner' }
   }
-  class Side extends RpcTarget { async issue() { return { url: 'https://objects.example/x', method: 'GET', size_bytes: 1, sha256_hex: 'c'.repeat(64), content_type: 'application/vnd.cloudflareos.document+json' } } async validate() {} }
+  let validations = 0
+  class Side extends RpcTarget {
+    constructor(readonly id: string) { super() }
+    async issue() { return { url: this.id, method: 'GET', size_bytes: 1, sha256_hex: 'c'.repeat(64), content_type: 'application/vnd.cloudflareos.document+json' } }
+    async validate() { validations++ }
+  }
   const selected: string[] = []
   class Downloads extends RpcTarget {
     async publications() {
@@ -70,33 +87,56 @@ it('панель «Версии» по макету: список версий, 
         { id: 'event-1', recordedAt: '2026-08-18T10:00:00Z', actor: 'Павел', format: 'cloudflareos.document' },
       ] }
     }
-    async select(_scope: string, _node: string, publication: string) { selected.push(publication); return new RpcStub(new Side()) }
+    async select(_scope: string, _node: string, publication: string) { selected.push(publication); return new RpcStub(new Side(publication)) }
   }
-  download.mockImplementation(async () => ({ format: 'cloudflareos.document', formatVersion: 1, document: { title: 'План запуска', blocks: [{ html: '<p>Текст</p>' }] } }))
+  // Как настоящая загрузка: проверка доступа зовётся ПОСЛЕ скачивания, через await. Выбранная версия к этому
+  // моменту не должна быть освобождена — иначе «Сравнение не открылось» (ошибка, найденная на живой установке).
+  download.mockImplementation(async (_origin: string, ticket: { url: string }, _format: string, _signal: AbortSignal, validate: () => Promise<void>) => {
+    await new Promise(resolve => setTimeout(resolve, 1))
+    await validate()
+    return snapshotOf(ticket.url)
+  })
+  const restored: unknown[][] = []
+  class Editor extends RpcTarget { async restoreDocumentSnapshot(...args: unknown[]) { restored.push(args) } }
   sessionStorage.setItem('mnemos-native-review:/:project', 'proposal')
-  const view = mount(new Selector(), new Downloads(), { accountId: null, scope: 'project', resource: 'doc', savedRevision: 7 })
+  const view = mount(new Selector(), new Downloads(), { accountId: null, scope: 'project', resource: 'doc', savedRevision: 7 }, { connectToGadget: async () => new RpcStub(new Editor()) })
   const panel = () => document.querySelector('[data-version-panel]')
+  const rows = () => [...panel()!.querySelectorAll('ol[aria-label="Версии документа"] button')].map(b => b.textContent)
   try {
     await view.render()
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('[data-document-status]')?.textContent).toContain('Кандидат')) })
     await view.click('Версии')
     await act(async () => { await vi.waitFor(() => expect(panel()!.querySelector('h2')?.textContent).toBe('Версии «План запуска»')) })
-    expect(panel()!.querySelectorAll('select')).toHaveLength(0)
-    for (const gone of ['Сменить', 'Перечитать', 'Пригласить', 'Кто видит', 'Согласование мне', 'Подключение']) expect(panel()!.textContent).not.toContain(gone)
-    const rows = [...panel()!.querySelectorAll('ol[aria-label="Версии документа"] button')].map(b => b.textContent)
-    expect(rows[0]).toContain('Версия 3 — ждёт согласования'); expect(rows[0]).toContain('Вы')
-    expect(rows[1]).toContain('Версия 2 · опубликована'); expect(rows[1]).toContain('Анна')
-    expect(rows[2]).toContain('Версия 1 · опубликована'); expect(rows[2]).toContain('Павел')
+    expect(panel()!.querySelectorAll('select, input[type="radio"]')).toHaveLength(0)
+    for (const gone of ['Сменить', 'Перечитать', 'Пригласить', 'Кто видит', 'Согласование мне', 'Подключение', 'История', 'Применить']) expect(panel()!.textContent).not.toContain(gone)
+    // Строка «что изменилось» — автор и разница с предыдущей версией, по скачанным версиям.
+    // Загрузки идут вне act: даём им завершиться короткими шагами, каждый — отдельный act.
+    for (let i = 0; i < 200 && !rows()[0]?.includes('Вы: изменён'); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+    expect(rows()[0]).toContain('Вы: изменён текст раздела «Сроки»')
+    expect(rows()[0]).toContain('Версия 3'); expect(rows()[0]).toContain('на согласовании')
+    expect(rows()[1]).toContain('Версия 2'); expect(rows()[1]).toContain('опубликована'); expect(rows()[1]).toContain('Анна: +1 абзац')
+    expect(rows()[2]).toContain('Павел: первая версия, 2 абзаца')
     expect(panel()!.textContent).toContain('Ни одна версия не пропадает. Вернуть можно любую — это станет новой версией.')
-    // Одна главная кнопка по состоянию: заявка отправлена — ждёт решения по имени согласующего.
     expect(panel()!.querySelector('[data-version-primary]')?.textContent).toBe('Ждёт согласования: Иван Петров')
-    expect(view.button('Вернуть версию 2')).toBeDefined()
+    expect(validations).toBe(3)
     await view.click('Сравнить 2 и 3')
-    await act(async () => { await vi.waitFor(() => expect(panel()!.textContent).toContain('Версия 2')) })
-    expect(selected).toEqual(['event-2', 'private:' + 'd'.repeat(64)])
+    await act(async () => { await vi.waitFor(() => expect(panel()!.querySelector('[data-version-comparison]')).not.toBeNull()) })
+    expect(panel()!.textContent).not.toContain('Сравнение не открылось')
+    const comparison = panel()!.querySelector('[data-version-comparison]')!
+    expect(comparison.querySelector('h3')?.textContent).toBe('Версия 2 → Версия 3')
+    expect([...comparison.querySelectorAll('del')].map(e => e.textContent)).toEqual(['1'])
+    expect([...comparison.querySelectorAll('ins')].map(e => e.textContent)).toEqual(['15'])
+    // Версии скачиваются по одному разу: и подпись, и сравнение берут одну и ту же.
+    expect([...selected].sort()).toEqual(['event-1', 'event-2', 'private:' + 'd'.repeat(64)])
     await act(async () => { (panel()!.querySelectorAll('ol[aria-label="Версии документа"] button')[1] as HTMLButtonElement).click() })
+    expect(panel()!.querySelector('[data-version-comparison]')).toBeNull()
     expect(view.button('Сравнить 1 и 2')).toBeDefined()
-    expect(view.button('Вернуть версию 2')).toBeDefined()
+    // «Вернуть версию 2»: содержимое встаёт в редактор, привязка теряет ревизию сохранения — автосохранение запишет новую версию.
+    await view.click('Вернуть версию 2')
+    await act(async () => { await vi.waitFor(() => expect(restored).toHaveLength(1)) })
+    expect(restored[0]).toEqual([snapshotOf('event-2'), 7])
+    await act(async () => { await vi.waitFor(() => expect(JSON.parse(sessionStorage.getItem(view.key)!).savedRevision).toBeUndefined()) })
+    expect(JSON.parse(sessionStorage.getItem(view.key)!).savedHead).toBe(head)
     await act(async () => { (document.querySelector('button[aria-label="Назад к документу"]') as HTMLButtonElement).click() })
     expect(panel()).toBeNull()
   } finally { await view.unmount() }
@@ -137,10 +177,11 @@ it('смена документа — из меню «…»: «Привязат�
   } finally { await view.unmount() }
 })
 
-it('«Поделиться» документом: человек по имени, «может править», сразу сохраняется; право меняется в строке; «Убрать»', async () => {
+it('«Поделиться»: люди списком по отделам, выбор щелчком, одна кнопка «Пригласить N»; право в строке сохраняется сразу; «Убрать»', async () => {
   const people = [
     { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов', mode: '' as string, canRead: true, canWrite: true },
     { id: 'reader-1', name: 'Ольга Кузнецова', mode: 'read' as string, canRead: true, canWrite: false },
+    { id: 'viewer-2', name: 'Анна Смирнова', mode: '' as string, canRead: true, canWrite: false },
   ]
   const calls: unknown[][] = []
   class Writer extends RpcTarget { async head() { return head } async access() { return 'owner' } }
@@ -157,43 +198,72 @@ it('«Поделиться» документом: человек по имен�
       person.mode = args[5] as string
     }
     async projectLevel() { return { name: 'Mnemos', level: 'private', canEdit: false, pending: null } }
+    async orgUnits() { return [
+      { id: 'dev', name: 'Разработка', members: [{ id: 'owner', name: 'Владелец' }, { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов' }, { id: 'outsider', name: 'Пётр Сидоров' }] },
+      { id: 'law', name: 'Юристы', members: [{ id: 'reader-1', name: 'Ольга Кузнецова' }, { id: 'viewer-2', name: 'Анна Смирнова' }] },
+    ] }
+    async sharedDocuments() { return { documents: [] } }
     async reviewerIdentity() { return 'owner' }
   }
   class Downloads extends RpcTarget { async publications() { return { resourceUrl: '', nextCursor: '', publications: [] } } }
   const view = mount(new Selector(), new Downloads(), { accountId: null, scope: 'project', resource: 'doc', savedRevision: 7 })
-  const panel = () => document.querySelector('[data-share-panel]')
+  const panel = () => document.querySelector('[data-share-panel]')!
+  const candidate = (name: string) => [...panel().querySelectorAll('[data-candidate]')].find(b => b.textContent?.includes(name)) as HTMLButtonElement | undefined
   try {
     await view.render()
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('[data-document-status]')?.textContent).toContain('сохранено')) })
     await act(async () => { window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT)) })
-    await act(async () => { await vi.waitFor(() => expect(panel()?.querySelector('h2')?.textContent).toBe('Кто видит «Дорожная карта»')) })
-    await act(async () => { await vi.waitFor(() => expect(panel()!.querySelector('[data-share-person]')).not.toBeNull()) })
-    expect(panel()!.querySelectorAll('select')).toHaveLength(0)
-    expect(panel()!.textContent).not.toContain('user-FGTK3l4q5INoE4X1')
-    expect(panel()!.textContent).toContain('Только приглашённые'); expect(panel()!.textContent).toContain('Мой отдел'); expect(panel()!.textContent).toContain('Вся организация')
-    expect(panel()!.textContent).toContain('Ольга Кузнецова')
-    const input = panel()!.querySelector('input#share-person') as HTMLInputElement
+    await act(async () => { await vi.waitFor(() => expect(candidate('Николай Деревцов')).toBeDefined()) })
+    expect(panel().querySelector('h2')?.textContent).toBe('Поделиться')
+    expect(panel().querySelector('header p')?.textContent).toBe('Дорожная карта')
+    expect(panel().querySelectorAll('select')).toHaveLength(0)
+    expect(panel().textContent).not.toContain('user-FGTK3l4q5INoE4X1')
+    for (const gone of ['Перечитать', 'Применить']) expect(panel().textContent).not.toContain(gone)
+    expect([...panel().querySelectorAll('[role="radio"]')].map(b => b.textContent).slice(0, 3)).toEqual(['Только приглашённые', 'Мой отдел', 'Вся организация'])
+    expect(panel().querySelector('[data-level-line]')?.textContent).toBe('Видят только вы и те, кого вы пригласили.')
+    // Свой отдел раскрыт первым; чужой свёрнут; уже имеющий доступ в кандидатах не повторяется.
+    expect([...panel().querySelectorAll('[data-group]')].map(g => g.getAttribute('data-group'))).toEqual(['unit:dev', 'unit:law'])
+    expect(panel().querySelector('[data-group="unit:dev"]')?.textContent).toContain('Мой отдел · Разработка')
+    expect(candidate('Анна Смирнова')).toBeUndefined()
+    // Человек без доступа к проекту виден с пометкой, но не выбирается.
+    expect(candidate('Пётр Сидоров')?.textContent).toContain('нет доступа к проекту')
+    expect(candidate('Пётр Сидоров')?.disabled).toBe(true)
+    // Кнопки «Пригласить» нет, пока никто не выбран.
+    expect(panel().querySelector('[data-share-invite]')).toBeNull()
+    await act(async () => { ([...panel().querySelectorAll('[data-group="unit:law"] button')][0] as HTMLButtonElement).click() })
+    expect(candidate('Анна Смирнова')?.textContent).toContain('может только смотреть')
+    expect(candidate('Ольга Кузнецова')).toBeUndefined()
+    // Поиск только фильтрует список.
+    const input = panel().querySelector('input#share-person') as HTMLInputElement
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
     await act(async () => { setter.call(input, 'никол'); input.dispatchEvent(new Event('input', { bubbles: true })) })
-    const suggestion = [...panel()!.querySelectorAll('[role="option"]')].find(o => o.textContent?.includes('Николай Деревцов')) as HTMLButtonElement
-    expect(suggestion).toBeDefined()
-    await act(async () => suggestion.click())
-    await view.click('Пригласить')
-    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(1)) })
-    expect(calls[0]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', '', 'write'])
-    await act(async () => { await vi.waitFor(() => expect(panel()!.textContent).toContain('получит уведомление во «Входящих» и письмо')) })
-    // Право меняется щелчком в строке и сохраняется сразу.
-    const row = () => [...panel()!.querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Николай Деревцов'))!
-    await act(async () => { await vi.waitFor(() => expect(row()).toBeDefined()) })
-    await act(async () => { ([...row().querySelectorAll('button')].find(b => b.textContent === 'может смотреть') as HTMLButtonElement).click() })
+    expect([...panel().querySelectorAll('[data-candidate]')].map(b => b.textContent?.slice(2, 18))).toEqual(['Николай Деревцов'])
+    await act(async () => candidate('Николай Деревцов')!.click())
+    await act(async () => { setter.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    await act(async () => candidate('Анна Смирнова')!.click())
+    expect(panel().querySelector('[data-share-invite]')?.textContent).toBe('Пригласить 2')
+    await act(async () => (panel().querySelector('[data-share-invite]') as HTMLButtonElement).click())
     await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(2)) })
-    expect(calls[1]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'write', 'read'])
-    await act(async () => { await vi.waitFor(() => expect(row().querySelector('[aria-checked="true"]')?.textContent).toBe('может смотреть')) })
-    await act(async () => { ([...row().querySelectorAll('button')].find(b => b.textContent === 'Убрать') as HTMLButtonElement).click() })
+    expect(calls[0]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', '', 'write'])
+    expect(calls[1]).toEqual(['project', 'doc', head, 'viewer-2', '', 'read'])
+    await act(async () => { await vi.waitFor(() => expect(panel().textContent).toContain('получат уведомление во «Входящих» и письмо')) })
+    expect(panel().querySelector('[data-share-invite]')).toBeNull()
+    // Право меняется в строке и сохраняется сразу.
+    const row = () => [...panel().querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Николай Деревцов'))!
+    await act(async () => { await vi.waitFor(() => expect(row()).toBeDefined()) })
+    expect(row().textContent).toContain('может править')
+    await act(async () => { (row().querySelector('button[aria-label="Право: Николай Деревцов"]') as HTMLButtonElement).click() })
+    await act(async () => { ([...row().querySelectorAll('[role="menuitemradio"]')].find(b => b.textContent === 'может смотреть') as HTMLButtonElement).click() })
     await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(3)) })
-    expect(calls[2]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'read', ''])
-    await act(async () => { await vi.waitFor(() => expect(panel()!.textContent).toContain('больше не видит документ')) })
-  } finally { await view.unmount() }
+    expect(calls[2]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'write', 'read'])
+    await act(async () => { await vi.waitFor(() => expect(row().textContent).toContain('может смотреть')) })
+    await act(async () => { ([...row().querySelectorAll('button')].find(b => b.textContent === 'Убрать') as HTMLButtonElement).click() })
+    await act(async () => { await vi.waitFor(() => expect(calls).toHaveLength(4)) })
+    expect(calls[3]).toEqual(['project', 'doc', head, 'user-FGTK3l4q5INoE4X1', 'read', ''])
+    await act(async () => { await vi.waitFor(() => expect(panel().textContent).toContain('больше не видит документ')) })
+    // Недавние: приглашённые в этом браузере наверху.
+    await act(async () => { await vi.waitFor(() => expect(panel().querySelector('[data-group="recent"]')?.textContent).toContain('Николай Деревцов')) })
+  } finally { await view.unmount(); localStorage.clear() }
 })
 
 it('приглашённому «Поделиться» объясняет, что приглашает владелец; шапка — общий документ без публикации', async () => {
@@ -214,6 +284,6 @@ it('приглашённому «Поделиться» объясняет, чт
     expect(document.querySelector('button[data-primary-action]')).toBeNull()
     await act(async () => { window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT)) })
     await act(async () => { await vi.waitFor(() => expect(document.querySelector('[data-share-panel]')?.textContent).toContain('Приглашать других может его владелец')) })
-    expect(document.querySelector('[data-share-panel] h2')?.textContent).toBe('Кто видит «Дорожная карта»')
+    expect(document.querySelector('[data-share-panel] h2')?.textContent).toBe('Поделиться')
   } finally { await view.unmount() }
 })

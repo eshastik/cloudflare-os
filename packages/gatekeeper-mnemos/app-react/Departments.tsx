@@ -84,13 +84,16 @@ export function InvitationRows({ list, onChanged }: { list: OrganizationInvitati
 }
 
 /** Форма приглашения в одну строку: почта, имя, отдел, роль → одноразовая ссылка.
- * Администратор выбирает любой отдел и любую роль, руководитель — только свой отдел и роли «Сотрудник» или «Руководитель отдела». */
+ * Администратор выбирает любой отдел и любую роль, руководитель — только свой отдел и роли «Сотрудник» или «Руководитель отдела».
+ * «Агент кода» задаёт только администратор: по умолчанию выключен (агент кода меняет репозитории и тратит
+ * деньги на модель — это решение администратора о конкретном человеке); у роли «Администратор» он включён всегда. */
 export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: OrgUnit[]; allowNoUnit: boolean; admin: boolean; onCreated(): void }) {
   const ui = useUi();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [unit, setUnit] = useState(allowNoUnit ? "" : units[0]?.org_unit_id ?? "");
   const [role, setRole] = useState<InvitationRole>("employee");
+  const [codeAgent, setCodeAgent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<{ link: string; who: string; email: string; mailed?: "sent" | "failed" | "not_configured" } | null>(null);
@@ -103,9 +106,10 @@ export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: Or
     if (blocked) return;
     setBusy(true); setError(""); setCreated(null); setCopied(false);
     try {
-      const out = await ui.createInvitation(email.trim(), name.trim(), unit, role);
+      // У администратора агент кода есть через группу администраторов: отдельно не выдаётся.
+      const out = await ui.createInvitation(email.trim(), name.trim(), unit, role, admin && role !== "admin" && codeAgent);
       setCreated({ link: out.link, who: name.trim() || email.trim(), email: email.trim(), mailed: out.invitation.email_status });
-      setEmail(""); setName(""); setRole("employee"); onCreated();
+      setEmail(""); setName(""); setRole("employee"); setCodeAgent(false); onCreated();
     } catch {
       setError("Приглашение не создано. Проверьте почту и что у вас есть право приглашать в этот отдел.");
     } finally { setBusy(false); }
@@ -130,6 +134,11 @@ export function InviteForm({ units, allowNoUnit, admin, onCreated }: { units: Or
         </FieldSelect></Field>
         <Pill tone="primary" size="md" className="h-[42px]" disabled={blocked} onClick={() => void submit()}>{busy ? "Отправляем…" : "Отправить приглашение"}</Pill>
       </ActionForm>
+      {admin && <label className="mt-3 flex items-center gap-2 text-[13px] text-kumo-default">
+        <input type="checkbox" role="switch" aria-label="Агент кода" aria-checked={role === "admin" || codeAgent} checked={role === "admin" || codeAgent} disabled={busy || role === "admin"} onChange={e => setCodeAgent(e.target.checked)} />
+        Агент кода
+        <span className="text-kumo-subtle">{role === "admin" ? "— у администраторов включён всегда" : "— беседа сможет поручать работу с кодом проектов"}</span>
+      </label>}
       <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Сотрудник получит письмо со ссылкой, войдёт по ней и сразу окажется в организации{units.length ? " и в выбранном отделе" : ""}. Ссылка сработает один раз и действует 7 дней.</p>
       {roleBlocked && <div className="mt-2"><Notice>Чтобы пригласить руководителя, выберите его отдел.</Notice></div>}
       {role === "admin" && <div className="mt-2"><Notice>Администратор видит и меняет материалы всех проектов, управляет людьми и правилами.</Notice></div>}

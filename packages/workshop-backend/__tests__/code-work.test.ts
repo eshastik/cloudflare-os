@@ -367,6 +367,35 @@ describe("переключатель «Код» и маршрутизация с
     expect(seen).toMatchObject({message: "объясни проще", lastReplyByCode: true, lastAgentReply: "Я поправил заголовок страницы.", codeProjects: ["Продажи"]});
     expect((seen as {work: {topic: string}}).work.topic).toContain("src/app.ts");
   });
+
+  it("без права «Агент кода» Jev не шлёт в код ни при «Вкл», ни при уверенном «код» в «Авто»", async () => {
+    const meta = baseMeta({projectContext: PROJECTS, codeWork: liveWork()});
+    expect((await routeChatMessage({mode: "on", meta, message: "запусти тесты", codeAllowed: false})).route)
+      .toEqual({target: "chat", reason: "code_disabled"});
+    expect((await routeChatMessage({mode: "auto", meta, message: "запусти тесты", ask: decided("code"), codeAllowed: false})).route)
+      .toEqual({target: "chat", reason: "code_disabled"});
+    // С правом — прежнее поведение.
+    expect((await routeChatMessage({mode: "on", meta, message: "запусти тесты", codeAllowed: true})).route)
+      .toMatchObject({target: "code", reason: "on"});
+  });
+
+  it("без права «Агент кода» «Код» не включить, выключить можно; работа с кодом не запускается", async () => {
+    const {host, meta} = fakeHost(baseMeta({projectContext: PROJECTS}), {});
+    expect(() => setChatCodeMode(host, 1, "u1", "on", false)).toThrow("включает администратор");
+    expect(() => setChatCodeMode(host, 1, "u1", "auto", false)).toThrow("включает администратор");
+    setChatCodeMode(host, 1, "u1", "off", false);
+    expect(meta().codeMode).toBe("off");
+
+    const started: string[] = [];
+    const denied = fakeHost(baseMeta({projectContext: PROJECTS}), {
+      async codeWorkAllowed() { return false; },
+      async codeWorkTarget() { return {title: "Продажи", code: TARGET}; },
+      async codeWorkStart(_a, p) { started.push(p); return {taskId: "t1", state: "starting", scopeExtended: false}; },
+    });
+    await expect(runChatCodeWork(denied.host, {chatId: 1, toolCallId: "c", prompt: "почини", userId: "u1", profileId: "pr", signal: new AbortController().signal}))
+      .rejects.toThrow("включает администратор");
+    expect(started).toEqual([]);
+  });
 });
 
 describe("Jev подключает проекты к беседе", () => {

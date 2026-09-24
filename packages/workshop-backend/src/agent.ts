@@ -613,15 +613,22 @@ export type CodeWorkInfo = {
   mode?: ChatCodeMode;
   /** В беседе есть проект с кодом или живая работа с кодом. */
   hasCodeProject?: boolean;
+  /** У человека нет права «Агент кода»: его включает администратор. */
+  codeDisabled?: boolean;
 };
 
-/** Инструменты codeWork/codeAsk агенту беседы: есть работа с кодом и переключатель не «Выкл». */
+/** Инструменты codeWork/codeAsk агенту беседы: есть работа с кодом, право «Агент кода» и переключатель не «Выкл». */
 export function codeWorkToolsAvailable(info: CodeWorkInfo | null): boolean {
-  return !!info && info.mode !== "off";
+  return !!info && !info.codeDisabled && info.mode !== "off";
 }
 
 export function formatCodeWorkPrompt(info: CodeWorkInfo): string {
   let lines = ["# Проекты беседы и работа с кодом", ""];
+  if (info.codeDisabled) {
+    lines.push("Агент кода для этого человека выключен администратором: инструментов кода (codeWork, codeAsk) у тебя нет, код проектов ты не меняешь.",
+      "Если человек просит что-то сделать в коде проекта, скажи, что агента кода включает администратор в разделе «Люди и отделы». С документами проектов работай как обычно.");
+    return lines.join("\n");
+  }
   if (info.mode === "off") {
     lines.push("Человек выключил работу с кодом переключателем «Код: Выкл» у поля ввода: инструментов кода у тебя сейчас нет.",
       "Если человек просит что-то сделать в коде проекта, скажи, что для этого нужно переключить «Код» на «Авто» или «Вкл».");

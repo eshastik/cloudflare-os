@@ -6,7 +6,7 @@ import type { OrganizationRole, OrgUnit } from "../src/mnemos-api.ts";
 import { useUi } from "./host.ts";
 import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
 import { DepartmentsPanel, InvitationRows, InvitePanel, InviteForm, headedUnits, useInvitations, useOrgUnits } from "./Departments.tsx";
-import { AdminSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
+import { AdminSwitch, CodeAgentSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
 import { Card, CardRow, Field, FieldSelect, Initials, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
@@ -98,7 +98,7 @@ const STANDARD_RESOURCE_DOMAINS=[
  {id:"административный",name:"Административные вопросы"},{id:"общий",name:"Общие материалы"},
 ];
 /** Полномочия словами; незнакомое не показывается кодом. */
-const CAPABILITY_WORDS: Record<string,string> = {"principal.manage":"Управление людьми и правилами","project.create":"Создание проектов","platform.metrics.read":"Просмотр состояния системы"};
+const CAPABILITY_WORDS: Record<string,string> = {"principal.manage":"Управление людьми и правилами","project.create":"Создание проектов","platform.metrics.read":"Просмотр состояния системы","code.agent.use":"Агент кода"};
 const capabilityWords = (capability?: string) => CAPABILITY_WORDS[capability ?? ""] ?? "Особое полномочие";
 
 /** Раскрытая строка сотрудника: отдел словами, компетенции метками, «Администратор» и доступ к проектам. */
@@ -148,7 +148,11 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
   const domainName=(r:AdminRight)=>r.functional_role_id ? STANDARD_RESOURCE_DOMAINS.find(d=>d.id===r.functional_role_id)?.name||roles.find(d=>d.id===r.functional_role_id)?.name||"Область без названия" : "Все области";
   const grant=()=>{if(busy||!rights?.exists||!project||(scope==="area"&&(!area||domainsError||domainsLoading)))return;void change({remove:false,right:{kind:"anchor",principal_id:person.userName,project_id:project,class:resourceClass,mode,node_id:"",functional_role_id:scope==="all"?"":area}});};
   const canGrant=!busy&&!!rights?.exists&&!!project&&!(scope==="area"&&(!area||domainsError||domainsLoading));
-  return <section aria-label="Проекты и доступ" className="min-w-0">
+  // «Агент кода» читается из тех же назначений: одно чтение прав на карточку.
+  const ownCodeAgent=rights?rights.rights.some(r=>r.kind==="capability"&&r.capability==="code.agent.use"):error?null:undefined;
+  return <>
+  <section aria-label="Агент кода"><CodeAgentSwitch person={person} own={ownCodeAgent} onChanged={()=>setRevision(v=>v+1)} /></section>
+  <section aria-label="Проекты и доступ" className="min-w-0">
     <div className="mb-1 flex flex-wrap items-center gap-3">
       <h3 className="m-0 flex-1 text-[14px] font-semibold">Проекты и доступ</h3>
       {!editing&&<Pill disabled={!rights?.exists||busy} onClick={()=>{setEditing(true);setPending(null);setError("");}}><Plus size={14}/>Дать доступ</Pill>}
@@ -157,12 +161,13 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
     {!rights && !error && <Notice>Загрузка доступа…</Notice>}
     {rights?.deactivated && <Notice>Сохранённые права сейчас не действуют.</Notice>}
     {rights && <div>
-      {rights.rights.map((r,i)=><div key={i} className="flex items-center gap-3 border-t border-kumo-fill py-2.5 first:border-t-0">
+      {/* «Агент кода» меняется своим переключателем выше, в списке назначений его нет. */}
+      {rights.rights.filter(r=>!(r.kind==="capability"&&r.capability==="code.agent.use")).map((r,i)=><div key={i} className="flex items-center gap-3 border-t border-kumo-fill py-2.5 first:border-t-0">
         <div className="min-w-0 flex-1"><div className="break-words text-[14px] font-medium">{r.kind==="capability"?capabilityWords(r.capability):projectName(r)}</div>
         {r.kind!=="capability"&&<div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-kumo-subtle"><span>{domainName(r)}</span><span>{r.mode==="write"?"Чтение и запись":"Чтение"}</span>{r.class==="database"&&<span>База данных</span>}{r.node_id&&<span>Часть проекта</span>}</div>}</div>
         <Pill tone="ghost" aria-label={`Отозвать доступ: ${projectName(r)}, ${domainName(r)}`} disabled={busy||!!pending} onClick={()=>{setPending({right:r,remove:true});setEditing(false);}}><Trash size={14}/></Pill>
       </div>)}
-      {!rights.rights.length && <p className="m-0 py-1 text-[13px] text-kumo-subtle">Доступ к проектам ещё не назначен.</p>}
+      {!rights.rights.some(r=>!(r.kind==="capability"&&r.capability==="code.agent.use")) && <p className="m-0 py-1 text-[13px] text-kumo-subtle">Доступ к проектам ещё не назначен.</p>}
     </div>}
     {editing&&<ActionForm aria-label="Новое назначение" className="mt-3 grid gap-3 rounded-2xl border border-kumo-fill bg-kumo-overlay p-4 sm:grid-cols-2" onAction={grant}>
       <Field label="Проект"><FieldSelect aria-label="Проект" required value={project} onChange={e=>{setProject(e.target.value);setScope("area");}}><option value="">Выберите проект</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</FieldSelect></Field>
@@ -175,5 +180,6 @@ function PersonRights({person,data}: {person:AdminPerson;data:MemoryData}) {
       <div className="flex gap-2 sm:col-span-2"><Pill tone="primary" onClick={grant} disabled={!canGrant}>{busy?"Сохраняем…":"Сохранить"}</Pill><Pill tone="ghost" disabled={busy} onClick={()=>{setEditing(false);setPending(null);}}>Отмена</Pill></div>
     </ActionForm>}
     {pending && <div role="region" aria-label="Подтверждение изменения доступа" className="mt-3 grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]"><strong className="font-medium">{pending.remove?"Отозвать":"Добавить"} назначение для {person.displayName||"сотрудника"}</strong><p className="m-0">{summary(pending.right)}</p>{pending.remove&&<p className="m-0 text-kumo-subtle">Доступ через группы и другие назначения может сохраниться.</p>}<div className="flex gap-2"><Pill tone="primary" disabled={busy} onClick={()=>void change()}>Подтвердить {pending.remove?"отзыв":"назначение"}</Pill><Pill tone="ghost" disabled={busy} onClick={()=>setPending(null)}>Отмена</Pill></div></div>}
-  </section>;
+  </section>
+  </>;
 }

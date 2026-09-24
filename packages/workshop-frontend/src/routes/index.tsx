@@ -22,7 +22,7 @@ import {
 import { useDocumentTitle } from "../useDocumentTitle";
 import { homePromptFromSearch, homeProjectFromSearch, projectContextFromProjects } from "../homePrompt";
 import { ProjectChips } from "../components/chat/ProjectChips";
-import { CodeModeSwitch } from "../components/chat/CodeModeSwitch";
+import { CodeModeSwitch, useCodeWorkAllowed } from "../components/chat/CodeModeSwitch";
 import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
 import SharedWithYou from "../components/AppShell/SharedWithYou";
 
@@ -76,6 +76,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
   // Работа с кодом для новой беседы. Сохраняется в беседе сразу после её создания; по умолчанию
   // «Авто», как у любой беседы без явного выбора.
   const [codeMode, setCodeMode] = useState<ChatCodeMode>(() => chatCodeMode(undefined));
+  // Без права «Агент кода» переключателя «Код» нет.
+  const loadCodeWorkAllowed = useCallback(() => authenticatedApi.codeWorkAllowed(), [authenticatedApi]);
+  const codeWorkAllowed = useCodeWorkAllowed(loadCodeWorkAllowed);
 
   const [models, setModels] = useState<AiChatAuthorInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -211,7 +214,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
             projects={projects}
             onChange={setProjects}
             loadChoices={loadProjectChoices}
-            trailing={<CodeModeSwitch mode={codeMode} onChange={setCodeMode} />}
+            trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={setCodeMode} /> : undefined}
           />
           <ChatInput
             createCapsuleGatekeeper={createCapsuleGatekeeper}

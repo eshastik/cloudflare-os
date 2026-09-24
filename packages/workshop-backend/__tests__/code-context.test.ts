@@ -63,4 +63,14 @@ describe("переключатель «Код» в подсказке и инс�
   it("«Вкл» без проекта с кодом — агент беседы просит подключить проект", () => {
     expect(formatCodeWorkPrompt({projects: [], mode: "on", hasCodeProject: false})).toContain("попроси подключить проект с кодом");
   });
+
+  it("без права «Агент кода» — нет codeWork/codeAsk при любом режиме, подсказка говорит, что кода нет и кто его включает", () => {
+    for (const mode of ["auto", "on"] as const) {
+      expect(codeWorkToolsAvailable({projects: [], mode, hasCodeProject: true, codeDisabled: true})).toBe(false);
+    }
+    const prompt = formatCodeWorkPrompt({projects: [], mode: "on", hasCodeProject: true, codeDisabled: true});
+    expect(prompt).toContain("выключен администратором");
+    expect(prompt).toContain("«Люди и отделы»");
+    expect(prompt).not.toContain("«Код: Выкл»");
+  });
 });

@@ -831,12 +831,13 @@ export class MnemosAPI {
     return list;
   }
   /** Код ссылки приходит только в ответе на создание. */
-  /** Роль «Сотрудник» не передаётся: сервер без поля role её и подразумевает, а старый сервер поле не знает. */
-  async createInvitation(email: string, displayName: string, orgUnit: string, role: InvitationRole = "employee", signal?: AbortSignal): Promise<OrganizationInvitation & { code: string }> {
+  /** Роль «Сотрудник» не передаётся: сервер без поля role её и подразумевает, а старый сервер поле не знает.
+   * codeAgent — выдать приглашённому право «Агент кода»; без него поле не передаётся. */
+  async createInvitation(email: string, displayName: string, orgUnit: string, role: InvitationRole = "employee", signal?: AbortSignal, codeAgent = false): Promise<OrganizationInvitation & { code: string }> {
     if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.length > 320 ||
         typeof displayName !== "string" || displayName.length > 255 || typeof orgUnit !== "string" || orgUnit.length > 255 ||
         !INVITATION_ROLES.includes(role) || (role === "head" && !orgUnit)) throw new MnemosAPIError(400);
-    const out = await this.#request<unknown>("/v1/invitations", "POST", signal, { email: email.trim(), display_name: displayName.trim(), org_unit_id: orgUnit, ...(role === "employee" ? {} : { role }) });
+    const out = await this.#request<unknown>("/v1/invitations", "POST", signal, { email: email.trim(), display_name: displayName.trim(), org_unit_id: orgUnit, ...(role === "employee" ? {} : { role }), ...(codeAgent === true ? { code_agent: true } : {}) });
     const code = (out as { code?: unknown } | null)?.code;
     if (!validInvitation(out) || typeof code !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(code)) throw new MnemosAPIError(502);
     return { ...out, code };
@@ -1183,7 +1184,7 @@ export interface OrgUnitDeletion { deleted: true; projects_made_private: number;
 export type InvitationStatus = "open" | "accepted" | "revoked" | "expired";
 export type InvitationRole = "employee" | "head" | "admin";
 export const INVITATION_ROLES: readonly InvitationRole[] = ["employee", "head", "admin"];
-export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; role?: InvitationRole; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string; email_status?: InvitationEmailStatus }
+export interface OrganizationInvitation { invitation_id: string; email: string; display_name: string; org_unit_id?: string; org_unit_name?: string; role?: InvitationRole; created_by: string; created_by_name: string; created_at: string; expires_at: string; status: InvitationStatus; accepted_by?: string; accepted_by_name?: string; accepted_at?: string; email_status?: InvitationEmailStatus; /** Право «Агент кода» при принятии. */ code_agent?: boolean }
 /** Судьба письма со ссылкой при создании приглашения. */
 export type InvitationEmailStatus = "sent" | "failed" | "not_configured";
 function shortText(value: unknown, max = 255): value is string { return typeof value === "string" && value.length <= max; }
@@ -1200,7 +1201,8 @@ function validInvitation(value: unknown): value is OrganizationInvitation {
     shortText(i.created_by) && shortText(i.created_by_name) && typeof i.created_at === "string" && typeof i.expires_at === "string" &&
     ["open", "accepted", "revoked", "expired"].includes(i.status) && (i.accepted_by === undefined || shortText(i.accepted_by)) &&
     (i.accepted_by_name === undefined || shortText(i.accepted_by_name)) && (i.role === undefined || INVITATION_ROLES.includes(i.role)) &&
-    (i.email_status === undefined || ["sent", "failed", "not_configured"].includes(i.email_status));
+    (i.email_status === undefined || ["sent", "failed", "not_configured"].includes(i.email_status)) &&
+    (i.code_agent === undefined || typeof i.code_agent === "boolean");
 }
 
 /** Документ другого человека, открытый вызывающему; mode — право на сейчас. */

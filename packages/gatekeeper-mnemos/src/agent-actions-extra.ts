@@ -19,6 +19,10 @@ import type { DatabaseConnection } from "./database-connections.ts";
 import type { ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
 import { intakePlacement } from "./intake.ts";
 import { agentNames } from "../app-react/names.ts";
+import { CODE_AGENT_CAPABILITY } from "./workspace-tasks.ts";
+
+/** Группа «Администраторы организации»: агент кода у её участников включён всегда. */
+const ADMINS_GROUP = "system:organization-admins";
 import { allPages, flag, inScope, money, oneOf, pickOne, project, projectName, str, text, type AgentActionSession, type PreparedAgentAction } from "./agent-actions.ts";
 
 /** Методы человека сверх AgentActionSession: сессия управления и источники самого аккаунта (ящики, календари, диск, Telegram). */
@@ -30,6 +34,7 @@ export interface ExtraActionSession extends AgentActionSession {
   listPeople(): Promise<{ users: AdminPerson[] }>;
   listPersonRights(principal: string): Promise<AdminRights>;
   removePersonRight(right: AdminRight): Promise<{ outcome: string }>;
+  grantPersonRight(right: AdminRight): Promise<unknown>;
   listOrganizationRoles(cursor?: string): Promise<OrganizationRolePage>;
   createOrganizationRole(input: { id: string; kind: "group" | "functional_role"; name: string; expected_generation: number }): Promise<OrganizationRole>;
   readPrincipalMembership(container: string, member: string): Promise<PrincipalMembership>;
@@ -87,6 +92,7 @@ export type ExtraActionRequest =
   | { kind: "set_review_domain"; project: string; domain: string; approvers: string[] }
   | { kind: "remove_review_domain"; project: string; domain: string }
   | { kind: "revoke_person_right"; person: string; project: string; mode: "read" | "write" | "all" }
+  | { kind: "set_person_code_agent"; person: string; enabled: boolean }
   | { kind: "create_competency"; name: string }
   | { kind: "set_competency_member"; competency: string; person: string; member: boolean }
   | { kind: "decide_acceptance"; request: string; accept: boolean; comment: string }
@@ -105,7 +111,7 @@ export type ExtraActionKind = ExtraActionRequest["kind"];
 
 export const EXTRA_KEYS: Record<ExtraActionKind, string[]> = {
   update_org_rules: ["rules"], set_review_domain: ["project", "domain", "approvers"], remove_review_domain: ["project", "domain"],
-  revoke_person_right: ["person", "project", "mode"], create_competency: ["name"], set_competency_member: ["competency", "person", "member"],
+  revoke_person_right: ["person", "project", "mode"], set_person_code_agent: ["person", "enabled"], create_competency: ["name"], set_competency_member: ["competency", "person", "member"],
   decide_acceptance: ["request", "accept", "comment"], decide_template: ["proposal", "approve", "comment"],
   decide_intake: ["alert", "approve", "project", "domain", "note"], decide_team_budget: ["project", "proposal", "approve", "comment"],
   revoke_agent: ["agent"], set_agent_project_right: ["agent", "project", "mode", "enabled"],
@@ -114,7 +120,7 @@ export const EXTRA_KEYS: Record<ExtraActionKind, string[]> = {
 };
 export const EXTRA_LABELS: Record<ExtraActionKind, string> = {
   update_org_rules: "Правила организации", set_review_domain: "Согласующие проекта", remove_review_domain: "Направление согласования",
-  revoke_person_right: "Отзыв права сотрудника", create_competency: "Новая компетенция", set_competency_member: "Состав компетенции",
+  revoke_person_right: "Отзыв права сотрудника", set_person_code_agent: "Агент кода сотрудника", create_competency: "Новая компетенция", set_competency_member: "Состав компетенции",
   decide_acceptance: "Приёмка работы", decide_template: "Решение по шаблону", decide_intake: "Решение приёмной",
   decide_team_budget: "Командный бюджет", revoke_agent: "Отзыв агента", set_agent_project_right: "Право агента на проект",
   set_agent_source_access: "Доступ агента к почте или календарю", disconnect_source: "Отключение подключения",
@@ -169,6 +175,7 @@ export function checkedExtraAction(kind: ExtraActionKind, value: Record<string, 
     }
     case "remove_review_domain": return { kind, project: text(value.project, "проект"), domain: text(value.domain, "направление") };
     case "revoke_person_right": return { kind, person: text(value.person, "сотрудник"), project: text(value.project, "проект"), mode: oneOf(value.mode, ["read", "write", "all"] as const, "mode") };
+    case "set_person_code_agent": return { kind, person: text(value.person, "сотрудник"), enabled: flag(value.enabled, "enabled") };
     case "create_competency": return { kind, name: text(value.name, "название компетенции") };
     case "set_competency_member": return { kind, competency: text(value.competency, "компетенция"), person: text(value.person, "сотрудник"), member: flag(value.member, "member") };
     case "decide_acceptance": return { kind, request: text(value.request, "поручение"), accept: flag(value.accept, "accept"), comment: text(value.comment, "комментарий", true, 4000) };
@@ -267,6 +274,16 @@ export async function prepareExtraAction(session: ExtraActionSession, scope: Rea
       if (!rights.length) throw new Error(`У ${who.displayName} нет такого права на проект «${p.name}».`);
       return card("access", `Отозвать доступ ${who.displayName} к проекту «${p.name}»`, [`Назначений: ${rights.length}`, "Доступ через отдел и видимость проекта не меняется"],
         { person: who.userName, personName: who.displayName, projectName: p.name, rights: JSON.stringify(rights) });
+    }
+    case "set_person_code_agent": {
+      const who = await person(session, request.person);
+      const admin = await session.readPrincipalMembership(ADMINS_GROUP, who.userName).then(m => m.enabled, () => false);
+      if (admin) throw new Error(`${who.displayName} — администратор: у администраторов агент кода включён всегда.`);
+      const own = (await session.listPersonRights(who.userName)).rights.some(r => r.kind === "capability" && r.capability === CODE_AGENT_CAPABILITY);
+      if (own === request.enabled) throw new Error(`Агент кода у ${who.displayName} уже ${request.enabled ? "включён" : "выключен"}.`);
+      return card("code", `${request.enabled ? "Включить" : "Выключить"} агента кода для ${who.displayName}`,
+        [request.enabled ? "Беседы сотрудника смогут поручать работу с кодом проектов" : "Работа с кодом сотрудника остановится, новые задачи не запустятся"],
+        { person: who.userName, personName: who.displayName, enabled: request.enabled });
     }
     case "create_competency": {
       const { generation, roles } = await competencies(session);
@@ -411,6 +428,11 @@ export async function executeExtraAction(session: ExtraActionSession, kind: Extr
     case "revoke_person_right": {
       for (const right of JSON.parse(str(r, "rights")) as AdminRight[]) await session.removePersonRight(right);
       return { summary: `${str(r, "personName")} больше не имеет назначенного доступа к «${str(r, "projectName")}»` };
+    }
+    case "set_person_code_agent": {
+      const right: AdminRight = { kind: "capability", principal_id: str(r, "person"), capability: CODE_AGENT_CAPABILITY };
+      if (r.enabled === true) await session.grantPersonRight(right); else await session.removePersonRight(right);
+      return { summary: `Агент кода у ${str(r, "personName")} ${r.enabled ? "включён" : "выключен"}` };
     }
     case "create_competency": {
       const role = await session.createOrganizationRole({ id: str(r, "id"), kind: "functional_role", name: str(r, "name"), expected_generation: r.generation as number });

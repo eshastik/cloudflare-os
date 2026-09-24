@@ -1,6 +1,19 @@
 // Переключатель «Код: Выкл · Авто · Вкл» у поля ввода: кто отвечает на сообщения беседы.
 // Значение хранится в метаданных беседы; по умолчанию «Авто».
+import { useEffect, useState } from "react";
 import type { ChatCodeMode } from "@gadgets/workshop-shared/code-work";
+
+/** Право человека «Агент кода» (его включает администратор). Пока не прочитано и при сбое — нет:
+ *  переключатель без права только ввёл бы в заблуждение, а окончательно право проверяет сервер. */
+export function useCodeWorkAllowed(load: () => Promise<boolean>): boolean {
+  const [allowed, setAllowed] = useState(false);
+  useEffect(() => {
+    let current = true;
+    Promise.resolve().then(load).then(value => { if (current) setAllowed(value === true); }, () => { if (current) setAllowed(false); });
+    return () => { current = false; };
+  }, [load]);
+  return allowed;
+}
 
 const OPTIONS: { mode: ChatCodeMode; label: string; hint: string }[] = [
   { mode: "off", label: "Выкл", hint: "Отвечает только агент беседы. С кодом проекта он не работает." },

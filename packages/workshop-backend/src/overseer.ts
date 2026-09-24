@@ -6209,6 +6209,10 @@ class OverseerImpl implements AgentHooks {
     // сами проекты не перечисляются на каждом ходе (это обращение к каждому подключению).
     if (!projects.length && !meta?.codeWork &&
         !await this.users.get(this.users.idFromString(userId)).hasChatProjectSource()) return null;
+    // Без права «Агент кода» у агента беседы нет инструментов кода, а подсказка говорит, что кода нет.
+    if (!await this.users.get(this.users.idFromString(userId)).codeWorkAllowed().catch(() => false)) {
+      return {projects, mode: "off", codeDisabled: true};
+    }
     let work = meta?.codeWork;
     let alive = !!work && codeWorkAlive(work.state);
     return {projects, ...(work ? {active: {projectTitle: work.projectTitle, alive, ...(alive ? {brief: codeWorkBrief(work)} : {})}} : {}),
@@ -6248,8 +6252,10 @@ class OverseerImpl implements AgentHooks {
     let mode = chatCodeMode(meta);
     let apiKey = installationOpenRouterKey(this.env as unknown as OpenRouterInstallConfig);
     let startedAt = Date.now();
+    let owner = this.#codeWorkUserId(chatId, initiator);
+    let codeAllowed = !!owner && await this.users.get(this.users.idFromString(owner)).codeWorkAllowed().catch(() => false);
     let {route, jev, projects} = await routeChatMessage({
-      mode, meta, message: last.message, lastAgentReply: lastAgentReply(recent.slice(1)),
+      mode, meta, message: last.message, lastAgentReply: lastAgentReply(recent.slice(1)), codeAllowed,
       ...(apiKey ? {ask: context => askJev({apiKey, context, signal})} : {}),
       projectChoices: async () => {
         let userId = this.#codeWorkUserId(chatId, initiator);
@@ -8725,7 +8731,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async setChatCodeMode(chatId: number, mode: ChatCodeMode): Promise<void> {
-    setChatCodeMode(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString(), mode);
+    // Включить «Код» можно только с правом «Агент кода»; выключить — всегда.
+    let allowed = mode === "off" || await this.clientUser.codeWorkAllowed().catch(() => false);
+    setChatCodeMode(this.impl.codeWorkHost(), chatId, this.clientUser.id.toString(), mode, allowed);
   }
 
   async readChatCodeChanges(chatId: number): Promise<ChatCodeChanges | null> {

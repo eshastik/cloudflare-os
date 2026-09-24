@@ -4,6 +4,10 @@ import type { GitProjectRepositoryPage } from "./git-connections.ts";
 import { workspaceProgress, type WorkspaceEvent, type WorkspaceProgress } from "./workspace-steps.ts";
 
 export type WorkspaceState = "starting" | "running" | "idle" | "stopped" | "failed";
+/** Полномочие Mnemos «Агент кода» (миграция 0158): без него служба рабочих мест задачу не создаёт. */
+export const CODE_AGENT_CAPABILITY = "code.agent.use";
+/** Отказ службы рабочих мест человеку без права «Агент кода». */
+export const CODE_AGENT_DISABLED_MESSAGE = "Агент кода выключен: его включает администратор в «Люди и отделы».";
 const STATES: readonly WorkspaceState[] = ["starting", "running", "idle", "stopped", "failed"];
 /** Ключ агента живёт 15 минут; служба останавливает задачу без обновления. */
 export const WORKSPACE_REFRESH_MS = 10 * 60_000;
@@ -34,7 +38,7 @@ export interface WorkspaceTaskView {
 }
 export interface WorkspaceTaskDetails extends WorkspaceProgress { task: WorkspaceTaskView }
 export class WorkspaceError extends Error {
-  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready", message: string) { super(message); }
+  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready" | "disabled", message: string) { super(message); }
 }
 
 /** Файл контекста беседы в рабочем месте (путь от /workspace). */
@@ -168,6 +172,8 @@ export class WorkspaceClient implements WorkspaceControl {
       throw new WorkspaceError("unavailable", "Служба рабочих мест недоступна.");
     }
     if (response.status === 404) throw new WorkspaceError("not_found", "Задача не найдена в службе рабочих мест.");
+    // Право «Агент кода» проверяет служба по Mnemos; при отказе она уже остановила задачу.
+    if (response.status === 403) throw new WorkspaceError("disabled", CODE_AGENT_DISABLED_MESSAGE);
     if (response.status === 400 && invalid) throw invalid;
     if (response.status === 409 && conflict) {
       if (conflict instanceof WorkspaceError) throw conflict;
@@ -586,8 +592,17 @@ export class WorkspaceTasks {
     if (finished(task.state)) throw new WorkspaceError("not_found", "Задача уже завершена. Поручите новую.");
     const control = this.#control();
     const { bindingId } = await this.#deps.agent();
-    await control.credential(id, await this.#credential(bindingId));
-    await control.message(id, body);
+    try {
+      await control.credential(id, await this.#credential(bindingId));
+      await control.message(id, body);
+    } catch (error) {
+      // Право «Агент кода» сняли: служба уже остановила задачу, запись следует за ней.
+      if (error instanceof WorkspaceError && error.code === "disabled") {
+        this.#save({ ...task, state: "stopped", reason: "агент кода выключен администратором", finished_at: new Date(this.#clock()).toISOString() });
+        await this.#arm();
+      }
+      throw error;
+    }
     this.#save({ ...task, state: "running" });
     await this.#arm();
   }

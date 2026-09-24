@@ -24,7 +24,12 @@ export interface CodeWorkUser {
   codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number): Promise<CodeWorkReview>;
   /** Файл в /workspace/.mnemos рабочего места; нет — подключение этого не умеет. */
   codeWorkPutFile?(accountId: number, project: string, task: string, path: string, contentBase64: string): Promise<void>;
+  /** Право «Агент кода» человека; нет метода — подключения права не знают. */
+  codeWorkAllowed?(): Promise<boolean>;
 }
+
+/** Отказ человеку без права «Агент кода». */
+export const CODE_AGENT_DISABLED_MESSAGE = "Агент кода выключен: его включает администратор в разделе «Люди и отделы».";
 
 export interface ChatCodeWorkHost {
   chatMeta(chatId: number): AiChatMetadata | undefined;
@@ -94,9 +99,11 @@ export function setChatProjects(host: ChatCodeWorkHost, chatId: number, userId: 
   host.putChatMeta(meta);
 }
 
-/** Переключатель «Код» беседы: меняет тот, кто начал беседу (работа с кодом идёт его правами). */
-export function setChatCodeMode(host: ChatCodeWorkHost, chatId: number, userId: string, value: unknown): void {
+/** Переключатель «Код» беседы: меняет тот, кто начал беседу (работа с кодом идёт его правами).
+ *  codeAllowed=false — у человека нет права «Агент кода»: включить «Код» нельзя, выключить можно. */
+export function setChatCodeMode(host: ChatCodeWorkHost, chatId: number, userId: string, value: unknown, codeAllowed = true): void {
   let mode = validateChatCodeMode(value);
+  if (!codeAllowed && mode !== "off") throw new Error(CODE_AGENT_DISABLED_MESSAGE);
   let meta = metaOrThrow(host, chatId);
   let creator = meta.projectContext?.creatorId;
   if (creator && creator !== userId) throw new Error("Режим работы с кодом меняет тот, кто начал беседу.");
@@ -136,7 +143,9 @@ export type ChatRouteReason =
   /** Jev не уверен: отвечает агент беседы, он сам решит, звать ли агента кода. */
   | "router_unsure"
   /** Jev недоступен (нет ключа, ошибка, срок): продолжает тот, кто отвечал последним. */
-  | "router_failed";
+  | "router_failed"
+  /** У человека нет права «Агент кода». */
+  | "code_disabled";
 
 export type ChatRoute =
   | {target: "code"; projectId: string; continuing: boolean; reason: ChatRouteReason}
@@ -152,6 +161,8 @@ export type ChatRouteInput = {
   ask?: (context: CodeRouteContext) => Promise<JevResult>;
   /** Проекты человека: Jev решает, какие из них подключить к беседе и какие убрать. */
   projectChoices?: () => Promise<ChatProjectChoice[]>;
+  /** Право «Агент кода» человека; false — в код не маршрутизируется ничего. */
+  codeAllowed?: boolean;
 };
 
 /** Что Jev поменял в наборе проектов беседы. */
@@ -243,6 +254,7 @@ export async function routeChatMessage(input: ChatRouteInput): Promise<{route: C
   let meta = projects ? withProjectChanges(input.meta, projects) : input.meta;
   let done = (route: ChatRoute) => ({route, ...(jev ? {jev} : {}), ...(projects ? {projects} : {})});
 
+  if (input.codeAllowed === false) return done({target: "chat", reason: "code_disabled"});
   if (input.mode === "off") return done({target: "chat", reason: "off"});
   const target = chatCodeTarget(meta);
   if (!target) return done({target: "chat", reason: "no_code_project"});
@@ -289,6 +301,8 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let meta = metaOrThrow(host, request.chatId);
   let ownerId = meta.projectContext?.creatorId ?? request.userId;
   let user = host.user(ownerId);
+  // Окончательно право проверяет служба рабочих мест по Mnemos; здесь отказ до запуска и понятными словами.
+  if (user.codeWorkAllowed && !await user.codeWorkAllowed()) throw new Error(CODE_AGENT_DISABLED_MESSAGE);
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
   let work = meta.codeWork;
   let continuing = !!work && codeWorkAlive(work.state) && (!request.projectId || request.projectId === work.projectId);

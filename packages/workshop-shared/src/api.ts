@@ -620,6 +620,8 @@ export interface AuthenticatedApi extends RpcTarget {
 
   /** Проекты из подключённой памяти человека для набора проектов беседы. */
   listChatProjects(): Promise<ChatProjectChoice[]>;
+  /** Право «Агент кода» человека: без него переключатель «Код» не показывается. */
+  codeWorkAllowed(): Promise<boolean>;
 
   /** Register an owner-prepared selection. The request must remain unchanged on retry. */
   registerMailSelection(targetAccountId: number, project: string, request: string, selection: string): ReturnType<NonNullable<GatekeeperUser["registerMailSelection"]>>;

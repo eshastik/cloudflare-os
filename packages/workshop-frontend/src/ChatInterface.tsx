@@ -120,7 +120,7 @@ import { chatListState, codeAnsweredMessageSeqs, upsertAgentStep } from "./codeW
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
-import { CodeModeSwitch } from "./components/chat/CodeModeSwitch";
+import { CodeModeSwitch, useCodeWorkAllowed } from "./components/chat/CodeModeSwitch";
 import { StepLimitNotice } from "./components/chat/StepLimitNotice";
 import { ActionConfirmCard } from "./components/chat/ActionConfirmCard";
 import { useActionOpen } from "./components/chat/useActionOpen";
@@ -4899,6 +4899,9 @@ function ChatInterface({
     () => overseer.revertChatCodeChanges(selectedChatId!),
     [overseer, selectedChatId],
   );
+  // Без права «Агент кода» переключателя «Код» нет: беседа с кодом не работает.
+  const loadCodeWorkAllowed = useCallback(() => authenticatedApi.codeWorkAllowed(), [authenticatedApi]);
+  const codeWorkAllowed = useCodeWorkAllowed(loadCodeWorkAllowed);
   const changeCodeMode = useCallback(async (mode: ChatCodeMode) => {
     if (selectedChatId === null) return;
     try {
@@ -7781,7 +7784,7 @@ function ChatInterface({
                     onChange={changeChatProjects}
                     loadChoices={loadProjectChoices}
                     disabled={isAgentActive}
-                    trailing={<CodeModeSwitch mode={codeMode} onChange={changeCodeMode} />}
+                    trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={changeCodeMode} /> : undefined}
                   />
                   <ChatInput
                     chatKey={selectedChatId}

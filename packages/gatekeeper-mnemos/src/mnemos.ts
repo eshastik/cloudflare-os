@@ -5,7 +5,7 @@ import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
 import {AccountAlarms} from './account-alarms.ts';
-import {WorkspaceClient,WorkspaceTasks} from './workspace-tasks.ts';
+import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceTasks} from './workspace-tasks.ts';
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
@@ -162,6 +162,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
 
   /** Работа с кодом беседы: хост вызывает от имени этого человека; фрейм управления их не видит. */
   async listChatProjects(){return this.#account().listChatProjects();}
+  /** Право «Агент кода» этого человека: без него беседа не показывает «Код» и не зовёт агента кода. */
+  async codeWorkAllowed(){return this.#account().codeWorkAllowed();}
   async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string;repositoryName:string},prompt:string){return this.#account().codeWorkStart(project,target,prompt);}
   async codeWorkMessage(project:string,task:string,text:string){return this.#account().codeWorkMessage(project,task,text);}
   async codeWorkEvents(project:string,task:string,after:number,waitMs:number){return this.#account().codeWorkEvents(project,task,after,waitMs);}
@@ -240,15 +242,26 @@ export class UserAccount extends DurableObject<Env> {
  async readWorkspaceTask(project:string,task:string){return this.#workspace().read(project,task);}
  async messageWorkspaceTask(project:string,task:string,text:string){return this.#workspace().message(project,task,text);}
  async abortWorkspaceTask(project:string,task:string){return this.#workspace().abort(project,task);}
- /** Проекты человека для набора проектов беседы; у первых проектов проверяется подключённый код. */
+ /** Право «Агент кода» (полномочие code.agent.use в Mnemos). Сбой чтения — «нет»: окончательно
+  * решает служба рабочих мест, спрашивая Mnemos с ключом агента. */
+ async codeWorkAllowed(){
+  const session=this.#account().session();
+  try{return (await session.whoAmI()).capabilities?.includes(CODE_AGENT_CAPABILITY)===true;}
+  catch{return false;}
+  finally{session.dispose();}
+ }
+ /** Проекты человека для набора проектов беседы; у первых проектов проверяется подключённый код.
+  * Без права «Агент кода» код проектов не называется: беседе некуда звать агента кода. */
  async listChatProjects(){
   const session=this.#account().session();
   try{
+   const identity=await session.whoAmI();
+   const codeAllowed=identity.capabilities?.includes(CODE_AGENT_CAPABILITY)===true;
    const projects=(await session.listProjects()).projects.slice(0,CHAT_PROJECTS_LIMIT);
    const out:{projectId:string;title:string;code?:{connectionId:string;repositoryId:string;repositoryName:string}}[]=[];
    for(const [i,p] of projects.entries()){
     let code:{connectionId:string;repositoryId:string;repositoryName:string}|undefined;
-    if(i<CHAT_PROJECTS_WITH_CODE_CHECK){try{const r=(await session.listProjectGitRepositories(p.id,'')).repositories.find(x=>x.enabled);if(r)code={connectionId:r.connection_id,repositoryId:r.repository_id,repositoryName:r.repository_name};}catch{/* проект без доступного кода */}}
+    if(codeAllowed&&i<CHAT_PROJECTS_WITH_CODE_CHECK){try{const r=(await session.listProjectGitRepositories(p.id,'')).repositories.find(x=>x.enabled);if(r)code={connectionId:r.connection_id,repositoryId:r.repository_id,repositoryName:r.repository_name};}catch{/* проект без доступного кода */}}
     out.push({projectId:p.id,title:p.name,...(code?{code}:{})});
    }
    return {projects:out};
@@ -1460,9 +1473,9 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async deleteOrgUnit(unit: string) { return this.#session.deleteOrgUnit(unit); }
   async listInvitations() { return this.#session.listInvitations(); }
   /** Ссылка собирается здесь: адрес входа знает только подключение, а не фрейм. */
-  async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee") {
+  async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee", codeAgent = false) {
     if (!this.#telegram) throw new Error("Invitation link unavailable");
-    const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit, role);
+    const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit, role, codeAgent);
     return { invitation, link: await this.#telegram.invitationLink(code) };
   }
   async revokeInvitation(id: string) { return this.#session.revokeInvitation(id); }
