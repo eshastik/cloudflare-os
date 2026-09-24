@@ -53,10 +53,10 @@ describe("карточка подтверждения действия аген�
     expect(host.querySelector("a")?.getAttribute("href")).toBe("https://mnemos.example/doc");
   });
 
-  it("после отказа: «Отклонено», без итога и ссылки", () => {
+  it("после отказа: «Вы отклонили», без итога и ссылки", () => {
     const { host, buttons } = render("rejected", { outcome: { summary: "не должно показываться", url: "https://x.example" } });
     expect(buttons()).toEqual([]);
-    expect(host.textContent).toContain("Отклонено");
+    expect(host.textContent).toContain("Вы отклонили");
     expect(host.textContent).not.toContain("не должно показываться");
     expect(host.querySelector("a")).toBeNull();
   });

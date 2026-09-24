@@ -5,7 +5,9 @@ import CorporateWorkContext from "./CorporateWorkContext";
 import { isTransientRpcError, logRpcFailure } from "./rpcErrors";
 import {
   Fragment,
+  createContext,
   memo,
+  useContext,
   useState,
   useEffect,
   useLayoutEffect,
@@ -124,6 +126,9 @@ import { CodeModeSwitch, useCodeWorkAllowed } from "./components/chat/CodeModeSw
 import { StepLimitNotice } from "./components/chat/StepLimitNotice";
 import { ActionConfirmCard } from "./components/chat/ActionConfirmCard";
 import { useActionOpen } from "./components/chat/useActionOpen";
+import { LiveStep, WorkRun, type OpenDocument } from "./components/chat/WorkSteps";
+import { actionDisplay, describeLiveStep, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
+import { useMnemosLink } from "./components/chat/useMnemosLink";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
 import { MAX_CHAT_PROJECTS, chatCodeMode, chatProjects, displayName, looksLikeId, type ChatCodeMode, type ChatProject } from "@gadgets/workshop-shared/code-work";
@@ -748,7 +753,27 @@ type ToolCallGroup = {
   calls: AiToolCall[];
   observations: ObservationChatMessage[];
   hasError: boolean;
+  // Шаги по ответам модели в порядке записи: по ним строится ход работы (WorkRun).
+  batches?: WorkBatch[];
+  startedAt?: Date;
+  finishedAt?: Date;
 };
+
+// Сведения для хода работы, общие для всех строк беседы: имена проектов и переход к документу.
+const WorkRunContext = createContext<{ projectNames?: ReadonlyMap<string, string>; openDocument?: OpenDocument }>({});
+
+function observationRecord(msg: ObservationChatMessage): ObservationRecord {
+  const log = msg.actionLog;
+  return {
+    chatId: msg.chatId,
+    sequence: msg.sequence,
+    resourceTitle: log.resourceTitle,
+    title: log.description.title,
+    description: log.description.description,
+    ...(log.description.workContext ? { workContext: log.description.workContext } : {}),
+    ...(log.description.activity ? { activity: log.description.activity } : {}),
+  };
+}
 
 function lowerFirst(text: string): string {
   return text ? text[0].toLowerCase() + text.slice(1) : text;
@@ -848,142 +873,8 @@ function getToolIcon(
   }
 }
 
-function getProvisionalToolLabel(toolName: AiToolCall["toolName"] | null | undefined) {
-  switch (toolName) {
-    case "readFile":
-      return "Читаю файл";
-    case "writeFile":
-      return "Записываю файл";
-    case "editFile":
-      return "Меняю файл";
-    case "describeBinding":
-      return "Смотрю подключение";
-    case "setBindingHook":
-      return "Подключаю ресурс";
-    case "setGadgetBinding":
-      return "Настраиваю подключение";
-    case "saveCapsuleAsBinding":
-      return "Сохраняю ресурс";
-    case "createGadget":
-      return "Создаю приложение";
-    case "executeCode":
-      return "Выполняю действие";
-    case "webFetch":
-      return "Открываю страницу";
-    case "observeUserChanges":
-      return "Смотрю ваши правки";
-    case "giveUp":
-      return "Останавливаюсь";
-    case "codeWork":
-      return "Работаю с кодом проекта";
-    case "codeAsk":
-      return "Спрашиваю агента кода";
-    default:
-      return "Выполняю действие";
-  }
-}
-
 function getToolTarget(tc: AiToolCall): string | undefined {
   return getToolCallSummary(tc).target;
-}
-
-// Present-tense verb for an in-progress tool call.
-function getProvisionalToolVerb(toolName: AiToolCall["toolName"]): string {
-  switch (toolName) {
-    case "readFile": return "Читаю";
-    case "writeFile": return "Записываю";
-    case "editFile": return "Меняю";
-    case "describeBinding": return "Смотрю";
-    case "setBindingHook": return "Подключаю";
-    case "setGadgetBinding": return "Подключаю";
-    case "saveCapsuleAsBinding": return "Сохраняю";
-    case "createGadget": return "Создаю приложение";
-    case "executeCode": return "Выполняю действие";
-    case "webFetch": return "Открываю";
-    case "observeUserChanges": return "Смотрю ваши правки";
-    case "giveUp": return "Останавливаюсь";
-    case "listBlueprints": return "Ищу шаблоны приложений";
-    case "listConnectableResources": return "Ищу доступные подключения";
-    case "requestConnection": return "Прошу подключение";
-    case "codeWork": return "Работаю с кодом проекта";
-    case "codeAsk": return "Спрашиваю агента кода";
-  }
-  const _exhaustive: never = toolName;
-  return _exhaustive;
-}
-
-// Present-tense, count-aware label mirroring describeToolCallCount (e.g. "Writing 5 files").
-function describeProvisionalToolCount(toolName: AiToolCall["toolName"], count: number): string {
-  if (count <= 1) return getProvisionalToolLabel(toolName);
-  switch (toolName) {
-    case "readFile": return `Читаю ${pluralize(count, "файл", "файла", "файлов")}`;
-    case "writeFile": return `Записываю ${pluralize(count, "файл", "файла", "файлов")}`;
-    case "editFile": return `Вношу ${pluralize(count, "правку", "правки", "правок")}`;
-    case "webFetch": return `Открываю ${pluralize(count, "страницу", "страницы", "страниц")}`;
-    case "executeCode": return `Выполняю действия ${formatTimes(count)}`;
-    case "describeBinding": return `Смотрю ${pluralize(count, "подключение", "подключения", "подключений")}`;
-    case "setBindingHook":
-    case "setGadgetBinding": return `Подключаю ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
-    case "saveCapsuleAsBinding": return `Сохраняю ${pluralize(count, "ресурс", "ресурса", "ресурсов")}`;
-    case "createGadget": return `Создаю ${pluralize(count, "приложение", "приложения", "приложений")}`;
-    case "observeUserChanges": return "Смотрю ваши правки";
-    case "giveUp": return "Останавливаюсь";
-    case "listBlueprints": return "Ищу шаблоны приложений";
-    case "listConnectableResources": return "Ищу доступные подключения";
-    case "requestConnection": return `Прошу ${pluralize(count, "подключение", "подключения", "подключений")}`;
-    case "codeWork": return "Работаю с кодом проекта";
-    case "codeAsk": return "Спрашиваю агента кода";
-  }
-  const _exhaustive: never = toolName;
-  return _exhaustive;
-}
-
-// Builds the label + detail lines for the in-progress tool-call row.
-function buildProvisionalToolSummary(
-  calls: ProvisionalToolCallState[],
-): { label: string; detailLines: string[] } {
-
-  if (calls.length === 1 && calls[0].outputFormat) {
-    return { label: `Создаю: ${localizedNoun(calls[0].outputFormat.noun)}`, detailLines: [] };
-  }
-  const toolNames = Array.from(
-    new Set(calls.map((c) => c.toolName).filter((n): n is AiToolCall["toolName"] => !!n)),
-  );
-  const detailLines = Array.from(
-    new Set(calls.map((c) => c.target).filter((t): t is string => Boolean(t))),
-  );
-
-  if (toolNames.length === 0) {
-    return { label: "Выполнение действия", detailLines: [] };
-  }
-
-  if (toolNames.length > 1) {
-    const parts = toolNames.map((toolName) =>
-      describeProvisionalToolCount(
-        toolName,
-        calls.filter((c) => c.toolName === toolName).length,
-      ),
-    );
-    return {
-      label: parts.map((part, i) => (i === 0 ? part : lowerFirst(part))).join(", "),
-      detailLines,
-    };
-  }
-
-  const toolName = toolNames[0];
-  if (calls.length === 1) {
-    const target = detailLines[0];
-    return {
-      label: target ? `${getProvisionalToolVerb(toolName)} ${target}` : getProvisionalToolLabel(toolName),
-      detailLines: [],
-    };
-  }
-
-  const label =
-    detailLines.length === 1
-      ? `${getProvisionalToolVerb(toolName)} ${detailLines[0]}`
-      : describeProvisionalToolCount(toolName, calls.length);
-  return { label, detailLines };
 }
 
 type CodeWorkToolCall = Extract<AiToolCall, { toolName: "codeWork" | "codeAsk" }>;
@@ -997,6 +888,7 @@ function buildToolCallGroups(
   toolCalls: AiToolCall[],
   observations: ObservationChatMessage[] = [],
   outputOf?: ToolOutputResolver,
+  work?: { batches: WorkBatch[]; startedAt?: Date; finishedAt?: Date },
 ): ToolCallGroup[] {
   const codeGroups = toolCalls.filter(isCodeWorkCall).map((tc): ToolCallGroup => {
     const summary = getToolCallSummary(tc);
@@ -1010,10 +902,16 @@ function buildToolCallGroups(
       hasError: Boolean(tc.error),
     };
   });
-  return [
-    ...buildPlainToolCallGroups(toolCalls.filter((tc) => !isCodeWorkCall(tc)), observations, outputOf),
-    ...codeGroups,
-  ];
+  const plain = buildPlainToolCallGroups(toolCalls.filter((tc) => !isCodeWorkCall(tc)), observations, outputOf);
+  if (work && plain.length > 0) {
+    const shown = new Set(toolCalls.filter((tc) => !isCodeWorkCall(tc)).map((tc) => tc.toolCallId));
+    plain[0].batches = work.batches
+      .map((batch) => ({ calls: batch.calls.filter((tc) => shown.has(tc.toolCallId)), observations: batch.observations }))
+      .filter((batch) => batch.calls.length > 0 || batch.observations.length > 0);
+    plain[0].startedAt = work.startedAt;
+    plain[0].finishedAt = work.finishedAt;
+  }
+  return [...plain, ...codeGroups];
 }
 
 function buildPlainToolCallGroups(
@@ -1748,6 +1646,22 @@ export const ThinkingTraceRow = memo(function ThinkingTraceRow({
   );
 });
 
+function WorkRunFromContext({ group, open, onToggle, inProgress }: { group: ToolCallGroup; open: boolean; onToggle: (key: string) => void; inProgress: boolean }) {
+  const { projectNames, openDocument } = useContext(WorkRunContext);
+  return (
+    <WorkRun
+      batches={group.batches!}
+      projectNames={projectNames}
+      startedAt={group.startedAt}
+      finishedAt={group.finishedAt}
+      inProgress={inProgress}
+      open={open}
+      onToggle={() => onToggle(group.key)}
+      openDocument={openDocument}
+    />
+  );
+}
+
 const ToolGroupRow = memo(function ToolGroupRow({
   group,
   open,
@@ -1760,9 +1674,11 @@ const ToolGroupRow = memo(function ToolGroupRow({
   footerDisabled = false,
   onFooterRevert,
   outputOf,
+  inProgress = false,
 }: {
   group: ToolCallGroup;
   open: boolean;
+  inProgress?: boolean;
   expandedKeys: ReadonlySet<string>;
   onToggle: (key: string) => void;
   footerChangeSequence?: number;
@@ -1790,6 +1706,33 @@ const ToolGroupRow = memo(function ToolGroupRow({
   const footerLabel = footerChangeSequence !== undefined
     ? getDiscardLabel(footerIsTrailing, footerCreatedGadgetTitles)
     : null;
+  if (group.batches) {
+    return (
+      <div className="group">
+        <WorkRunFromContext group={group} open={open} onToggle={onToggle} inProgress={inProgress} />
+        {footerChangeSequence !== undefined && footerTimestamp && footerLabel && onFooterRevert && (
+          <div className="mt-0.5 flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
+            <Tooltip content={footerLabel} asChild>
+              <button
+                type="button"
+                disabled={footerDisabled}
+                onClick={() => onFooterRevert(footerChangeSequence)}
+                className="flex cursor-pointer items-center rounded-md p-1 text-kumo-inactive transition-[color,opacity,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label={footerLabel}
+              >
+                <ArrowUUpLeft size={15} />
+              </button>
+            </Tooltip>
+            <Tooltip content={formatFullTimestamp(footerTimestamp)} asChild>
+              <span className="px-1 font-mono text-[11px] leading-4 text-kumo-inactive">
+                {footerTimestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="group -ml-0.5">
       <button
@@ -3605,6 +3548,8 @@ function isObservationActionMessage(msg: AiChatMessage): msg is ObservationChatM
 type WorkMessageParts = {
   toolCalls: AiToolCall[];
   observations: ObservationChatMessage[];
+  // Ответы модели с наблюдениями, записанными во время их инструментов (агент пишет их следом).
+  batches: WorkBatch[];
   lastAgentMessageSequence: number | null;
   lastWorkSequence: number;
   lastWorkTimestamp: Date;
@@ -3630,6 +3575,7 @@ function getWorkOnlyMessageParts(msg: AiChatMessage): WorkMessageParts | null {
     return {
       toolCalls: [],
       observations: [msg],
+      batches: [{ calls: [], observations: [observationRecord(msg)] }],
       lastAgentMessageSequence: null,
       lastWorkSequence: msg.sequence,
       lastWorkTimestamp: msg.timestamp,
@@ -3644,6 +3590,7 @@ function getWorkOnlyMessageParts(msg: AiChatMessage): WorkMessageParts | null {
     return {
       toolCalls: msg.toolCalls,
       observations: [],
+      batches: [{ calls: msg.toolCalls, observations: [] }],
       lastAgentMessageSequence: msg.sequence,
       lastWorkSequence: msg.sequence,
       lastWorkTimestamp: msg.timestamp,
@@ -3656,6 +3603,11 @@ function getWorkOnlyMessageParts(msg: AiChatMessage): WorkMessageParts | null {
 function appendWorkParts(target: WorkMessageParts, source: WorkMessageParts) {
   target.toolCalls.push(...source.toolCalls);
   target.observations.push(...source.observations);
+  for (const batch of source.batches) {
+    const last = target.batches.at(-1);
+    if (batch.calls.length === 0 && last) last.observations.push(...batch.observations);
+    else target.batches.push({ calls: [...batch.calls], observations: [...batch.observations] });
+  }
   target.lastWorkSequence = source.lastWorkSequence;
   target.lastWorkTimestamp = source.lastWorkTimestamp;
   if (source.lastAgentMessageSequence !== null) {
@@ -3898,6 +3850,7 @@ export function buildChatDisplayEntries(
       const workParts: WorkMessageParts = {
         toolCalls: [...initialWorkParts.toolCalls],
         observations: [...initialWorkParts.observations],
+        batches: initialWorkParts.batches.map((batch) => ({ calls: [...batch.calls], observations: [...batch.observations] })),
         lastAgentMessageSequence: initialWorkParts.lastAgentMessageSequence,
         lastWorkSequence: initialWorkParts.lastWorkSequence,
         lastWorkTimestamp: initialWorkParts.lastWorkTimestamp,
@@ -3925,6 +3878,7 @@ export function buildChatDisplayEntries(
           transcriptToolCalls(workParts.toolCalls),
           workParts.observations,
           outputOf,
+          { batches: workParts.batches, startedAt: messages[i - 1]?.timestamp, finishedAt: workParts.lastWorkTimestamp },
         ),
         lastMessageSequence: workParts.lastAgentMessageSequence ?? workParts.lastWorkSequence,
         lastMessageTimestamp: workParts.lastWorkTimestamp,
@@ -3938,6 +3892,7 @@ export function buildChatDisplayEntries(
       const workParts: WorkMessageParts = {
         toolCalls: msg.toolCalls ? [...msg.toolCalls] : [],
         observations: [],
+        batches: [{ calls: msg.toolCalls ? [...msg.toolCalls] : [], observations: [] }],
         lastAgentMessageSequence: msg.sequence,
         lastWorkSequence: msg.sequence,
         lastWorkTimestamp: msg.timestamp,
@@ -3966,6 +3921,7 @@ export function buildChatDisplayEntries(
             transcriptToolCalls(workParts.toolCalls),
             workParts.observations,
             outputOf,
+            { batches: workParts.batches, startedAt: messages[i - 1]?.timestamp, finishedAt: workParts.lastWorkTimestamp },
           ),
           lastMessageSequence: workParts.lastAgentMessageSequence ?? msg.sequence,
         });
@@ -5418,6 +5374,11 @@ function ChatInterface({
 
   // Patch cached chat messages on action upserts.
   const openActionScreen = useActionOpen();
+  const openMnemosDocument = useMnemosLink();
+  const workRunContext = useMemo(() => ({
+    projectNames: new Map(chatProjectList.flatMap((p) => p.title && !looksLikeId(p.title) ? [[p.projectId, p.title] as const] : [])),
+    openDocument: openMnemosDocument,
+  }), [chatProjectList, openMnemosDocument]);
   useActionEntries(overseer, (record) => {
     if (applyActionLogUpdateToCachedMessages(record)) scheduleUpdate();
   });
@@ -6504,6 +6465,7 @@ function ChatInterface({
           onReject={() => void resolveAction(msg.actionId, "deny")}
           onAlwaysApprove={canAlwaysApprove ? () => setAutoApproveConfirm(autoApproveTarget!) : undefined}
           open={log.description.card.open ? { label: log.description.card.open.label, onOpen: openActionScreen(log.description.card.open, log.resourceTitle) } : undefined}
+          doneLabel={actionDisplay(log.description.actionKind?.tag, log.description.title).past}
         />
       );
     }
@@ -6869,6 +6831,7 @@ function ChatInterface({
 
   // ─── main render ─────────────────────────────────────────────────────────────
   return (
+    <WorkRunContext.Provider value={workRunContext}>
     <div
       className={`flex h-full bg-kumo-base ${sidebarMode ? "flex-row" : "flex-col"}`}
     >
@@ -6945,7 +6908,7 @@ function ChatInterface({
                 />
               )}
 
-              <CorporateWorkContext messages={currentMessages} />
+              <CorporateWorkContext messages={currentMessages} openDocument={openMnemosDocument} />
               {/* Messages */}
               <div
                 ref={messagesContainerRef}
@@ -7141,6 +7104,7 @@ function ChatInterface({
                                 key={group.key}
                                 group={group}
                                 open={expandedToolCalls.has(group.key)}
+                                inProgress={isAgentActive && entryIndex === displayEntries.length - 1}
                                 expandedKeys={expandedToolCalls}
                                 onToggle={toggleToolCallExpansion}
                                 footerChangeSequence={
@@ -7366,6 +7330,7 @@ function ChatInterface({
                                     key={group.key}
                                     group={group}
                                     open={expandedToolCalls.has(group.key)}
+                                    inProgress={isAgentActive && entryIndex === displayEntries.length - 1}
                                     expandedKeys={expandedToolCalls}
                                     onToggle={toggleToolCallExpansion}
                                     footerChangeSequence={
@@ -7686,77 +7651,14 @@ function ChatInterface({
                               />
                             ))}
 
-                          {provisionalToolCalls.some((t) => !(t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps)) && (() => {
-                            const plainCalls = provisionalToolCalls.filter(
-                              (t) => !(t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps),
-                            );
-                            const first = plainCalls[0];
-                            const { label, detailLines } =
-                              buildProvisionalToolSummary(plainCalls);
-                            const expansionKey = `group-${first.toolCallId}`;
-                            const isExpanded = expandedToolCalls.has(expansionKey);
-                            const detailCalls = plainCalls.filter(
-                              (t) => t.code || t.output,
-                            );
-                            return (
-                              <div className="space-y-1">
-                                <div className="group/work -ml-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleToolCallExpansion(expansionKey)}
-                                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 text-left text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.995]"
-                                    aria-expanded={isExpanded}
-                                  >
-                                    <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-                                      <WorkIcon Icon={getToolIcon(first.toolName, first.outputFormat)} />
-                                    </span>
-                                    <span className="min-w-0 flex-1">
-                                      <span className="flex min-w-0 items-center gap-2 text-[14px] leading-5 tracking-[-0.25px]">
-                                        <span className="min-w-0 truncate">{label}</span>
-                                        <CaretRight
-                                          size={13}
-                                          weight="bold"
-                                          className={`flex-shrink-0 text-kumo-inactive transition-transform duration-150 ease-out ${isExpanded ? "rotate-90" : ""}`}
-                                        />
-                                      </span>
-                                      {detailLines.length > 1 && (
-                                        <span className="mt-1 block truncate font-mono text-[12px] leading-4 text-kumo-inactive">
-                                          {detailLines.join(" · ")}
-                                        </span>
-                                      )}
-                                    </span>
-                                  </button>
-                                  {isExpanded && detailCalls.length > 0 && (
-                                    <div className="ml-8 mt-1 space-y-1">
-                                      {detailCalls.map((toolCall) => (
-                                        <div
-                                          key={`stream-tool-${toolCall.toolCallId}`}
-                                          className="themed-surface-inset space-y-3 rounded-2xl border border-kumo-line/70 bg-kumo-elevated/45 p-3"
-                                        >
-                                          {toolCall.code && (
-                                            <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Код</span>
-                                              <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
-                                                {toolCall.code}
-                                              </pre>
-                                            </>
-                                          )}
-                                          {toolCall.output && (
-                                            <>
-                                              <span className="font-mono text-[11px] leading-4 text-kumo-inactive uppercase tracking-[0.08em]">Результат</span>
-                                              <pre className="max-h-56 overflow-auto rounded-xl border border-kumo-line/70 bg-kumo-base p-3 font-mono text-[12px] leading-[18px] text-kumo-subtle whitespace-pre-wrap">
-                                                {toolCall.output}
-                                              </pre>
-                                            </>
-                                          )}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })()}
+                          {provisionalToolCalls
+                            .filter((t) => !(t.toolName === "codeWork" || t.toolName === "codeAsk" || t.steps))
+                            .map((t) => (
+                              <LiveStep
+                                key={`stream-tool-${t.toolCallId}`}
+                                label={t.outputFormat ? `Создаю: ${localizedNoun(t.outputFormat.noun)}` : describeLiveStep(t.toolName, t.target, t.code)}
+                              />
+                            ))}
                         </div>
                       );
                     })()}
@@ -7928,6 +7830,7 @@ function ChatInterface({
         onClose={() => setUsageModalOpen(false)}
       />
     </div>
+    </WorkRunContext.Provider>
   );
 }
 

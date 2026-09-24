@@ -2,7 +2,7 @@ import { DurableObject, RpcTarget, type RpcStub } from "cloudflare:workers";
 import {
   boundAgentCatalog,
   type AgentCatalog, type AgentCatalogRequest, type ApprovalQueue, type Gatekeeper,
-  type GatekeeperUserVerifier, type ObservationAuthorizer, type ResourceDescription,
+  type GatekeeperUserVerifier, type ObservationActivity, type ObservationAuthorizer, type ResourceDescription,
 } from "@gadgets/workshop-shared/gatekeeper";
 import {
   MnemosAPIError, type DocumentContent, type DraftDocument, type DraftDownloadTicket, type DraftHead, type DraftState,
@@ -143,6 +143,10 @@ const TEXT_TYPES = new Set(["text/plain", "text/markdown"]);
 const TRACKER_TYPES = new Set(["application/vnd.mnemos.task-tracker+json"]);
 /** Сколько строк папки отдаётся за один обзор. */
 const FOLDER_ENTRIES_LIMIT = 500;
+/** Сколько найденных записей попадает в итог шага для ленты беседы; полное число — в total. */
+const RESULT_ITEMS = 12;
+/** Итог чтения без вида: вид и ref подставляет наблюдение итога. */
+type ActivityResult = Omit<ObservationActivity, "kind">;
 /** Виды, которые человек может разрешить насовсем кнопкой «Разрешать всегда». */
 const AUTO_APPROVABLE_TAGS: (AgentActionKind | "publish")[] = ["publish", ...AUTO_APPROVABLE_KINDS];
 const UNSUPPORTED = "Эта версия подключения Mnemos не умеет выполнять действие; обновите приложение Mnemos.";
@@ -369,6 +373,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         await authorizer.authorizeObservation({
           title: "Каталог Mnemos",
           description: `Перечислено проектов: ${catalog.entries.length}.`,
+          activity: {kind: "mnemos.catalog", total: catalog.entries.length},
           excludeObservers: await this.#excludedObservers(),
         });
       }
@@ -468,7 +473,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   async #proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, input: AdminOperationRequest): Promise<MnemosAdminProposal> {
     identifier(requestId, "ключ операции", 128);
     const request = checkedAdminOperation(input);
-    await queue.authorizeObservation({title: "Подготовка действия Mnemos", description: "Проверка предложения перед подтверждением человеком.", excludeObservers: await this.#excludedObservers()});
+    await queue.authorizeObservation({title: "Подготовка действия Mnemos", description: "Проверка предложения перед подтверждением человеком.", activity: {kind: "mnemos.prepare", subject: request.kind === "create_project" ? "Создать проект" : request.kind === "connect_project" ? "Подключить проект к агенту Mnemos" : "Изменить доступ сотрудника"}, excludeObservers: await this.#excludedObservers()});
     const agent = await this.#agent();
     try {
       if (!agent.admin || !agent.bindingId) throw new Error("Административные действия агента ещё не подключены.");
@@ -530,7 +535,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (typeof name !== "string" || !name.trim() || name !== name.trim() || /[/\\\0]/.test(name) || bytes(name)>255 || typeof content !== "string" || content.includes("\0") || !TEXT_TYPES.has(mediaType) || bytes(content)>CONTENT_LIMIT) throw new Error("Некорректное имя, формат или текст нового документа (до 256 КиБ).");
     const app = await this.#app();
     try {
-      await queue.authorizeObservation({title:"Новый документ Mnemos",description:`Проверка проекта и папки для «${name}».`,excludeObservers:await this.#excludedObservers()});
+      await queue.authorizeObservation({title:"Новый документ Mnemos",description:`Проверка проекта и папки для «${name}».`,activity:{kind:"mnemos.create",scopeId:project,subject:name},excludeObservers:await this.#excludedObservers()});
       const projectInfo = (await this.#data(()=>app.ui.listProjects())).projects.find(p=>p.id===project);
       if (!projectInfo) throw new Error(UNAVAILABLE);
       const nodes = await this.#nodes(app.ui, project);
@@ -558,7 +563,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const app = await this.#app();
     try {
       const { ui } = app;
-      await queue.authorizeObservation({title:"Черновик Mnemos",description:`Запись личного черновика в проекте ${project}.`,excludeObservers:await this.#excludedObservers()});
+      await queue.authorizeObservation({title:"Черновик Mnemos",description:`Запись личного черновика в проекте ${project}.`,activity:{kind:"mnemos.edit",scopeId:project,subject:clip(document,200)},excludeObservers:await this.#excludedObservers()});
       const state = await this.#data(() => ui.draftState(project));
       const base: BaseVersion = state.personal_exists ? { head: state.personal_head, personal: true } : { head: state.shared_head, personal: false };
       const located = await this.#lookup(ui, project, document);
@@ -619,13 +624,13 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     try { return await read(); } catch (error) { throw failure(error); }
   }
 
-  async #authorizePersonal(queue: RpcStub<ApprovalQueue>): Promise<void> {
-    await queue.authorizeObservation({ownerOnly: true, title: "Личные материалы Mnemos", description: "Чтение личных материалов владельца в пределах прав агента."});
+  async #authorizePersonal(queue: RpcStub<ApprovalQueue>, activity: ObservationActivity): Promise<void> {
+    await queue.authorizeObservation({ownerOnly: true, title: "Личные материалы Mnemos", description: "Чтение личных материалов владельца в пределах прав агента.", activity});
   }
   async #listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage> {
     identifier(project, "проект");
     if (typeof cursor !== "string" || cursor.length > 2048) throw new Error("Некорректный курсор.");
-    await this.#authorizePersonal(queue);
+    await this.#authorizePersonal(queue, {kind: "mnemos.personal.list", scopeId: project});
     const agent = await this.#agent();
     try {
       if (!agent.personal) throw new Error(UNAVAILABLE);
@@ -634,7 +639,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   }
   async #readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument> {
     identifier(project, "проект"); identifier(node, "документ");
-    await this.#authorizePersonal(queue);
+    await this.#authorizePersonal(queue, {kind: "mnemos.personal.read", scopeId: project});
     const agent = await this.#agent();
     try {
       const {draft, text} = await this.#personalText(agent, project, node, TEXT_TYPES, "Личный документ недоступен как текст или содержит конфликт.");
@@ -663,6 +668,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     await queue.authorizeObservation({
       title: "Список проектов Mnemos",
       description: "Перечень проектов, доступных владельцу аккаунта.",
+      activity: {kind: "mnemos.projects"},
       excludeObservers: await this.#excludedObservers(),
     });
     const page = await this.#data(() => reader.listProjects());
@@ -672,13 +678,18 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   async #searchProject(queue: RpcStub<ApprovalQueue>, project: string, query: string): Promise<MnemosSearchResult> {
     identifier(project, "проект"); identifier(query, "запрос", 4096);
     using reader = await this.#open();
+    const projectName = await this.#projectName(reader, project);
+    const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Поиск в Mnemos",
-      description: `Проект «${project}», запрос: «${clip(query, 200)}».`,
+      description: `Проект «${projectName ?? project}», запрос: «${clip(query, 200)}».`,
+      activity: {kind: "mnemos.search", ref, scopeId: project, subject: clip(query, 200), ...(projectName ? {scope: projectName} : {})},
       excludeObservers: await this.#excludedObservers(),
     });
     const page = await this.#data(() => reader.searchProject(project, query));
-    await this.#recordWorkContext(queue, reader, project);
+    await this.#recordWorkContext(queue, reader, project, {projectName, result: {ref, total: page.hits.length,
+      items: page.hits.slice(0, RESULT_ITEMS).map(hit => ({name: hit.name, snippet: clip(hit.text.trim(), 200), projectId: project, documentId: hit.node_id, ...(projectName ? {projectName} : {})})),
+      ...(page.index_pending ? {note: "индекс ещё строится"} : page.degraded ? {note: "поиск работал в упрощённом режиме"} : {})}});
     return {
       hits: page.hits.map(hit => ({ document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
       indexPending: page.index_pending, degraded: page.degraded,
@@ -702,11 +713,14 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       const eventId = history?.events.find(event => event.exists !== false)?.event_id;
       publication = eventId ? { projectId: project, nodeId: located.id, eventId } : undefined;
     }
+    const projectName = await this.#projectName(reader, project);
+    const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Чтение документа Mnemos",
       description: located
-        ? `Проект «${project}», документ «${located.name}» (${located.id})${publication ? `, публикация ${publication.eventId}` : ""}.`
-        : `Проект «${project}», запрошен документ «${clip(document, 200)}»; он не найден или недоступен.`,
+        ? `Проект «${projectName ?? project}», документ «${located.name}» (${located.id})${publication ? `, публикация ${publication.eventId}` : ""}.`
+        : `Проект «${projectName ?? project}», запрошен документ «${clip(document, 200)}»; он не найден или недоступен.`,
+      activity: {kind: "mnemos.open", ref, scopeId: project, subject: located && located.name !== located.id ? located.name : clip(document, 200), ...(projectName ? {scope: projectName} : {})},
       excludeObservers: await this.#excludedObservers(publication),
     });
     if (!located || !publication) throw new Error(UNAVAILABLE);
@@ -716,7 +730,10 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return reader.readProjectDocumentWindow(project, located.id, window.ordinal, window.radius, window.maxBytes ?? CONTENT_LIMIT);
     });
     if (!content) throw new Error(UNAVAILABLE);
-    await this.#recordWorkContext(queue, reader, project, located.name !== located.id ? located.name : undefined, publication);
+    const shownName = located.name !== located.id ? located.name : undefined;
+    await this.#recordWorkContext(queue, reader, project, {resourceName: shownName, publication, projectName, result: {ref,
+      items: [{name: shownName ?? "Документ", documentId: located.id, projectId: project, ...(projectName ? {projectName} : {})}],
+      note: window ? `фрагменты ${Math.max(0, window.ordinal - window.radius)}–${window.ordinal + window.radius}` : `${Math.max(1, Math.round(bytes(content.text) / 1024))} КБ${content.truncated ? ", текст усечён" : ""}`}});
     return { document: content.node_id, name: located.name, text: content.text, mediaType: content.media_type, truncated: content.truncated };
   }
 
@@ -726,14 +743,18 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Некорректное значение: limit — целое от 1 до 50.");
     using reader = await this.#open();
     if (!reader.searchAll) throw new Error(UNSUPPORTED);
+    const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Поиск в Mnemos",
       description: `Все доступные проекты, запрос: «${clip(query, 200)}».`,
+      activity: {kind: "mnemos.search", ref, scope: "все проекты", subject: clip(query, 200)},
       excludeObservers: await this.#excludedObservers(),
     });
     const page = await this.#data(() => reader.searchAll!(query, limit));
     const projects = await this.#quiet(() => reader.listProjects());
     const names = new Map((projects?.projects ?? []).map(project => [project.id, project.name]));
+    await this.#recordResult(queue, {ref, total: page.hits.length,
+      items: page.hits.slice(0, RESULT_ITEMS).map(hit => ({name: hit.name, snippet: clip(hit.text.trim(), 200), projectId: hit.project_id, documentId: hit.node_id, ...(names.get(hit.project_id) ? {projectName: names.get(hit.project_id)} : {})}))});
     return {
       hits: page.hits.map(hit => ({ project: hit.project_id, projectName: names.get(hit.project_id) ?? "", document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
       indexPending: page.index_pending, degraded: page.degraded,
@@ -745,9 +766,12 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     identifier(project, "проект");
     if (typeof folder !== "string" || folder.length > 4096) throw new Error("Некорректное значение: папка.");
     using reader = await this.#open();
+    const projectName = await this.#projectName(reader, project);
+    const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Папки проекта Mnemos",
-      description: `Проект «${project}», папка «${clip(folder, 200) || "корень"}».`,
+      description: `Проект «${projectName ?? project}», папка «${clip(folder, 200) || "корень"}».`,
+      activity: {kind: "mnemos.browse", ref, scopeId: project, subject: clip(folder, 200), ...(projectName ? {scope: projectName} : {})},
       excludeObservers: await this.#excludedObservers(),
     });
     const listing = await this.#data(() => this.#nodePages(reader, project));
@@ -776,7 +800,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     }
     const children = nodes.filter(node => (node.parent_id || "") === parent)
       .toSorted((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
-    await this.#recordWorkContext(queue, reader, project);
+    await this.#recordWorkContext(queue, reader, project, {projectName, result: {ref, total: children.length,
+      items: children.slice(0, RESULT_ITEMS).map(node => ({name: node.name, path: path(node), ...(node.is_dir ? {folder: true} : {documentId: node.node_id}), projectId: project}))}});
     return {
       project, folder: parent ? path(byId.get(parent)!) : "",
       entries: children.slice(0, FOLDER_ENTRIES_LIMIT).map(node => ({ id: node.node_id, name: node.name, path: path(node), kind: node.is_dir ? "folder" : "document" })),
@@ -791,9 +816,11 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (typeof message !== "string" || message.includes("\0") || bytes(message) > 1024) throw new Error("Некорректное значение: сообщение публикации (до 1 КиБ).");
     using reader = await this.#open();
     if (!reader.readPublicationPolicy || !reader.readPublicationReview) throw new Error(UNSUPPORTED);
+    const publishedName = await this.#projectName(reader, project);
     await queue.authorizeObservation({
       title: "Публикация Mnemos",
-      description: `Публикация личного черновика в проекте «${project}».`,
+      description: `Публикация личного черновика в проекте «${publishedName ?? project}».`,
+      activity: {kind: "mnemos.publish", scopeId: project, ...(publishedName ? {scope: publishedName} : {})},
       excludeObservers: await this.#excludedObservers(),
     });
     const agent = await this.#agent();
@@ -855,7 +882,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const prepare = this.#account().prepareAgentAction;
     if (!prepare) throw new Error(UNSUPPORTED);
     // Карточка показывает имена людей и документов: наблюдение — только владельцу.
-    await queue.authorizeObservation({ownerOnly: true, title: "Подготовка действия Mnemos", description: `${ACTION_LABELS[request.kind]}: проверка и описание для подтверждения.`});
+    await queue.authorizeObservation({ownerOnly: true, title: "Подготовка действия Mnemos", description: `${ACTION_LABELS[request.kind]}: проверка и описание для подтверждения.`, activity: {kind: "mnemos.prepare", subject: ACTION_LABELS[request.kind]}});
     let prepared: PreparedAgentAction;
     try { prepared = await this.#account().prepareAgentAction!(request); }
     catch (error) { throw failure(error); }
@@ -900,21 +927,21 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (!Number.isSafeInteger(action) || action <= 0) throw new Error(NOT_FOUND);
     const stored = this.ctx.storage.kv.get<StoredAction>(`act:${action}`);
     if (!stored) throw new Error(NOT_FOUND);
-    await queue.authorizeObservation({ownerOnly: true, title: "Итог действия Mnemos", description: stored.title});
+    await queue.authorizeObservation({ownerOnly: true, title: "Итог действия Mnemos", description: stored.title, activity: {kind: "mnemos.status", subject: stored.title}});
     const status = stored.state === "applied" ? "done" : stored.state === "rejected" ? "rejected" : "awaiting_confirmation";
     return {action, title: stored.title, status, ...(stored.outcome ? {result: stored.outcome.summary, ...(stored.outcome.url ? {url: stored.outcome.url} : {})} : {})};
   }
   async #read(queue: RpcStub<ApprovalQueue>, input: AgentReadRequest): Promise<unknown> {
     const request = checkedAgentRead(input);
     if (!this.#account().readForAgent) throw new Error(UNSUPPORTED);
-    await queue.authorizeObservation({ownerOnly: true, title: "Сведения Mnemos", description: `Чтение: ${READ_TITLES[request.kind]}.`});
+    await queue.authorizeObservation({ownerOnly: true, title: "Сведения Mnemos", description: `Чтение: ${READ_TITLES[request.kind]}.`, activity: {kind: `mnemos.info.${request.kind}`, subject: READ_TITLES[request.kind]}});
     try { return await this.#account().readForAgent!(request); }
     catch (error) { throw failure(error); }
   }
 
   async #readTracker(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosTracker> {
     identifier(project, "проект"); identifier(document, "трекер");
-    await this.#authorizePersonal(queue);
+    await this.#authorizePersonal(queue, {kind: "mnemos.tracker.read", scopeId: project, subject: document});
     const agent = await this.#agent();
     try {
       const { draft, text } = await this.#personalText(agent, project, document, TRACKER_TYPES, "Трекер недоступен: документа нет, это не трекер или в нём конфликт.");
@@ -929,7 +956,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     identifier(project, "проект"); identifier(document, "трекер");
     if (typeof expectedHead !== "string" || !/^[a-f0-9]{64}$/.test(expectedHead)) throw new Error("Некорректное значение: expectedHead — head из readTracker().");
     if (typeof create !== "boolean" || !task || typeof task !== "object") throw new Error("Некорректная задача трекера.");
-    await this.#authorizePersonal(queue);
+    await this.#authorizePersonal(queue, {kind: "mnemos.tracker.change", scopeId: project, subject: document, ...(typeof task.title === "string" ? {note: clip(task.title, 120)} : {})});
     const agent = await this.#agent();
     try {
       if (!agent.textUploads) throw new Error("Хранилище Mnemos не настроено; загрузка текста недоступна.");
@@ -958,15 +985,33 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     } finally { release(agent); }
   }
 
-  /** Контекст фиксируется после успешного чтения; недоступное имя не подменяется ID. */
-  async #recordWorkContext(queue: RpcStub<ApprovalQueue>, reader: LibraryReader, project: string, resourceName?: string, publication?: Publication): Promise<void> {
-    const projects = await this.#quiet(() => reader.listProjects());
-    const projectName = projects?.projects.find(item => item.id === project)?.name;
-    if (!projectName) return;
+  /** Имя проекта для подписи шага; null — список недоступен или проекта в нём нет. */
+  async #projectName(reader: LibraryReader, project: string): Promise<string | undefined> {
+    return (await this.#quiet(() => reader.listProjects()))?.projects.find(item => item.id === project)?.name;
+  }
+  /**
+   * Контекст фиксируется после успешного чтения; недоступное имя не подменяется ID. Итог чтения
+   * (найденное, размер) едет в том же наблюдении: строка шага в беседе показывает его по раскрытию.
+   */
+  async #recordWorkContext(queue: RpcStub<ApprovalQueue>, reader: LibraryReader, project: string,
+      options: { resourceName?: string; publication?: Publication; projectName?: string; result?: ActivityResult } = {}): Promise<void> {
+    const { resourceName, publication, result } = options;
+    const projectName = options.projectName ?? await this.#projectName(reader, project);
+    if (!projectName) { if (result) await this.#recordResult(queue, result, publication); return; }
     await queue.authorizeObservation({
       title: "Материалы Mnemos",
       description: resourceName ? `Проект «${projectName}», документ «${resourceName}».` : `Поиск выполнен в проекте «${projectName}».`,
       workContext: {projectName, ...(resourceName ? {resourceName} : {})},
+      ...(result ? {activity: {...result, kind: "mnemos.result", scope: projectName, scopeId: project}} : {}),
+      excludeObservers: await this.#excludedObservers(publication),
+    });
+  }
+  /** Итог чтения без проекта (поиск по всем проектам): только для ленты беседы. */
+  async #recordResult(queue: RpcStub<ApprovalQueue>, result: ActivityResult, publication?: Publication): Promise<void> {
+    await queue.authorizeObservation({
+      title: "Материалы Mnemos",
+      description: `Итог чтения: записей ${result.total ?? result.items?.length ?? 0}.`,
+      activity: {...result, kind: "mnemos.result"},
       excludeObservers: await this.#excludedObservers(publication),
     });
   }

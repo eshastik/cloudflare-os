@@ -1690,6 +1690,39 @@ export interface ApprovalQueue extends ObservationAuthorizer {
         description: HookDescription): Promise<void>;
 }
 
+/** Найденная или прочитанная запись в итоге шага. Идентификаторы — только для ссылки, на экран не выводятся. */
+export type ObservationActivityItem = {
+  name: string;
+  path?: string;
+  /** Короткий фрагмент текста, не длиннее пары сотен символов. */
+  snippet?: string;
+  folder?: boolean;
+  projectId?: string;
+  projectName?: string;
+  documentId?: string;
+};
+
+/**
+ * Сведения для строки хода работы в беседе. Ресурс заполняет их, чтобы строка сказала, что сделано
+ * («Искал «…» в «Склад» · 8 совпадений»), без разбора текста description.
+ */
+export type ObservationActivity = {
+  /** Вид шага по реестру отображения интерфейса, например "mnemos.search". */
+  kind: string;
+  /** Связывает наблюдение перед чтением с наблюдением итога после него. */
+  ref?: string;
+  /** Где: имя проекта или источника, как его видит человек. */
+  scope?: string;
+  scopeId?: string;
+  /** Главный параметр: запрос, папка, имя документа, название действия. */
+  subject?: string;
+  /** Итог: найденное или прочитанное; список усечён, полное число — в total. */
+  items?: ObservationActivityItem[];
+  total?: number;
+  /** Короткое уточнение итога: «усечён», «фрагменты 10–14». */
+  note?: string;
+};
+
 export type ObservationDescription = {
   /** Личные данные владельца: запрещает совместный доступ к этой беседе, сохраняя действия владельца. */
   ownerOnly?: boolean;
@@ -1700,6 +1733,8 @@ export type ObservationDescription = {
     /** Имя фактически прочитанного ресурса; отсутствует при поиске по проекту. */
     resourceName?: string;
   };
+  /** Что именно сделано — для строки хода работы в беседе. Только показ: права не выдаёт. */
+  activity?: ObservationActivity;
 
   // Brief one-line summary of the observation, like an email subject line, to display in a list.
   title: string;

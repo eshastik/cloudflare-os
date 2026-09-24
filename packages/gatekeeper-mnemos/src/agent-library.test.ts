@@ -823,3 +823,40 @@ test("карточка-переход: ход агента не останавл
   assert.equal(disconnect.card.open, undefined);
   assert.ok(!state.calls.includes("execute:disconnect_source"), "до подтверждения не отключается");
 });
+
+test("ход работы в беседе: поиск, чтение и обзор папки несут имя проекта, запрос и итог без сырых идентификаторов в подписи", async () => {
+  const { library, state } = fixture();
+  const auth = authorizer(state);
+  const session = await library.startSession(auth as any);
+  type Seen = { title: string; description: string; activity?: { kind: string; ref?: string; scope?: string; scopeId?: string; subject?: string; total?: number; note?: string; items?: { name: string; path?: string; snippet?: string; folder?: boolean; documentId?: string; projectId?: string }[] } };
+  const seen = () => auth.seen as unknown as Seen[];
+
+  await session.searchProject("p1", "план");
+  const [search, found] = seen().slice(-2);
+  assert.deepEqual({ ...search.activity, ref: undefined }, { kind: "mnemos.search", ref: undefined, scope: "Продажи", scopeId: "p1", subject: "план" });
+  assert.match(search.description, /Проект «Продажи», запрос: «план»/);
+  assert.equal(found.activity?.kind, "mnemos.result");
+  assert.equal(found.activity?.ref, search.activity?.ref, "итог связан с поиском");
+  assert.equal(found.activity?.total, 1);
+  assert.deepEqual(found.activity?.items, [{ name: "plan.md", snippet: "план", projectId: "p1", documentId: "n1", projectName: "Продажи" }]);
+
+  await session.readDocument("p1", "docs/plan.md");
+  const [open, read] = seen().slice(-2);
+  assert.equal(open.activity?.kind, "mnemos.open");
+  assert.equal(open.activity?.subject, "plan.md");
+  assert.equal(read.activity?.ref, open.activity?.ref);
+  assert.equal(read.activity?.items?.[0].name, "plan.md");
+  assert.match(read.activity?.note ?? "", /КБ/);
+
+  await session.browseProject("p1", "docs");
+  const [browse, listing] = seen().slice(-2);
+  assert.deepEqual([browse.activity?.kind, browse.activity?.scope, browse.activity?.subject], ["mnemos.browse", "Продажи", "docs"]);
+  assert.deepEqual(listing.activity?.items, [{ name: "plan.md", path: "docs/plan.md", documentId: "n1", projectId: "p1" }]);
+
+  await session.search("архив", 5);
+  const [everywhere, hits] = seen().slice(-2);
+  assert.deepEqual([everywhere.activity?.kind, everywhere.activity?.scope], ["mnemos.search", "все проекты"]);
+  assert.equal(hits.activity?.ref, everywhere.activity?.ref);
+  assert.equal(hits.activity?.items?.[0].name, "readme.md");
+
+});

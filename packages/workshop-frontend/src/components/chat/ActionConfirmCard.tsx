@@ -16,7 +16,7 @@ export type ActionConfirmState = "pending" | "approved" | "rejected";
 // Карточка действия, которое агент предлагает от имени человека. Оформлена как карточка
 // созданного документа: плитка со значком вида действия слева, заголовок и подробности справа.
 // Пока решения нет — кнопки; после решения — итог и ссылка на результат, если ресурс её дал.
-export function ActionConfirmCard({ icon, title, details, state, outcome, busy, onApprove, onReject, onAlwaysApprove, open }: {
+export function ActionConfirmCard({ icon, title, details, state, outcome, busy, onApprove, onReject, onAlwaysApprove, open, doneLabel }: {
   icon: ActionCardIcon;
   title: string;
   details: string[];
@@ -29,6 +29,8 @@ export function ActionConfirmCard({ icon, title, details, state, outcome, busy, 
   onAlwaysApprove?: () => void;
   /** Карточка-переход: главная кнопка открывает экран у человека; без обработчика экран недоступен. */
   open?: { label: string; onOpen?: () => void };
+  /** Что сделано, в прошедшем времени, из реестра отображения: «Открыл доступ к документу». */
+  doneLabel?: string;
 }) {
   const Glyph = ICONS[icon] ?? ShieldCheck;
   const link = outcome?.url ? safeExternalUrl(outcome.url) : undefined;
@@ -84,11 +86,11 @@ export function ActionConfirmCard({ icon, title, details, state, outcome, busy, 
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] leading-4">
             {state === "approved" ? (
               <span className="flex items-center gap-1 font-medium text-kumo-success">
-                <CheckCircle size={14} weight="fill" aria-hidden="true" /> Сделано
+                <CheckCircle size={14} weight="fill" aria-hidden="true" /> {doneLabel ?? "Сделано"}
               </span>
             ) : (
               <span className="flex items-center gap-1 font-medium text-kumo-danger">
-                <XCircle size={14} weight="fill" aria-hidden="true" /> Отклонено
+                <XCircle size={14} weight="fill" aria-hidden="true" /> Вы отклонили
               </span>
             )}
             {state === "approved" && outcome && <span className="text-kumo-subtle">{outcome.summary}</span>}

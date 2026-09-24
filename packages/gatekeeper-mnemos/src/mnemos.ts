@@ -1066,7 +1066,7 @@ export class MnemosNativeDocumentSource extends DurableObject<Env, {
     for (const [id, verifier] of this.#observers()) {
       if (!await verifier.canReadPublication(resourceUrl, publication, tenantId)) excluded.push(id);
     }
-    await authorizer.authorizeObservation({ title: "Открыть документ Mnemos", description: "Чтение выбранной публикации нативного документа.", excludeObservers: excluded });
+    await authorizer.authorizeObservation({ title: "Открыть документ Mnemos", description: "Чтение выбранной публикации нативного документа.", activity: { kind: "mnemos.native.open" }, excludeObservers: excluded });
   }
   async openDocument(authorizer: RpcStub<ObservationAuthorizer>) {
     const storageOrigin = await this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId)).nativeStorageOrigin();
