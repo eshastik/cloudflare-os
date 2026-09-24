@@ -285,11 +285,6 @@ function PaneWorkpieceTabs({
           >
             <FormatGlyph output={gadget.output} size="sm" className="flex-shrink-0" weight="regular" />
             <span className="truncate">{gadget.title}</span>
-            {gadget.chatId !== undefined && (
-              <span className="flex-shrink-0 rounded-full bg-kumo-fill px-1.5 py-0.5 text-[10px] font-medium leading-none text-kumo-subtle">
-                Черновик
-              </span>
-            )}
           </button>
         )
       })}
@@ -1607,7 +1602,6 @@ export default function GadgetEditor() {
                 <PaneLabel
                   output={selectedGadgetSummary.output}
                   title={headerTitle}
-                  badge={selectedGadgetSummary.chatId !== undefined ? 'Черновик' : undefined}
                 />
               )}
             </div>
