@@ -5,17 +5,20 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 
 type PillTone = "primary" | "secondary" | "ghost" | "danger";
 
+// Неактивная кнопка — по токенам, а не полупрозрачностью: бледная заливка акцента читалась как сломанная.
+const FILLED_OFF = "disabled:border-transparent disabled:bg-kumo-tint disabled:text-kumo-inactive";
+const PLAIN_OFF = "disabled:bg-transparent disabled:text-kumo-inactive";
 const PILL: Record<PillTone, string> = {
-  primary: "border border-transparent bg-kumo-brand text-white hover:bg-kumo-brand-hover",
-  secondary: "border border-kumo-fill-hover bg-kumo-overlay text-kumo-default hover:bg-kumo-tint",
-  ghost: "border border-transparent bg-transparent text-kumo-default hover:bg-kumo-tint",
-  danger: "border border-transparent bg-transparent text-kumo-danger hover:bg-kumo-danger-tint",
+  primary: `border border-transparent bg-kumo-brand text-white hover:bg-kumo-brand-hover ${FILLED_OFF}`,
+  secondary: `border border-kumo-fill-hover bg-kumo-overlay text-kumo-default hover:bg-kumo-tint ${FILLED_OFF}`,
+  ghost: `border border-transparent bg-transparent text-kumo-default hover:bg-kumo-tint ${PLAIN_OFF}`,
+  danger: `border border-transparent bg-transparent text-kumo-danger hover:bg-kumo-danger-tint ${PLAIN_OFF}`,
 };
 
 /** Кнопка-пилюля: радиус — половина высоты. */
 export function Pill({ tone = "secondary", size = "sm", className = "", type = "button", ...rest }: { tone?: PillTone; size?: "sm" | "md" } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const height = size === "md" ? "h-10 px-[18px] text-[14px]" : "h-8 px-3 text-[13px]";
-  return <button type={type} {...rest} className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${height} ${PILL[tone]} ${className}`} />;
+  return <button type={type} {...rest} className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-kumo-ring disabled:cursor-not-allowed ${height} ${PILL[tone]} ${className}`} />;
 }
 
 /** Белая карточка со строками. */

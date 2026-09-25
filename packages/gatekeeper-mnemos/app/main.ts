@@ -282,6 +282,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   updateGitSyncLink: MnemosAccountSession["updateGitSyncLink"];
   deleteGitSyncLink: MnemosAccountSession["deleteGitSyncLink"];
   refreshGitSyncLink: MnemosAccountSession["refreshGitSyncLink"];
+  createProjectFromRepository: MnemosAccountSession["createProjectFromRepository"];
   listGitAppRepositories: MnemosAccountSession["listGitAppRepositories"];
   startGitHubConnect: MnemosAccountSession["startGitHubConnect"];
   listGitHubAccounts: MnemosAccountSession["listGitHubAccounts"];

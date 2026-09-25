@@ -16,6 +16,7 @@ import { ActionForm, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTi
 import ProjectIntake from "./ProjectIntake.tsx";
 import { uploadActive, useProjectUpload, useUploadChoosing } from "./UploadNotice.tsx";
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
+import GitHubSyncStatus from "./GitHubSyncStatus.tsx";
 import ProjectTasks from "./ProjectTasks.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
@@ -120,6 +121,7 @@ function ProjectPage({ project, data, view, linkedDocument = null, onOpenDocumen
         <div className="mt-2.5"><VisibilityBadge project={project} /></div>
       </PageHeader>
       {actionError && <div className="mb-4"><Notice tone="danger">{actionError}</Notice></div>}
+      {!hasCode && <GitHubSyncStatus projectId={project.id} />}
       <div id="project-share">{sharing && <SharePanel project={project} onClose={() => setSharing(false)} onChanged={data.reloadProjects} />}</div>
       <div className="grid gap-x-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="min-w-0">

@@ -1478,6 +1478,7 @@ export class MnemosAccountSession {
   async createGitSyncLink(input:import("./mnemos-api.ts").GitSyncLinkCreate){this.#check();const value=await this.#client.createGitSyncLink(input,this.#lifetime.signal);this.#check();return value;}
   async updateGitSyncLink(link:string,input:import("./mnemos-api.ts").GitSyncLinkUpdate){this.#check();const value=await this.#client.updateGitSyncLink(link,input,this.#lifetime.signal);this.#check();return value;}
   async deleteGitSyncLink(link:string,expectedRevision:number){this.#check();const value=await this.#client.deleteGitSyncLink(link,expectedRevision,this.#lifetime.signal);this.#check();return value;}
+  async createProjectFromRepository(input:import("./mnemos-api.ts").GitSyncProjectCreate){this.#check();const value=await this.#client.createProjectFromRepository(input,this.#lifetime.signal);this.#check();return value;}
   async refreshGitSyncLink(link:string){this.#check();const value=await this.#client.refreshGitSyncLink(link,this.#lifetime.signal);this.#check();return value;}
   async listGitAppRepositories(){this.#check();const value=await this.#client.listGitAppRepositories(this.#lifetime.signal);this.#check();return value;}
   async startGitHubConnect(){this.#check();const value=await this.#client.startGitHubConnect(this.#lifetime.signal);this.#check();return value;}

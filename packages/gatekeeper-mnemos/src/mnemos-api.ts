@@ -1037,6 +1037,18 @@ export class MnemosAPI {
     return this.#request(`/v1/git/sync-links/${segment(link)}?expected_revision=${expectedRevision}`,"DELETE",signal);
   }
   refreshGitSyncLink(link:string,signal?:AbortSignal):Promise<{queued:boolean}>{return this.#request(`/v1/git/sync-links/${segment(link)}/refresh`,"POST",signal,{});}
+  /** «Создать проект» из репозитория: проект и связь заводятся на сервере одной операцией. */
+  createProjectFromRepository(input:GitSyncProjectCreate,signal?:AbortSignal):Promise<{project:{id:string;name:string;visibility?:string};link:GitSyncLink}>{
+    const name=input.name.trim();
+    if(!name||new TextEncoder().encode(name).length>255)throw new MnemosAPIError(400);
+    segment(input.repository_id);
+    if(input.source==="app"){segment(input.installation_id??"");if(input.connection_id)throw new MnemosAPIError(400);}
+    else if(input.source==="connection"){segment(input.connection_id??"");if(input.installation_id)throw new MnemosAPIError(400);}
+    else throw new MnemosAPIError(400);
+    if(!input.repository_name||input.repository_name.length>255)throw new MnemosAPIError(400);
+    checkGitSyncSettings(input);
+    return this.#request("/v1/git/sync-projects","POST",signal,{...input,name});
+  }
   /** Репозитории, к которым установлено GitHub App; available=false — приложение на сервере не настроено. */
   listGitAppRepositories(signal?:AbortSignal):Promise<GitAppRepositoryPage>{return this.#request("/v1/git/app/repositories","GET",signal);}
   /** «Подключить GitHub»: адрес страницы установки приложения на GitHub с одноразовым state. */
@@ -1512,3 +1524,10 @@ function validPersonPhoto(value: unknown): value is PersonPhoto {
       !Number.isSafeInteger(p.size_bytes) || typeof p.url !== "string" || typeof p.expires_at !== "string") return false;
   try { const url = new URL(p.url); return url.protocol === "https:" && !url.username && !url.password; } catch { return false; }
 }
+
+/** «Создать проект» из репозитория GitHub (сервер: POST /v1/git/sync-projects). */
+export interface GitSyncProjectCreate extends GitSyncSettings {name:string;source:"app"|"connection";installation_id?:string;connection_id?:string;repository_id:string;repository_name:string}
+/** Дополнение списка репозиториев: аккаунт, дата последней отправки кода и язык по оценке GitHub. */
+export interface GitAppRepository {account?:string;pushed_at?:string;language?:string|null}
+/** Сколько файлов репозитория сейчас лежит в проекте по связи. */
+export interface GitSyncLink {file_count?:number}

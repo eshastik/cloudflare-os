@@ -105,10 +105,12 @@ test("«Подключения»: свои аккаунты GitHub — подк�
     assert.deepEqual(calls.find(([m]) => m === "disconnectGitHubAccount"), ["disconnectGitHubAccount", "12"]);
     assert.ok(block().textContent.includes("alice"), "второй аккаунт остался");
 
-    [...row().querySelectorAll("button")].find(b => b.textContent === "Связать репозиторий с проектом").click();
-    await app.until(() => row().querySelectorAll('select[aria-label="Репозиторий GitHub"] optgroup').length === 2, "репозитории по аккаунтам");
-    const groups = [...row().querySelectorAll('select[aria-label="Репозиторий GitHub"] optgroup')].map(g => `${g.label}: ${[...g.querySelectorAll("option")].map(o => o.textContent).join(", ")}`);
-    assert.deepEqual(groups, ["acme: acme/api, acme/web", "alice: alice/site"]);
+    // Репозитории — строками с аккаунтом, без выпадающего списка.
+    await app.until(() => row().querySelectorAll("[data-repo]").length === 3, "репозитории строками");
+    const repos = [...row().querySelectorAll("[data-repo]")].map(r => r.dataset.repo).sort();
+    assert.deepEqual(repos, ["acme/api", "acme/web", "alice/site"]);
+    assert.ok(row().querySelector('[data-repo="acme/api"]').textContent.includes("api · acme"), "имя и аккаунт в строке");
+    assert.equal(row().querySelector('[aria-label="Синхронизация с GitHub"] select'), null, "ни одного выпадающего списка");
   } finally { app.dispose(); }
 });
 

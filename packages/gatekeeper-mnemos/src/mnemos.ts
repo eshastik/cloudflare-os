@@ -1720,6 +1720,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async createGitSyncLink(input:import("./mnemos-api.ts").GitSyncLinkCreate){return this.#session.createGitSyncLink(input);}
   async updateGitSyncLink(link:string,input:import("./mnemos-api.ts").GitSyncLinkUpdate){return this.#session.updateGitSyncLink(link,input);}
   async deleteGitSyncLink(link:string,expectedRevision:number){return this.#session.deleteGitSyncLink(link,expectedRevision);}
+  async createProjectFromRepository(input:import("./mnemos-api.ts").GitSyncProjectCreate){return this.#session.createProjectFromRepository(input);}
   async refreshGitSyncLink(link:string){return this.#session.refreshGitSyncLink(link);}
   async listGitAppRepositories(){return this.#session.listGitAppRepositories();}
   async startGitHubConnect(){return this.#session.startGitHubConnect();}
