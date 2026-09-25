@@ -80,6 +80,28 @@ test("«Журнал и состояние»: одна панель состоя
   } finally { app.dispose(); }
 });
 
+test("«Журнал и состояние»: застрявшая индексация — строкой простыми словами, незнакомая проверка — общей строкой с ключом", async () => {
+  const at = "2026-09-25T10:00:00Z";
+  const ok = key => ({ key, state: "ok", reason: "check_passed", observed_at: at });
+  const metrics = { ...METRICS, signals: [ok("dependencies"), ok("external.readiness"), ok("external.login"), ok("external.read"), ok("external.save"),
+    { key: "shared_projection", state: "firing", reason: "jobs_stalled", observed_at: at, count: 3 },
+    { key: "future.check", state: "firing", reason: "something_new", observed_at: at }] };
+  const app = await mountMemoryApp({
+    async readPlatformMetrics() { return metrics; },
+    readOperationAuditPage: auditPages(EVENTS),
+    async listWorkJournal() { return { entries: [], truncated: false }; },
+    async listPeople() { return PEOPLE; },
+  }, { section: "journal" });
+  try {
+    const panel = () => app.document.querySelector("#root [data-system-state]");
+    await app.until(() => panel(), "панель состояния");
+    const text = panel().textContent;
+    assert.match(text, /Индексация новых файлов застряла: 3 задания дольше 10 минут — поиск их пока не находит/);
+    assert.match(text, /Проверка «future\.check»/, "незнакомая проверка — строкой с ключом");
+    assert.match(text, /Есть проблемы: 2 из 6/);
+  } finally { app.dispose(); }
+});
+
 test("журнал действий: отделы и приглашения из аудита организации видны словами сквозь толщу служебных записей", async () => {
   // Как на установке: каждое обращение интерфейса оставляет request.admit, дела людей тонут в них.
   const events = [

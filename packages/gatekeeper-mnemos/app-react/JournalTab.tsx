@@ -8,20 +8,34 @@ import { Notice, StatusBadge } from "./ui.tsx";
 import { Card, Pill, PillInput, PillSelect } from "./admin-ui.tsx";
 import { relativeTime } from "./time.ts";
 
-/** Подсистемы состояния: название и сигналы, из которых складывается строка. */
-const SUBSYSTEMS: { title: string; keys: PlatformSignal["key"][]; ok: string; problem: string }[] = [
+/** Подсистемы состояния: название и сигналы, из которых складывается строка.
+ * optional — строка есть, только если сервер прислал её сигнал (старый сервер его не отдаёт). */
+type Subsystem = { title: string; keys: PlatformSignal["key"][]; ok: string; problem: string | ((own: PlatformSignal[]) => string); optional?: boolean };
+const SUBSYSTEMS: Subsystem[] = [
   { title: "Сайт и вход", keys: ["external.readiness", "external.login"], ok: "Сайт открывается, сотрудники входят.", problem: "Сайт или вход работают с перебоями. Проверьте, открывается ли сайт; если нет — сообщите ответственному." },
   { title: "Хранилище", keys: ["dependencies"], ok: "База данных и хранилище файлов отвечают.", problem: "Хранилище отвечает с ошибками: материалы могут не сохраняться. Сообщите ответственному." },
   { title: "Чтение материалов", keys: ["external.read"], ok: "Материалы открываются.", problem: "Материалы открываются не всегда. Повторите позже; если не пройдёт — сообщите ответственному." },
   { title: "Сохранение материалов", keys: ["external.save"], ok: "Изменения сохраняются.", problem: "Изменения сохраняются не всегда. Не удаляйте локальные копии, пока не наладится." },
+  { title: "Индексация новых файлов", keys: ["shared_projection"], optional: true, ok: "Новые файлы попадают в поиск.", problem: own => {
+    const n = own.find(sig => sig.state === "firing")?.count ?? 0;
+    return `Индексация новых файлов застряла: ${n ? `${n} ${tasksWord(n)}` : "есть задания"} дольше 10 минут — поиск их пока не находит.`;
+  } },
 ];
+/** «задание», «задания», «заданий» — по числу. */
+function tasksWord(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "задание";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "задания";
+  return "заданий";
+}
+const KNOWN_KEYS = new Set(SUBSYSTEMS.flatMap(s => s.keys));
 type Health = "ok" | "problem" | "unknown";
 const DOT: Record<Health, string> = { ok: "bg-kumo-success", problem: "bg-kumo-danger", unknown: "bg-kumo-fill" };
 
 /** Проверки и их итог словами — для раскрытия «Подробнее для администратора». */
-const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт открывается", "external.login": "Вход сотрудников", dependencies: "База данных и хранилище файлов", "external.read": "Чтение материалов", "external.save": "Сохранение материалов" };
+const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт открывается", "external.login": "Вход сотрудников", dependencies: "База данных и хранилище файлов", "external.read": "Чтение материалов", "external.save": "Сохранение материалов", shared_projection: "Индексация новых файлов" };
 const SIGNAL_STATES: Record<string, string> = { ok: "в порядке", firing: "есть сбой", unknown: "нет свежих данных" };
-const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила" };
+const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила", jobs_stalled: "задания индексации не завершаются" };
 
 /** Страница обновляется сама: раз в `every` мс, пока вкладка видна, и сразу при возврате на вкладку. */
 function useLiveRefresh(refresh: () => void, every: number) {
@@ -58,11 +72,13 @@ function SystemState({ admin }: { admin: boolean }) {
   useLiveRefresh(() => { void metrics.reload(); }, 60_000);
   const usage = metrics.value;
   const signals = usage?.signals ?? [];
-  const rows = SUBSYSTEMS.map(sub => {
+  // Сигнал, которого интерфейс не знает (новая проверка сервера), — общей строкой с ключом, а не отказом страницы.
+  const unknown: Subsystem[] = signals.filter(sig => !KNOWN_KEYS.has(sig.key)).map(sig => ({ title: `Проверка «${sig.key}»`, keys: [sig.key], ok: "Проверка прошла.", problem: "Проверка сообщает о сбое. Сообщите ответственному." }));
+  const rows = [...SUBSYSTEMS, ...unknown].map(sub => {
     const own = signals.filter(sig => sub.keys.includes(sig.key));
     const health: Health = own.some(sig => sig.state === "firing") ? "problem" : own.length && own.every(sig => sig.state === "ok") ? "ok" : "unknown";
-    return { ...sub, health };
-  });
+    return { ...sub, own, health, problem: typeof sub.problem === "function" ? sub.problem(own) : sub.problem };
+  }).filter(r => !r.optional || r.own.length);
   const owners = [...new Set((usage?.signal_owners ?? []).filter(o => o.owner_id).map(o => o.owner_name || "сотрудник"))];
   const problems = rows.filter(r => r.health === "problem").length;
   const allOk = rows.every(r => r.health === "ok");
@@ -90,7 +106,7 @@ function SystemState({ admin }: { admin: boolean }) {
         <div className="mt-2 grid gap-3">
           <OwnerPicker onChanged={metrics.reload} />
           <div className="grid gap-1 text-[12px] text-kumo-subtle">
-            {signals.map(sig => <p key={sig.key} className="m-0 break-words">{SIGNAL_TITLES[sig.key] ?? "Другая проверка"}: {SIGNAL_STATES[sig.state] ?? sig.state}{SIGNAL_REASONS[sig.reason] ? ` · ${SIGNAL_REASONS[sig.reason]}` : ""}{sig.observed_at ? ` · ${new Date(sig.observed_at).toLocaleString("ru-RU")}` : ""}</p>)}
+            {signals.map(sig => <p key={sig.key} className="m-0 break-words">{SIGNAL_TITLES[sig.key] ?? `Проверка «${sig.key}»`}: {SIGNAL_STATES[sig.state] ?? sig.state}{SIGNAL_REASONS[sig.reason] ? ` · ${SIGNAL_REASONS[sig.reason]}` : ""}{sig.observed_at ? ` · ${new Date(sig.observed_at).toLocaleString("ru-RU")}` : ""}</p>)}
             {!!usage.readiness?.reasons.length && <p className="m-0 break-words">Почему установка не готова: {usage.readiness.reasons.join("; ")}</p>}
             {usage.deployment && <p className="m-0 break-words">Версия установки: {usage.deployment.release}</p>}
           </div>

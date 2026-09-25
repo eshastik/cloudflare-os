@@ -57,7 +57,10 @@ export interface WorkspaceActivityUsage { reporting_users: number; active_users:
 export interface PlatformDeployment {environment:string;release:string;source_revision:string;source_modified:boolean|null;go_version:string;schema_version:number}
 /** Bounded last-day groups; unknown collector builds remain a separate group. */
 export interface UIReadinessVersions {groups:(UIReadinessUsage & {client_version:string;deployment?:PlatformDeployment|null})[];total_groups:number;truncated:boolean}
-export interface PlatformSignal {key:"dependencies"|"external.readiness"|"external.login"|"external.read"|"external.save";state:"ok"|"firing"|"unknown";reason:"check_unavailable"|"source_unavailable"|"observations_missing"|"observations_stale"|"check_failed"|"check_passed";observed_at:string|null}
+/** Известные ключи и причины; сервер может прислать новые — они показываются общей строкой, а не роняют страницу. */
+export type KnownPlatformSignalKey="dependencies"|"external.readiness"|"external.login"|"external.read"|"external.save"|"shared_projection";
+export type KnownPlatformSignalReason="check_unavailable"|"source_unavailable"|"observations_missing"|"observations_stale"|"check_failed"|"check_passed"|"jobs_stalled";
+export interface PlatformSignal {key:KnownPlatformSignalKey|(string&{});state:"ok"|"firing"|"unknown";reason:KnownPlatformSignalReason|(string&{});observed_at:string|null;/** Сколько единиц работы стоит за сбоем (застрявшие задания проекции). */count?:number}
 export interface PlatformSignalNotification extends PlatformSignal {id:string;created_at:string;read_at:string|null}
 export interface PlatformSignalInbox {items:PlatformSignalNotification[];unread:number;next_before:string}
 export interface PlatformSignalOwner {signal_key:PlatformSignal["key"];owner_id:string;owner_name:string;owner_active:boolean;revision:number}
