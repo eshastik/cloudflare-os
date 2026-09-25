@@ -3,6 +3,7 @@ import { PROJECT_VISIBILITIES, VISIBILITY_TITLES, type ProjectSharingSettings, t
 import { useUi } from "./host.ts";
 import { useLoad, type ProjectData } from "./data.ts";
 import { Button, Notice, Select, StatusBadge } from "./ui.tsx";
+import { REPOSITORY_FAILURES } from "../src/git-repositories.ts";
 
 export const VISIBILITY_NOTES: Record<ProjectVisibility, string> = {
   private: "Проект видите вы и те, кого вы пригласили.",
@@ -30,19 +31,25 @@ export function SharePanel({ project, onClose, onChanged }: { project: ProjectDa
   const [canEdit, setCanEdit] = useState(!!project.canEdit);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ tone: "success" | "danger" | "neutral"; text: string } | null>(null);
+  // Сервер ответил, что в проекте код приватного репозитория: нужен ответ человека словами.
+  const [consent, setConsent] = useState<ProjectVisibility | null>(null);
   const unchanged = level === (project.visibility ?? "private") && canEdit === !!project.canEdit && !project.pendingShare;
 
-  async function save() {
+  async function save(agreed = false) {
     if (busy) return;
     setBusy(true); setResult(null);
     try {
-      const out = await ui.setProjectVisibility(project.id, level, level === "private" ? false : canEdit);
+      const out = await ui.setProjectVisibility(project.id, level, level === "private" ? false : canEdit, agreed);
+      setConsent(null);
       setResult(out.applied
         ? { tone: "success", text: level === "private" ? "Проект снова виден только вам." : `Готово: проект открыт — «${VISIBILITY_TITLES[out.visibility]}».` }
         : { tone: "neutral", text: `Ждёт подтверждения ${deciderWords(out.request)}. Вы увидите решение здесь и во «Входящих».` });
       await onChanged();
-    } catch {
-      setResult({ tone: "danger", text: "Не получилось поделиться. Поделиться проектом может тот, кто вправе его править; правила организации тоже могут это ограничивать." });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      if (message === REPOSITORY_FAILURES["project.private_code_consent"]) setConsent(level);
+      else if (message === REPOSITORY_FAILURES["project.private_code_admin"]) setResult({ tone: "danger", text: "В проекте код приватного репозитория: всей организации его открывает только администратор. Выберите «Мой отдел» или попросите администратора." });
+      else setResult({ tone: "danger", text: "Не получилось поделиться. Поделиться проектом может тот, кто вправе его править; правила организации тоже могут это ограничивать." });
     } finally { setBusy(false); }
   }
 
@@ -63,6 +70,13 @@ export function SharePanel({ project, onClose, onChanged }: { project: ProjectDa
         Могут править
         <span className="text-kumo-subtle">— без этого видящие только читают</span>
       </label>}
+      {consent && consent === level && <div role="alert" data-private-code-consent="" className="mt-3 grid gap-2 rounded-[12px] border border-kumo-warning bg-kumo-warning-tint px-3.5 py-3 text-[13px] text-kumo-warning">
+        <span>Код приватного репозитория увидят {level === "organization" ? "все сотрудники организации" : "все сотрудники отдела"}, даже если в GitHub или GitLab у них доступа к нему нет.</span>
+        <span className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={busy} onClick={() => void save(true)}>Понимаю, открыть</Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConsent(null)}>Отмена</Button>
+        </span>
+      </div>}
       {result && <div className="mt-3"><Notice tone={result.tone}>{result.text}</Notice></div>}
       <div className="mt-3 flex gap-2">
         <Button size="sm" disabled={busy || unchanged} onClick={() => void save()}>{busy ? "Сохраняем…" : "Сохранить"}</Button>
@@ -128,4 +142,21 @@ export function OrganizationSharingSettings() {
       </div>}
     </section>
   );
+}
+
+/** Отказ «подтвердите приватный код» — по тексту, коды через фрейм не проходят. */
+export function privateCodeConsentNeeded(e: unknown): boolean {
+  return e instanceof Error && e.message === REPOSITORY_FAILURES["project.private_code_consent"];
+}
+
+/** Одобрение запроса на видимость, когда в проекте есть код приватного репозитория: решающий подтверждает
+ * сам — код мог появиться в проекте уже после того, как запрос подали. */
+export function PrivateCodeApproval({ share, busy, onConfirm, onCancel }: { share: ShareRequest; busy: boolean; onConfirm(): void; onCancel(): void }) {
+  return <div role="alert" data-private-code-approval="" className="grid gap-2 rounded-[12px] border border-kumo-warning bg-kumo-warning-tint px-3.5 py-3 text-[13px] text-kumo-warning">
+    <span>В проекте «{share.project_name}» есть код приватного репозитория. Его увидят {share.level === "organization" ? "все сотрудники организации" : "все сотрудники отдела"}, даже если в GitHub или GitLab у них доступа к нему нет.</span>
+    <span className="flex flex-wrap gap-2">
+      <Button size="sm" disabled={busy} onClick={onConfirm}>Понимаю, разрешить</Button>
+      <Button variant="ghost" size="sm" disabled={busy} onClick={onCancel}>Отмена</Button>
+    </span>
+  </div>;
 }

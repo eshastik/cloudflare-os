@@ -101,7 +101,9 @@ function ProjectPage({ project, data, view, linkedDocument = null, onOpenDocumen
   const [actionError, setActionError] = useState("");
   const [sharing, setSharing] = useState(false);
   const overview = useLoad(() => ui.readProjectOverview(project.id, ""), "", [ui, project.id]);
-  const repositories = useLoad(async () => (await ui.listProjectGitRepositories(project.id, "")).repositories.filter(r => r.enabled), "", [ui, project.id]);
+  // Репозиторий в проекте — с «Файлами» или с «Агентами кода»: код виден в обоих случаях, задачи агентов — только при агентах.
+  const repositories = useLoad(async () => (await ui.listProjectGitRepositories(project.id, "")).repositories.filter(r => r.enabled || r.files), "", [ui, project.id]);
+  const agentRepositories = (repositories.value ?? []).filter(r => r.enabled);
   const hasCode = (repositories.value?.length ?? 0) > 0;
   const [compareTo, setCompareTo] = useState<CompareTarget | null>(null);
   useEffect(() => {
@@ -137,8 +139,8 @@ function ProjectPage({ project, data, view, linkedDocument = null, onOpenDocumen
       {hasCode && repositories.value && <section id="project-code" aria-label="Код" className="mt-2 mb-7">
         <SectionTitle title="Код" />
         <ProjectCode admin={isAdministrator(data.identity)} key={compareTo ? `${compareTo.connection_id}/${compareTo.repository_id}/${compareTo.branch}` : "code"} projectId={project.id} repositories={repositories.value} compareTo={compareTo} />
-        <div className="mt-4"><ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={repositories.value}
-          onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); document.getElementById("project-code")?.scrollIntoView?.({ block: "start" }); }} /></div>
+        {agentRepositories.length > 0 && <div className="mt-4"><ProjectTasks admin={isAdministrator(data.identity)} projectId={project.id} repositories={agentRepositories}
+          onCompare={task => { setCompareTo({ connection_id: task.connection_id, repository_id: task.repository_id, branch: task.branch }); document.getElementById("project-code")?.scrollIntoView?.({ block: "start" }); }} /></div>}
       </section>}
     </div>
   );

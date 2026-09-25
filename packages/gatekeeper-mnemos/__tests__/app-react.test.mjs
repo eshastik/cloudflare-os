@@ -58,19 +58,20 @@ test("прямые разделы Mnemos: материалы, согласова
     assert.equal(app.document.querySelector("#root h1")?.textContent,"Входящие");
     assert.equal(app.document.querySelectorAll('[role="tab"]').length,0,"вторая навигация отсутствует");
     await app.open("Материалы");
-    const option = name => [...app.document.querySelectorAll('#root select[aria-label="Проект"] option')].find(o => o.textContent.startsWith(name));
+    const option = name => [...app.document.querySelectorAll('#root [role="group"][aria-label="Проект"] button')].find(o => o.textContent.startsWith(name));
     await until(() => option("Общий проект") && option("Второй проект"), "проекты в выборе");
     await until(() => text().includes("Заметка команды") && text().includes("Другой документ"), "документы обоих проектов");
     const row = name => [...app.document.querySelectorAll("#root [data-document]")].find(r => r.textContent.includes(name));
     await until(() => row("Заметка команды")?.textContent.includes("На согласовании · 1 из 2"), "бейдж «на согласовании»");
     assert.ok(row("План").textContent.includes("Конфликт"), "конфликт из listPrivateDocuments");
-    assert.ok(row("Другой документ").textContent.includes("Опубликовано"), "документ без черновика — опубликован");
+    // Опубликованное — обычное состояние, отдельной пометки у него нет; помечено только то, что требует внимания.
+    assert.ok(!/Черновик|Конфликт|согласовании/.test(row("Другой документ").textContent), "документ без черновика — без пометки");
     assert.ok(row("Новый черновик").textContent.includes("Черновик"), "документ только личной версии — черновик");
     assert.ok(!row("Папка"), "каталоги в списке документов не показываются");
     await until(() => row("Заметка команды").querySelector("time")?.getAttribute("datetime") === "2026-09-12T10:00:00Z", "время из истории документа");
     assert.ok(histories.some(([p, n, c]) => p === "one" && n === "doc" && c === ""));
-    assert.equal(option("Общий проект").textContent, "Общий проект · 2");
-    assert.equal(option("Все проекты").textContent, "Все проекты · 4");
+    assert.equal(option("Общий проект").textContent, "Общий проект2");
+    assert.equal(option("Все проекты").textContent, "Все проекты4");
 
     const search = app.document.querySelector("#root input[type=search]");
     // React сверяет значение со своим слепком, поэтому ввод ставится нативным сеттером, как это делает браузер.

@@ -7,6 +7,8 @@ import { shareAudience } from "./MyWorkTab.tsx";
 import { plural } from "./names.ts";
 import PersonAvatar from "./PersonAvatar.tsx";
 import { Button, Chip, Notice, PageHeader } from "./ui.tsx";
+import { PrivateCodeApproval, privateCodeConsentNeeded } from "./ProjectSharing.tsx";
+import { REPOSITORY_FAILURES } from "../src/git-repositories.ts";
 
 /** «Мой отдел» — руководителю отдела и ответственному за проект: запросы «Поделиться», которые ждут
  * его решения, сотрудники и проекты. Права проверяет сервер при каждом действии. */
@@ -16,6 +18,7 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
   const { units, loading: unitsLoading, failed: unitsFailed } = useOrgUnits();
   const shares = useLoad(async () => (await ui.listShareRequests(false)).requests.filter(r => r.status === "pending"), "Запросы на решение не загрузились. Обновите страницу.", [ui]);
   const [busy, setBusy] = useState("");
+  const [privateCode, setPrivateCode] = useState<ShareRequest | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
 
   const mine = headedUnits(units, userId);
@@ -25,16 +28,18 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
   const responsibleProjects = data.projects.filter(p => responsible.has(p.id));
   const people = mine.reduce((n, u) => n + u.members.length, 0);
 
-  async function decide(share: ShareRequest, approve: boolean) {
+  async function decide(share: ShareRequest, approve: boolean, consent = false) {
     if (busy) return;
     setBusy(share.request_id); setNotice(null);
     try {
-      await ui.decideShareRequest(share.request_id, approve);
+      await ui.decideShareRequest(share.request_id, approve, consent);
+      setPrivateCode(null);
       setNotice({ tone: "success", text: approve ? `Проект «${share.project_name}» открыт ${shareAudience(share)}.` : `Запрос отклонён: проект «${share.project_name}» остаётся с прежним доступом.` });
       await shares.reload();
       await data.reloadProjects();
-    } catch {
-      setNotice({ tone: "danger", text: "Решение не сохранено. Возможно, запрос уже решён или у вас больше нет права решать его." });
+    } catch (e) {
+      if (approve && !consent && privateCodeConsentNeeded(e)) setPrivateCode(share);
+      else setNotice({ tone: "danger", text: e instanceof Error && e.message === REPOSITORY_FAILURES["project.private_code_admin"] ? "В проекте код приватного репозитория: всей организации его открывает только администратор." : "Решение не сохранено. Возможно, запрос уже решён или у вас больше нет права решать его." });
     } finally { setBusy(""); }
   }
 
@@ -48,6 +53,7 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
     <PageHeader title="Мой отдел" subtitle={summary || undefined}
       actions={mine.length > 0 && onInvite ? <Button size="md" onClick={onInvite}>Пригласить в отдел</Button> : undefined} />
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+    {privateCode && <PrivateCodeApproval share={privateCode} busy={!!busy} onConfirm={() => void decide(privateCode, true, true)} onCancel={() => setPrivateCode(null)} />}
 
     <section aria-label="Ждёт вашего решения" className="flex flex-col gap-2.5">
       <h2 className="m-0 text-[17px] font-semibold text-kumo-default">Ждёт вашего решения</h2>

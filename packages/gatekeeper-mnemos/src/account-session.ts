@@ -608,7 +608,7 @@ export class MnemosAccountSession {
     const page = await this.#client.searchAll(query, Math.min(Math.max(Math.trunc(limit) || 20, 1), 50), this.#lifetime.signal);
     this.#check();
     if (!Array.isArray(page.hits) || page.hits.some(hit => typeof hit.project_id !== "string" || !hit.project_id)) throw new MnemosAPIError(502);
-    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal }) => ({ project_id, node_id, name, text, ordinal })), index_pending: page.index_pending, degraded: page.degraded };
+    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal, path }) => ({ project_id, node_id, name, text, ordinal, ...(typeof path === "string" ? { path } : {}) })), index_pending: page.index_pending, degraded: page.degraded };
   }
   async readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144) {
     this.#check();
@@ -698,7 +698,7 @@ export class MnemosAccountSession {
     const page = await this.#client.searchProject(projectId, query, 20, this.#lifetime.signal);
     this.#check();
     if (!Array.isArray(page.hits) || page.hits.some(hit => hit.project_id !== projectId)) throw new MnemosAPIError(502);
-    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal }) => ({ project_id, node_id, name, text, ordinal })), index_pending: page.index_pending, degraded: page.degraded };
+    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal, path }) => ({ project_id, node_id, name, text, ordinal, ...(typeof path === "string" ? { path } : {}) })), index_pending: page.index_pending, degraded: page.degraded };
   }
   /** Submit only diagnostic activity; the API derives the human from this credential. */
   async recordWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> {
@@ -770,14 +770,14 @@ export class MnemosAccountSession {
     this.#check(); return page;
   }
   /** Поделиться может только человек: whoAmI отсекает агентскую сессию до обращения к серверу. */
-  async setProjectVisibility(project: string, level: import("./project-sharing.ts").ProjectVisibility, canEdit: boolean) {
-    await this.whoAmI(); const out = await this.#client.setProjectVisibility(project, level, canEdit, this.#lifetime.signal); this.#check(); return out;
+  async setProjectVisibility(project: string, level: import("./project-sharing.ts").ProjectVisibility, canEdit: boolean, consent = false) {
+    await this.whoAmI(); const out = await this.#client.setProjectVisibility(project, level, canEdit, this.#lifetime.signal, consent === true); this.#check(); return out;
   }
   async listShareRequests(mine = false) {
     await this.whoAmI(); const out = await this.#client.listShareRequests(mine, this.#lifetime.signal); this.#check(); return out;
   }
-  async decideShareRequest(request: string, approve: boolean) {
-    await this.whoAmI(); const out = await this.#client.decideShareRequest(request, approve, this.#lifetime.signal); this.#check(); return out;
+  async decideShareRequest(request: string, approve: boolean, consent = false) {
+    await this.whoAmI(); const out = await this.#client.decideShareRequest(request, approve, this.#lifetime.signal, consent === true); this.#check(); return out;
   }
   async listPersonPhotos() { this.#check(); const out = await this.#client.listPersonPhotos(this.#lifetime.signal); this.#check(); return out; }
   async beginPersonPhotoUpload(size: number, checksum: string) { this.#check(); const out = await this.#client.beginPersonPhotoUpload(size, checksum, this.#lifetime.signal); this.#check(); return out; }

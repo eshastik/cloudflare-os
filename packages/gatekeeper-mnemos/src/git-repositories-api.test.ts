@@ -52,9 +52,17 @@ test("«Репозитории»: отказы приватности и пра�
     const api = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code, message: "server text" }, { status }));
     await assert.rejects(api.setRepositoryCapabilities("p", "c", "42", { expected_revision: 1, files: true }), (e: unknown) => e instanceof MnemosAPIError && e.status === status && e.code === code && e.message === REPOSITORY_FAILURES[code]);
   }
-  // Прочие 403 по-прежнему без подробностей.
-  const other = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code: "git_sync.forbidden", message: "x" }, { status: 403 }));
-  await assert.rejects(other.listRepositoryOverview(), (e: unknown) => e instanceof MnemosAPIError && e.status === 403 && e.code === undefined);
+  // Отказы кода, которые раньше приходили общей фразой, теперь словами — и на 403, и на 404, и на 501.
+  for (const [status, code] of [[403, "git_sync.forbidden"], [403, "git_sync.github_access_unconfirmed"], [409, "git_repo.not_revoked"], [409, "git_sync.duplicate"], [404, "git_repo.missing"], [501, "git_sync.unavailable"]] as const) {
+    const api = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code, message: "server text" }, { status }));
+    await assert.rejects(api.listRepositoryOverview(), (e: unknown) => e instanceof MnemosAPIError && e.status === status && e.code === code && e.message === REPOSITORY_FAILURES[code]);
+  }
+  assert.match(REPOSITORY_FAILURES["git_sync.github_access_unconfirmed"], /Нажмите «Обновить доступ»/);
+  // Прочие 403 и 404 по-прежнему без подробностей.
+  for (const status of [403, 404]) {
+    const other = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code: "authz.access_denied", message: "x" }, { status }));
+    await assert.rejects(other.listRepositoryOverview(), (e: unknown) => e instanceof MnemosAPIError && e.status === status && e.code === undefined);
+  }
 });
 
 test("«Подключить внутреннее хранилище кода»: путь запроса, итог и отказ словами; негодный ответ отвергается", async () => {

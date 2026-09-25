@@ -74,6 +74,8 @@ export interface DocumentRow {
   projectName: string;
   nodeId: string;
   name: string;
+  /** Папка внутри проекта, если её узлы загружены вместе со списком. */
+  folder?: string;
   status: { tone: "neutral" | "success" | "warning" | "danger"; label: string };
 }
 
@@ -81,10 +83,23 @@ export interface DocumentRow {
 export function documentRows(project: ProjectData, reviews: PublicationReview[]): DocumentRow[] {
   const rows: DocumentRow[] = [];
   const seen = new Set<string>();
+  const byId = new Map(project.nodes.map(node => [node.node_id, node]));
+  const folderOf = (parent: string | undefined) => {
+    const names: string[] = [];
+    // Предел глубины защищает от петли в неполной странице узлов.
+    for (let id = parent, depth = 0; id && depth < 32; depth++) {
+      const dir = byId.get(id);
+      if (!dir) break;
+      names.unshift(dir.name);
+      id = dir.parent_id;
+    }
+    return names.join("/");
+  };
   for (const node of project.nodes) {
     if (node.is_dir) continue;
     seen.add(node.node_id);
-    rows.push({ projectId: project.id, projectName: project.name, nodeId: node.node_id, name: node.name || UNNAMED_DOCUMENT, status: documentStatus(project, node.node_id, false, reviews) });
+    const folder = folderOf(node.parent_id);
+    rows.push({ projectId: project.id, projectName: project.name, nodeId: node.node_id, name: node.name || UNNAMED_DOCUMENT, ...(folder ? { folder } : {}), status: documentStatus(project, node.node_id, false, reviews) });
   }
   for (const [nodeId, doc] of project.privateDocs) {
     if (seen.has(nodeId)) continue;

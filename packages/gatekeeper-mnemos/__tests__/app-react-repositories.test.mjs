@@ -48,12 +48,12 @@ function methods(calls, over = {}) {
   };
 }
 
-async function mount(calls, over = {}) {
+async function mount(calls, over = {}, count = 4) {
   const app = await mountMemoryApp(methods(calls, over), { section: "connections", view: "repositories" });
   const page = () => app.document.querySelector("#root");
   const repo = name => page().querySelector(`[data-repo="${name}"]`);
   const press = (root, name) => { const b = [...root.querySelectorAll("button")].find(x => x.textContent === name); assert.ok(b, `кнопка «${name}»`); b.click(); };
-  await app.until(() => page().querySelectorAll("[data-repo]").length === 4, "репозитории строками");
+  await app.until(() => page().querySelectorAll("[data-repo]").length === count, "репозитории строками");
   return { app, page, repo, press };
 }
 
@@ -233,10 +233,10 @@ test("Страница проекта: «Репозиторий: … · Файл
   } finally { app.dispose(); }
 });
 
-test("Люди: уход сотрудника — его источники и связи передаются другому по «Передать…»", async () => {
+test("Люди: до удаления — честный текст; «Передать…» — у бывшего сотрудника, связи продолжают работать", async () => {
   const calls = [];
   const app = await mountMemoryApp({
-    async listPeople() { return { users: [{ userName: "bob", displayName: "Боб", active: true }, { userName: "carol", displayName: "Кэрол", active: true }] }; },
+    async listPeople() { return { users: [{ userName: "bob", displayName: "Боб", active: true }, { userName: "carol", displayName: "Кэрол", active: true }, { userName: "dan", displayName: "Дэн", active: false }] }; },
     async readGitOwnership(person) { calls.push(["readGitOwnership", person]); return calls.some(([m]) => m === "transferGitOwnership") ? { connections: [], links: [] } : { connections: [{ connection_id: "github-app-11", provider: "github", name: "GitHub · acme", account_login: "acme", installation_id: "11" }], links: [SITE] }; },
     async transferGitOwnership(person, to) { calls.push(["transferGitOwnership", person, to]); return { connections: 1, links: 1, installations: 1 }; },
   }, { section: "people" });
@@ -246,17 +246,23 @@ test("Люди: уход сотрудника — его источники и �
     app.buttons().find(b => b.getAttribute("aria-label") === "Открыть карточку: Боб").click();
     await app.until(() => app.button("Удалить из организации"), "карточка");
     app.button("Удалить из организации").click();
-    const block = () => root().querySelector('[aria-label="Источники кода сотрудника"]');
-    await app.until(() => block()?.textContent.includes("Сначала передайте код"), "источники уходящего");
+    const before = () => root().querySelector('[aria-label="Подтверждение удаления: Боб"] [aria-label="Источники кода сотрудника"]');
+    await app.until(() => before()?.textContent.includes("После удаления администратор передаст его источники"), "честный текст до удаления");
+    assert.equal([...before().querySelectorAll("button")].some(b => b.textContent === "Передать…"), false, "до удаления передавать нечего: сервер передаёт только от ушедшего");
+    // Бывший сотрудник: блок «Передать…».
+    const former = () => root().querySelector('[aria-label="Бывшие сотрудники"]');
+    await app.until(() => former()?.querySelector('[aria-label="Источники кода сотрудника"]'), "источники бывшего сотрудника");
+    const block = () => former().querySelector('[aria-label="Источники кода сотрудника"]');
     assert.ok(block().textContent.includes("GitHub · acme — через приложение") && block().textContent.includes("acme/site → проект «Общий проект»"), block().textContent);
     [...block().querySelectorAll("button")].find(b => b.textContent === "Передать…").click();
     await app.until(() => block().querySelector('[aria-label="Новый владелец"]'), "выбор человека");
     assert.equal(block().querySelectorAll("select").length, 0, "человек выбирается строкой, не списком");
+    assert.equal([...block().querySelectorAll('[role="radio"]')].some(b => b.textContent.includes("Дэн")), false, "бывшему сотруднику не передают");
     [...block().querySelectorAll('[role="radio"]')].find(b => b.textContent.includes("Кэрол")).click();
     await app.until(() => [...block().querySelectorAll("button")].some(b => b.textContent === "Передать: Кэрол"), "кнопка называет человека");
     [...block().querySelectorAll("button")].find(b => b.textContent === "Передать: Кэрол").click();
     await app.until(() => calls.some(([m]) => m === "transferGitOwnership"), "передача");
-    assert.deepEqual(calls.find(([m]) => m === "transferGitOwnership"), ["transferGitOwnership", "bob", "carol"]);
+    assert.deepEqual(calls.find(([m]) => m === "transferGitOwnership"), ["transferGitOwnership", "dan", "carol"]);
   } finally { app.dispose(); }
 });
 
@@ -298,5 +304,135 @@ test("«Репозитории»: доступ того, кто держит а�
   try {
     await app.until(() => repo("acme/site").textContent.includes("доступ отозван в GitHub — агенты не работают"), "агенты с отозванным доступом");
     await app.until(() => page().querySelector("[data-ledger]")?.textContent.includes("требуют внимания: 1"), "в счёте внимания");
+  } finally { app.dispose(); }
+});
+
+test("«Поделиться»: в проекте приватный код — понятный вопрос и повтор с подтверждением", async () => {
+  const calls = [];
+  const CONSENT_TEXT = "Код приватного репозитория увидят все, кому открыт проект. Подтвердите это.";
+  const app = await mountMemoryApp({
+    async setProjectVisibility(project, level, canEdit, consent) {
+      calls.push([project, level, canEdit, consent]);
+      if (!consent) throw new Error(CONSENT_TEXT);
+      return { project_id: project, visibility: level, can_edit: canEdit, applied: true };
+    },
+  }, { section: "projects", project: "one" });
+  try {
+    await app.until(() => app.button("Поделиться"), "кнопка");
+    app.button("Поделиться").click();
+    const panel = () => app.document.querySelector('#root section[aria-label="Поделиться проектом"]');
+    await app.until(() => panel(), "панель");
+    panel().querySelector('input[value="department"]').click();
+    await app.until(() => ![...panel().querySelectorAll("button")].find(b => b.textContent === "Сохранить").disabled, "есть что сохранять");
+    [...panel().querySelectorAll("button")].find(b => b.textContent === "Сохранить").click();
+    await app.until(() => panel().querySelector("[data-private-code-consent]"), "вопрос о приватном коде");
+    assert.ok(panel().textContent.includes("Код приватного репозитория увидят все сотрудники отдела"), panel().textContent);
+    assert.equal(panel().textContent.includes("Не получилось поделиться"), false, "не общий отказ");
+    [...panel().querySelectorAll("button")].find(b => b.textContent === "Понимаю, открыть").click();
+    await app.until(() => panel().textContent.includes("Готово: проект открыт"), "открыт с подтверждением");
+    assert.deepEqual(calls, [["one", "department", false, false], ["one", "department", false, true]]);
+  } finally { app.dispose(); }
+});
+
+test("«Поделиться»: приватный код всей организации — только администратор, сказано словами", async () => {
+  const app = await mountMemoryApp({ async setProjectVisibility() { throw new Error("Приватный код открывает всей организации только администратор."); } }, { section: "projects", project: "one" });
+  try {
+    await app.until(() => app.button("Поделиться"), "кнопка");
+    app.button("Поделиться").click();
+    const panel = () => app.document.querySelector('#root section[aria-label="Поделиться проектом"]');
+    await app.until(() => panel(), "панель");
+    panel().querySelector('input[value="organization"]').click();
+    await app.until(() => ![...panel().querySelectorAll("button")].find(b => b.textContent === "Сохранить").disabled, "есть что сохранять");
+    [...panel().querySelectorAll("button")].find(b => b.textContent === "Сохранить").click();
+    await app.until(() => panel().textContent.includes("всей организации его открывает только администратор"), "отказ словами");
+  } finally { app.dispose(); }
+});
+
+test("«Репозитории»: репозиторий по ключу без ответа о приватности считается приватным — в проект отдела только с подтверждением", async () => {
+  const calls = [];
+  const { app, repo, press } = await mount(calls, { methods: {
+    async listGitConnections() { return { connections: [{ connection_id: "key-1", owner_id: "alice", provider: "gitlab", api_base: "https://gitlab.example/api/v4", account_id: "5", account_login: "team", name: "GitLab компании", revision: 1, enabled: true }] }; },
+    async listGitRepositories() { return { repositories: [{ id: "900", name: "team/secret", default_branch: "main" }, { id: "901", name: "team/open", default_branch: "main", public: true }] }; },
+    async listProjects() { return { projects: [{ id: "one", name: "Общий проект", slug: "shared", visibility: "department" }, { id: "two", name: "Второй проект", slug: "second", visibility: "department" }] }; },
+  } }, 6);
+  try {
+    assert.match(repo("team/secret").textContent, /приватный/);
+    assert.match(repo("team/open").textContent, /публичный/);
+    press(repo("team/secret"), "Добавить в проект…");
+    await app.until(() => repo("team/secret").querySelector('[aria-label="Проект"] [role="radio"]'), "проекты");
+    const form = repo("team/secret");
+    [...form.querySelectorAll('[aria-label="Проект"] [role="radio"]')].find(b => b.textContent.includes("Второй проект")).click();
+    await app.until(() => form.querySelector('input[type="checkbox"]'), "подтверждение для приватного кода");
+    assert.equal(form.querySelector("button[data-submit]").disabled, true, "без подтверждения не добавить");
+    form.querySelector('input[type="checkbox"]').click();
+    await app.until(() => !form.querySelector("button[data-submit]").disabled, "подтверждено");
+    form.querySelector("button[data-submit]").click();
+    await app.until(() => calls.some(([m]) => m === "addRepository"), "добавление");
+    const input = calls.find(([m]) => m === "addRepository")[1];
+    assert.deepEqual({ source: input.source, connection_id: input.connection_id, consent: input.consent }, { source: "connection", connection_id: "key-1", consent: true });
+  } finally { app.dispose(); }
+});
+
+test("«Репозитории»: сервер знает о приватности больше строки — его «подтвердите» включает вопрос, повтор с подтверждением", async () => {
+  const calls = [];
+  const { app, repo, press } = await mount(calls, { addError: CONSENT });
+  try {
+    press(repo("acme/notes"), "Добавить в проект…");
+    await app.until(() => repo("acme/notes").querySelector('[aria-label="Проект"] [role="radio"]'), "проекты");
+    const form = repo("acme/notes");
+    form.querySelector('[aria-label="Проект"] [role="radio"]').click();
+    await app.until(() => !form.querySelector("button[data-submit]").disabled, "проект выбран");
+    assert.equal(form.querySelector('input[type="checkbox"]'), null, "публичный по строке — без вопроса");
+    form.querySelector("button[data-submit]").click();
+    await app.until(() => form.querySelector('input[type="checkbox"]'), "вопрос после ответа сервера");
+    assert.equal(form.textContent.includes(CONSENT), false, "не ошибка, а вопрос");
+    form.querySelector('input[type="checkbox"]').click();
+    await app.until(() => !form.querySelector("button[data-submit]").disabled, "подтверждено");
+    form.querySelector("button[data-submit]").click();
+    await app.until(() => calls.filter(([m]) => m === "addRepository").length === 2, "повтор");
+    assert.deepEqual(calls.filter(([m]) => m === "addRepository").map(c => c[1].consent), [undefined, true]);
+  } finally { app.dispose(); }
+});
+
+test("Страница проекта: репозиторий только с «Файлами» виден кодом и строкой тем же языком", async () => {
+  const app = await mountMemoryApp({ ...methods([]),
+    async listProjectRepositories(project) { return { records: project === "one" ? [{ ...SITE, agents: false }] : [] }; },
+    async listProjectGitRepositories(project) { return { repositories: project === "one" ? [{ project_id: "one", connection_id: "github-app-11", repository_id: "101", repository_name: "acme/site", revision: 4, enabled: false, files: true, provider: "github", connection_revision: 1 }] : [] }; },
+    async listGitTree() { return { entries: [] }; },
+  }, { section: "projects", project: "one" });
+  try {
+    await app.until(() => app.document.querySelector("[data-project-repository]"), "строка репозитория");
+    assert.match(app.document.querySelector("[data-project-repository]").textContent, /Репозиторий: acme\/site.*Файлы: синхронизировано.*Агенты кода: выключены/);
+    await app.until(() => app.document.querySelector('#root section[aria-label="Код"]'), "раздел «Код» для репозитория с файлами");
+  } finally { app.dispose(); }
+});
+
+test("«Входящие»: одобрение запроса на отдел, когда в проекте появился приватный код, — вопрос и «Понимаю, разрешить»", async () => {
+  const REQUEST = { request_id: "0f3c9a2e-5b7d-4e1a-9c3b-2d4e6f8a0b1c", project_id: "one", project_name: "Общий проект", level: "department", can_edit: false, org_unit_id: "u1", org_unit_name: "Продажи",
+    requested_by: "anna", requested_by_name: "Анна", decider: "head", status: "pending", created_at: "2026-09-24T10:00:00Z" };
+  const calls = [];
+  let decided = false;
+  const app = await mountMemoryApp({
+    async listShareRequests(mine) { return { requests: mine || decided ? [] : [REQUEST] }; },
+    async decideShareRequest(id, approve, consent) {
+      calls.push([id, approve, consent]);
+      if (!consent) throw new Error("Код приватного репозитория увидят все, кому открыт проект. Подтвердите это.");
+      decided = true;
+      return { ...REQUEST, status: "approved" };
+    },
+  });
+  try {
+    const card = () => [...app.document.querySelectorAll("#root [data-inbox]")].find(c => c.dataset.inbox === "share");
+    await app.until(() => card(), "карточка запроса");
+    card().querySelector("button").click();
+    await app.until(() => [...card().querySelectorAll("button")].some(b => b.textContent === "Разрешить"), "кнопка решения");
+    [...card().querySelectorAll("button")].find(b => b.textContent === "Разрешить").click();
+    const alert = () => app.document.querySelector("#root [data-private-code-approval]");
+    await app.until(() => alert(), "вопрос о приватном коде");
+    assert.ok(alert().textContent.includes("увидят все сотрудники отдела"), alert().textContent);
+    assert.equal(app.text().includes("Решение не записано"), false, "не общий отказ");
+    [...alert().querySelectorAll("button")].find(b => b.textContent === "Понимаю, разрешить").click();
+    await app.until(() => app.text().includes("Проект «Общий проект» открыт"), "одобрено с подтверждением");
+    assert.deepEqual(calls, [[REQUEST.request_id, true, false], [REQUEST.request_id, true, true]]);
   } finally { app.dispose(); }
 });

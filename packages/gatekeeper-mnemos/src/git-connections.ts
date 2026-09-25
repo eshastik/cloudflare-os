@@ -3,7 +3,9 @@ export interface GitConnection extends SourceLoadHealth {connection_id:string;ow
   /** Установка GitHub App, представленная подключением (миграция 0164): это не личный ключ. */
   installation_id?:string}
 export interface GitConnectionPage {connections:GitConnection[];next_cursor?:string}
-export interface GitRepository {id:string;name:string;default_branch:string}
+export interface GitRepository {id:string;name:string;default_branch:string;
+  /** Провайдер прямо ответил «публичный»; нет ответа — репозиторий приватный. */
+  public?:boolean}
 export interface GitRepositoryPage {repositories:GitRepository[];next_page?:number}
 export interface GitSetup {provider:"github"|"gitlab";api_base:string;name:string}
 export interface GitRegistration extends GitSetup {connection_id:string;token:string}
@@ -14,7 +16,9 @@ export function validateGitSetup(input:GitSetup):GitSetup {
  return {provider:input.provider,api_base:input.api_base.replace(/\/$/,""),name:input.name};
 }
 
-export interface GitProjectRepository {project_id:string;connection_id:string;repository_id:string;repository_name:string;revision:number;enabled:boolean;provider:"github"|"gitlab"|"gitea";connection_revision:number}
+export interface GitProjectRepository {project_id:string;connection_id:string;repository_id:string;repository_name:string;revision:number;enabled:boolean;provider:"github"|"gitlab"|"gitea";connection_revision:number;
+  /** «Файлы в проекте» (миграция 0164): код читается и без агентов. enabled — «Агенты кода». */
+  files?:boolean;branch?:string}
 export interface GitProjectRepositoryPage {repositories:GitProjectRepository[];next_cursor?:string}
 
 export interface GitBindingState {push_path?:string;push_url?:string;mcp_resource?:string;connection_revision:number;binding:Omit<GitProjectRepository,"provider"|"connection_revision">|null}

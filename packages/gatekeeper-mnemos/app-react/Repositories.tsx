@@ -120,7 +120,7 @@ export default function RepositoriesPage({ data, onBack }: { data: MemoryData; o
   const keys = useLoad(async () => (await ui.listGitConnections("")).connections.filter(personalKey), "Ключи доступа не прочитаны.", [ui, version]);
   const keyIds = (keys.value ?? []).map(k => k.connection_id).join(",");
   const keyRepos = useLoad(async () => {
-    const out: { key: GitConnection; repos: { id: string; name: string; default_branch: string }[] }[] = [];
+    const out: { key: GitConnection; repos: { id: string; name: string; default_branch: string; public?: boolean }[] }[] = [];
     for (const key of keys.value ?? []) out.push({ key, repos: (await ui.listGitRepositories(key.connection_id, 1).catch(() => ({ repositories: [] }))).repositories });
     return out;
   }, "", [ui, keyIds]);
@@ -197,7 +197,7 @@ function Ledger({ counts, filter, onFilter }: { counts: { sources: number; linke
   </div>;
 }
 
-function buildRows(overview: RepositoryOverview | null, app: GitAppRepository[], keyed: { key: GitConnection; repos: { id: string; name: string; default_branch: string }[] }[]): RepoRow[] {
+function buildRows(overview: RepositoryOverview | null, app: GitAppRepository[], keyed: { key: GitConnection; repos: { id: string; name: string; default_branch: string; public?: boolean }[] }[]): RepoRow[] {
   const rows = new Map<string, RepoRow>();
   const ensure = (key: string, init: () => RepoRow) => { let r = rows.get(key); if (!r) { r = init(); rows.set(key, r); } return r; };
   for (const a of app) {
@@ -210,7 +210,8 @@ function buildRows(overview: RepositoryOverview | null, app: GitAppRepository[],
     const k = identity(key.provider, key.connection_id, r.id);
     const { short, account } = split(r.name, key.account_login);
     const row = ensure(k, () => ({ key: k, name: r.name, short, account, source: "key", provider: key.provider, sourceTitle: key.provider === "gitlab" ? "GitLab" : "GitHub, ключ доступа",
-      private: null, language: "", pushedAt: "", branch: r.default_branch, entry: null, records: [] }));
+      // Приватность по ответу провайдера; ответа нет — приватный, как считает и сервер.
+      private: r.public !== true, language: "", pushedAt: "", branch: r.default_branch, entry: null, records: [] }));
     // Приложение GitHub — основной вход; ключ — запасной, если приложения для репозитория нет.
     row.entry ??= { source: "connection", connection: key.connection_id, id: r.id };
   }
@@ -442,7 +443,11 @@ function AddRepository({ mode, row, data, admin, taken, onCancel, onDone }: { mo
   useEffect(() => { first.current?.focus({ preventScroll: true }); }, []);
   const chosen = data.projects.find(p => p.id === project);
   const level: RepositoryVisibility | "" = mode === "create" ? visibility : chosen?.visibility ?? "";
-  const need = privacyNeed(row.private, level, admin);
+  // Сервер знает о приватности больше строки (ответ провайдера): его отказ «подтвердите» включает вопрос.
+  const [serverPrivate, setServerPrivate] = useState(false);
+  const basic = privacyNeed(row.private || serverPrivate, level, admin);
+  // Видимость проекта интерфейсу может быть неизвестна — тогда вопрос задаётся по ответу сервера.
+  const need = serverPrivate && basic === "none" ? "consent" : basic;
   const branchName = branch.trim() || row.branch;
   const cleanFolder = (folder.trim() || row.short).replace(/^\/+|\/+$/g, "");
   const ready = !busy && (files || agents) && need !== "admin" && (need !== "consent" || agreed) && (mode === "create" ? !!name.trim() : !!project);
@@ -465,6 +470,7 @@ function AddRepository({ mode, row, data, admin, taken, onCancel, onDone }: { mo
       if (mode === "create" && target) await host.openSection("projects", target).catch(() => {});
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
+      if (message === REPOSITORY_FAILURES["project.private_code_consent"] && !serverPrivate) { setServerPrivate(true); return; }
       setError(/[а-яё]/i.test(message) ? message : mode === "create" ? "Проект не создан. Проверьте название и повторите; если не выйдет — добавьте репозиторий в существующий проект." : "Репозиторий не добавлен. Проверьте, что вы владелец проекта, и повторите.");
     } finally { setBusy(false); }
   }

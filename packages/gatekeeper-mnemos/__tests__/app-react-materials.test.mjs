@@ -19,6 +19,7 @@ function searching(searches) {
 }
 const cards = app => [...app.document.querySelectorAll("#root [data-document]")];
 const card = (app, name) => cards(app).find(c => c.querySelector("button")?.textContent === name);
+const chip = (app, name) => [...app.document.querySelectorAll('#root [role="group"][aria-label="Проект"] button')].find(b => b.textContent.startsWith(name));
 const inside = (el, name) => [...el.querySelectorAll("button")].find(b => b.textContent === name);
 function submit(app, text) {
   const input = app.document.querySelector('#root input[aria-label="Поиск по материалам"]');
@@ -27,7 +28,7 @@ function submit(app, text) {
   input.dispatchEvent(new app.dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
 }
 
-test("«Материалы»: одна строка ищет по всем проектам, результаты — карточки с проектом, фрагментом и временем", async () => {
+test("«Материалы»: одна строка ищет по всем проектам, результаты — строки с проектом, фрагментом и временем", async () => {
   const searches = [];
   const app = await mountMemoryApp(searching(searches), { section: "documents" });
   try {
@@ -42,10 +43,47 @@ test("«Материалы»: одна строка ищет по всем пр�
     assert.ok(first.querySelector("p").textContent.endsWith("…") && first.querySelector("p").textContent.length <= 241, "длинный фрагмент обрезан");
     await app.until(() => card(app, "Другой документ")?.querySelector("time")?.getAttribute("datetime") === "2026-09-10T10:00:00Z", "когда изменён");
 
-    // Выбор проекта повторяет тот же запрос только в нём.
-    app.type(app.document.querySelector('#root select[aria-label="Проект"]'), "two");
+    // Выбор проекта — чипом, без выпадающего списка; тот же запрос повторяется только в нём.
+    assert.equal(app.document.querySelector("#root select"), null, "выпадающих списков на экране нет");
+    chip(app, "Второй проект").click();
     await app.until(() => cards(app).length === 1 && card(app, "Другой документ"), "поиск в выбранном проекте");
     assert.deepEqual(searches.at(-1), ["two", "оплата"]);
+    assert.equal(chip(app, "Второй проект").getAttribute("aria-pressed"), "true");
+  } finally { app.dispose(); }
+});
+
+test("«Материалы»: поиск идёт сам при вводе, «Ищу…» стоит у поля и исчезает с ответом, найденное показывает папку", async () => {
+  const searches = [];
+  const waiting = [];
+  const app = await mountMemoryApp({
+    async searchProject(project, query) {
+      searches.push([project, query]);
+      if (query === "config") await new Promise(resolve => waiting.push(resolve));
+      if (project !== "one") return { hits: [], index_pending: false, degraded: false };
+      if (query === "config") return { hits: [{ project_id: "one", node_id: "cfg", name: "config.py", path: "/k400_front_back/backend/app/core/config.py", text: "", ordinal: 0 }], index_pending: false, degraded: false };
+      return { hits: [], index_pending: false, degraded: false };
+    },
+  }, { section: "documents" });
+  try {
+    await app.until(() => card(app, "Заметка команды"), "материалы");
+    assert.equal(app.buttons().filter(b => b.textContent === "Найти").length, 0, "кнопки «Найти» нет");
+    const input = app.document.querySelector('#root input[aria-label="Поиск по материалам"]');
+    app.type(input, "config");
+    const indicator = () => app.document.querySelector("#root [data-searching]");
+    await app.until(() => indicator() && waiting.length === 2, "индикатор у поля");
+    assert.ok(input.closest("label").contains(indicator()), "индикатор внутри поля поиска, а не во весь экран");
+    assert.equal(app.buttons().filter(b => b.getAttribute("aria-label") === "Очистить поиск").length, 1, "очистка появилась с текстом");
+    waiting.forEach(resolve => resolve());
+    await app.until(() => card(app, "config.py") && !indicator(), "ответ пришёл, индикатор исчез");
+    assert.ok(card(app, "config.py").textContent.includes("k400_front_back/backend/app/core"), "папка файла видна");
+    assert.deepEqual(searches.filter(([, q]) => q === "config").map(([p]) => p).toSorted(), ["one", "two"], "запрос ушёл без нажатия кнопки, по одному разу на проект");
+
+    app.type(input, "нетакогослова");
+    await app.until(() => app.document.querySelector("#root [data-nothing-found]"), "пустой результат");
+    assert.ok(app.text().includes("Ничего не найдено по «нетакогослова»"));
+    app.document.querySelector('#root button[aria-label="Очистить поиск"]').click();
+    await app.until(() => !app.document.querySelector('#root section[aria-label="Результаты поиска"]') && card(app, "Заметка команды"), "очистка вернула список");
+    assert.equal(app.document.querySelector('#root button[aria-label="Очистить поиск"]'), null, "очистки нет, когда нечего чистить");
   } finally { app.dispose(); }
 });
 
@@ -151,5 +189,35 @@ test("«Материалы»: Markdown в просмотре оформлен, �
     assert.equal(links[0].getAttribute("href"), "https://example.com");
     assert.equal(links[0].getAttribute("rel"), "noopener noreferrer");
     assert.ok(shown.textContent.includes("плохая"));
+  } finally { app.dispose(); }
+});
+
+test("«Материалы»: поздний ответ прежнего запроса не перетирает новый; одна буква запрос не отправляет", async () => {
+  const searches = [];
+  const late = [];
+  const app = await mountMemoryApp({
+    async searchProject(project, query) {
+      searches.push([project, query]);
+      if (query === "старый") await new Promise(resolve => late.push(resolve));
+      if (project !== "one") return { hits: [], index_pending: false, degraded: false };
+      return { hits: [{ project_id: "one", node_id: query === "старый" ? "old" : "new", name: query === "старый" ? "Старый.md" : "Новый.md", text: "", ordinal: 0 }], index_pending: false, degraded: false };
+    },
+  }, { section: "documents" });
+  try {
+    await app.until(() => card(app, "Заметка команды"), "материалы");
+    const input = app.document.querySelector('#root input[aria-label="Поиск по материалам"]');
+    app.type(input, "с");
+    await app.until(() => app.document.querySelector("#root [data-too-short]"), "подсказка про длину");
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(searches.length, 0, "одна буква не уходит на сервер");
+
+    app.type(input, "старый");
+    await app.until(() => late.length === 2, "прежний запрос ушёл и висит");
+    app.type(input, "новый");
+    await app.until(() => card(app, "Новый.md") && !app.document.querySelector("#root [data-searching]"), "ответ на новый запрос");
+    late.forEach(resolve => resolve());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.ok(card(app, "Новый.md"), "новый результат на месте");
+    assert.equal(card(app, "Старый.md"), undefined, "поздний ответ прежнего запроса отброшен");
   } finally { app.dispose(); }
 });

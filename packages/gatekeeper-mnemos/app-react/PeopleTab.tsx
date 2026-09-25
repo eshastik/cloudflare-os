@@ -93,7 +93,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
           {!error && !current.length && !openInvitations.length && <CardRow><Notice>Сотрудников пока нет. Пригласите первого.</Notice></CardRow>}
           {current.length > 0 && !visiblePeople.length && <CardRow><Notice>По этому запросу никого не найдено.</Notice></CardRow>}
         </Card>}
-        {!loading && former.length > 0 && <FormerPeople people={former} onChanged={reload} />}
+        {!loading && former.length > 0 && <FormerPeople people={former} current={current} data={data} onChanged={reload} />}
         {invitations.failed && <div className="mt-2"><Notice tone="danger">Список приглашений недоступен.</Notice></div>}
       </section>
     </div>
@@ -144,7 +144,7 @@ function RemovePerson({person,people,data,self,onRemoved}: {person:AdminPerson;p
     {confirming && <div role="region" aria-label={`Подтверждение удаления: ${name}`} className="grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]">
       <p className="m-0">Удалить {name} из организации? Вход и ключи доступа перестанут работать, агенты сотрудника отключатся, приглашения к документам и доступ к проектам снимутся, из отделов и компетенций сотрудник уйдёт.</p>
       <p className="m-0 text-kumo-subtle">Учётная запись и авторство версий сохранятся. Вернуть можно в «Бывших сотрудниках» ниже списка — доступ к проектам тогда выдаётся заново.</p>
-      <GitOwnershipTransfer person={person} people={people} data={data} />
+      <GitOwnershipTransfer person={person} people={people} data={data} mode="notice" />
       <div className="flex gap-2">
         <Pill tone="danger" disabled={busy} onClick={() => void remove()}>{busy ? "Удаляем…" : "Удалить"}</Pill>
         <Pill tone="ghost" disabled={busy} onClick={() => setConfirming(false)}>Отмена</Pill>
@@ -155,7 +155,7 @@ function RemovePerson({person,people,data,self,onRemoved}: {person:AdminPerson;p
 }
 
 /** Бывшие сотрудники: свёрнуты под списком, «Вернуть» открывает вход снова, без прежних прав. */
-function FormerPeople({people,onChanged}: {people:AdminPerson[];onChanged():void}) {
+function FormerPeople({people,current,data,onChanged}: {people:AdminPerson[];current:AdminPerson[];data:MemoryData;onChanged():void}) {
   const ui = useUi();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{tone:"success"|"danger";text:string}|null>(null);
@@ -168,11 +168,15 @@ function FormerPeople({people,onChanged}: {people:AdminPerson[];onChanged():void
   };
   return <details aria-label="Бывшие сотрудники" className="mt-3 text-[13px]">
     <summary className="cursor-pointer text-kumo-subtle">Бывшие сотрудники: {people.length}</summary>
-    <Card className="mt-2">{people.map(p => <CardRow key={p.userName}>
-      <PersonAvatar name={p.displayName || "Сотрудник"} id={p.userName} size={34} />
-      <RowTitle title={p.displayName || "Сотрудник без имени"} note="удалён из организации" />
-      <Pill tone="ghost" aria-label={`Вернуть: ${p.displayName || "сотрудник без имени"}`} disabled={busy} onClick={() => void restore(p)}>Вернуть</Pill>
-    </CardRow>)}</Card>
+    <Card className="mt-2">{people.map(p => <div key={p.userName} className="border-t border-kumo-fill first:border-t-0">
+      <CardRow className="border-t-0">
+        <PersonAvatar name={p.displayName || "Сотрудник"} id={p.userName} size={34} />
+        <RowTitle title={p.displayName || "Сотрудник без имени"} note="удалён из организации" />
+        <Pill tone="ghost" aria-label={`Вернуть: ${p.displayName || "сотрудник без имени"}`} disabled={busy} onClick={() => void restore(p)}>Вернуть</Pill>
+      </CardRow>
+      {/* Источники кода ушедшего: передаются здесь, после удаления, — сервер передаёт только от ушедшего. */}
+      <div className="px-4 pb-3 empty:hidden sm:pl-[62px]"><GitOwnershipTransfer person={p} people={current} data={data} /></div>
+    </div>)}</Card>
     {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
   </details>;
 }

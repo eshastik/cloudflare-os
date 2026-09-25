@@ -46,8 +46,8 @@ test("«Проекты»: страница проекта одним экран�
     await app.until(() => app.button("Все документы проекта"), "материалы");
     app.button("Все документы проекта").click();
     await app.until(() => app.document.querySelector("#root h1")?.textContent === "Материалы", "переход к документам");
-    // Проект в «Материалах» выбирается простым списком; выбран тот же, что был открыт.
-    await app.until(() => app.document.querySelector('#root select[aria-label="Проект"]')?.value === "one", "выбран тот же проект");
+    // Проект в «Материалах» выбирается чипом; выбран тот же, что был открыт.
+    await app.until(() => app.document.querySelector('#root [role="group"][aria-label="Проект"] button[aria-pressed="true"]')?.textContent.startsWith("Общий проект"), "выбран тот же проект");
   } finally { app.dispose(); }
 });
 

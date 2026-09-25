@@ -7,8 +7,10 @@ import { Notice } from "./ui.tsx";
 import { Pill, plural } from "./admin-ui.tsx";
 
 /** Уход сотрудника (решение владельца 25.09.2026): его источники кода и связи репозиториев с проектами не ломаются
- * молча — администратор передаёт их другому человеку, и связи продолжают работать от его имени. */
-export default function GitOwnershipTransfer({ person, people, data }: { person: AdminPerson; people: AdminPerson[]; data: MemoryData }) {
+ * молча — администратор передаёт их другому человеку, и связи продолжают работать от его имени. Сервер передаёт
+ * источники только ушедшего: до удаления (mode="notice") блок честно говорит, что будет, «Передать…» есть у
+ * бывших сотрудников (mode="transfer"). */
+export default function GitOwnershipTransfer({ person, people, data, mode = "transfer" }: { person: AdminPerson; people: AdminPerson[]; data: MemoryData; mode?: "notice" | "transfer" }) {
   const ui = useUi();
   const owned = useLoad(() => ui.readGitOwnership(person.userName), "Источники кода сотрудника не прочитаны.", [ui, person.userName]);
   const [picking, setPicking] = useState(false);
@@ -29,18 +31,23 @@ export default function GitOwnershipTransfer({ person, people, data }: { person:
       const out = await ui.transferGitOwnership(person.userName, to);
       setNotice({ tone: "success", text: `Передано ${receiver?.displayName || "сотруднику"}: источников ${out.connections}, связей с проектами ${out.links}. Связи продолжают работать.` });
       setPicking(false); await owned.reload();
-    } catch { setNotice({ tone: "danger", text: "Не передано. Обновите страницу и повторите." }); }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      setNotice({ tone: "danger", text: /[а-яё]/i.test(message) ? message : "Не передано. Обновите страницу и повторите." });
+    }
     finally { setBusy(false); }
   }
   const sourceWords = (c: { provider: string; name: string; installation_id?: string }) => c.installation_id ? `${c.name || "GitHub"} — через приложение` : c.provider === "gitea" ? "Внутреннее хранилище Mnemos" : `${c.name || c.provider} — ключ доступа`;
   return <section aria-label="Источники кода сотрудника" className="grid gap-2 rounded-xl border border-kumo-warning bg-kumo-warning-tint p-3 text-[13px] text-kumo-warning">
-    <p className="m-0"><strong className="font-semibold">Сначала передайте код.</strong> От имени сотрудника работают {value.connections.length} {plural(value.connections.length, "источник", "источника", "источников")} и {value.links.length} {plural(value.links.length, "связь", "связи", "связей")} репозиториев с проектами — после удаления они остановятся.</p>
+    {mode === "notice"
+      ? <p className="m-0">От имени сотрудника работают {value.connections.length} {plural(value.connections.length, "источник", "источника", "источников")} кода и {value.links.length} {plural(value.links.length, "связь", "связи", "связей")} репозиториев с проектами. После удаления администратор передаст его источники другому сотруднику в «Бывших сотрудниках»; до передачи эти связи остановятся.</p>
+      : <p className="m-0"><strong className="font-semibold">Передайте код.</strong> От имени бывшего сотрудника остались {value.connections.length} {plural(value.connections.length, "источник", "источника", "источников")} и {value.links.length} {plural(value.links.length, "связь", "связи", "связей")} репозиториев с проектами — они стоят, пока их не передадут другому.</p>}
     <ul className="m-0 grid list-none gap-0.5 p-0 text-kumo-default">
       {value.connections.map(c => <li key={c.connection_id}>Источник: {sourceWords(c)}</li>)}
       {value.links.map(l => <li key={`${l.project_id}/${l.connection_id}/${l.repository_id}`}>Связь: {l.repository_name} → проект «{projectName(data.projects, l.project_id)}»</li>)}
     </ul>
-    {!picking && <div><Pill tone="primary" disabled={busy} onClick={() => setPicking(true)}>Передать…</Pill></div>}
-    {picking && <div className="grid gap-2">
+    {mode === "transfer" && !picking && <div><Pill tone="primary" disabled={busy} onClick={() => setPicking(true)}>Передать…</Pill></div>}
+    {mode === "transfer" && picking && <div className="grid gap-2">
       <label className="flex h-9 max-w-[360px] items-center gap-2 rounded-xl border border-kumo-fill-hover bg-kumo-overlay px-3">
         <MagnifyingGlass size={14} aria-hidden="true" className="shrink-0 text-kumo-subtle" />
         <input aria-label="Кому передать" value={search} onChange={e => setSearch(e.target.value)} placeholder="Кому передать" className="min-w-0 flex-1 border-0 bg-transparent text-[14px] text-kumo-default outline-none placeholder:text-kumo-inactive" />

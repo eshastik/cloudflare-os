@@ -14,6 +14,8 @@ import { plural } from "./names.ts";
 import { Block, Button, DecisionCard, EmptyState, Notice, PageHeader, Row, RowList, RowText, StatusBadge } from "./ui.tsx";
 import AcceptanceReview from "./AcceptanceReview.tsx";
 import AgentRequests from "./AgentRequests.tsx";
+import { PrivateCodeApproval, privateCodeConsentNeeded } from "./ProjectSharing.tsx";
+import { REPOSITORY_FAILURES } from "../src/git-repositories.ts";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 /** Сколько проектов опрашивать на вопросы приёмной; столько же берёт счётчик в навигации. */
@@ -74,6 +76,8 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [publishing, setPublishing] = useState("");
   const [sharing, setSharing] = useState("");
+  // Запрос, одобрение которого ждёт подтверждения про приватный код проекта.
+  const [privateCode, setPrivateCode] = useState<ShareRequest | null>(null);
   const userId = data.identity?.subject.user_id ?? "";
   const names = useMemo(() => documentNames(data.projects), [data.projects]);
   const projectIds = data.projects.slice(0, ALERT_PROJECTS).map(p => p.id);
@@ -115,17 +119,19 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       setPublishing("");
     }
   }
-  async function decideShare(share: ShareRequest, approve: boolean) {
+  async function decideShare(share: ShareRequest, approve: boolean, consent = false) {
     if (sharing) return;
     setSharing(share.request_id); setNotice(null);
     try {
-      await ui.decideShareRequest(share.request_id, approve);
+      await ui.decideShareRequest(share.request_id, approve, consent);
+      setPrivateCode(null);
       setNotice({ tone: "success", text: approve ? `Проект «${share.project_name}» открыт ${shareAudience(share)}.` : `Запрос отклонён: проект «${share.project_name}» остаётся с прежним доступом.` });
       setSelectedKey("");
       await shares.reload();
       if (approve) await data.reloadProjects();
-    } catch {
-      setNotice({ tone: "danger", text: "Решение не записано: запрос мог быть уже решён или у вас нет права решать его. Обновите список." });
+    } catch (e) {
+      if (approve && !consent && privateCodeConsentNeeded(e)) setPrivateCode(share);
+      else setNotice({ tone: "danger", text: e instanceof Error && e.message === REPOSITORY_FAILURES["project.private_code_admin"] ? "В проекте код приватного репозитория: всей организации его открывает только администратор." : "Решение не записано: запрос мог быть уже решён или у вас нет права решать его. Обновите список." });
     } finally { setSharing(""); }
   }
   /** Открыть документ, которым поделились, в его редакторе. Документ лежит в ветке владельца, поэтому
@@ -225,6 +231,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
 
       {decision.notice && <div className="mb-3"><Notice tone={decision.notice.tone}>{decision.notice.text}</Notice></div>}
       {notice && <div className="mb-3"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
+      {privateCode && <div className="mb-3"><PrivateCodeApproval share={privateCode} busy={!!sharing} onConfirm={() => void decideShare(privateCode, true, true)} onCancel={() => setPrivateCode(null)} /></div>}
       {errors.map(error => <div key={error} className="mb-3"><Notice tone="danger">{error}</Notice></div>)}
 
       <section aria-label="Ждут вашего решения" className="mb-10 flex flex-col gap-4">

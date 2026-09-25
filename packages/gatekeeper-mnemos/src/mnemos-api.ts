@@ -768,10 +768,11 @@ export class MnemosAPI {
     return this.#request("/v1/projects", "GET", signal);
   }
   /** Сервер либо меняет видимость сразу, либо заводит запрос руководителю или администратору. */
-  async setProjectVisibility(project: string, level: ProjectVisibility, canEdit: boolean, signal?: AbortSignal): Promise<ProjectVisibilityResult> {
+  /** consent — человек подтвердил, что код приватного репозитория проекта увидят все, кому проект будет открыт. */
+  async setProjectVisibility(project: string, level: ProjectVisibility, canEdit: boolean, signal?: AbortSignal, consent = false): Promise<ProjectVisibilityResult> {
     segment(project);
-    if (!isProjectVisibility(level) || typeof canEdit !== "boolean") throw new MnemosAPIError(400);
-    const out = await this.#request<unknown>(`/v1/projects/${segment(project)}/visibility`, "POST", signal, { level, can_edit: canEdit });
+    if (!isProjectVisibility(level) || typeof canEdit !== "boolean" || typeof consent !== "boolean") throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>(`/v1/projects/${segment(project)}/visibility`, "POST", signal, consent ? { level, can_edit: canEdit, consent: true } : { level, can_edit: canEdit });
     if (!validVisibilityResult(out, project)) throw new MnemosAPIError(502);
     return out;
   }
@@ -784,10 +785,11 @@ export class MnemosAPI {
     if (!Array.isArray(requests) || requests.length > 500 || !requests.every(validShareRequest)) throw new MnemosAPIError(502);
     return { requests };
   }
-  async decideShareRequest(request: string, approve: boolean, signal?: AbortSignal): Promise<ShareRequest> {
+  /** consent — решающий подтвердил, что код приватного репозитория проекта увидят все, кому проект откроется. */
+  async decideShareRequest(request: string, approve: boolean, signal?: AbortSignal, consent = false): Promise<ShareRequest> {
     segment(request);
-    if (typeof approve !== "boolean") throw new MnemosAPIError(400);
-    const out = await this.#request<unknown>(`/v1/share-requests/${segment(request)}/decision`, "POST", signal, { approve });
+    if (typeof approve !== "boolean" || typeof consent !== "boolean") throw new MnemosAPIError(400);
+    const out = await this.#request<unknown>(`/v1/share-requests/${segment(request)}/decision`, "POST", signal, consent ? { approve, consent: true } : { approve });
     if (!validShareRequest(out) || out.request_id !== request) throw new MnemosAPIError(502);
     return out;
   }
@@ -1157,7 +1159,8 @@ export interface IngestRefusal {reason:string;detail:string}
 function publicText(value:unknown):string{return typeof value==='string'?[...value].filter(char=>char.charCodeAt(0)>=32).join('').trim().slice(0,600):'';}
 async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal;progress?:HistoryProgress}|undefined>{
  // 403 разбирается только ради отказов раздела «Репозитории»: у них понятная человеку причина.
- if(response.status!==400&&response.status!==403&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
+ // 404 и 501 — ради отказов раздела «Репозитории» (git_repo.missing, git_sync.unavailable): прочие коды там не разбираются.
+ if(response.status!==400&&response.status!==403&&response.status!==404&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==501&&response.status!==503){await response.body?.cancel();return undefined;}
  // Отказ политики несёт готовый абзац по-русски, поэтому у 400 предел тела больше.
  const limit=response.status===400?4096:1024;
  const reader=response.body?.getReader();if(!reader)return undefined;
@@ -1178,7 +1181,7 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
   // История проекта ещё переносится в граф ядра: ход — в progress, опрос ведёт оболочка.
   if(response.status===429&&fields.code===HISTORY_PREPARING)return {code:HISTORY_PREPARING,progress:historyProgress(fields.progress)};
   if(typeof fields.code==='string'&&(REPOSITORY_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as RepositoryFailureCode};
-  if(response.status===403)return undefined;
+  if(response.status===403||response.status===404||response.status===501)return undefined;
   if(response.status!==400&&typeof fields.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as GitFailureCode};
  }catch{return undefined;}finally{reader.releaseLock();}
  return undefined;
@@ -1249,7 +1252,8 @@ export interface ContentDownloadTicket { node_id: string; url: string; method: s
 export interface PublicationDownloadTicket { content_type: string; node_id: string; event_id: string; url: string; method: string; size_bytes: number; sha256_hex: string; expires_at: string }
 
 export interface ProjectSearchPage {
-  hits: { project_id: string; node_id: string; name: string; text: string; ordinal: number }[];
+  /** path — путь в проекте; у приглашённого к одному документу это только имя. */
+  hits: { project_id: string; node_id: string; name: string; text: string; ordinal: number; path?: string }[];
   index_pending: boolean;
   degraded: boolean;
 }
