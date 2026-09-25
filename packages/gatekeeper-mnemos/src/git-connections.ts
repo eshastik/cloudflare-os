@@ -1,5 +1,7 @@
 import type {SourceLoadHealth} from './source-health.ts';
-export interface GitConnection extends SourceLoadHealth {connection_id:string;owner_id:string;provider:"github"|"gitlab"|"gitea";api_base:string;account_id:string;account_login:string;name:string;revision:number;enabled:boolean}
+export interface GitConnection extends SourceLoadHealth {connection_id:string;owner_id:string;provider:"github"|"gitlab"|"gitea";api_base:string;account_id:string;account_login:string;name:string;revision:number;enabled:boolean;
+  /** Установка GitHub App, представленная подключением (миграция 0164): это не личный ключ. */
+  installation_id?:string}
 export interface GitConnectionPage {connections:GitConnection[];next_cursor?:string}
 export interface GitRepository {id:string;name:string;default_branch:string}
 export interface GitRepositoryPage {repositories:GitRepository[];next_page?:number}
@@ -14,7 +16,6 @@ export function validateGitSetup(input:GitSetup):GitSetup {
 
 export interface GitProjectRepository {project_id:string;connection_id:string;repository_id:string;repository_name:string;revision:number;enabled:boolean;provider:"github"|"gitlab"|"gitea";connection_revision:number}
 export interface GitProjectRepositoryPage {repositories:GitProjectRepository[];next_cursor?:string}
-export interface GitRepositorySelection {expected_connection_revision:number;expected_revision:number;repository_name:string;enabled:boolean}
 
 export interface GitBindingState {push_path?:string;push_url?:string;mcp_resource?:string;connection_revision:number;binding:Omit<GitProjectRepository,"provider"|"connection_revision">|null}
 

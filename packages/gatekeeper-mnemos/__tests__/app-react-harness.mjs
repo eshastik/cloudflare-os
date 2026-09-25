@@ -6,6 +6,9 @@ import { MessageChannel } from "node:worker_threads";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { RpcTarget, newMessagePortRpcSession } from "capnweb";
 
+/** Настоящий таймер: тесты могут подменять часы, ожидание экрана от этого не зависит. */
+const realSetTimeout = globalThis.setTimeout;
+
 export const REVIEW_MINE = "e".repeat(64);
 export const REVIEW_READY = "f".repeat(64);
 const HEAD_A = "a".repeat(64), HEAD_B = "b".repeat(64);
@@ -167,11 +170,15 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
   const tab = name => tabs().find(t => t.textContent.startsWith(name));
   const buttons = () => [...document.querySelectorAll("#root button")];
   const button = name => buttons().find(b => b.textContent === name);
+  // Ожидание по состоянию, а не по часам: проверка повторяется каждые 5 мс, пока экран не придёт в нужное
+  // состояние. Предел — число попыток, а не секунды (MNEMOS_UI_WAIT_MS / 5, по умолчанию 2 минуты на
+  // свободной машине): под нагрузкой каждая попытка дольше, и тест ждёт дольше, а не падает. Таймер берётся
+  // настоящий, сохранённый при загрузке модуля: тесты с подменёнными часами его не останавливают.
   async function until(predicate, what) {
-    const deadline = Date.now() + 15000;
-    while (!predicate()) {
-      if (Date.now() >= deadline) throw new Error(`UI did not reach expected state: ${what}\n${text().slice(0, 600)}`);
-      await new Promise(resolve => setTimeout(resolve, 5));
+    const attempts = Math.ceil((Number(process.env.MNEMOS_UI_WAIT_MS) || 120000) / 5);
+    for (let i = 0; !predicate(); i++) {
+      if (i >= attempts) throw new Error(`UI did not reach expected state: ${what}\n${text().slice(0, 600)}`);
+      await new Promise(resolve => realSetTimeout(resolve, 5));
     }
   }
   async function open(name) {

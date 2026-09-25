@@ -3,8 +3,8 @@ import { CalendarBlank, Code, Database, Envelope, Folder, TelegramLogo } from "@
 import { useHost, useUi } from "./host.ts";
 import { agentNames, projectName, useLoad, type MemoryData } from "./data.ts";
 import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
-import { Field, FieldInput, FieldSelect, Pill, PillSelect, RowTitle } from "./admin-ui.tsx";
-import GitHubRepositories, { repoFromApp, type RepoRow } from "./GitHubRepositories.tsx";
+import { Field, FieldInput, FieldSelect, Pill, RowTitle } from "./admin-ui.tsx";
+import { RepositoriesRow } from "./Repositories.tsx";
 
 const FAILURE = "не удалось прочитать подключения. Обновите страницу.";
 
@@ -28,7 +28,7 @@ export default function ConnectionsTab({ data }: { data: MemoryData }) {
       <MailRow data={data} />
       <CalendarRow data={data} />
       <DriveRow />
-      <GitRow data={data} />
+      <RepositoriesRow data={data} />
       <DatabaseRow data={data} />
       <TelegramRow data={data} />
     </div>
@@ -154,36 +154,15 @@ function DriveRow() {
       onConnect={({ server, username, password }) => ui.connectWebDAVAccount({ request: crypto.randomUUID(), server, username, password })} />} />;
 }
 
-const GIT_SERVICES = { github: { title: "GitHub", api: "https://api.github.com" }, gitlab: { title: "GitLab.com", api: "https://gitlab.com/api/v4" }, own: { title: "Свой сервер GitLab", api: "" } } as const;
-
-function GitRow({ data }: { data: MemoryData }) {
-  const ui = useUi();
-  const connections = useLoad(() => ui.listGitConnections(""), FAILURE, [ui]);
-  const items: Item[] = (connections.value?.connections ?? []).map(c => ({ key: `git/${c.connection_id}`, ...gitWords(c),
-    problem: c.enabled ? loadProblem(c) : "отключено",
-    disconnect: c.enabled ? () => ui.disableGitConnection(c.connection_id, c.revision) : undefined }));
-  const enabled = (connections.value?.connections ?? []).filter(c => c.enabled);
-  const githubReturn = useGitHubReturn();
-  return <ConnectionRow title="Код" icon="code" connectLabel="Добавить GitHub" what="Внутреннее хранилище кода Mnemos, GitHub и GitLab. Проекту открывается выбранный репозиторий." loading={connections.loading} error={connections.error} items={items} reload={connections.reload}
-    openWhen={githubReturn !== null}
-    extra={<>
-      {enabled.length > 0 && <GitBinding data={data} connections={enabled.map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} />}
-      <GitHubSync data={data} connections={enabled.filter(c => c.provider === "github").map(c => ({ connection_id: c.connection_id, name: gitWords(c).title }))} githubReturn={githubReturn} />
-    </>}
-    connect={done => <GitForm done={done} />} />;
-}
-
-type SyncLink = Awaited<ReturnType<ReturnType<typeof useUi>["listGitSyncLinks"]>>["links"][number];
-
 /** Создать проект может тот, кому это разрешает правило «Кто создаёт проекты»; окончательно решает сервер. */
-function canCreateProjects(identity: MemoryData["identity"]): boolean {
+export function canCreateProjects(identity: MemoryData["identity"]): boolean {
   return !!identity?.capabilities?.includes("project.create") || !!identity?.roles?.can_create_projects;
 }
 
-type GitHubReturn = { result: "connected" | "updated" | "failed"; reason: string };
+export type GitHubReturn = { result: "connected" | "updated" | "failed"; reason: string };
 
 /** Итог возврата с GitHub из адреса страницы: хост отдаёт его один раз. */
-function useGitHubReturn(): GitHubReturn | null {
+export function useGitHubReturn(): GitHubReturn | null {
   const host = useHost();
   const [value, setValue] = useState<GitHubReturn | null>(null);
   useEffect(() => { host.takeGitHubReturn().then(r => { if (r) setValue(r); }, () => {}); }, [host]);
@@ -199,9 +178,9 @@ const GITHUB_FAILURES: Record<string, string> = {
   unconfigured: "GitHub-приложение не настроено до конца. Обратитесь к администратору сервера.",
 };
 
-function githubReturnNotice(r: GitHubReturn): { tone: "success" | "danger"; text: string } {
+export function githubReturnNotice(r: GitHubReturn): { tone: "success" | "danger"; text: string } {
   if (r.result === "connected") return { tone: "success", text: "GitHub подключён. Его репозитории можно связывать с проектами." };
-  if (r.result === "updated") return { tone: "success", text: "Доступ в GitHub изменён. Список репозиториев обновлён." };
+  if (r.result === "updated") return { tone: "success", text: "Доступ в GitHub изменён. Нажмите «Обновить доступ» у аккаунта, чтобы Mnemos увидел изменения: репозитории показываются те, что GitHub подтвердил вам при входе." };
   // Приложение поставлено прямо на GitHub, не по кнопке: чья установка, Mnemos узнает при подключении.
   if (r.reason === "installed") return { tone: "success", text: "Приложение Mnemos установлено в GitHub. Нажмите «Подключить GitHub», чтобы его репозитории стали доступны вам." };
   return { tone: "danger", text: GITHUB_FAILURES[r.reason] ?? "GitHub не ответил. Повторите через несколько минут." };
@@ -209,16 +188,18 @@ function githubReturnNotice(r: GitHubReturn): { tone: "success" | "danger"; text
 
 function repositoriesWord(n: number): string {
   const last = n % 10, tens = n % 100;
-  if (last === 1 && tens !== 11) return `${n} выбранный репозиторий`;
-  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) return `${n} выбранных репозитория`;
-  return `${n} выбранных репозиториев`;
+  if (last === 1 && tens !== 11) return `${n} доступный вам репозиторий`;
+  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) return `${n} доступных вам репозитория`;
+  return `${n} доступных вам репозиториев`;
 }
 
 type GitHubAccountPage = Awaited<ReturnType<ReturnType<typeof useUi>["listGitHubAccounts"]>>;
 type GitHubAccountRow = GitHubAccountPage["accounts"][number];
 
 function accountNote(a: GitHubAccountRow): string {
-  const repos = a.repository_selection === "all" ? "все репозитории" : a.repository_count >= 0 ? repositoriesWord(a.repository_count) : "выбранные репозитории";
+  // Показываются репозитории, открытые самому человеку в GitHub, а не вся установка организации.
+  if (a.access_stale) return "доступ не подтверждён — нажмите «Обновить доступ» и войдите в GitHub";
+  const repos = a.repository_count >= 0 ? repositoriesWord(a.repository_count) : a.repository_selection === "all" ? "все репозитории" : "выбранные репозитории";
   const kind = a.account_type === "Organization" ? "организация · " : "";
   const via = a.github_login && a.github_login !== a.account_login ? ` · подключено через ${a.github_login}` : "";
   return `${kind}${repos}${via}`;
@@ -226,7 +207,7 @@ function accountNote(a: GitHubAccountRow): string {
 
 /** «Ваши аккаунты GitHub»: у каждого человека свои. GitHub открывается в новой вкладке: фрейму Mnemos
  * самому открывать окна нельзя, это делает хост и только для страниц приложения GitHub. */
-function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitHubAccountPage | null; error: string; loading: boolean }; reload(): Promise<void>; changed(): void }) {
+export function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitHubAccountPage | null; error: string; loading: boolean }; reload(): Promise<void>; changed(): void }) {
   const ui = useUi();
   const host = useHost();
   const [busy, setBusy] = useState("");
@@ -261,6 +242,7 @@ function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitH
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
     {page.accounts.map(a => <div key={a.installation_id} data-github-account="" className="flex flex-wrap items-center gap-2 rounded-xl bg-kumo-base px-3 py-2.5">
       <RowTitle title={a.account_login} note={accountNote(a)} />
+      {page.connectable && <Pill tone={a.access_stale ? "primary" : "ghost"} disabled={!!busy} onClick={() => void connect()}>Обновить доступ</Pill>}
       {a.manage_url && <Pill tone="ghost" disabled={!!busy} onClick={() => void open(a.manage_url, "GitHub")}>Изменить доступ</Pill>}
       {confirm !== a.installation_id && <Pill tone="ghost" disabled={!!busy} onClick={() => setConfirm(a.installation_id)}>Отключить</Pill>}
       {confirm === a.installation_id && <span className="flex flex-wrap items-center gap-1.5">
@@ -280,120 +262,13 @@ function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitH
   </div>;
 }
 
-/** «Синхронизация с GitHub»: аккаунты, затем репозитории списком. Репозиторий становится новым проектом
- * или папкой существующего и дальше обновляется сам. */
-function GitHubSync({ data, connections, githubReturn }: { data: MemoryData; connections: { connection_id: string; name: string }[]; githubReturn: GitHubReturn | null }) {
-  const ui = useUi();
-  const links = useLoad(() => ui.listGitSyncLinks(), "Связи с GitHub не прочитаны. Обновите страницу.", [ui]);
-  const accounts = useLoad(() => ui.listGitHubAccounts(), "Аккаунты GitHub не прочитаны.", [ui]);
-  const [version, setVersion] = useState(0);
-  const personal = connections.map(c => c.connection_id).join(",");
-  const repos = useLoad(async (): Promise<RepoRow[]> => {
-    const app = await ui.listGitAppRepositories();
-    const out = app.repositories.map(repoFromApp);
-    // Личный ключ доступа GitHub — запасной вход: его репозитории в том же списке.
-    for (const c of connections) {
-      const page = await ui.listGitRepositories(c.connection_id, 1);
-      for (const r of page.repositories) if (!out.some(o => o.id === r.id)) {
-        const slash = r.name.indexOf("/");
-        out.push({ key: `conn/${c.connection_id}/${r.id}`, id: r.id, name: r.name, short: slash >= 0 ? r.name.slice(slash + 1) : r.name, account: slash >= 0 ? r.name.slice(0, slash) : c.name,
-          branch: r.default_branch, private: null, pushedAt: "", language: "", source: "connection", installation: "", connection: c.connection_id });
-      }
-    }
-    return out;
-  }, "Список репозиториев GitHub не прочитан. Обновите страницу.", [ui, personal, version]);
-  // Подключение идёт в соседней вкладке: вернувшись, человек видит свежий список без обновления страницы.
-  useEffect(() => {
-    const again = () => { if (document.visibilityState === "visible") { void accounts.reload(); void links.reload(); setVersion(v => v + 1); } };
-    document.addEventListener("visibilitychange", again);
-    return () => document.removeEventListener("visibilitychange", again);
-  }, [accounts.reload, links.reload]);
-  return <section aria-label="Синхронизация с GitHub" className="rounded-2xl border border-kumo-fill p-4 text-[13px]">
-    <h3 className="m-0 text-[14px] font-medium">Синхронизация с GitHub</h3>
-    <p className="mt-1 mb-0 text-kumo-subtle">Репозиторий становится проектом или папкой проекта и обновляется сам. Правка в Mnemos поверх файла из GitHub даёт явный конфликт, ничего не теряется.</p>
-    {githubReturn && <div className="mt-2"><Notice tone={githubReturnNotice(githubReturn).tone}>{githubReturnNotice(githubReturn).text}</Notice></div>}
-    <GitHubAccounts accounts={accounts} reload={accounts.reload} changed={() => { void links.reload(); setVersion(v => v + 1); }} />
-    <GitHubRepositories data={data} repos={repos} links={links} canCreate={canCreateProjects(data.identity)} />
-  </section>;
-}
-
 /** Строка подключения кода словами. Внутреннее хранилище установки (provider "gitea") работает от
  * служебной учётной записи организации: ни название программы, ни эта учётная запись человеку ничего не говорят. */
 export function gitWords(c: { provider: string; name: string; account_login: string }): { title: string; note: string } {
-  const consent = "изменения агент отправляет только после вашего согласования";
+  const consent = "агенты работают в своих ветках; в основную ветку изменения попадают после «Принять»";
   if (c.provider !== "github" && c.provider !== "gitlab") return { title: "Внутреннее хранилище кода Mnemos", note: consent };
   const service = c.provider === "github" ? "GitHub" : "GitLab";
   return { title: c.name || `Хранилище кода ${service}`, note: `${service}${c.account_login ? ` · учётная запись ${c.account_login}` : ""} · ${consent}` };
-}
-
-function GitForm({ done }: { done(): void }) {
-  const ui = useUi();
-  const [service, setService] = useState<keyof typeof GIT_SERVICES>("github");
-  const [address, setAddress] = useState("");
-  const [name, setName] = useState("");
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const api = service === "own" ? address.trim().replace(/\/$/, "") + (address.trim() && !/\/api\/v4$/.test(address.trim().replace(/\/$/, "")) ? "/api/v4" : "") : GIT_SERVICES[service].api;
-  async function submit() {
-    if (busy || !name.trim() || !token || !api) return;
-    setBusy(true); setError("");
-    try {
-      const intent = await ui.saveGitRegistrationIntent({ provider: service === "github" ? "github" : "gitlab", api_base: api, name: name.trim() });
-      await ui.executeGitRegistrationIntent(intent.id, token, false);
-      setToken(""); done();
-    } catch { setToken(""); setError("Не подключилось. Проверьте ключ доступа и адрес сервера."); }
-    finally { setBusy(false); }
-  }
-  return <ActionForm aria-label="Подключить код" onAction={() => void submit()} className="grid max-w-[480px] gap-3 text-[14px]">
-    <Field label="Где хранится код"><FieldSelect aria-label="Хранилище кода" value={service} disabled={busy} onChange={e => setService(e.target.value as keyof typeof GIT_SERVICES)}>
-      {Object.entries(GIT_SERVICES).map(([id, s]) => <option key={id} value={id}>{s.title}</option>)}
-    </FieldSelect></Field>
-    {service === "own" && <Field label="Адрес сервера GitLab"><FieldInput aria-label="Адрес сервера GitLab" value={address} disabled={busy} onChange={e => setAddress(e.target.value)} placeholder="https://gitlab.company.ru" /></Field>}
-    <Field label="Название"><FieldInput aria-label="Название подключения" value={name} disabled={busy} onChange={e => setName(e.target.value)} placeholder="Например, Код компании" /></Field>
-    <Field label="Ключ доступа"><FieldInput aria-label="Ключ доступа" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></Field>
-    <p className="m-0 text-[12px] text-kumo-subtle">Ключ доступа создаётся в настройках GitHub или GitLab. Он хранится на сервере памяти и не передаётся агентам.</p>
-    {error && <Notice tone="danger">{error}</Notice>}
-    <div><Pill tone="primary" disabled={busy || !name.trim() || !token || !api} onClick={() => void submit()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
-  </ActionForm>;
-}
-
-/** Открыть проекту репозиторий: проект и репозиторий выбираются по названиям. */
-function GitBinding({ data, connections }: { data: MemoryData; connections: { connection_id: string; name: string }[] }) {
-  const ui = useUi();
-  const [connection, setConnection] = useState(connections[0].connection_id);
-  const [project, setProject] = useState("");
-  const [repository, setRepository] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
-  const repositories = useLoad(async () => (await ui.listGitRepositories(connection, 1)).repositories, "Список репозиториев не прочитан.", [ui, connection]);
-  async function bind() {
-    const repo = repositories.value?.find(r => r.id === repository);
-    if (busy || !project || !repo) return;
-    setBusy(true); setNotice(null);
-    try {
-      const state = await ui.readOwnedGitBinding(project, connection, repo.id);
-      await ui.bindGitRepository(project, connection, repo.id, { expected_connection_revision: state.connection_revision, expected_revision: state.binding?.revision ?? 0, repository_name: repo.name, enabled: true });
-      setNotice({ tone: "success", text: `Репозиторий «${repo.name}» открыт проекту «${projectName(data.projects, project)}».` });
-    } catch { setNotice({ tone: "danger", text: "Не получилось. Проверьте, что у вас есть право менять проект." }); }
-    finally { setBusy(false); }
-  }
-  return <section aria-label="Код для проекта" className="rounded-2xl border border-kumo-fill p-4 text-[13px]">
-    <h3 className="m-0 text-[14px] font-medium">Открыть проекту репозиторий</h3>
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      {connections.length > 1 && <PillSelect aria-label="Подключение кода" value={connection} disabled={busy} onChange={e => { setConnection(e.target.value); setRepository(""); }}>{connections.map(c => <option key={c.connection_id} value={c.connection_id}>{c.name}</option>)}</PillSelect>}
-      <PillSelect aria-label="Репозиторий" value={repository} disabled={busy || !repositories.value} onChange={e => setRepository(e.target.value)}>
-        <option value="">{repositories.loading ? "Загрузка…" : "Выберите репозиторий"}</option>
-        {(repositories.value ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-      </PillSelect>
-      <PillSelect aria-label="Проект для кода" value={project} disabled={busy} onChange={e => setProject(e.target.value)}>
-        <option value="">Выберите проект</option>{data.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </PillSelect>
-      <Pill disabled={busy || !project || !repository} onClick={() => void bind()}>Открыть проекту</Pill>
-    </div>
-    {repositories.error && <Notice tone="danger">{repositories.error}</Notice>}
-    {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
-  </section>;
 }
 
 function DatabaseRow({ data }: { data: MemoryData }) {

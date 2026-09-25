@@ -5,6 +5,7 @@ import DocumentsTab from "./DocumentsTab.tsx";
 import MyWorkTab from "./MyWorkTab.tsx";
 import ProjectsTab from "./ProjectsTab.tsx";
 import ConnectionsTab from "./ConnectionsTab.tsx";
+import RepositoriesPage from "./Repositories.tsx";
 import AgentsTab from "./AgentsTab.tsx";
 import PeopleTab from "./PeopleTab.tsx";
 import IntakeTab from "./IntakeTab.tsx";
@@ -77,6 +78,8 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
   const page = section && sections[section];
   // «Люди и отделы» решают сами: руководителю отдела без полномочия там доступно приглашение в свой отдел.
   const denied = (section === "rules" && !admin) || (section === "journal" && !admin && !capabilities.includes("platform.metrics.read"));
+  // «Репозитории» — строка «Подключений», раскрытая в полноценную страницу со своим заголовком.
+  const repositories = section === "connections" && selectedView === "repositories" && !compact;
 
   if (section === undefined) return <p role="status" className="m-0 p-10 text-[15px] text-kumo-subtle">Загрузка раздела…</p>;
   if (panelIntake) return <div className="flex w-full flex-col px-4 py-4"><IntakeTab data={data} compact /></div>;
@@ -87,7 +90,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
   </>;
 
   return <div className={compact ? "flex w-full flex-col px-4 py-4" : `mx-auto flex w-full ${(section && WIDTH[section]) ?? "max-w-[1120px]"} flex-col px-4 py-8 sm:px-6 sm:py-12`}>
-    {!compact && !(section && OWN_HEADER.has(section)) && <PageHeader title={page ? page.title : "Раздел не найден"} subtitle={page?.description} />}
+    {!compact && !repositories && !(section && OWN_HEADER.has(section)) && <PageHeader title={page ? page.title : "Раздел не найден"} subtitle={page?.description} />}
     {notice && <p role="alert" className="m-0 mb-4 text-[14px] text-kumo-danger">{notice}</p>}
     {!section && <p className="m-0 text-[15px] text-kumo-subtle">Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status" className="m-0 text-[15px] text-kumo-subtle">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>
@@ -97,7 +100,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
       {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} onInvite={() => open("people")} />}
       {section === "people" && <PeopleTab data={data} />}
       {section === "rules" && <RulesTab />}
-      {section === "connections" && <ConnectionsTab data={data} />}
+      {section === "connections" && (repositories ? <RepositoriesPage data={data} onBack={() => open("connections")} /> : <ConnectionsTab data={data} />)}
       {section === "agents" && <AgentsTab data={data} />}
       {section === "journal" && <JournalTab data={data} />}
     </>}

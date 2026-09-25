@@ -93,7 +93,10 @@ test("итог с ошибками: «Показать» раскрывает с
     assert.deepEqual(app.calls.find(c => c[0] === "retryUpload"), ["retryUpload", 7]);
     await app.until(() => reads > before, "список файлов перечитан по завершении");
     card.querySelector('button[aria-label="Закрыть"]').click();
+    // Карточка прячется сразу локальным состоянием; dismissUpload идёт отдельным вызовом хоста и может
+    // прийти чуть позже — оба дожидаемся отдельно, а не полагаемся на порядок между ними.
     await app.until(() => !section(app).querySelector('[data-upload="done"]'), "итог закрыт крестиком");
+    await app.until(() => app.calls.some(c => c[0] === "dismissUpload"), "закрытие отправлено хосту");
     assert.deepEqual(app.calls.find(c => c[0] === "dismissUpload"), ["dismissUpload", 7]);
   } finally { app.dispose(); }
 });

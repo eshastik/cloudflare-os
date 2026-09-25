@@ -1,4 +1,5 @@
 import { HISTORY_PREPARING, historyPreparingMessage, historyProgress, type HistoryProgress } from "./history-preparing.ts";
+import { REPOSITORY_FAILURES, REPOSITORY_FAILURE_CODES, checkedCodeFromFiles, type CodeFromFilesResult, checkedRecord, checkedRepositoryOverview, type CapabilityChange, type GitOwnership, type GitOwnershipTransfer, type RepositoryFailureCode, type RepositoryInput, type RepositoryOverview, type RepositoryRecord, type RepositoryResult } from "./git-repositories.ts";
 import { checkedIntakeSubmit, type IntakeReceipt, type IntakeStatus, type IntakeAlerts, type IntakeAlert, type IntakeDecision } from "./intake.ts";
 import { checkedAdminRight, type AdminPersonCreate, type AdminPerson, type AdminPeopleResult, type AdminRight, type AdminRights } from "./admin-people.ts";
 import type {CentroidResult} from './centroid.ts';
@@ -13,7 +14,7 @@ import type {CorporateFilePrepared,CorporateUpdateResolution,CorporateRecordUpda
 import type {DatabaseConnection,DatabaseRegistration} from "./database-connections.ts";
 import type {OperationAuditPage} from "./operation-audit.ts";
 import type {GitFile,GitCommit,GitBindingState} from "./git-connections.ts";
-import type {GitProjectRepositoryPage,GitProjectRepository,GitRepositorySelection,GitTree,GitBranchPage,GitLogPage,GitComparison} from "./git-connections.ts";
+import type {GitProjectRepositoryPage,GitProjectRepository,GitTree,GitBranchPage,GitLogPage,GitComparison} from "./git-connections.ts";
 import {checkedGitTree,checkedGitBranches,checkedGitLog,checkedGitComparison} from "./git-connections.ts";
 import type {GitConnection,GitConnectionPage,GitRegistration,GitRepositoryPage,GitDisabled} from "./git-connections.ts";
 import type {PersonalWorkTemplateSelection,WorkTemplateResolution} from "./work-templates.ts";
@@ -977,7 +978,6 @@ export class MnemosAPI {
   /** «Вернуть как было»: отменяет принятые изменения (outcome reverted). */
   revertMergeRequest(project:string,connection:string,repository:string,index:number,signal?:AbortSignal):Promise<MergeRequestView>{if(!Number.isSafeInteger(index)||index<1)throw new MnemosAPIError(400);return this.#request(`${gitRepositoryPath(project,connection,repository)}/merge-requests/${index}/revert`,"POST",signal,{});}
   listProjectGitRepositories(project:string,cursor="",signal?:AbortSignal):Promise<GitProjectRepositoryPage>{return this.#request(`/v1/projects/${segment(project)}/git-repositories?cursor=${encodeURIComponent(cursor)}&limit=25`,"GET",signal);}
-  bindGitRepository(project:string,connection:string,repository:string,input:GitRepositorySelection,signal?:AbortSignal):Promise<Omit<GitProjectRepository,"provider"|"connection_revision">>{return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}`,"POST",signal,input);}
   listGitConnections(cursor="",signal?:AbortSignal):Promise<GitConnectionPage>{return this.#request(`/v1/git/connections?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
   readGitConnection(id:string,signal?:AbortSignal):Promise<GitConnection>{return this.#request(`/v1/git/connections/${segment(id)}`,"GET",signal);}
   /** Current subject's staging reservations; owners cannot be selected by callers. */
@@ -1065,6 +1065,56 @@ export class MnemosAPI {
     if(!/^[1-9][0-9]{0,18}$/.test(installation))throw new MnemosAPIError(400);
     return this.#request(`/v1/git/app/accounts/${installation}`,"DELETE",signal);
   }
+  /** Раздел «Репозитории»: записи «репозиторий ↔ проект» в видимых проектах и источники организации. */
+  async listRepositoryOverview(signal?:AbortSignal):Promise<RepositoryOverview>{
+    try{return checkedRepositoryOverview(await this.#request<unknown>("/v1/git/repositories","GET",signal));}
+    catch(e){if(e instanceof MnemosAPIError)throw e;throw new MnemosAPIError(502);}
+  }
+  /** «Создать проект» или «Добавить в проект…» из строки репозитория. */
+  async addRepository(input:RepositoryInput,signal?:AbortSignal):Promise<RepositoryResult>{
+    segment(input.repository_id);
+    if(input.project_id)segment(input.project_id);else if(!input.name?.trim()||new TextEncoder().encode(input.name.trim()).length>255)throw new MnemosAPIError(400);
+    if(input.source==="app"){segment(input.installation_id??"");if(input.connection_id)throw new MnemosAPIError(400);}
+    else if(input.source==="connection"){segment(input.connection_id??"");if(input.installation_id)throw new MnemosAPIError(400);}
+    else throw new MnemosAPIError(400);
+    if(!input.files&&!input.agents)throw new MnemosAPIError(400);
+    const value=await this.#request<RepositoryResult>("/v1/git/repositories","POST",signal,{...input,name:input.name?.trim()});
+    if(!value||!value.record||typeof value.record.project_id!=="string")throw new MnemosAPIError(502);
+    return {...value,record:checkedRecord(value.record)};
+  }
+  /** Строка «Репозиторий: … · Файлы · Агенты кода» на странице проекта. */
+  async listProjectRepositories(project:string,signal?:AbortSignal):Promise<{records:RepositoryRecord[]}>{
+    const value=await this.#request<{records:RepositoryRecord[]}>(`/v1/projects/${segment(project)}/git/records`,"GET",signal);
+    if(!value||!Array.isArray(value.records))throw new MnemosAPIError(502);
+    return {records:value.records.map(checkedRecord)};
+  }
+  /** Переключатели «Файлы в проекте» и «Агенты кода»: сохраняются сразу. */
+  async setRepositoryCapabilities(project:string,connection:string,repository:string,change:CapabilityChange,signal?:AbortSignal):Promise<RepositoryRecord>{
+    if(!Number.isSafeInteger(change.expected_revision)||change.expected_revision<1||(change.files===undefined&&change.agents===undefined))throw new MnemosAPIError(400);
+    return checkedRecord(await this.#request<RepositoryRecord>(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/capabilities`,"PUT",signal,change));
+  }
+  /** «Отвязать»: агенты выключаются, связь файлов снимается, документы остаются. */
+  detachRepository(project:string,connection:string,repository:string,expected:number,signal?:AbortSignal):Promise<{detached:boolean}>{
+    if(!Number.isSafeInteger(expected)||expected<1)throw new MnemosAPIError(400);
+    return this.#request(`/v1/projects/${segment(project)}/git/${segment(connection)}/repositories/${segment(repository)}/detach`,"POST",signal,{expected_revision:expected});
+  }
+  /** Доступ отозван в GitHub: «Оставить копию» (remove=false) или «Убрать файлы из проекта». */
+  resolveRevokedRepository(link:string,remove:boolean,signal?:AbortSignal):Promise<{accepted:boolean}>{return this.#request(`/v1/git/sync-links/${segment(link)}/revoked`,"POST",signal,{remove});}
+  /** Источники и связи уходящего человека (администратор). */
+  readGitOwnership(person:string,signal?:AbortSignal):Promise<GitOwnership>{return this.#request(`/v1/people/${segment(person)}/git-ownership`,"GET",signal);}
+  /** «Передать…»: источники и связи человека переходят другому, связи продолжают работать. */
+  transferGitOwnership(person:string,to:string,signal?:AbortSignal):Promise<GitOwnershipTransfer>{segment(to);return this.#request(`/v1/people/${segment(person)}/git-ownership/transfer`,"POST",signal,{to});}
+  /** «Подключить внутреннее хранилище кода»: репозиторий из текущих файлов проекта первым коммитом (большое
+   * дерево — частями), с агентами кода. Сервер читает и кладёт файлы сам, поэтому ждём дольше обычного. */
+  async connectCodeFromFiles(project:string,signal?:AbortSignal):Promise<CodeFromFilesResult>{
+    const value=await this.#request<unknown>(`/v1/projects/${segment(project)}/code/from-files`,"POST",signal,{},false,300_000);
+    try{return checkedCodeFromFiles(value);}catch{throw new MnemosAPIError(502);}
+  }
+  /** Отключить внутреннее хранилище кода для всей организации (администратор). */
+  disableInternalCodeHosting(expected:number,signal?:AbortSignal):Promise<{disabled:boolean}>{
+    if(!Number.isSafeInteger(expected)||expected<1)throw new MnemosAPIError(400);
+    return this.#request("/v1/git/internal/disable","POST",signal,{expected_revision:expected});
+  }
   listAgentConnections(cursor = "", signal?: AbortSignal): Promise<AgentConnectionPage> {
     return this.#request(`/v1/agent-connections?limit=50&cursor=${encodeURIComponent(cursor)}`, "GET", signal);
   }
@@ -1100,13 +1150,14 @@ export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 /** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
 export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
-type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING;
+type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
 /** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
 export interface IngestRefusal {reason:string;detail:string}
 /** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
 function publicText(value:unknown):string{return typeof value==='string'?[...value].filter(char=>char.charCodeAt(0)>=32).join('').trim().slice(0,600):'';}
 async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal;progress?:HistoryProgress}|undefined>{
- if(response.status!==400&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
+ // 403 разбирается только ради отказов раздела «Репозитории»: у них понятная человеку причина.
+ if(response.status!==400&&response.status!==403&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
  // Отказ политики несёт готовый абзац по-русски, поэтому у 400 предел тела больше.
  const limit=response.status===400?4096:1024;
  const reader=response.body?.getReader();if(!reader)return undefined;
@@ -1126,6 +1177,8 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
   if(response.status===429&&fields.code===UPLOAD_IN_PROGRESS)return {code:UPLOAD_IN_PROGRESS};
   // История проекта ещё переносится в граф ядра: ход — в progress, опрос ведёт оболочка.
   if(response.status===429&&fields.code===HISTORY_PREPARING)return {code:HISTORY_PREPARING,progress:historyProgress(fields.progress)};
+  if(typeof fields.code==='string'&&(REPOSITORY_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as RepositoryFailureCode};
+  if(response.status===403)return undefined;
   if(response.status!==400&&typeof fields.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as GitFailureCode};
  }catch{return undefined;}finally{reader.releaseLock();}
  return undefined;
@@ -1145,7 +1198,7 @@ export class MnemosAPIError extends Error {
   readonly refusal?: IngestRefusal;
   /** Ход переноса истории проекта при project.history_preparing. */
   readonly progress?: HistoryProgress;
-  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; }
+  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):code&&code in REPOSITORY_FAILURES?REPOSITORY_FAILURES[code as RepositoryFailureCode]:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */
@@ -1490,7 +1543,9 @@ function checkedGitSyncPage(value:unknown):GitSyncLinkPage{
 }
 
 /** Аккаунт GitHub, подключённый человеком кнопкой «Подключить GitHub» (сервер: services/storage-api/internal/app/git_app_owner.go). */
-export interface GitHubAccount {installation_id:string;github_login:string;account_login:string;account_type:string;repository_selection:"all"|"selected";linked_at:string;repository_count:number;manage_url:string}
+/** repository_count — сколько репозиториев установки GitHub открыл самому человеку при последнем входе;
+ * access_stale — такого набора нет или он устарел: новые связи ждут «Обновить доступ» (вход заново). */
+export interface GitHubAccount {installation_id:string;github_login:string;account_login:string;account_type:string;repository_selection:"all"|"selected";linked_at:string;repository_count:number;manage_url:string;access_stale:boolean}
 /** available=false — приложение GitHub на сервере не подключено; connectable=false — нет секрета клиента, подключить свой GitHub нельзя. */
 export interface GitHubAccountPage {available:boolean;connectable:boolean;accounts:GitHubAccount[]}
 
@@ -1502,7 +1557,8 @@ function checkedGitHubAccounts(value:unknown):GitHubAccountPage{
     if(!a||typeof a!=="object"||typeof a.installation_id!=="string"||!/^[1-9][0-9]{0,18}$/.test(a.installation_id)||typeof a.account_login!=="string"||typeof a.github_login!=="string")throw new MnemosAPIError(502);
     const account:GitHubAccount={installation_id:a.installation_id,github_login:a.github_login,account_login:a.account_login,account_type:typeof a.account_type==="string"?a.account_type:"",
       repository_selection:a.repository_selection==="selected"?"selected":"all",linked_at:typeof a.linked_at==="string"?a.linked_at:"",
-      repository_count:typeof a.repository_count==="number"&&Number.isSafeInteger(a.repository_count)?a.repository_count:-1,manage_url:typeof a.manage_url==="string"?a.manage_url:""};
+      repository_count:typeof a.repository_count==="number"&&Number.isSafeInteger(a.repository_count)?a.repository_count:-1,manage_url:typeof a.manage_url==="string"?a.manage_url:"",
+      access_stale:a.access_stale===true};
     return account;
   });
   return {available:page.available,connectable:page.connectable,accounts};

@@ -8,6 +8,7 @@ import { ActionForm, Notice, StatusBadge } from "./ui.tsx";
 import { DepartmentsPanel, InvitationRows, InvitePanel, InviteForm, headedUnits, useInvitations, useOrgUnits } from "./Departments.tsx";
 import { AdminSwitch, CodeAgentSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
 import PersonAvatar from "./PersonAvatar.tsx";
+import GitOwnershipTransfer from "./GitOwnership.tsx";
 import { Card, CardRow, Field, FieldSelect, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
@@ -85,7 +86,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
                 <RowTitle title={name} note={org.loading ? undefined : unitWords(org.units, p.userName)} />
                 {!p.active && <StatusBadge tone="neutral">Доступ приостановлен</StatusBadge>}
               </button>
-              {open && <div className="px-4 pb-4 sm:pl-[62px]"><PersonCard key={p.userName} person={p} data={data} units={org.units} unitsLoading={org.loading} self={p.userName === me} onRemoved={() => { reload(); org.reload(); }} /></div>}
+              {open && <div className="px-4 pb-4 sm:pl-[62px]"><PersonCard key={p.userName} person={p} people={current} data={data} units={org.units} unitsLoading={org.loading} self={p.userName === me} onRemoved={() => { reload(); org.reload(); }} /></div>}
             </div>;
           })}
           {invitations.list && <InvitationRows list={openInvitations} onChanged={invitations.reload} />}
@@ -109,7 +110,7 @@ const CAPABILITY_WORDS: Record<string,string> = {"principal.manage":"Управ�
 const capabilityWords = (capability?: string) => CAPABILITY_WORDS[capability ?? ""] ?? "Особое полномочие";
 
 /** Раскрытая строка сотрудника: отдел словами, компетенции метками, «Администратор» и доступ к проектам. */
-function PersonCard({person,data,units,unitsLoading,self,onRemoved}: {person:AdminPerson;data:MemoryData;units:OrgUnit[];unitsLoading:boolean;self:boolean;onRemoved():void}) {
+function PersonCard({person,people,data,units,unitsLoading,self,onRemoved}: {person:AdminPerson;people:AdminPerson[];data:MemoryData;units:OrgUnit[];unitsLoading:boolean;self:boolean;onRemoved():void}) {
   const own = units.filter(u => u.members.some(m => m.principal_id === person.userName));
   return <section aria-label={`Сотрудник: ${person.displayName||"без имени"}`} className="grid min-w-0 gap-4">
     <section aria-label="Отдел" className="text-[13px]">
@@ -119,12 +120,12 @@ function PersonCard({person,data,units,unitsLoading,self,onRemoved}: {person:Adm
     <section aria-label="Компетенции сотрудника"><PersonCompetencies person={person} /></section>
     <section aria-label="Права администратора"><AdminSwitch person={person} /></section>
     <PersonRights person={person} data={data} />
-    <RemovePerson person={person} self={self} onRemoved={onRemoved} />
+    <RemovePerson person={person} people={people} data={data} self={self} onRemoved={onRemoved} />
   </section>;
 }
 
 /** «Удалить из организации»: подтверждение в строке, сохраняется сразу. Учётная запись остаётся ради истории и авторства. */
-function RemovePerson({person,self,onRemoved}: {person:AdminPerson;self:boolean;onRemoved():void}) {
+function RemovePerson({person,people,data,self,onRemoved}: {person:AdminPerson;people:AdminPerson[];data:MemoryData;self:boolean;onRemoved():void}) {
   const ui = useUi();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -143,6 +144,7 @@ function RemovePerson({person,self,onRemoved}: {person:AdminPerson;self:boolean;
     {confirming && <div role="region" aria-label={`Подтверждение удаления: ${name}`} className="grid gap-2 rounded-xl bg-kumo-tint p-3 text-[13px]">
       <p className="m-0">Удалить {name} из организации? Вход и ключи доступа перестанут работать, агенты сотрудника отключатся, приглашения к документам и доступ к проектам снимутся, из отделов и компетенций сотрудник уйдёт.</p>
       <p className="m-0 text-kumo-subtle">Учётная запись и авторство версий сохранятся. Вернуть можно в «Бывших сотрудниках» ниже списка — доступ к проектам тогда выдаётся заново.</p>
+      <GitOwnershipTransfer person={person} people={people} data={data} />
       <div className="flex gap-2">
         <Pill tone="danger" disabled={busy} onClick={() => void remove()}>{busy ? "Удаляем…" : "Удалить"}</Pill>
         <Pill tone="ghost" disabled={busy} onClick={() => setConfirming(false)}>Отмена</Pill>

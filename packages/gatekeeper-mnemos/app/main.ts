@@ -271,7 +271,6 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   abortWorkspaceTask(project:string,task:string):Promise<void>;
   readOwnedGitBinding:MnemosAccountSession["readOwnedGitBinding"];
   listProjectGitRepositories: MnemosAccountSession["listProjectGitRepositories"];
-  bindGitRepository: MnemosAccountSession["bindGitRepository"];
   listGitConnections: MnemosAccountSession["listGitConnections"];
   readGitConnection: MnemosAccountSession["readGitConnection"];
   disableGitConnection: MnemosAccountSession["disableGitConnection"];
@@ -287,6 +286,18 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   startGitHubConnect: MnemosAccountSession["startGitHubConnect"];
   listGitHubAccounts: MnemosAccountSession["listGitHubAccounts"];
   disconnectGitHubAccount: MnemosAccountSession["disconnectGitHubAccount"];
+  /** Раздел «Репозитории»: репозиторий в проекте одной записью с «Файлами в проекте» и «Агентами кода». */
+  listRepositoryOverview: MnemosAccountSession["listRepositoryOverview"];
+  addRepository: MnemosAccountSession["addRepository"];
+  listProjectRepositories: MnemosAccountSession["listProjectRepositories"];
+  setRepositoryCapabilities: MnemosAccountSession["setRepositoryCapabilities"];
+  detachRepository: MnemosAccountSession["detachRepository"];
+  resolveRevokedRepository: MnemosAccountSession["resolveRevokedRepository"];
+  readGitOwnership: MnemosAccountSession["readGitOwnership"];
+  transferGitOwnership: MnemosAccountSession["transferGitOwnership"];
+  disableInternalCodeHosting: MnemosAccountSession["disableInternalCodeHosting"];
+  /** «Подключить внутреннее хранилище кода» к проекту с уже загруженными файлами. */
+  connectCodeFromFiles: MnemosAccountSession["connectCodeFromFiles"];
   listGitRegistrationIntents: MnemosAccountSession["listGitRegistrationIntents"];
   saveGitRegistrationIntent: MnemosAccountSession["saveGitRegistrationIntent"];
   inspectGitRegistrationIntent: MnemosAccountSession["inspectGitRegistrationIntent"];

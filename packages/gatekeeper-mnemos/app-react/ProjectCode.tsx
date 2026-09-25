@@ -32,7 +32,6 @@ export default function ProjectCode({ projectId, repositories, compareTo, action
   const repo = repositories.find(r => key(r) === repoKey) ?? repositories[0];
   return (
     <div>
-      <GitHubSyncLine projectId={projectId} />
       {repositories.length > 1 && (
         <label className="mb-3 flex items-center gap-2 text-[14px] text-kumo-subtle">
           Код
@@ -44,31 +43,6 @@ export default function ProjectCode({ projectId, repositories, compareTo, action
       <Repository key={key(repo)} admin={admin} projectId={projectId} repo={repo} compareBranch={compareTo && key(compareTo) === key(repo) ? compareTo.branch : ""} actions={actions} />
     </div>
   );
-}
-
-/** «Синхронизировано с GitHub: репозиторий, время». Нет связей или сервер их не отдал — строки нет. */
-function GitHubSyncLine({ projectId }: { projectId: string }) {
-  const ui = useUi();
-  const links = useLoad(async () => (await ui.listProjectGitSync(projectId)).links, "", [ui, projectId]);
-  const active = (links.value ?? []).filter(l => l.state !== "disabled");
-  if (!active.length) return null;
-  return (
-    <div className="mb-3 grid gap-1 text-[13px]">
-      {active.map(l => (
-        <p key={l.link_id} className={`m-0 ${l.state === "conflict" || l.state === "error" || l.state === "blocked" ? "text-kumo-danger" : "text-kumo-subtle"}`}>
-          Синхронизировано с GitHub: {l.repository_name}{l.last_synced_at ? `, ${syncTime(l.last_synced_at)}` : ", ещё не обновлялось"}
-          {l.state === "conflict" && " · конфликт: файл изменён и в Mnemos, и в GitHub — разрешите его в документах проекта"}
-          {(l.state === "error" || l.state === "blocked") && ` · ${l.message || "обновление не прошло"}`}
-          {(l.state === "pending" || l.state === "syncing") && " · обновляется"}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-function syncTime(iso: string): string {
-  const at = Date.parse(iso);
-  return Number.isNaN(at) ? "" : new Date(at).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 }
 
 function key(r: { connection_id: string; repository_id: string } | undefined): string {

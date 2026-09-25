@@ -41,7 +41,6 @@ import type {CalendarReadSource, CalendarWriteSource, MailReadSource, MailSendSo
 import type {BitrixTaskMapping} from "./corporate-import.ts";
 import {CorporateTaskCreation} from "./corporate-task-creation.ts";
 import type {DatabaseRegistration} from "./database-connections.ts";
-import type {GitRepositorySelection} from "./git-connections.ts";
 import type {GitSetup} from "./git-connections.ts";
 import {ResourceMapCreation,type ResourceMapSetup} from "./resource-map-creation.ts";
 import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.ts";
@@ -1661,7 +1660,6 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readProjectOverview(project:string,node=""){return this.#session.readProjectOverview(project,node);}
   async readOwnedGitBinding(project:string,connection:string,repository:string){return this.#session.readOwnedGitBinding(project,connection,repository);}
   async listProjectGitRepositories(project:string,cursor=""){return this.#session.listProjectGitRepositories(project,cursor);}
-  async bindGitRepository(project:string,connection:string,repository:string,input:GitRepositorySelection){return this.#session.bindGitRepository(project,connection,repository,input);}
   async listGitConnections(cursor=""){return this.#session.listGitConnections(cursor);}
   async readGitConnection(id:string){return this.#session.readGitConnection(id);}
   /** Read the connected subject's upload reservations. */
@@ -1726,6 +1724,16 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async startGitHubConnect(){return this.#session.startGitHubConnect();}
   async listGitHubAccounts(){return this.#session.listGitHubAccounts();}
   async disconnectGitHubAccount(installation:string){return this.#session.disconnectGitHubAccount(installation);}
+  async listRepositoryOverview(){return this.#session.listRepositoryOverview();}
+  async addRepository(input:import("./git-repositories.ts").RepositoryInput){return this.#session.addRepository(input);}
+  async listProjectRepositories(project:string){return this.#session.listProjectRepositories(project);}
+  async setRepositoryCapabilities(project:string,connection:string,repository:string,change:import("./git-repositories.ts").CapabilityChange){return this.#session.setRepositoryCapabilities(project,connection,repository,change);}
+  async detachRepository(project:string,connection:string,repository:string,expected:number){return this.#session.detachRepository(project,connection,repository,expected);}
+  async resolveRevokedRepository(link:string,remove:boolean){if(typeof remove!=="boolean")throw new Error("Invalid choice");return this.#session.resolveRevokedRepository(link,remove);}
+  async readGitOwnership(person:string){return this.#session.readGitOwnership(person);}
+  async transferGitOwnership(person:string,to:string){return this.#session.transferGitOwnership(person,to);}
+  async disableInternalCodeHosting(expected:number){return this.#session.disableInternalCodeHosting(expected);}
+  async connectCodeFromFiles(project:string){return this.#session.connectCodeFromFiles(project);}
   async listGitRegistrationIntents(){return this.#session.listGitRegistrationIntents();}
   async saveGitRegistrationIntent(setup:GitSetup){return this.#session.saveGitRegistrationIntent(setup);}
   async inspectGitRegistrationIntent(id:string){return this.#session.inspectGitRegistrationIntent(id);}

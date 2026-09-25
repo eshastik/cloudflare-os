@@ -18,7 +18,6 @@ import type {CalendarGrantDecision} from "./calendar-connections.ts";
 import type {MailGrantDecision} from "./mail-connections.ts";
 import type {BitrixTaskMapping} from "./corporate-import.ts";
 import type {DatabaseRegistration} from "./database-connections.ts";
-import type {GitRepositorySelection} from "./git-connections.ts";
 import {GitRegistrations} from "./git-registration.ts";
 import type {GitSetup,GitRegistration} from "./git-connections.ts";
 import {TemplateReviewActions} from "./template-review-actions.ts";
@@ -1366,7 +1365,6 @@ export class MnemosAccountSession {
   async acceptMergeRequest(project:string,connection:string,repository:string,index:number,expectedHead:string){this.#check();const out=await this.#client.acceptMergeRequest(project,connection,repository,index,expectedHead,this.#lifetime.signal);this.#check();return out;}
   async revertMergeRequest(project:string,connection:string,repository:string,index:number){this.#check();const out=await this.#client.revertMergeRequest(project,connection,repository,index,this.#lifetime.signal);this.#check();return out;}
   async listProjectGitRepositories(project:string,cursor=""){this.#check();const value=await this.#client.listProjectGitRepositories(project,cursor,this.#lifetime.signal);this.#check();return value;}
-  async bindGitRepository(project:string,connection:string,repository:string,input:GitRepositorySelection){this.#check();const value=await this.#client.bindGitRepository(project,connection,repository,input,this.#lifetime.signal);this.#check();return value;}
   async listGitConnections(cursor=""){this.#check();const value=await this.#client.listGitConnections(cursor,this.#lifetime.signal);this.#check();return value;}
   async readGitConnection(id:string){this.#check();const value=await this.#client.readGitConnection(id,this.#lifetime.signal);this.#check();return value;}
   /** Prepare/recover intent; this does not issue a paid rebuild request. */
@@ -1484,6 +1482,16 @@ export class MnemosAccountSession {
   async startGitHubConnect(){this.#check();const value=await this.#client.startGitHubConnect(this.#lifetime.signal);this.#check();return value;}
   async listGitHubAccounts(){this.#check();const value=await this.#client.listGitHubAccounts(this.#lifetime.signal);this.#check();return value;}
   async disconnectGitHubAccount(installation:string){this.#check();const value=await this.#client.disconnectGitHubAccount(installation,this.#lifetime.signal);this.#check();return value;}
+  async listRepositoryOverview(){this.#check();const value=await this.#client.listRepositoryOverview(this.#lifetime.signal);this.#check();return value;}
+  async addRepository(input:import("./git-repositories.ts").RepositoryInput){this.#check();const value=await this.#client.addRepository(input,this.#lifetime.signal);this.#check();return value;}
+  async listProjectRepositories(project:string){this.#check();const value=await this.#client.listProjectRepositories(project,this.#lifetime.signal);this.#check();if(value.records.some(r=>r.project_id!==project))throw new MnemosAPIError(502);return value;}
+  async setRepositoryCapabilities(project:string,connection:string,repository:string,change:import("./git-repositories.ts").CapabilityChange){this.#check();const value=await this.#client.setRepositoryCapabilities(project,connection,repository,change,this.#lifetime.signal);this.#check();if(value.project_id!==project||value.repository_id!==repository)throw new MnemosAPIError(502);return value;}
+  async detachRepository(project:string,connection:string,repository:string,expected:number){this.#check();const value=await this.#client.detachRepository(project,connection,repository,expected,this.#lifetime.signal);this.#check();return value;}
+  async resolveRevokedRepository(link:string,remove:boolean){this.#check();const value=await this.#client.resolveRevokedRepository(link,remove,this.#lifetime.signal);this.#check();return value;}
+  async readGitOwnership(person:string){this.#check();const value=await this.#client.readGitOwnership(person,this.#lifetime.signal);this.#check();return value;}
+  async transferGitOwnership(person:string,to:string){this.#check();const value=await this.#client.transferGitOwnership(person,to,this.#lifetime.signal);this.#check();return value;}
+  async connectCodeFromFiles(project:string){this.#check();const value=await this.#client.connectCodeFromFiles(project,this.#lifetime.signal);this.#check();return value;}
+  async disableInternalCodeHosting(expected:number){this.#check();const value=await this.#client.disableInternalCodeHosting(expected,this.#lifetime.signal);this.#check();return value;}
   private gitRegistrations(){this.#check();if(!this.requestStorage)throw Error("Git request storage unavailable");return new GitRegistrations(this.requestStorage);}
   async listGitRegistrationIntents(){return this.gitRegistrations().list(this);}
   async saveGitRegistrationIntent(setup:GitSetup){return this.gitRegistrations().save(this,setup);}
