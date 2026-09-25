@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { personInitials } from './AppShell/initials'
-import { useMnemosPhoto, useMnemosPhotos } from '../mnemosPhotos'
+import { shownPhoto, useCarryPlatformPhoto, useMnemosPhoto, useMnemosPhotos } from '../mnemosPhotos'
 import { useAuthenticatedApi } from '../AuthContext'
 import { useAvatar } from '../useAvatar'
 
@@ -28,11 +28,16 @@ export default function MnemosAvatar({ name, id, photo, size = 36, className = '
   </span>
 }
 
-/** Свой аватар (меню, низ панели, настройки): фото в Mnemos, иначе фото платформы, иначе инициалы. */
+/**
+ * Свой аватар (меню, низ панели, настройки). Связь с Mnemos есть — фото в Mnemos, как его видят коллеги
+ * во встроенном приложении; нет связи — фото платформы; иначе инициалы. Здесь же — разовый перенос фото
+ * платформы в Mnemos: низ панели виден на каждой странице, поэтому перенос случается при первом входе.
+ */
 export function MyAvatar({ size, className }: { size: number; className?: string }) {
   const { authenticatedApi, currentUser } = useAuthenticatedApi()
   const platform = useAvatar(authenticatedApi, currentUser?.id)
   const book = useMnemosPhotos(authenticatedApi)
-  const mine = book.me ? book.photos.get(book.me) ?? null : null
-  return <MnemosAvatar name={currentUser?.name || ''} id={book.me || currentUser?.id || 'me'} photo={mine || platform || null} size={size} className={className} />
+  useCarryPlatformPhoto(authenticatedApi, currentUser?.id, book)
+  const photo = shownPhoto({ linked: !!book.me, url: book.me ? book.photos.get(book.me) ?? null : null }, platform)
+  return <MnemosAvatar name={currentUser?.name || ''} id={book.me || currentUser?.id || 'me'} photo={photo} size={size} className={className} />
 }

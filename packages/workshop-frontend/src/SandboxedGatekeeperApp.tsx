@@ -22,7 +22,7 @@ import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
 import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { useAuthenticatedApi } from './AuthContext'
-import { FramePersonPhotos, type FramePhoto } from './framePersonPhotos'
+import { FramePersonPhotos, framePhotos, type FramePhoto } from './framePersonPhotos'
 import { isGitHubAppPage, readGitHubReturn, type GitHubReturn } from './gitHubAppLink'
 import {
   normalizeGatekeeperAppPrompt,
@@ -304,10 +304,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
   /** Фото людей байтами, по ответу на каждый id: фрейм без сети показывает их через blob:-адрес. null — фото нет или не скачалось. */
   async personPhotos(ids: string[]): Promise<(FramePhoto | null)[]> {
     if (!Array.isArray(ids) || ids.length > MAX_PHOTO_IDS) throw new TypeError('Некорректный запрос фото.')
-    return Promise.all(ids.map(async id => {
-      if (!this.photos || this.#disposed || typeof id !== 'string' || !id || id.length > 255) return null
-      try { return await this.photos.photo(id) } catch { return null }
-    }))
+    return framePhotos(this.photos, ids, this.#disposed)
   }
 
   // Only text and an opaque service scope come from the frame. The signed URL

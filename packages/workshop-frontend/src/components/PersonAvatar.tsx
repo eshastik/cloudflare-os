@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import { useAvatar } from '../useAvatar'
-import { useUserMnemosPhoto } from '../mnemosPhotos'
+import { shownPhoto, useUserMnemosPhoto } from '../mnemosPhotos'
 
 export function initials(name: string): string {
   return name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()
@@ -57,12 +57,13 @@ export function PersonAvatar({
     return () => observer.disconnect()
   }, [])
 
-  // Фото из Mnemos (общий снимок, по склейке пользователя с принципалом) важнее фото платформы:
-  // его видит вся организация. Нет связи или фото не загрузилось — фото платформы, затем инициалы.
+  // Один источник с встроенным приложением: человек связан с Mnemos — только фото Mnemos (нет его или
+  // не загрузилось — инициалы); фото платформы — только когда связи с Mnemos нет.
   const mnemos = useUserMnemosPhoto(visible ? userId : null)
   const platform = useAvatar(api, visible ? userId : null)
   const [broken, setBroken] = useState<string[]>([])
-  const url = [mnemos, platform].find(candidate => !!candidate && !broken.includes(candidate)) ?? null
+  const candidate = shownPhoto(mnemos, platform)
+  const url = candidate && !broken.includes(candidate) ? candidate : null
   const useColor = !url
   return (
     <div

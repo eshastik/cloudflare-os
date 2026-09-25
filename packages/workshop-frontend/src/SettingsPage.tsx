@@ -7,8 +7,9 @@ import { hashPassword } from './passwordHash'
 import { CF_ACCESS_MODE } from './useAuth'
 import { User, Pencil, Check, X, Lock, Camera, Eye, EyeSlash, CaretLeft } from '@phosphor-icons/react'
 import { Link } from '@tanstack/react-router'
-import { useAvatar, invalidateAvatarCache } from './useAvatar'
-import { compressAvatar, avatarBlobUrl } from './avatarUtils'
+import { useAvatar } from './useAvatar'
+import { avatarBlobUrl } from './avatarUtils'
+import { saveMyPhoto, shownPhoto, useMnemosPhotos } from './mnemosPhotos'
 import UsageSettings from './components/billing/UsageSettings'
 import { useDocumentTitle } from './useDocumentTitle'
 
@@ -118,7 +119,9 @@ export default function SettingsPage() {
   // Whether this account has a password (false for OAuth-created accounts). Null while loading.
   const [hasPassword, setHasPassword] = useState<boolean | null>(null)
 
-  const avatarUrl = useAvatar(authenticatedApi, userInfo?.id)
+  const platformAvatar = useAvatar(authenticatedApi, userInfo?.id)
+  const photos = useMnemosPhotos(authenticatedApi)
+  const avatarUrl = shownPhoto({ linked: !!photos.me, url: photos.me ? photos.photos.get(photos.me) ?? null : null }, platformAvatar)
 
   // Determine whether to show the change-password section.
   useEffect(() => {
@@ -179,14 +182,11 @@ export default function SettingsPage() {
     }
     setAvatarUploading(true)
     try {
-      const compressed = await compressAvatar(file)
-      // Show preview immediately
+      if (!userInfo?.id) throw new Error('Профиль не прочитан.')
+      // Одна фотография везде: в Mnemos (её видят коллеги во встроенном приложении) и в профиль платформы.
+      const compressed = await saveMyPhoto(authenticatedApi, userInfo.id, file)
       if (localAvatarPreview) URL.revokeObjectURL(localAvatarPreview)
       setLocalAvatarPreview(avatarBlobUrl(compressed))
-      // Upload
-      await authenticatedApi.setAvatar(compressed)
-      // Invalidate cache so the hook refetches
-      if (userInfo?.id) invalidateAvatarCache(userInfo.id)
       toasts.add({ title: 'Фотография обновлена', variant: 'success' })
     } catch (err) {
       console.error('Failed to upload avatar:', err)

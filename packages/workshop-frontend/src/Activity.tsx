@@ -13,6 +13,7 @@ import { useAutoApproval, autoApprovalKey, type AutoApprovalEntry } from './useA
 import { useAlwaysApproveTag } from './useAlwaysApproveTag'
 import { useAuthenticatedApi } from './AuthContext'
 import { useAvatar } from './useAvatar'
+import { shownPhoto, useUserMnemosPhoto } from './mnemosPhotos'
 import { useVendorBranding } from './useVendorBranding'
 import { useResolveAction } from './useResolveAction'
 import { russianPlural } from './codeWorkSteps'
@@ -647,7 +648,8 @@ function HistoryRow({
 
 function ResolverBadge({ profileId, children }: { profileId: string; children: ReactNode }) {
   const { authenticatedApi } = useAuthenticatedApi()
-  const avatarUrl = useAvatar(authenticatedApi, profileId)
+  // То же правило, что у аватаров людей: связан с Mnemos — фото Mnemos, без связи — фото платформы.
+  const avatarUrl = shownPhoto(useUserMnemosPhoto(profileId), useAvatar(authenticatedApi, profileId))
   return (
     <span className="flex min-w-0 items-center gap-1 text-kumo-subtle">
       {avatarUrl && (

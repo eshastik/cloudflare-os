@@ -32,6 +32,23 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 // пока не сменится. Сумма сверяется с байтами, поэтому общий ключ безопасен.
 const downloaded = new Map<string, Promise<FramePhoto | null>>()
 
+/** Причина, по которой фото не отдано фрейму: в консоль отладочной строкой, чтобы инициалы вместо фото можно было объяснить. */
+function skip(id: string, reason: string): null {
+  console.debug(`[фото] ${id}: ${reason}`)
+  return null
+}
+
+/**
+ * Ответ моста host.personPhotos: по ответу на каждый id, null — фото нет или не скачалось.
+ * ids — principal_id людей Mnemos (те же, что в principal_photo), не id пользователей оболочки.
+ */
+export async function framePhotos(source: Pick<FramePersonPhotos, 'photo'> | undefined, ids: string[], disposed = false): Promise<(FramePhoto | null)[]> {
+  return Promise.all(ids.map(async id => {
+    if (!source || disposed || typeof id !== 'string' || !id || id.length > 255) return null
+    try { return await source.photo(id) } catch (error) { return skip(id, error instanceof Error ? error.message : String(error)) }
+  }))
+}
+
 /** Для тестов: забыть скачанное. */
 export function forgetDownloadedPhotos() { downloaded.clear() }
 
@@ -60,10 +77,11 @@ export class FramePersonPhotos {
     if (typeof id !== 'string' || !id || id.length > 255) return null
     this.#lifetime.signal.throwIfAborted()
     const entry = (await this.#list()).get(id)
-    if (!entry || !/^[0-9a-f]{64}$/.test(entry.sha256)) return null
+    if (!entry) return null
+    if (!/^[0-9a-f]{64}$/.test(entry.sha256)) { skip(id, 'сумма в списке не SHA-256'); return null }
     let bytes = downloaded.get(entry.sha256)
     if (!bytes) {
-      bytes = this.#limited(() => this.#download(entry)).catch(() => null)
+      bytes = this.#limited(() => this.#download(entry)).catch(error => { skip(id, error instanceof Error ? error.message : String(error)); return null })
       downloaded.set(entry.sha256, bytes)
       // Неудачу не запоминаем: следующий запрос попробует снова.
       void bytes.then(result => { if (!result && downloaded.get(entry.sha256) === bytes) downloaded.delete(entry.sha256) })
@@ -90,7 +108,7 @@ export class FramePersonPhotos {
       return map
     })
     this.#listing = listing
-    listing.catch(() => { if (this.#listing === listing) this.#listing = null })
+    listing.catch(error => { skip('*', `список фото не прочитан: ${error instanceof Error ? error.message : String(error)}`); if (this.#listing === listing) this.#listing = null })
     return listing
   }
 
@@ -103,16 +121,17 @@ export class FramePersonPhotos {
 
   async #download(photo: GatekeeperPersonPhoto): Promise<FramePhoto | null> {
     const url = new URL(photo.url)
-    if (url.protocol !== 'https:' || url.origin !== this.#origin || url.username || url.password) return null
+    if (url.protocol !== 'https:' || url.origin !== this.#origin || url.username || url.password) return skip(photo.id, `ссылка не в хранилище подключения (${url.origin})`)
     const signal = AbortSignal.any([this.#lifetime.signal, AbortSignal.timeout(30_000)])
     const response = await this.#fetch(url.href, { signal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' })
-    if (!response.ok) { await response.body?.cancel(); return null }
+    if (!response.ok) { await response.body?.cancel(); return skip(photo.id, `хранилище ответило ${response.status}`) }
     const declared = Number(response.headers.get('content-length') ?? '0')
-    if (declared > MAX_PHOTO_BYTES) { await response.body?.cancel(); return null }
+    if (declared > MAX_PHOTO_BYTES) { await response.body?.cancel(); return skip(photo.id, 'больше 1 МБ') }
     const bytes = new Uint8Array(await response.arrayBuffer())
-    if (bytes.byteLength > MAX_PHOTO_BYTES) return null
+    if (bytes.byteLength > MAX_PHOTO_BYTES) return skip(photo.id, 'больше 1 МБ')
     const type = photoType(bytes)
-    if (!type || await sha256Hex(bytes) !== photo.sha256) return null
+    if (!type) return skip(photo.id, 'не JPEG, PNG или WebP')
+    if (await sha256Hex(bytes) !== photo.sha256) return skip(photo.id, 'сумма байтов не совпала со списком')
     return { sha256: photo.sha256, type, bytes }
   }
 

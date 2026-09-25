@@ -8,7 +8,7 @@ import type { ThemeMode } from './theme'
 import { useDocumentTitle } from './useDocumentTitle'
 import { MyAvatar } from './components/MnemosAvatar'
 import { GROUP_CARD, SECONDARY_PILL, SECTION_TITLE } from './components/AppShell/pageStyles'
-import { removeMyPhoto, uploadMyPhoto, useMnemosPhotos } from './mnemosPhotos'
+import { clearMyPhoto, saveMyPhoto, useMnemosPhotos } from './mnemosPhotos'
 
 // Настройки (макет Settings): одна страница, секции друг под другом, без вложенных вкладок.
 // Личное — профиль, оформление, свои результаты. Организационное (люди, правила, подключения,
@@ -28,10 +28,13 @@ export default function SettingsHub() {
   async function changePhoto(action: 'upload' | 'remove', file?: File) {
     if (photoBusy) return
     setPhotoBusy(action); setPhotoError('')
+    // Пишем в Mnemos и в профиль платформы: показывается Mnemos, платформа — для тех, у кого связи с Mnemos нет.
     try {
-      if (action === 'upload' && file) await uploadMyPhoto(authenticatedApi, file)
-      else await removeMyPhoto(authenticatedApi)
-    } catch {
+      if (!currentUser) throw new Error('Пользователь не известен.')
+      if (action === 'upload' && file) await saveMyPhoto(authenticatedApi, currentUser.id, file)
+      else await clearMyPhoto(authenticatedApi, currentUser.id)
+    } catch (error) {
+      console.debug('[фото] своё фото не сохранено:', error instanceof Error ? error.message : String(error))
       setPhotoError(action === 'upload' ? 'Фото не загрузилось. Выберите снимок JPEG, PNG или WebP и повторите.' : 'Фото не убралось. Повторите попытку.')
     } finally { setPhotoBusy('') }
   }

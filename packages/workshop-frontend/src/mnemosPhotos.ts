@@ -6,6 +6,8 @@ import { listAccounts, storesDocuments } from './accountCapabilities'
 import { compressAvatar } from './avatarUtils'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { useAuthenticatedApi } from './AuthContext'
+import { photoType } from './framePersonPhotos'
+import { invalidateAvatarCache } from './useAvatar'
 
 // Фотографии людей Mnemos: человек сам ставит свою, видят все люди организации. Тело идёт
 // браузер ↔ хранилище напрямую (presigned PUT и GET); через RPC — только размер, сумма и ссылка.
@@ -122,8 +124,19 @@ export function mnemosPrincipal(api: PrincipalApi, userId: string): Promise<stri
 /** Для тестов: забыть склейку пользователей с принципалами. */
 export function forgetMnemosPrincipals() { principals.clear(); principalWaiters.clear(); principalBatch = null }
 
-/** Фото из Mnemos для пользователя оболочки (по склейке с принципалом) или null. */
-export function useUserMnemosPhoto(userId: string | null | undefined): string | null {
+/**
+ * Какое фото показать человеку в оболочке. Связан с Mnemos — только фото Mnemos (нет его — инициалы),
+ * чтобы оболочка и встроенное приложение показывали одно и то же. Фото платформы — только без связи.
+ */
+export function shownPhoto(mnemos: { linked: boolean; url: string | null }, platform: string | null): string | null {
+  return mnemos.linked ? mnemos.url : platform
+}
+
+/**
+ * Фото пользователя оболочки из Mnemos (по склейке с принципалом). linked — человек связан с Mnemos и
+ * снимок фото прочитан: тогда показывается только фото Mnemos (или инициалы), как во встроенном приложении.
+ */
+export function useUserMnemosPhoto(userId: string | null | undefined): { linked: boolean; url: string | null } {
   const { authenticatedApi } = useAuthenticatedApi()
   const [principal, setPrincipal] = useState<string | null>(null)
   useEffect(() => {
@@ -132,7 +145,8 @@ export function useUserMnemosPhoto(userId: string | null | undefined): string | 
     if (userId) void mnemosPrincipal(authenticatedApi as unknown as PrincipalApi, userId).then(p => { if (current) setPrincipal(p) })
     return () => { current = false }
   }, [authenticatedApi, userId])
-  return useMnemosPhoto(principal ?? undefined)
+  const current = useMnemosPhotos(authenticatedApi)
+  return { linked: !!principal && !!current.me, url: principal ? current.photos.get(principal) ?? null : null }
 }
 
 /** Сумма SHA-256 в base64 — так её подписывает хранилище в x-amz-checksum-sha256. */
@@ -146,7 +160,11 @@ async function checksumOf(bytes: Uint8Array): Promise<string> {
  * кладёт тело прямо в хранилище по билету и просит сервер сделать его фотографией.
  */
 export async function uploadMyPhoto(api: Api, file: File): Promise<void> {
-  const bytes = await compressAvatar(file)
+  if (!await uploadPhotoBytes(api, await compressAvatar(file))) throw new Error('Подключение Mnemos недоступно.')
+}
+
+/** Положить готовые байты снимка фотографией в Mnemos. false — подключения Mnemos нет. */
+async function uploadPhotoBytes(api: Api, bytes: Uint8Array): Promise<boolean> {
   const done = await withSelector(api, async (selector, origin) => {
     const checksum = await checksumOf(bytes)
     const ticket = await selector.beginPhotoUpload(bytes.byteLength, checksum)
@@ -159,15 +177,86 @@ export async function uploadMyPhoto(api: Api, file: File): Promise<void> {
     await selector.savePhoto(ticket.upload_id)
     return true
   })
-  if (!done) throw new Error('Подключение Mnemos недоступно.')
+  if (!done) return false
   loadedAt = 0
   await refreshPhotos(api)
+  return true
 }
 
 /** Убрать свою фотографию. */
 export async function removeMyPhoto(api: Api): Promise<void> {
+  if (!await removeMnemosPhoto(api)) throw new Error('Подключение Mnemos недоступно.')
+}
+
+async function removeMnemosPhoto(api: Api): Promise<boolean> {
   const done = await withSelector(api, async selector => { await selector.removePhoto(); return true })
-  if (!done) throw new Error('Подключение Mnemos недоступно.')
+  if (!done) return false
   loadedAt = 0
   await refreshPhotos(api)
+  return true
+}
+
+// Один источник правды — фото в Mnemos: его показывают и оболочка, и встроенное приложение.
+// Фото профиля платформы пишется рядом для тех, у кого связи с Mnemos нет, и показывается только им.
+type PlatformAvatars = { getAvatar(userId: string): Promise<Uint8Array | null>; setAvatar(bytes: Uint8Array | null): Promise<void> }
+type PhotoApi = Api & PlatformAvatars
+
+/**
+ * Поставить свою фотографию везде: сначала в Mnemos (если подключение есть), затем в профиль платформы.
+ * Сбой Mnemos останавливает запись, чтобы оболочка и приложение не разошлись.
+ */
+export async function saveMyPhoto(api: PhotoApi, userId: string, file: File): Promise<Uint8Array> {
+  const bytes = await compressAvatar(file)
+  await uploadPhotoBytes(api, bytes)
+  await api.setAvatar(bytes)
+  invalidateAvatarCache(userId)
+  return bytes
+}
+
+/** Убрать свою фотографию везде: иначе перенос при входе вернул бы в Mnemos фото платформы. */
+export async function clearMyPhoto(api: PhotoApi, userId: string): Promise<void> {
+  await removeMnemosPhoto(api)
+  await api.setAvatar(null)
+  invalidateAvatarCache(userId)
+}
+
+const carried = new Set<string>()
+
+/** Для тестов: забыть, чьи фото уже переносились. */
+export function forgetCarriedPhotos() { carried.clear() }
+
+/**
+ * Перенос: у человека есть фото профиля платформы, а в Mnemos фото нет — кладём байты платформы в Mnemos
+ * тем же путём, что и обычную загрузку (билет, PUT с суммой, проверка типа и размера на сервере).
+ * Раз на вкладку для пары «пользователь — принципал»; сбой пишется в консоль и повторится при следующем входе.
+ */
+export async function carryPlatformPhoto(api: PhotoApi, userId: string): Promise<'carried' | 'skipped'> {
+  const current = await refreshPhotos(api)
+  if (!current.me || current.photos.has(current.me)) return 'skipped'
+  const key = `${userId}\n${current.me}`
+  if (carried.has(key)) return 'skipped'
+  carried.add(key)
+  try {
+    const bytes = await api.getAvatar(userId)
+    if (!bytes || bytes.byteLength === 0) return 'skipped'
+    if (bytes.byteLength > PLATFORM_PHOTO_MAX_BYTES || !photoType(bytes)) {
+      console.debug('[фото] фото платформы не перенесено в Mnemos: не JPEG, PNG или WebP либо больше 512 КБ')
+      return 'skipped'
+    }
+    return await uploadPhotoBytes(api, bytes) ? 'carried' : 'skipped'
+  } catch (error) {
+    console.debug('[фото] фото платформы не перенесено в Mnemos:', error instanceof Error ? error.message : String(error))
+    return 'skipped'
+  }
+}
+
+/** Потолок фото на сервере Mnemos (pgstore.PersonPhotoMaxBytes). */
+const PLATFORM_PHOTO_MAX_BYTES = 512 * 1024
+
+/** Перенести фото платформы в Mnemos, когда снимок фото показал, что своего фото в Mnemos нет. */
+export function useCarryPlatformPhoto(api: PhotoApi | null | undefined, userId: string | null | undefined, book: PhotoBook) {
+  const missing = !!book.me && !book.photos.has(book.me)
+  useEffect(() => {
+    if (api && userId && missing) void carryPlatformPhoto(api, userId)
+  }, [api, userId, missing])
 }

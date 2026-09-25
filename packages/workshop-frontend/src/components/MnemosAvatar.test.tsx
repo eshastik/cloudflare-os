@@ -4,9 +4,13 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const shared = vi.hoisted(() => new Map<string, string>([['anna', 'https://objects.example/content/anna.jpg']]))
-vi.mock('../mnemosPhotos', () => ({ useMnemosPhoto: (id?: string) => (id && shared.get(id)) || null, useMnemosPhotos: () => ({ me: '', photos: new Map(), origin: '' }) }))
+const state = vi.hoisted(() => ({ me: '', platform: null as string | null, carry: [] as unknown[][] }))
+vi.mock('../mnemosPhotos', async original => ({ ...await original<typeof import('../mnemosPhotos')>(),
+  useMnemosPhoto: (id?: string) => (id && shared.get(id)) || null,
+  useMnemosPhotos: () => ({ me: state.me, photos: shared, origin: '' }),
+  useCarryPlatformPhoto: (...args: unknown[]) => { state.carry.push(args) } }))
 vi.mock('../AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: {}, currentUser: { id: 'u1', name: 'Мария Орлова' } }) }))
-vi.mock('../useAvatar', () => ({ useAvatar: () => null }))
+vi.mock('../useAvatar', () => ({ useAvatar: () => state.platform }))
 import MnemosAvatar, { MyAvatar } from './MnemosAvatar'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -37,8 +41,21 @@ it('незагрузившееся фото заменяется инициал�
 })
 
 it('свой аватар без фото — инициалы своего имени', async () => {
+  Object.assign(state, { me: '', platform: null })
   const el = await render(<MyAvatar size={30} />)
   expect(el.textContent).toBe('МО')
+})
+
+it('свой аватар: со связью с Mnemos — фото Mnemos, а не платформы; без фото в Mnemos — инициалы и перенос', async () => {
+  Object.assign(state, { me: 'anna', platform: 'blob:platform-me', carry: [] })
+  expect((await render(<MyAvatar size={30} />)).querySelector('img')!.getAttribute('src')).toBe('https://objects.example/content/anna.jpg')
+  Object.assign(state, { me: 'maria' })
+  const el = await render(<MyAvatar size={30} />)
+  expect(el.querySelector('img')).toBeNull()
+  expect(el.textContent).toBe('МО')
+  expect(state.carry.at(-1)![1]).toBe('u1')
+  Object.assign(state, { me: '' })
+  expect((await render(<MyAvatar size={30} />)).querySelector('img')!.getAttribute('src')).toBe('blob:platform-me')
 })
 
 // Все исходники оболочки (кроме тестов) текстом: сторож ищет в них самодельные кружки с инициалами.
@@ -62,5 +79,17 @@ it('сторож: кружки с инициалами людей рисуют �
   expect(sources['./MnemosAvatar.tsx']).toMatch(/useMnemosPhoto\(/)
   expect(sources['./PersonAvatar.tsx']).toMatch(/useUserMnemosPhoto\(/)
   for (const [path, source] of Object.entries(sources)) if (/peoplePhotos\(\)/.test(source) && !['../mnemosPhotos.ts', '../framePersonPhotos.ts'].includes(path)) offenders.push(`${path}: своё чтение фото`)
+  expect(offenders).toEqual([])
+})
+
+it('сторож одного источника: фото платформы показывается только через shownPhoto и пишется только вместе с Mnemos', () => {
+  const offenders: string[] = []
+  for (const [path, source] of Object.entries(sources)) {
+    // Показ фото платформы в обход правила «связан с Mnemos — только Mnemos» (как было: mine || platform).
+    if (/useAvatar\(/.test(source) && !['../useAvatar.ts'].includes(path) && !/shownPhoto\(/.test(source)) offenders.push(`${path}: фото платформы без shownPhoto`)
+    if (/\|\|\s*platform\w*\b/.test(source)) offenders.push(`${path}: фото платформы запасным к Mnemos`)
+    // Запись фото платформы в одиночку снова развела бы оболочку и встроенное приложение.
+    if (/\.setAvatar\(/.test(source) && path !== '../mnemosPhotos.ts') offenders.push(`${path}: фото платформы без записи в Mnemos`)
+  }
   expect(offenders).toEqual([])
 })

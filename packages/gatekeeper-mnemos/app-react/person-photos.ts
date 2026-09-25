@@ -37,6 +37,7 @@ function settle(id: string, entry: Entry, photo: Photo | undefined) {
       next = { at: Date.now(), sha: photo.sha256, url: URL.createObjectURL(new Blob([photo.bytes as BlobPart], { type: photo.type })), loading: false };
     }
   } else {
+    if (photo) console.debug(`[фото] ${id}: мост отдал не картинку JPEG, PNG или WebP`);
     if (entry.url) URL.revokeObjectURL(entry.url);
     next = { at: Date.now(), sha: "", url: null, loading: false };
   }
@@ -56,7 +57,8 @@ async function flush() {
     try {
       const result = await batch.host.personPhotos(part);
       answers = Array.isArray(result) && result.length === part.length ? result as Photo[] : undefined;
-    } catch { answers = undefined; }
+      if (!answers) console.debug(`[фото] мост вернул ${Array.isArray(result) ? result.length : typeof result} ответов на ${part.length} запросов`);
+    } catch (error) { answers = undefined; console.debug("[фото] мост personPhotos не ответил:", error instanceof Error ? error.message : String(error)); }
     part.forEach((id, n) => settle(id, pending[n]!, answers?.[n]));
   }
 }
