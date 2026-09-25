@@ -49,3 +49,19 @@ export function corporateSources(messages: readonly AiChatMessage[]): SourceProj
   }
   return [...projects.values()];
 }
+
+/**
+ * Во скольких ходах агента (отрезках между сообщениями человека) есть материалы из corporateSources.
+ * Если ход один, его собственный список источников уже показывает то же самое.
+ */
+export function sourceTurnCount(messages: readonly AiChatMessage[]): number {
+  const turns = new Set<number>();
+  let turn = 0;
+  for (const message of messages) {
+    if (message.type === "message" && message.author.type === "user") { turn += 1; continue; }
+    if (message.type !== "action" || message.actionLog?.type !== "observation" || message.actionLog.state !== "approved") continue;
+    const projectName = message.actionLog.description.workContext?.projectName;
+    if (typeof projectName === "string" && projectName.trim()) turns.add(turn);
+  }
+  return turns.size;
+}

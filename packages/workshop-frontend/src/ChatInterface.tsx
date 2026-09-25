@@ -6964,7 +6964,6 @@ function ChatInterface({
                 />
               )}
 
-              <CorporateWorkContext messages={currentMessages} openDocument={openMnemosDocument} />
               {/* Messages */}
               <div
                 ref={messagesContainerRef}
@@ -7718,6 +7717,11 @@ function ChatInterface({
                         </div>
                       );
                     })()}
+
+                    {/* Итог беседы: материалы, которые агент читал за всё её время. Идёт в потоке
+                        сообщений, а не поверх него, поэтому прокручивается вместе с историей.
+                        Пока агент работает, итог не подводится: он встал бы под живыми шагами хода. */}
+                    {!isAgentActive && <CorporateWorkContext messages={currentMessages} openDocument={openMnemosDocument} />}
                   </div>
                 )}
               </div>
