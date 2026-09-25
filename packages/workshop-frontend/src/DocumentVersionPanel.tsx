@@ -1,3 +1,4 @@
+import HistoryPreparingNotice from './HistoryPreparingNotice'
 import type {NativeDocumentLaunch} from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CaretLeft, SidebarSimple, X } from '@phosphor-icons/react'
@@ -229,6 +230,7 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
     </header>
     <div className="flex min-h-0 flex-col gap-5 overflow-y-auto px-7 pb-[26px]">
       {status.error && <p role="alert" className={`m-0 ${rowText} text-kumo-danger`}>{status.error}</p>}
+      {status.preparing && <HistoryPreparingNotice progress={status.preparing} />}
       {status.notice && <p role="status" className={`m-0 ${rowText}`}>{status.notice}</p>}
 
       {!binding && section !== 'open' && <SaveToProject gadget={gadget} format={format} snapshotSource={snapshotSource} disabled={disabled} status={status} />}

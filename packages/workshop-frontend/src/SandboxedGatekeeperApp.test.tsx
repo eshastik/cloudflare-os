@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document";
 import SandboxedGatekeeperApp from "./SandboxedGatekeeperApp";
+import UploadDock from "./UploadDock";
+import { uploadCenter } from "./uploadCenter";
 import { prepareForLogout } from "./authNavigation";
 
 vi.mock("./ThemeContext", () => ({
@@ -33,7 +35,7 @@ const listGadgets = vi.fn<() => Promise<{ id: string; title: string }[]>>(async 
 
 vi.mock("./AuthContext", () => {
   let authenticatedApi:{listGadgets:typeof listGadgets}|undefined;
-  return {useAuthenticatedApi:()=>({authenticatedApi:authenticatedApi??={listGadgets}})};
+  return {useAuthenticatedApi:()=>({authenticatedApi:authenticatedApi??={listGadgets}}),useOptionalAuthenticatedApi:()=>null};
 });
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,6 +71,8 @@ describe("SandboxedGatekeeperApp navigation", () => {
   afterEach(async () => {
     host?.[Symbol.dispose]();
     await act(async () => root?.unmount());
+    // Владелец загрузок один на вкладку: загрузки одного теста не должны занимать очередь другого.
+    uploadCenter.abortAll();
     container?.remove();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -246,11 +250,18 @@ describe("SandboxedGatekeeperApp navigation", () => {
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:window}));expect(closed).not.toHaveBeenCalled();
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:iframe.contentWindow}));expect(closed).toHaveBeenCalledOnce();
   });
-  it("смена организации отменяет ожидающий drop и очищает его состояние", async () => {
-    let issued=0;
-    class Issuer extends RpcTarget {issue(){issued++;throw Error("unexpected upload")} submit(){throw Error("unexpected submit")}}
-    const first={iframeHtml:"<!doctype html><title>First</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
-    const second={...first,iframeHtml:"<!doctype html><title>Second</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://other.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
+  it("перетаскивание уходит в ту организацию, где его начали, даже если фрейм сменился", async () => {
+    const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
+    const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
+    vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:200})));
+    const issued:string[]=[],submitted:string[]=[];
+    class Issuer extends RpcTarget {
+      constructor(readonly name:string){super()}
+      issue(size:number,checksum:string){issued.push(this.name);return {upload_id:"1",url:`https://${this.name}.example/file`,method:"PUT",checksum_header:"x-amz-checksum-sha256",checksum_value:checksum,content_length:size};}
+      submit(_id:string,path:string){submitted.push(`${this.name}:${path}`);return {outcome:"enqueued",enqueued:true};}
+    }
+    const first={iframeHtml:"<!doctype html><title>First</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://first.example",issuer:new RpcStub(new Issuer("first"))}} as unknown as GatekeeperUiFrame;
+    const second={...first,iframeHtml:"<!doctype html><title>Second</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://second.example",issuer:new RpcStub(new Issuer("second"))}} as unknown as GatekeeperUiFrame;
     let replaceFrame:(frame:GatekeeperUiFrame)=>void=()=>{};
     const rootRoute=createRootRoute({component:()=>{const [frame,setFrame]=useState(first);replaceFrame=setFrame;return <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>}});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:rootRoute.addChildren([createRoute({getParentRoute:()=>rootRoute,path:"/"})])});
@@ -267,14 +278,12 @@ describe("SandboxedGatekeeperApp navigation", () => {
     expect(finish).toBeDefined();
     const oldHost=host;
     await act(async()=>replaceFrame(second));oldHost?.[Symbol.dispose]();connect();
-    await act(async()=>{finish!(new File(["private"],"Закрытая папка.txt"));await Promise.resolve();});
-    expect(issued).toBe(0);
-    expect(container.textContent).not.toContain("Читаем файлы");
-    expect(container.textContent).not.toContain("Закрытая папка");
-    expect(container.querySelector("progress")).toBeNull();
+    await act(async()=>{finish!(new RealFile(["private"],"Закрытая папка.txt") as unknown as File);await Promise.resolve();});
+    await vi.waitFor(()=>expect(submitted).toEqual(["first:Закрытая папка.txt"]));
+    expect(issued).toEqual(["first"]);
     window.history.replaceState(null,"","/");
   });
-  it("закрытие приёма отменяет текущий PUT и сохраняет уже принятый файл", async()=>{
+  it("закрытие фрейма не прерывает загрузку: начатый PUT доходит, приём подтверждается", async()=>{
     const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
     const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);
     const submitted:string[]=[];let count=0;let signal:AbortSignal|undefined;
@@ -283,9 +292,10 @@ describe("SandboxedGatekeeperApp navigation", () => {
       submit(_id:string,path:string){submitted.push(path);return {outcome:"enqueued",enqueued:true};}
     }
     // Файлы идут параллельно, поэтому «первый принят, второй висит» задаётся по имени, а не по порядку.
-    const request=vi.fn(async(_url:string,init:RequestInit)=>{expect(init.body).toBeInstanceOf(File);expect(init.credentials).toBe("omit");if((init.body as File).name==="первый.txt")return new Response(null,{status:200});signal=init.signal as AbortSignal;return new Promise<Response>((_,reject)=>signal!.addEventListener("abort",()=>reject(Error("abort")),{once:true}));});vi.stubGlobal("fetch",request);
+    let release:(()=>void)|undefined;
+    const request=vi.fn(async(_url:string,init:RequestInit)=>{expect(init.body).toBeInstanceOf(File);expect(init.credentials).toBe("omit");if((init.body as File).name==="первый.txt")return new Response(null,{status:200});signal=init.signal as AbortSignal;return new Promise<Response>((resolve,reject)=>{release=()=>resolve(new Response(null,{status:200}));signal!.addEventListener("abort",()=>reject(Error("abort")),{once:true})});});vi.stubGlobal("fetch",request);
     const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
-    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const route=createRootRoute({component:()=> <><SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/><UploadDock/></>});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
     container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
@@ -293,7 +303,9 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await act(async()=>dragFiles("dragenter"));
     await act(async()=>{container!.querySelector('[aria-label="Перетащите материалы организации"]')!.dispatchEvent(event);await vi.waitFor(()=>expect(request).toHaveBeenCalledTimes(2));await vi.waitFor(()=>expect(submitted).toEqual(["первый.txt"]));});
     expect(submitted).toEqual(["первый.txt"]);
-    await act(async()=>root!.render(null));expect(signal?.aborted).toBe(true);expect(submitted).toEqual(["первый.txt"]);
+    await act(async()=>root!.render(null));expect(signal?.aborted).toBe(false);
+    release!();
+    await vi.waitFor(()=>expect(submitted).toEqual(["первый.txt","второй.txt"]));
   });
   it("папка: служебное отобрано до загрузки, сводка, загрузка и повтор незагрузившегося", async()=>{
     const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
@@ -305,7 +317,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     }
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:200})));
     const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
-    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const route=createRootRoute({component:()=> <><SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/><UploadDock/></>});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
     container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));
@@ -350,7 +362,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
     }
     vi.stubGlobal("fetch",vi.fn(async()=>new Response(null,{status:200})));
     const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new Issuer())}} as unknown as GatekeeperUiFrame;
-    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const route=createRootRoute({component:()=> <><SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/><UploadDock/></>});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
     container=document.createElement("div");document.body.append(container);root=createRoot(container);await act(async()=>root!.render(<RouterProvider router={router}/>));
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container.querySelector("iframe")!.contentWindow,ports:[port2]}));

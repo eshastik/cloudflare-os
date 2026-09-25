@@ -1,3 +1,5 @@
+import { HISTORY_POLL_MS, historyPreparing, type HistoryProgress } from '../../gatekeeper-mnemos/src/history-preparing.ts'
+import HistoryPreparingNotice from './HistoryPreparingNotice'
 import { useEffect, useRef, useState } from 'react'
 import NativeOfficeImport from './NativeOfficeImport'
 import { RpcStub, RpcTarget } from 'capnweb'
@@ -72,6 +74,13 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   const [scope, setScope] = useState(initialScope ?? ''), [document, setDocument] = useState(initialResource ?? ''), [publication, setPublication] = useState('')
   const [publications, setPublications] = useState<Publication[]>([]), [resourceUrl, setResourceUrl] = useState('')
   const [historyLimited,setHistoryLimited]=useState(false)
+  /** История проекта готовится на сервере: публикации перечитываются сами через HISTORY_POLL_MS. */
+  const [preparing, setPreparing] = useState<HistoryProgress | null>(null), [historyRound, setHistoryRound] = useState(0)
+  useEffect(() => {
+    if (!preparing) return
+    const timer = setTimeout(() => setHistoryRound(round => round + 1), HISTORY_POLL_MS)
+    return () => clearTimeout(timer)
+  }, [preparing])
   const [docCursor, setDocCursor] = useState(''), [pubCursor, setPubCursor] = useState(''), [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const selector = useRef<RpcStub<GatekeeperNativeDocumentSelector> | null>(null)
@@ -135,14 +144,18 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   useEffect(() => {
     let cancelled = false
     setPublications([]); setPublication(scope === initialScope && document === initialResource ? initialPublication ?? '' : ''); setPubCursor(''); setHistoryLimited(false); setResourceUrl(''); setSharedDeleted(undefined)
-    if (!scope || !document || !selector.current) return
+    if (!scope || !document || !selector.current) { setPreparing(null); return }
     if (/\.(docx|xlsx)$/i.test(documents.find(d => d.id === document)?.name || '')) return
     setLoading(true); setError('')
     void selector.current.publications(scope, document, '').then(page => {
-      if (!cancelled) { setPublications(page.publications.filter(p => p.format === format)); setPubCursor(page.nextCursor); setHistoryLimited(old=>old||!!page.historyLimited); setResourceUrl(page.resourceUrl); setSharedDeleted(page.sharedDeleted) }
-    }).catch(() => { if (!cancelled) setError('Не удалось прочитать публикации.') }).finally(() => { if (!cancelled) setLoading(false) })
+      if (!cancelled) { setPreparing(null); setPublications(page.publications.filter(p => p.format === format)); setPubCursor(page.nextCursor); setHistoryLimited(old=>old||!!page.historyLimited); setResourceUrl(page.resourceUrl); setSharedDeleted(page.sharedDeleted) }
+    }).catch(error => {
+      if (cancelled) return
+      const progress = historyPreparing(error)
+      if (progress) setPreparing(progress); else { setPreparing(null); setError('Не удалось прочитать публикации.') }
+    }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [scope, document, accountId, format, sourceVersion])
+  }, [scope, document, accountId, format, sourceVersion, historyRound])
   async function more(kind: 'documents' | 'publications') {
     if (!selector.current || loading || busy) return
     setLoading(true)
@@ -302,6 +315,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       {!resume && publication.startsWith('private:') && writer.current && <WorkshopButton disabled={loading || busy} onClick={() => { void exportOffice(true) }}>Скачать оригинал</WorkshopButton>}
       {notice && <p role="status">{notice}</p>}
       {loading && <p role="status">Загрузка…</p>}
+      {preparing && <HistoryPreparingNotice progress={preparing} subject="Публикации документа появятся" />}
       {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
       <div className="flex justify-end gap-2 mt-1"><WorkshopButton disabled={busy} onClick={close}>Отмена</WorkshopButton>
         <WorkshopButton tone="primary" className="!h-8" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открытие…' : initialPublication ? 'Открыть документ' : 'Заменить содержимое редактора'}</WorkshopButton></div>

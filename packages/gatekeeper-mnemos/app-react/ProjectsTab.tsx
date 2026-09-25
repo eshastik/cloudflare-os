@@ -14,7 +14,7 @@ import PersonAvatar from "./PersonAvatar.tsx";
 import { ActionForm, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
-import { uploadActive, useProjectUpload } from "./UploadNotice.tsx";
+import { uploadActive, useProjectUpload, useUploadChoosing } from "./UploadNotice.tsx";
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
 import ProjectTasks from "./ProjectTasks.tsx";
 
@@ -200,7 +200,9 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
   const [all, setAll] = useState(false);
   // Ход загрузки рисует уведомление (UploadNotice): здесь оно встаёт в блок «Файлы».
   const upload = useProjectUpload(project.id);
-  const busy = uploading || uploadActive(upload.view);
+  // Хост с очередью ведёт загрузку сам: следующую можно начать, пока идёт прежняя. Старый хост — по одной.
+  const choosing = useUploadChoosing();
+  const busy = upload.live ? choosing : uploading || uploadActive(upload.view);
   useEffect(() => {
     const refresh = (event: MessageEvent) => {
       if (event.source === window.parent && event.data?.type === "mnemos-inbox-updated") void data.reloadProjects();
@@ -268,7 +270,7 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
       {total === 0 && !shared.value?.length
-        ? !busy && <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
+        ? !(uploading || uploadActive(upload.view)) && <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
         : <div>
           {shownFolders.map(folder => (
             <ListRow key={folder.node_id} icon={<Folder size={18} />}>

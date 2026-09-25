@@ -28,6 +28,8 @@ export type UploadView =
       /** Секунд до конца; null — ещё не измерено. */
       eta: number | null;
       stopping: boolean;
+      /** Сколько загрузок ждёт своей очереди после этой. Старый хост поля не шлёт. */
+      queued?: number;
     }
   | {
       phase: "done"; id: number; project: string;
@@ -41,6 +43,8 @@ export type UploadView =
       /** Файлы легли личными черновиками проекта. */
       personal: boolean;
       note: string;
+      /** Загрузку оборвали закрытие или перезагрузка вкладки; stopped — сколько не успело уйти. */
+      interrupted?: boolean;
     }
   | { phase: "error"; id: number; project: string; message: string };
 

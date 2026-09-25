@@ -143,3 +143,20 @@ test("итог с отказами политики: «Не приняты» п�
     assert.equal(section(app).querySelector("[data-upload-refused]").textContent, "Не приняты 8: сторонний код (vendor, node_modules) — 8");
   } finally { app.dispose(); }
 });
+
+test("очередь и прерванная загрузка: пока идёт одна, можно начать следующую; после перезагрузки вкладки — «Догрузить остальные»", async () => {
+  const app = await mountMemoryApp(empty, { section: "projects", project: "two", uploads: { initial: uploading({ queued: 2 }) } });
+  try {
+    await app.until(() => section(app)?.querySelector('[data-upload="uploading"]'), "ход");
+    assert.equal(section(app).querySelector("[data-upload-queued]").textContent, " · ещё 2 в очереди");
+    // Оболочка ставит новую загрузку в очередь: кнопки выбора не блокируются, пока файлы уходят.
+    assert.equal(app.button("Выбрать папку").disabled, false);
+    await app.pushUpload({ phase: "done", id: 9, project: "two", files: 3, accepted: 2, acceptedBytes: 10, failed: [], failedCount: 0, stopped: 1, personal: false, note: "", refused: [], interrupted: true });
+    await app.until(() => section(app).querySelector('[data-upload="done"]'), "итог");
+    assert.equal(section(app).querySelector("[data-upload-stopped]").textContent,
+      "Загрузка прервана закрытием вкладки: не загружено 1 файл из 3. Выберите ту же папку снова — принятые файлы пропустим.");
+    app.button("Догрузить остальные").click();
+    await app.until(() => app.calls.some(c => c[0] === "resumeUpload"), "догрузка");
+    assert.deepEqual(app.calls.find(c => c[0] === "resumeUpload"), ["resumeUpload", 9]);
+  } finally { app.dispose(); }
+});

@@ -404,11 +404,24 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (!session) {
       throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);
     }
-    await this.#recordInDirectory();
+    this.#recordInDirectoryInBackground();
   }
 
-  // Внести себя в справочник подсказок «Поделиться»: один раз и заново после смены имени. Сбой
-  // справочника вход не ломает — человек просто не появится в подсказках до следующего входа.
+  // Срок одной записи в справочник. Поле, а не константа: тест подаёт миллисекунды.
+  private directoryWriteTimeoutMs = 5_000;
+  #directoryTail: Promise<void> = Promise.resolve();
+
+  // Запись в справочник не задерживает ни вход, ни смену имени: справочник — общий объект, и его
+  // сбой или зависание не должны держать человека. Записи идут по очереди, каждая читает профиль
+  // заново, поэтому последней ложится последняя версия имени.
+  #recordInDirectoryInBackground(): void {
+    let next = this.#directoryTail.then(() => this.#recordInDirectory());
+    this.#directoryTail = next;
+    this.ctx.waitUntil(next);
+  }
+
+  // Внести себя в справочник подсказок «Поделиться»: один раз и заново после смены имени. Сбой или
+  // истёкший срок не ломают вход — запись повторится при следующем входе или смене имени.
   async #recordInDirectory(): Promise<void> {
     if (!this.storage.created.get()) return;
     let profile = this.storage.profile.get();
@@ -416,10 +429,16 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let mnemos = this.#mnemosAccount()?.owner;
     let stamp = JSON.stringify([profile.id, profile.name, mnemos?.tenant ?? "", mnemos?.principal ?? ""]);
     if (this.storage.directoryRecorded.get() === stamp) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.adminSettings.getByName("").recordDirectoryUser({ id: profile.id, name: profile.name, ...(mnemos ? { mnemos } : {}) });
+      await Promise.race([
+        this.adminSettings.getByName("").recordDirectoryUser({ id: profile.id, name: profile.name, ...(mnemos ? { mnemos } : {}) }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("directory write timed out")), this.directoryWriteTimeoutMs); }),
+      ]);
       this.storage.directoryRecorded.put(stamp);
-    } catch { /* повторится при следующем входе */ }
+    } catch { /* повторится при следующем входе или смене имени */ } finally {
+      clearTimeout(timer);
+    }
   }
 
   // Действующее подключение Mnemos этого человека и его принципал (из uniqueName подключения).
@@ -689,7 +708,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let profile = this.storage.profile.get();
     profile.name = name;
     this.storage.profile.put(profile);
-    await this.#recordInDirectory();
+    this.#recordInDirectoryInBackground();
   }
 
   async listModels(): Promise<AiChatAuthorInfo[]> {

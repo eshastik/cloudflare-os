@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
+// Импорт cloudflare:test загружает главный воркер (все объекты) при загрузке файла. Без него
+// загрузка случалась при первом вызове объекта внутри теста и на занятой машине съедала весь срок
+// теста (4–10 с локально, больше 30 с в CI).
+import { runInDurableObject } from "cloudflare:test";
 import type { UserDurableObject } from "../src/user.js";
 import type { AdminSettings } from "../src/admin-settings.js";
 
@@ -76,6 +80,11 @@ describe("право искать людей", () => {
   });
 });
 
+// Запись в справочник идёт в фоне: ждём её опросом с коротким сроком.
+const POLL = { timeout: 2_000, interval: 10 };
+
+type DirectoryFake = { getByName(name: string): { recordDirectoryUser(entry: unknown): Promise<void> } };
+
 describe("вход вносит человека в справочник", () => {
   it("после входа и смены имени его находит поиск справочника", async () => {
     const users = env.TEST_USER;
@@ -83,11 +92,48 @@ describe("вход вносит человека в справочник", () =>
     const user = users.get(users.idFromName("olga"));
     const token = await user.createAccount("olga", "Ольга Петрова", new Uint8Array(32).fill(3));
     await user.authenticate(token!);
-    expect(await directory.findDirectoryUsers("пет", [])).toEqual([{ id: "olga", name: "Ольга Петрова" }]);
+    await expect.poll(() => directory.findDirectoryUsers("пет", []), POLL).toEqual([{ id: "olga", name: "Ольга Петрова" }]);
     expect(await directory.findDirectoryUsers("ol", ["olga"])).toEqual([]);
     await user.setOwnDisplayName("Ольга Иванова");
-    expect(await directory.findDirectoryUsers("иван", [])).toEqual([{ id: "olga", name: "Ольга Иванова" }]);
-  }, 30_000); // первый запуск объектов в общем прогоне бывает дольше пяти секунд
+    await expect.poll(() => directory.findDirectoryUsers("иван", []), POLL).toEqual([{ id: "olga", name: "Ольга Иванова" }]);
+  });
+
+  it("зависший справочник не задерживает ни вход, ни смену имени", async () => {
+    const user = env.TEST_USER.getByName("stuck");
+    const token = await user.createAccount("stuck", "Зависший", new Uint8Array(32).fill(4));
+    let calls = 0;
+    let release: (() => void) | undefined;
+    await runInDurableObject(user, instance => {
+      (instance as unknown as { adminSettings: DirectoryFake }).adminSettings = {
+        getByName: () => ({ recordDirectoryUser: () => { calls++; return new Promise<void>(resolve => { release = resolve; }); } }),
+      };
+    });
+    // Срок записи по умолчанию — секунды; вход и смена имени возвращаются, пока запись висит.
+    await user.authenticate(token!);
+    await user.setOwnDisplayName("Зависший снова");
+    await expect.poll(() => calls, POLL).toBe(1);
+    // Отпускаем из контекста объекта: продолжение записи трогает его хранилище.
+    await runInDurableObject(user, () => { release!(); });
+    await expect.poll(() => calls, POLL).toBe(2);
+    await runInDurableObject(user, () => { release!(); });
+  });
+
+  it("запись, не уложившаяся в срок, не держит очередь следующих", async () => {
+    const user = env.TEST_USER.getByName("slow");
+    const token = await user.createAccount("slow", "Медленный", new Uint8Array(32).fill(5));
+    let calls = 0;
+    await runInDurableObject(user, instance => {
+      const fields = instance as unknown as { adminSettings: DirectoryFake; directoryWriteTimeoutMs: number };
+      fields.directoryWriteTimeoutMs = 20;
+      fields.adminSettings = { getByName: () => ({ recordDirectoryUser: () => { calls++; return new Promise<void>(() => {}); } }) };
+    });
+    await user.authenticate(token!);
+    await user.setOwnDisplayName("Медленный снова");
+    // Обе записи не удались по сроку: отметка не поставлена, следующий вход попробует снова.
+    await expect.poll(() => calls, POLL).toBe(2);
+    await user.authenticate(token!);
+    await expect.poll(() => calls, POLL).toBe(3);
+  });
 });
 
 // ---- Люди Mnemos как первый источник подсказок ----
@@ -223,7 +269,7 @@ describe("приглашение ещё не входившего", () => {
     expect(snapshot.entries.find(e => e.id === "vera@example.ru")).toEqual({ id: "vera@example.ru", name: "Вера", mnemos: { tenant: TENANT, principal: "p-vera" } });
     expect(snapshot.entries.find(e => e.id === "bad@example.ru")).toEqual({ id: "bad@example.ru", name: "Плохой" });
     expect(typeof snapshot.aliases).toBe("object");
-  }, 30_000);
+  });
 });
 
 describe("principalsForUsers: пользователь оболочки → принципал Mnemos для фото", () => {

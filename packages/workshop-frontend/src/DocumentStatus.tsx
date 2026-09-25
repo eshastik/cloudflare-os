@@ -1,3 +1,5 @@
+import { HISTORY_POLL_MS, historyPreparing, type HistoryProgress } from '../../gatekeeper-mnemos/src/history-preparing.ts'
+import { HistoryPreparingLine } from './HistoryPreparingNotice'
 import { readNativeDocumentLaunch, clearNativeDocumentLaunch, type NativeDocumentLaunch } from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -30,7 +32,9 @@ export type HistoryEntry = { id: string; label: string; recordedAt: string; acto
 export type DocumentAccess = 'owner' | 'write' | 'read'
 /** conflict null — черновик не прочитан; participants null — приглашённые не прочитаны; head — текущая версия документа;
  *  matchesShared — личная версия документа совпадает с последней опубликованной (после публикации личная ветка остаётся). */
-export type StatusData = { state: PublicationState | null; review: PublicationReview | null; conflict: boolean | null; participants: Participant[] | null; history: HistoryEntry[]; sharedVersion: string; me: string; access: DocumentAccess; head: string; name: string | null; matchesShared: boolean }
+export type StatusData = { state: PublicationState | null; review: PublicationReview | null; conflict: boolean | null; participants: Participant[] | null; history: HistoryEntry[]; sharedVersion: string; me: string; access: DocumentAccess; head: string; name: string | null; matchesShared: boolean
+  /** История проекта ещё переносится на сервере: черновик и версии появятся позже. */
+  preparing?: HistoryProgress | null }
 
 /** Несохранённые правки редактора: число; 'no-baseline' — ревизия сохранения неизвестна; 'unread' — снимок редактора не прочитан. */
 export type Changes = number | 'no-baseline' | 'unread'
@@ -161,7 +165,7 @@ export async function describePublishPlace(selector: Selector, binding: Document
 
 const dotTone = { neutral: 'bg-kumo-inactive', warning: 'bg-kumo-warning', danger: 'bg-kumo-danger', success: 'bg-kumo-success', info: 'bg-kumo-info' } as const
 
-export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, saving, error, flash, onPrimary, onSecondary, onOpenVersion, onSaveToProject }: {
+export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, saving, error, flash, preparing, onPrimary, onSecondary, onOpenVersion, onSaveToProject }: {
   /** Привязка есть, но модели нет — состояние не прочитано, а не «не привязан». */
   model: DocumentStatusModel | null; bound?: boolean; busy?: boolean; disabled?: boolean; versionOpen: boolean
   /** Отказ последнего действия шапки (публикации, сохранения): строка рядом с кнопкой, а не тишина. */
@@ -170,6 +174,8 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
   saving?: string
   /** Подтверждение только что выполненного действия («Опубликовано в проект …»): на несколько секунд вместо строки состояния. */
   flash?: string
+  /** История проекта готовится на сервере: спокойная строка с ходом вместо состояния документа. */
+  preparing?: HistoryProgress | null
   onPrimary(kind: PrimaryKind): void; onSecondary(): void; onOpenVersion(): void
   /** Документ не сохранён в Mnemos: открыть выбор проекта. */
   onSaveToProject?(): void
@@ -183,7 +189,7 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
       {flash ? <span role="status" className="flex min-w-0 items-center gap-1.5 text-kumo-default">
         <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone.success}`} />
         <span className="min-w-0 truncate">{flash}</span>
-      </span> : model ? <>
+      </span> : preparing ? <HistoryPreparingLine progress={preparing} /> : model ? <>
         <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone[model.tone]}`} />
         <span className={`min-w-0 max-w-full shrink truncate ${model.tone === 'warning' ? 'text-kumo-warning' : model.tone === 'neutral' ? '' : 'text-kumo-default'}`}>{model.saved}</span>
         <span className="min-w-0 flex-1 truncate text-kumo-inactive">· {model.version} · {model.audience}</span>
@@ -244,12 +250,14 @@ async function loadStatus(selector: Selector, downloads: Downloads | null, origi
   let conflict: boolean | null = false, head = '', participants: Participant[] | null = [], access: DocumentAccess = 'owner'
   // Выбор документа открывает личный черновик человека, поэтому идёт до чтения состояния публикации.
   let selected = false
+  // Сервер ещё переносит историю проекта: это не отказ, шапка скажет «готовится» и спросит позже.
+  let preparing: HistoryProgress | null = null
   if (binding.resource) {
     try {
       using writer = await selector.select(binding.scope, binding.resource, format); signal.throwIfAborted()
       head = await writer.head(); selected = true
       access = (await Promise.resolve(writer.access()).catch(() => undefined)) ?? 'owner'
-    } catch { signal.throwIfAborted() }
+    } catch (error) { signal.throwIfAborted(); preparing ??= historyPreparing(error) }
   }
   // Имя документа — для заголовков панелей «Версии» и «Поделиться»; не прочитано — null.
   let name: string | null = null
@@ -276,12 +284,13 @@ async function loadStatus(selector: Selector, downloads: Downloads | null, origi
   }
   let history: HistoryEntry[] = [], sharedVersion = '—'
   if (downloads && binding.resource) {
-    try { const page = await downloads.publications(binding.scope, binding.resource, ''); ({ history, sharedVersion } = describeHistory(page, format)) } catch { /* без истории статус остаётся, только версия не подписана */ }
+    try { const page = await downloads.publications(binding.scope, binding.resource, ''); ({ history, sharedVersion } = describeHistory(page, format)) }
+    catch (error) { preparing ??= historyPreparing(error) /* без истории статус остаётся, только версия не подписана */ }
     signal.throwIfAborted()
   }
   const matchesShared = !!downloads && state.personal_exists && !!binding.resource && conflict === false && access === 'owner' && await matchesPublished(downloads, origin, binding, format, history, signal)
   signal.throwIfAborted()
-  return { state, review, conflict, participants, history, sharedVersion, access, head, name, matchesShared }
+  return { state, review, conflict, participants, history, sharedVersion, access, head, name, matchesShared, preparing }
 }
 
 /** Текущая ревизия редактора из снимка; undefined — редактора нет или ревизии в снимке нет. */
@@ -315,7 +324,7 @@ export const FLASH_MS = 6_000
 export type DocumentStatusHandle = ReturnType<typeof useDocumentStatus>
 
 /** Один хук на все факты шапки: черновик, конфликт, приглашённые, заявка, история — теми же RPC, что и секции панели. */
-export function useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs = CHANGES_POLL_MS, autosaveMs = AUTOSAVE_MS, flashMs = FLASH_MS }: {
+export function useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs = CHANGES_POLL_MS, autosaveMs = AUTOSAVE_MS, flashMs = FLASH_MS, historyPollMs = HISTORY_POLL_MS }: {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number
   /** Открытая беседа: её проект — место автосохранения, если беседа создания редактора неизвестна. */
   projectChatId?: number; changesPollMs?: number
@@ -323,6 +332,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   autosaveMs?: number
   /** Сколько держится подтверждение «Опубликовано в проект …», мс. */
   flashMs?: number
+  /** Как часто спрашивать сервер, пока история проекта готовится, мс. */
+  historyPollMs?: number
 }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [gadgetId, setGadgetId] = useState<string | number | null>(null)
@@ -332,6 +343,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const [changes, setChanges] = useState<Changes>('unread')
   const [busy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [tick, setTick] = useState(0)
+  /** История проекта готовится на сервере: ход переноса; null — готова или не известно. */
+  const [preparing, setPreparing] = useState<HistoryProgress | null>(null)
   /** Что знает рабочее место о документе Mnemos: привязка на сервере, начатое создание, проект беседы. null — не прочитано. */
   const [mnemos, setMnemos] = useState<NativeMnemosState | null>(null)
   const [saving, setSaving] = useState<string | undefined>()
@@ -368,7 +381,13 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const identity = binding ? JSON.stringify([binding.accountId, binding.scope, binding.resource]) : ''
   const bindingRef = useRef(binding)
   bindingRef.current = binding
-  useEffect(() => { setSaveFailed(false); savedContent.current = null }, [identity])
+  useEffect(() => { setSaveFailed(false); setPreparing(null); savedContent.current = null }, [identity])
+  // Пока история готовится, состояние перечитывается само: человеку ничего нажимать не нужно.
+  useEffect(() => {
+    if (!preparing || !(historyPollMs > 0)) return
+    const timer = setTimeout(() => setTick(value => value + 1), historyPollMs)
+    return () => clearTimeout(timer)
+  }, [preparing, historyPollMs])
 
   useEffect(() => {
     let cancelled = false
@@ -406,7 +425,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
         const me = await selector.reviewerIdentity().catch(() => ''); abort.signal.throwIfAborted()
         if (!binding) { setData({ state: null, review: null, conflict: false, participants: [], history: [], sharedVersion: '—', me, access: 'owner', head: '', name: null, matchesShared: false }); return }
         const loaded = await loadStatus(selector, downloads, frame.nativeDownloads?.storageOrigin ?? '', binding, format, abort.signal)
-        setData({ ...loaded, me })
+        setData({ ...loaded, me }); setPreparing(loaded.preparing ?? null)
         // Ревизия сохранения берётся из привязки на момент подсчёта: её могли дописать, пока читались состояние и снимок.
         setChanges(await countChanges(snapshotSource, format, () => bindingRef.current ?? binding, abort.signal))
         try {
@@ -418,7 +437,12 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
 
         } catch { abort.signal.throwIfAborted() }
 
-      } catch { if (!abort.signal.aborted) setError('Состояние документа не прочитано. Проверьте подключение Mnemos и выбранный документ.') }
+      } catch (error) {
+        if (abort.signal.aborted) return
+        const progress = historyPreparing(error)
+        if (progress) setPreparing(progress)
+        else setError('Состояние документа не прочитано. Проверьте подключение Mnemos и выбранный документ.')
+      }
       finally { if (!abort.signal.aborted) setBusy(false) }
     })()
     return () => { abort.abort(); source.current = null; disposeGatekeeperFrame(frame) }
@@ -744,10 +768,10 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   /** Открыта новая версия документа: чужая правка принята, можно снова сохранять. */
   const reopened = () => setChangedByOther(false)
 
-  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, flash, saving, changedByOther, suggestedProject: mnemos?.project ?? null, creationElsewhere, saveToProject, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
+  return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, flash, preparing, saving, changedByOther, suggestedProject: mnemos?.project ?? null, creationElsewhere, saveToProject, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
 }
 
-export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs, flashMs }: {
+export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs, flashMs, historyPollMs }: {
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
   /** Открытая беседа рабочего места: её проект — место автосохранения. */
   projectChatId?: number
@@ -759,8 +783,10 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   autosaveMs?: number
   /** Сколько держится подтверждение публикации, мс. */
   flashMs?: number
+  /** Как часто спрашивать сервер, пока история проекта готовится, мс. */
+  historyPollMs?: number
 }) {
-  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs, autosaveMs, flashMs })
+  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs, autosaveMs, flashMs, historyPollMs })
   const [panel, setPanel] = useState<{ open: boolean; section: PanelSection | null }>({ open: false, section: null })
   const [launch, setLaunch] = useState<NativeDocumentLaunch | null>(null)
 
@@ -800,7 +826,7 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   return <>
     {status.projectLink && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
     <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open} saving={status.saving ?? (status.creationElsewhere && !status.binding ? 'Сохраняет другая ваша вкладка…' : undefined)} flash={status.flash || undefined}
-      error={panel.open ? undefined : status.error || undefined}
+      error={panel.open ? undefined : status.error || undefined} preparing={status.preparing}
       onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))}
       onSaveToProject={() => setPanel({ open: true, section: 'save' })} />
     {panelHost ? createPortal(panelNode, panelHost) : panelNode}

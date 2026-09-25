@@ -13,7 +13,14 @@ declare module 'cloudflare:workers' {
 const OWNER = 'owner@example.ru';
 const ALIASES = JSON.stringify({ 'Owner@Example.ru': 'admin' });
 
-async function seedAdmin() {
+// Учётную запись admin заводит первый же тест, которому она нужна: при перемешанном порядке это
+// может быть любой из них, а повторно она не заводится.
+let seeded: Promise<DurableObjectStub<UserDurableObject>> | undefined;
+function seedAdmin() {
+  return seeded ??= createAdmin();
+}
+
+async function createAdmin() {
   const admin = env.TEST_USER.get(env.TEST_USER.idFromName('admin'));
   expect(await admin.createAccount('admin', 'Владелец', new Uint8Array(32).fill(7))).toBeTypeOf('string');
   await runInDurableObject(admin, async instance => {
@@ -61,7 +68,7 @@ it('привязка принимает только почту → имя уч�
 });
 
 it('служебный маршрут закрыт без токена и отвечает сводкой по почте', async () => {
-  const admin = await seedAdmin().catch(() => env.TEST_USER.get(env.TEST_USER.idFromName('admin')));
+  const admin = await seedAdmin();
   const deps = (token?: string) => ({ token, aliases: ALIASES, summary: (name: string) => env.TEST_USER.get(env.TEST_USER.idFromName(name)).accountSummary() });
   const request = (query: string, auth?: string) => new Request('https://h.test/__service/shell-account?' + query, auth ? { headers: { Authorization: auth } } : {});
   const token = 't'.repeat(40);

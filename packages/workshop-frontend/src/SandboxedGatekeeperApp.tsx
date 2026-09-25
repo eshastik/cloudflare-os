@@ -3,11 +3,10 @@ import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
 import { launchSharedDocument } from './sharedDocuments'
 import { useUnsavedFrameChanges } from "./useUnsavedFrameChanges"
-import {MAX_UPLOAD_FILES, planIntakeDrop, planPickedFiles, type IntakeDroppedFile} from "./intakeDrop"
-import {IntakeUploadPanel, runIntakeUpload, toUploadView, useIntakeUploadPanel, type IntakeUploadPanelState, type IntakeUploadUi, type UploadProgress} from "./intakeUploadPanel"
+import {planIntakeDrop, planPickedFiles} from "./intakeDrop"
 import type { UploadView } from "../../gatekeeper-mnemos/src/upload-progress.ts"
-import {isPermanentUploadError, isRefusedUpload, uploadInBatches, uploadRefusal} from "../../gatekeeper-mnemos/src/upload-batches.ts"
-import { uploadIntakeFile, type PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
+import type { PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
+import { pickFiles, uploadCenter, type UploadCenter } from "./uploadCenter"
 import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
@@ -42,8 +41,8 @@ interface ThemeReceiver extends RpcTarget {
 // Приложение, которое само рисует уведомление о загрузке файлов.
 interface UploadReceiver extends RpcTarget { setUploadState(view: UploadView | null): void }
 
-/** Связь хоста с панелью загрузки компонента: управление, текущее состояние и признак, что фрейм рисует её сам. */
-interface UploadPanelLink { ui: IntakeUploadUi; updated(): void; current(): IntakeUploadPanelState | null; claimed(): void }
+/** Связь хоста с владельцем загрузок оболочки: загрузка живёт там и переживает закрытие фрейма. */
+interface UploadLink { center: UploadCenter; vendorId: string; accountId?: number; api: unknown }
 
 // The content-pane rect, in viewport coordinates, that the app pins its page to while the iframe
 // is full-viewport.
@@ -121,8 +120,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
   readonly #downloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['textDownloads']>['issuer']> } | undefined
   readonly #reviewDownloads: { storageOrigin: string; issuer: RpcStub<NonNullable<GatekeeperUiFrame['reviewDownloads']>['issuer']> } | undefined
   readonly #nativeDownloads: { storageOrigin: string; selector: RpcStub<NonNullable<GatekeeperUiFrame['nativeDownloads']>['selector']> } | undefined
-  readonly #uploadUi: UploadPanelLink | undefined
+  readonly #uploadLink: UploadLink | undefined
   #uploadReceiver: RpcStub<UploadReceiver> | null = null
+  #uploadWatch: (() => void) | null = null
+  #uploadClaim: (() => void) | null = null
+  readonly #uploadOffer: (() => void) | undefined
+  #picking = false
   #disposed = false
   #downloadBusy = false
   #uploadBusy = false
@@ -157,16 +160,18 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
     private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
     private readonly navigateView: (view: string) => void = () => {},
-    uploadUi?: UploadPanelLink,
+    uploadLink?: UploadLink,
     private readonly launchShared?: (scope: string, owner: string, resource: string) => Promise<boolean>,
     private readonly photos?: FramePersonPhotos,
   ) {
     super()
-    this.#uploadUi = uploadUi
+    this.#uploadLink = uploadLink
     this.#calendarDraftCreator=calendarDraftCreator?(calendarDraftCreator as RpcStub<typeof calendarDraftCreator>).dup():undefined
     this.#mailDraftSender=mailDraftSender?(mailDraftSender as RpcStub<typeof mailDraftSender>).dup():undefined
     this.#nativeDownloads = nativeDownloads ? { storageOrigin: nativeDownloads.storageOrigin, selector: (nativeDownloads.selector as RpcStub<typeof nativeDownloads.selector>).dup() } : undefined
     this.#inboxUploads = inboxUploads ? { storageOrigin: inboxUploads.storageOrigin, issuer: (inboxUploads.issuer as RpcStub<typeof inboxUploads.issuer>).dup() } : undefined
+    // Владелец загрузок берёт отсюда свою копию ссылки на выдачу билетов — ту же, что у фрейма.
+    this.#uploadOffer = this.#inboxUploads && uploadLink ? uploadLink.center.offer(uploadLink, this.#inboxUploads, uploadLink.api) : undefined
     this.#uploads = uploads ? { storageOrigin: uploads.storageOrigin, issuer: (uploads.issuer as RpcStub<typeof uploads.issuer>).dup() } : undefined
     this.#downloads = downloads ? { storageOrigin: downloads.storageOrigin, issuer: (downloads.issuer as RpcStub<typeof downloads.issuer>).dup() } : undefined
     this.#reviewDownloads = reviewDownloads ? { storageOrigin: reviewDownloads.storageOrigin, issuer: (reviewDownloads.issuer as RpcStub<typeof reviewDownloads.issuer>).dup() } : undefined
@@ -321,109 +326,39 @@ class GatekeeperAppHostImpl extends RpcTarget {
     } finally { this.#uploadBusy = false }
   }
 
-  /** Файлы выбираются в хосте; фрейм получает только имена и результаты приёма. */
+  /**
+   * Файлы выбираются в хосте; фрейм получает только имена и результаты приёма. Загрузку ведёт
+   * владелец оболочки: закрытие фрейма её не обрывает, а ответ сюда просто никому не придёт.
+   */
   async pickInboxFiles(directory: boolean, project?: string): Promise<PickedIntakeFile[]> {
     if (project !== undefined && (typeof project !== 'string' || !project || project.length > 255)) throw new TypeError('Не выбран проект')
-    if (typeof directory !== 'boolean' || !this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
-    this.#uploadBusy = true
-    const signal = this.#uploadLifetime.signal
-    let files: File[]
-    try {
-      files = await new Promise<File[]>((resolve, reject) => {
-        const input = document.createElement('input')
-        input.type = 'file'; input.multiple = true; input.webkitdirectory = directory
-        input.style.display = 'none'; document.body.append(input)
-        const cleanup = () => { input.remove(); signal.removeEventListener('abort', abort) }
-        const abort = () => { cleanup(); reject(Error('Загрузка отменена')) }
-        signal.addEventListener('abort', abort, { once: true })
-        input.addEventListener('change', () => { const selected = Array.from(input.files ?? []); cleanup(); resolve(selected) }, { once: true })
-        input.addEventListener('cancel', () => { cleanup(); resolve([]) }, { once: true })
-        input.click()
-      })
-    } finally { this.#uploadBusy = false }
-    if (!files.length) return []
-    const picked = files.map(file => ({file,path:file.webkitRelativePath || file.name}))
-    const panel = this.#uploadUi
-    if (!panel) return this.#guardedUpload(picked, undefined, project)
+    const link = this.#uploadLink
+    if (typeof directory !== 'boolean' || !this.#inboxUploads || !link || this.#picking || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
+    this.#picking = true
+    let picked
+    try { picked = await pickFiles(directory, this.#uploadLifetime.signal) }
+    finally { this.#picking = false }
+    if (!picked.length) return []
     // Папка отбирается: служебные каталоги и .gitignore; отдельно выбранные файлы — как есть.
-    try {
-      panel.ui.reading(project)
-      const plan = await planPickedFiles(picked, { filter: directory })
-      signal.throwIfAborted()
-      return await runIntakeUpload(panel.ui, plan, (list, progress, stop) => this.#guardedUpload(list, progress, project, stop),
-        project ? 'Материалы добавлены в проект.' : 'Предложения появятся после разбора.', () => panel.updated())
-    } catch (error) {
-      if (!signal.aborted) panel.ui.error('Загрузка не завершена. Файлы, принятые до сбоя, уже в памяти; проверьте их перед повтором.')
-      throw error
-    }
+    return link.center.start({ target: { vendorId: link.vendorId, accountId: link.accountId, ...(project ? { project } : {}) }, directory,
+      note: project ? 'Материалы добавлены в проект.' : 'Предложения появятся после разбора.',
+      plan: () => planPickedFiles(picked, { filter: directory }) })
   }
 
-  async #guardedUpload(files:IntakeDroppedFile[],onProgress:((progress:UploadProgress)=>void)|undefined,project?:string,stop?:AbortSignal):Promise<PickedIntakeFile[]> {
-    if (!this.#inboxUploads || this.#uploadBusy || this.#uploadLifetime.signal.aborted) throw Error('Приём файлов недоступен')
-    this.#uploadBusy=true
-    try { return await this.#uploadInboxFiles(files,onProgress,project,stop) }
-    finally {this.#uploadBusy=false}
-  }
-
-  /** Только доверенный обработчик drop передаёт настоящие File; RPC данные не проходят проверку экземпляра. */
-  async uploadDroppedInboxFiles(files:IntakeDroppedFile[],onProgress?:(progress:UploadProgress)=>void,stop?:AbortSignal):Promise<PickedIntakeFile[]> {
-    return this.#guardedUpload(files,onProgress,this.dropProject(),stop)
+  /** Перетаскивание в оболочке: DataTransfer читается сразу, загрузка уходит владельцу оболочки. */
+  uploadDrop(transfer: DataTransfer): Promise<PickedIntakeFile[]> {
+    const link = this.#uploadLink
+    if (!this.#inboxUploads || !link || this.#uploadLifetime.signal.aborted) return Promise.reject(Error('Приём файлов недоступен'))
+    const project = this.dropProject()
+    const planned = planIntakeDrop(transfer)
+    return link.center.start({ target: { vendorId: link.vendorId, accountId: link.accountId, ...(project ? { project } : {}) }, directory: false,
+      note: this.getSelectedSection() === "projects" ? "Материалы добавлены в проект." : "Предложения появятся после разбора.",
+      plan: () => planned })
   }
 
   /** Проект, в который ляжет перетаскивание: выбранный на странице проектов. */
   dropProject():string|undefined {
     return this.getSelectedSection() === "projects" ? this.getSelectedProject() || undefined : undefined
-  }
-
-  // Пакетами по несколько файлов параллельно, с повтором временных ошибок: upload-batches.ts
-  // объясняет, почему не больше (предел незавершённых загрузок и запросов в минуту у сервера).
-  // Ход считается по байтам принятых и окончательно отклонённых файлов: fetch не сообщает, сколько
-  // байт одного PUT уже ушло, поэтому файл засчитывается целиком, когда приём подтверждён.
-  // stop — «Остановить»: принятое остаётся принятым, начатое прерывается, остальное помечается stopped.
-  async #uploadInboxFiles(files:IntakeDroppedFile[],onProgress?:(progress:UploadProgress)=>void,project?:string,stop?:AbortSignal):Promise<PickedIntakeFile[]> {
-    const lifetime=this.#uploadLifetime.signal
-    const signal=stop?AbortSignal.any([lifetime,stop]):lifetime
-    if(!Array.isArray(files)||files.length>MAX_UPLOAD_FILES)throw Error('Слишком много файлов')
-    for (const {file,path} of files) if (!(file instanceof File) || typeof path !== "string" || path.length > 1024) throw Error("Некорректный файл")
-    const uploads = this.#inboxUploads!
-    const result: PickedIntakeFile[] = new Array(files.length)
-    const progress:UploadProgress={doneFiles:0,doneBytes:0,failed:0,current:''}
-    const active:number[]=[]
-    const report=()=>onProgress?.({...progress,current:active.length?files[active[active.length-1]].path:''})
-    const run=uploadInBatches({
-      items: files.map((_, index) => index), signal, permanent: isPermanentUploadError, refused: isRefusedUpload,
-      onStart: index => { if(!active.includes(index))active.push(index); report() },
-      onSettled: (index, error) => {
-        const at=active.indexOf(index); if(at>=0)active.splice(at,1)
-        progress.doneFiles++; progress.doneBytes+=files[index].file.size; if(error!==undefined&&!isRefusedUpload(error))progress.failed++
-        report()
-      },
-      upload: async index => {
-        const {file,path} = files[index]
-        const uploadId = await uploadIntakeFile(file, async (size, checksum) => {
-          const ticket = await (project ? uploads.issuer.issue(size, checksum, project) : uploads.issuer.issue(size, checksum))
-          if (new URL(ticket.url).origin !== new URL(uploads.storageOrigin).origin) throw Error('Адрес хранилища не совпадает с настройкой установки')
-          signal.throwIfAborted()
-          return ticket
-        }, (url, options) => fetch(url, { ...options, signal }))
-        signal.throwIfAborted()
-        const receipt = await (project ? uploads.issuer.submit(uploadId, path, file.lastModified, project) : uploads.issuer.submit(uploadId, path, file.lastModified))
-        // Приём подтверждён сервером: файл в итоге, даже если в этот момент нажали «Остановить».
-        result[index] = { path, uploadId, modifiedAt: file.lastModified, receipt }
-        signal.throwIfAborted()
-      },
-    })
-    let outcome: Awaited<typeof run>
-    try { outcome = await run }
-    catch (error) {
-      if (lifetime.aborted || !stop?.aborted) throw error
-      return files.map(({ path }, index) => result[index] ?? { path, stopped: true })
-    }
-    for (const { item, error } of outcome.failed) {
-      const refused = uploadRefusal(error)
-      result[item] = refused ? { path: files[item].path, refused } : { path: files[item].path, error: 'Приём не подтверждён. Проверьте очередь и повторите этот файл при необходимости.' }
-    }
-    return result
   }
 
   // Revalidate access after S3 returns: a still-valid signed URL must not let an
@@ -548,14 +483,17 @@ class GatekeeperAppHostImpl extends RpcTarget {
     return this.#accentColor
   }
 
-  /** Приложение рисует уведомление о загрузке само; отдаёт текущее состояние. Панель оболочки тогда скрыта. */
+  /** Приложение рисует уведомление о загрузке само; отдаёт текущее состояние. Плашка оболочки тогда скрыта. */
   subscribeUploads(receiver: RpcStub<UploadReceiver>): UploadView | null {
     this.#uploadLifetime.signal.throwIfAborted()
-    if (!this.#uploadUi) return null
+    const center = this.#uploadLink?.center
+    if (!center || !this.#inboxUploads) return null
     this.#uploadReceiver?.[Symbol.dispose]()
     this.#uploadReceiver = receiver.dup()
-    this.#uploadUi.claimed()
-    return toUploadView(this.#uploadUi.current())
+    this.#uploadClaim ??= center.claim()
+    let last = center.view()
+    this.#uploadWatch ??= center.subscribe(() => { const view = center.view(); if (JSON.stringify(view) !== JSON.stringify(last)) { last = view; this.pushUploadState(view) } })
+    return last
   }
 
   pushUploadState(view: UploadView | null) {
@@ -565,40 +503,26 @@ class GatekeeperAppHostImpl extends RpcTarget {
     })
   }
 
-  #uploadState(id: unknown): IntakeUploadPanelState | null {
+  #center(): UploadCenter | null {
     this.#uploadLifetime.signal.throwIfAborted()
-    const state = this.#uploadUi?.current() ?? null
-    return state && typeof id === 'number' && state.id === id ? state : null
+    return this.#inboxUploads ? this.#uploadLink?.center ?? null : null
   }
 
   /** Ответ на сводку перед загрузкой. «Загрузить всё, включая служебные» фрейму недоступно. */
   answerUpload(id: number, choice: 'upload' | 'cancel'): void {
-    const state = this.#uploadState(id)
-    if (state?.phase !== 'confirm' || (choice !== 'upload' && choice !== 'cancel')) return
-    state.choose(choice === 'upload' ? 'filtered' : null)
+    if (choice !== 'upload' && choice !== 'cancel') return
+    this.#center()?.answer(id, choice === 'upload' ? 'filtered' : null)
   }
 
-  stopUpload(id: number): void {
-    const state = this.#uploadState(id)
-    if (state?.phase === 'uploading') state.stop()
-  }
+  stopUpload(id: number): void { this.#center()?.stop(id) }
 
   /** Повтор только не принятых файлов. */
-  retryUpload(id: number): void {
-    const state = this.#uploadState(id)
-    if (state?.phase === 'done') state.retry?.()
-  }
+  retryUpload(id: number): void { this.#center()?.retry(id) }
 
-  /** Загрузка файлов, не начатых из-за «Остановить». */
-  resumeUpload(id: number): void {
-    const state = this.#uploadState(id)
-    if (state?.phase === 'done') state.resume?.()
-  }
+  /** Загрузка файлов, не начатых из-за «Остановить»; после перезагрузки вкладки — выбор папки заново. */
+  resumeUpload(id: number): void { this.#center()?.resume(id) }
 
-  dismissUpload(id: number): void {
-    const state = this.#uploadState(id)
-    if (state && (state.phase === 'done' || state.phase === 'error')) this.#uploadUi?.ui.reset()
-  }
+  dismissUpload(id: number): void { this.#center()?.dismiss(id) }
 
   updateAccentColor(color:string) {
     if(!/^#(?:[a-f0-9]{3}|[a-f0-9]{6})$/i.test(color))return
@@ -642,6 +566,9 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.photos?.dispose()
     this.reportUnsavedChanges(false)
     this.#uploadLifetime.abort()
+    this.#uploadOffer?.()
+    this.#uploadWatch?.(); this.#uploadWatch = null
+    this.#uploadClaim?.(); this.#uploadClaim = null
     this.#inboxUploads?.issuer[Symbol.dispose]?.()
     this.#uploads?.issuer[Symbol.dispose]?.()
     this.#downloads?.issuer[Symbol.dispose]?.()
@@ -689,13 +616,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   const dirtyRef = useUnsavedFrameChanges()
   const connectedRef = useRef(false)
   const invalidatedRef = useRef(false)
-  const uploadPanel=useIntakeUploadPanel()
-  const uploadUi=uploadPanel.ui
-  const uploadCurrent=useRef(uploadPanel.current)
-  uploadCurrent.current=uploadPanel.current
-  // Приложение во фрейме подписалось и рисует уведомление само.
-  const [frameShowsUploads,setFrameShowsUploads]=useState(false)
-  useEffect(()=>{hostRef.current?.pushUploadState(toUploadView(uploadPanel.state))},[uploadPanel.state])
+  // Прогон загрузки закончился (в том числе начатый из другого фрейма): приложение перечитывает файлы.
+  useEffect(()=>uploadCenter.subscribeRuns(()=>{if(connectedRef.current)iframeRef.current?.contentWindow?.postMessage({type:'mnemos-inbox-updated'},'*')}),[])
   const dropBusy=useRef(false)
   const [dragOver,setDragOver]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
@@ -825,8 +747,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           await launchTemplateProposal(authenticatedApi,frame.textDownloads,scope,resource,proposal,signal,async id=>{await navigate({to:'/workspace/$id',params:{id}})})
         },
         view => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, view, document: undefined }), replace: true }) },
-        { ui: uploadUi, updated: () => { if (hostRef.current === host) iframeRef.current?.contentWindow?.postMessage({ type: 'mnemos-inbox-updated' }, '*') },
-          current: () => uploadCurrent.current(), claimed: () => { if (hostRef.current === host) setFrameShowsUploads(true) } },
+        { center: uploadCenter, vendorId: gatekeeperVendorId, accountId, api: authenticatedApi },
         async (scope, owner, resource) => {
           if (accountId === undefined) throw Error('Подключение Mnemos недоступно')
           return launchSharedDocument(authenticatedApi, frame, accountId, { scope, owner, resource }, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
@@ -834,7 +755,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.nativeWrites ? new FramePersonPhotos(frame.nativeWrites.selector, frame.nativeWrites.storageOrigin) : undefined,
       )
       host.updateAccentColor(accentRef.current)
-      setFrameShowsUploads(false)
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
       connectedRef.current = true
@@ -879,7 +799,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       hostRef.current?.dispose()
       hostRef.current = null
       dropBusy.current=false
-      uploadUi.reset()
       setOverlayPhase(null)
     }
     // Re-establish the session if either the HTML or the `ui` capability changes, so a new frame
@@ -904,21 +823,13 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   const intakeDrop=!!frame.inboxUploads && (embeddedIntake || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
   const drop=async(transfer:DataTransfer)=>{
     if(dropBusy.current)return
-    if(!hostRef.current){uploadUi.error("Приёмная ещё загружается. Повторите перетаскивание после загрузки.");return}
     const targetHost=hostRef.current
-    const targetWindow=iframeRef.current?.contentWindow
-    const updated=()=>{if(hostRef.current===targetHost)targetWindow?.postMessage({type:'mnemos-inbox-updated'},'*')}
+    if(!targetHost)return
     dropBusy.current=true
-    uploadUi.reading(targetHost.dropProject())
-    try {
-      // Папки отбираются до загрузки: служебные каталоги и правила .gitignore (upload-filter.ts).
-      const plan=await planIntakeDrop(transfer)
-      if(hostRef.current!==targetHost)return
-      const note=targetHost.getSelectedSection() === "projects" ? "Материалы добавлены в проект." : "Предложения появятся после разбора."
-      await runIntakeUpload(uploadUi,plan,(files,progress,stop)=>targetHost.uploadDroppedInboxFiles(files,value=>{if(hostRef.current===targetHost)progress(value)},stop),note,updated)
-      updated()
-    }catch {if(hostRef.current===targetHost)uploadUi.error('Не удалось завершить загрузку. Проверьте приёмную перед повтором.')}
-    finally{if(hostRef.current===targetHost)dropBusy.current=false}
+    // Загрузка живёт у владельца оболочки; здесь только отбор и передача. Ошибку покажет уведомление.
+    const started=targetHost.uploadDrop(transfer)
+    dropBusy.current=false
+    await started.catch(()=>{})
   }
 
   useEffect(()=>{
@@ -944,9 +855,6 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-    {!!frame.inboxUploads&&uploadPanel.state&&!frameShowsUploads&&<div role="status" className="absolute right-4 bottom-4 z-20 w-[min(380px,calc(100%-32px))] rounded-[18px] border border-kumo-line bg-kumo-overlay p-4 text-[13px] leading-[18px] text-kumo-subtle">
-      <IntakeUploadPanel state={uploadPanel.state} onClose={uploadUi.reset}/>
-    </div>}
     {intakeDrop&&dragOver&&<div role="region" aria-label="Перетащите материалы организации" data-testid="intake-drop-layer"
       onDragOver={event=>{event.preventDefault();event.stopPropagation()}}
       onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false)}}

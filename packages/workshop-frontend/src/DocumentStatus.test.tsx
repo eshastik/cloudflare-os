@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber, GadgetClient } from '@gadgets/workshop-shared/api'
 import type { PublicationReview } from '@gadgets/workshop-shared/publication-review'
+import { historyPreparingMessage } from '../../gatekeeper-mnemos/src/history-preparing.ts'
 import DocumentStatus, { DocumentStatusView, deriveDocumentStatus, publishDeniedMessage, useDocumentStatus, type StatusInput } from './DocumentStatus'
 
 const { api } = vi.hoisted(() => ({ api: { getGatekeeperApp: vi.fn<(...args: unknown[]) => Promise<unknown>>(), subscribeConnectedAccounts: vi.fn<(s: ConnectedAccountsSubscriber) => Promise<Disposable>>(async s => { s.add(1, { displayName: 'Память', avatar: { url: '' }, providesUi: { title: 'Память' } }, { displayName: 'Память', url: 'https://memory.example' }, [{ urlPattern: 'https://memory.example/drive', description: '', title: '', receives: 'drive' }], true, 'memory'); s.ready(); return { [Symbol.dispose]() {} } }) } }))
@@ -90,16 +91,21 @@ it('«только вы» показывается лишь без пригла�
 })
 
 // Живой хук с заглушками RPC: отказ каждого запроса и ревизия редактора задаются на вход.
-type Faults = { select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[]
+type Faults = {
+  /** История проекта готовится на сервере: черновик и состояние отвечают 429 history_preparing с этим ходом. */
+  preparing?: () => { done: number; total: number } | null
+  select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[]
   /** История документа вместо стандартной; функция — перечитывается при каждом запросе. */
   history?: () => { id: string; recordedAt: string; actor: string; format: 'cloudflareos.document' }[] }
 const head = 'a'.repeat(64)
 
 function frame(faults: Faults) {
+  // Так ошибку отдаёт мост Mnemos: через RPC доходит только текст с меткой хода.
+  const preparing = () => { const progress = faults.preparing?.(); if (progress) throw new Error(historyPreparingMessage(progress)) }
   class Writer extends RpcTarget { async head() { return head } }
   class Selector extends RpcTarget {
-    async publicationState() { return { personal_head: head, shared_head: 'b'.repeat(64), personal_exists: true } }
-    async select() { if (faults.select) throw new Error('Not found'); return new RpcStub(new Writer()) }
+    async publicationState() { preparing(); return { personal_head: head, shared_head: 'b'.repeat(64), personal_exists: true } }
+    async select() { preparing(); if (faults.select) throw new Error('Not found'); return new RpcStub(new Writer()) }
     async selectConflict() { throw new Error('No conflict') }
     async participants() {
       if (faults.participants) throw new Error('Forbidden')
@@ -139,7 +145,7 @@ function frame(faults: Faults) {
     nativeDownloads: { storageOrigin: 'https://objects.example', selector: new RpcStub(new Downloads()) } }
 }
 
-async function mountStatus({ faults = {}, savedRevision, revision, pollMs, flashMs }: { faults?: Faults; savedRevision?: number; revision: { current: number }; pollMs?: number; flashMs?: number }) {
+async function mountStatus({ faults = {}, savedRevision, revision, pollMs, flashMs, historyPollMs }: { faults?: Faults; savedRevision?: number; revision: { current: number }; pollMs?: number; flashMs?: number; historyPollMs?: number }) {
   api.getGatekeeperApp.mockImplementation(async () => frame(faults))
   class Gadget extends RpcTarget { async getId() { return 'native-doc' } }
   const gadget = new RpcStub(new Gadget())
@@ -150,13 +156,39 @@ async function mountStatus({ faults = {}, savedRevision, revision, pollMs, flash
   } }
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={pollMs} flashMs={flashMs} />))
+  await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} changesPollMs={pollMs} flashMs={flashMs} historyPollMs={historyPollMs} />))
   const status = () => container.querySelector('[data-document-status]')!
   const primary = () => container.querySelector('button[data-primary-action]')
   const settled = async () => { await act(async () => { await vi.waitFor(() => expect(status().textContent).not.toContain('Читаю состояние')) }) }
   const unmount = async () => { await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]() }
   return { status, primary, settled, unmount, container }
 }
+
+it('история проекта готовится: спокойная строка с ходом без красной ошибки, опрос до готовности', async () => {
+  let progress: { done: number; total: number } | null = { done: 120, total: 3670 }
+  const view = await mountStatus({ faults: { preparing: () => progress }, savedRevision: 7, revision: { current: 7 }, historyPollMs: 30 })
+  // Обновления внутри act применяются по его завершении: каждая проверка отпускает act.
+  const until = (check: () => void) => vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) }); check() }, { timeout: 3000 })
+  try {
+    await until(() => expect(view.status().textContent).toBe('История проекта готовится: перенесено 120 из 3 670 файлов'))
+    expect(view.container.querySelector('[role="alert"]')).toBeNull()
+    expect(view.container.querySelector('[data-history-preparing] [role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('3')
+    expect(view.primary()).toBeNull()
+    // Опрос идёт сам: ход обновляется без нажатий.
+    const asked = api.getGatekeeperApp.mock.calls.length
+    progress = { done: 3000, total: 3670 }
+    await until(() => expect(view.status().textContent).toContain('перенесено 3 000 из 3 670'))
+    expect(api.getGatekeeperApp.mock.calls.length).toBeGreaterThan(asked)
+    // Перенос закончен: шапка показывает обычное состояние документа и больше не опрашивает.
+    progress = null
+    await until(() => expect(view.primary()?.textContent).toBe('Опубликовать'))
+    expect(view.container.querySelector('[data-history-preparing]')).toBeNull()
+    const settledCalls = api.getGatekeeperApp.mock.calls.length
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)) })
+    expect(api.getGatekeeperApp.mock.calls.length).toBe(settledCalls)
+    expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  } finally { await view.unmount() }
+})
 
 // Дефект 2026-09-24: «Опубликовать» при отказе сервера (403) молчало — ошибка жила только в закрытой панели.
 it('отказ «Опубликовать» в праве: строка рядом с кнопкой называет папку, проект и к кому идти', async () => {

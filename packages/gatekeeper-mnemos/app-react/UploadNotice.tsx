@@ -9,8 +9,8 @@ import { Button } from "./ui.tsx";
 
 // Уведомление о загрузке файлов. Загрузку ведёт оболочка (файлы и адреса хранилища во фрейм не
 // попадают), фрейм получает только числа и имена и рисует уведомление: на странице проекта — в блоке
-// «Файлы», в любом другом разделе — плашкой в углу. Смена раздела фрейм не перезагружает, поэтому
-// плашка живёт до конца загрузки.
+// «Файлы», в любом другом разделе — плашкой в углу. Загрузка живёт в оболочке и не зависит от фрейма:
+// уход из приложения её не обрывает, а при возврате фрейм снова подписывается и видит текущий ход.
 
 interface UploadContextValue {
   view: UploadView | null;
@@ -96,6 +96,12 @@ export function useUploadBusy(): boolean {
   return uploadActive(useContext(UploadContext)?.view ?? null);
 }
 
+/** Идёт выбор или сводка перед загрузкой: следующую загрузку можно начать после ответа, она встанет в очередь. */
+export function useUploadChoosing(): boolean {
+  const phase = useContext(UploadContext)?.view?.phase;
+  return phase === "reading" || phase === "confirm";
+}
+
 /** Полоса хода: 6 px, заливка акцентом. Без числа — ход ещё не известен. */
 function ProgressBar({ percent, label }: { percent: number | null; label: string }) {
   return (
@@ -175,9 +181,10 @@ function UploadCard({ value, view, compact = false }: { value: UploadContextValu
             <p className={`${noteClass} min-w-0 flex-1`} data-upload-progress="">{progressLine(view)}</p>
             {!compact && <Button size="sm" variant="secondary" disabled={view.stopping} onClick={value.stop}>Остановить</Button>}
           </div>
-          {(pace || view.failed > 0) && <p className={noteClass}>
+          {(pace || view.failed > 0 || !!view.queued) && <p className={noteClass}>
             {pace}
             {view.failed > 0 && <span className="text-kumo-danger">{pace ? " · " : ""}{groupDigits(view.failed)} {wordFor(view.failed, "ошибка", "ошибки", "ошибок")}</span>}
+            {!!view.queued && <span data-upload-queued="">{pace || view.failed > 0 ? " · " : ""}ещё {groupDigits(view.queued)} в очереди</span>}
           </p>}
           {!compact && view.current && <p className="m-0 truncate text-[13px] leading-[18px] text-kumo-inactive" title={view.current} data-upload-current="">{view.current}</p>}
         </div>
@@ -192,7 +199,9 @@ function UploadCard({ value, view, compact = false }: { value: UploadContextValu
           <div className="min-w-0 flex-1">
             <p className={titleClass} data-upload-result="">Загружено {filesCount(view.accepted)} · {bytesText(view.acceptedBytes)}</p>
             {complete && <p className={`${noteClass} mt-0.5`}>{view.personal ? "Файлы сохранены как личные черновики проекта. Для общего доступа их нужно опубликовать." : view.note}</p>}
-            {view.stopped > 0 && <p className={`${noteClass} mt-0.5`}>Остановлено: не загружено {filesCount(view.stopped)} из {groupDigits(view.files)}.</p>}
+            {view.stopped > 0 && <p className={`${noteClass} mt-0.5`} data-upload-stopped="">{view.interrupted
+              ? `Загрузка прервана закрытием вкладки: не загружено ${filesCount(view.stopped)} из ${groupDigits(view.files)}. Выберите ту же папку снова — принятые файлы пропустим.`
+              : `Остановлено: не загружено ${filesCount(view.stopped)} из ${groupDigits(view.files)}.`}</p>}
             {/* Отказ по правилу установки — решение о файле, а не сбой: без красного и без повтора, с объяснением сервера. */}
             {refused.length > 0 && <>
               <button type="button" aria-expanded={refusedOpen} onClick={() => setRefusedOpen(!refusedOpen)}

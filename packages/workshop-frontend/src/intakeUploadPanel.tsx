@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { PickedIntakeFile } from '../../gatekeeper-mnemos/src/intake.ts'
 import { filesWord, megabytes, skippedFilesPhrase, skippedGroupsText } from '../../gatekeeper-mnemos/src/upload-filter.ts'
 import {
@@ -30,7 +30,9 @@ export type IntakeUploadPanelState = Base & (
   | { phase: 'reading' }
   | { phase: 'confirm'; plan: IntakeUploadPlan; choose(choice: 'filtered' | 'all' | null): void }
   | { phase: 'uploading'; files: number; bytes: number; progress: UploadProgress; speed: number; eta: number | null; stopping: boolean; stop(): void }
-  | { phase: 'done'; files: number; accepted: number; acceptedBytes: number; failed: string[]; refused: RefusedFile[]; stopped: number; personal: boolean; note: string; retry: (() => void) | null; resume: (() => void) | null }
+  | { phase: 'done'; files: number; accepted: number; acceptedBytes: number; failed: string[]; refused: RefusedFile[]; stopped: number; personal: boolean; note: string; retry: (() => void) | null; resume: (() => void) | null
+      /** Загрузку оборвали закрытие или перезагрузка вкладки: «Догрузить остальные» просит выбрать папку снова. */
+      interrupted?: boolean }
   | { phase: 'error'; message: string }
 )
 
@@ -55,7 +57,7 @@ type Upload = (files: IntakeDroppedFile[], onProgress: (progress: UploadProgress
  * приложение во фрейме). afterRun зовётся после повтора и продолжения, чтобы фрейм перечитал файлы.
  */
 export async function runIntakeUpload(ui: IntakeUploadUi, plan: IntakeUploadPlan, upload: Upload, note: string,
-    afterRun?: () => void): Promise<PickedIntakeFile[]> {
+    afterRun?: () => void, already: { files: number; bytes: number } = { files: 0, bytes: 0 }): Promise<PickedIntakeFile[]> {
   const files = await ui.choose(plan)
   if (!files?.length) return []
   const status = new Map<string, 'ok' | 'failed' | 'stopped' | 'refused'>()
@@ -85,7 +87,9 @@ export async function runIntakeUpload(ui: IntakeUploadUi, plan: IntakeUploadPlan
     const accepted = files.filter(({ path }) => status.get(path) === 'ok')
     const failed = files.filter(({ path }) => status.get(path) === 'failed').map(({ path }) => path)
     ui.done({
-      files: files.length, accepted: accepted.length, acceptedBytes: accepted.reduce((sum, { file }) => sum + file.size, 0),
+      // already — файлы, принятые до перезагрузки вкладки и пропущенные при догрузке.
+      files: files.length + already.files, accepted: accepted.length + already.files,
+      acceptedBytes: accepted.reduce((sum, { file }) => sum + file.size, already.bytes),
       failed, stopped: files.filter(({ path }) => status.get(path) === 'stopped').length, personal, note,
       refused: files.flatMap(({ path }) => { const refused = status.get(path) === 'refused' ? refusals.get(path) : undefined; return refused ? [{ path, ...refused }] : [] }),
       retry: again('failed'), resume: again('stopped'),
@@ -101,79 +105,86 @@ function folderOf(files: readonly IntakeDroppedFile[]): string {
   return files.every(({ path }) => path.startsWith(`${first[0]}/`)) ? first[0] : ''
 }
 
-export function useIntakeUploadPanel(options: { autoCloseMs?: number } = {}): { state: IntakeUploadPanelState | null; ui: IntakeUploadUi; current(): IntakeUploadPanelState | null } {
-  const [state, setStateRaw] = useState<IntakeUploadPanelState | null>(null)
-  const stateRef = useRef<IntakeUploadPanelState | null>(null)
-  const pending = useRef<((choice: 'filtered' | 'all' | null) => void) | null>(null)
+/** Машина состояний одной панели загрузки без React: её держит и хук, и общий владелец загрузок оболочки. */
+export interface UploadPanel { ui: IntakeUploadUi; current(): IntakeUploadPanelState | null }
+
+export function createUploadPanel(options: { autoCloseMs?: number; nextId?: () => number; onChange(state: IntakeUploadPanelState | null): void }): UploadPanel {
+  let state: IntakeUploadPanelState | null = null
+  let pending: ((choice: 'filtered' | 'all' | null) => void) | null = null
   const autoClose = options.autoCloseMs ?? AUTO_CLOSE_MS
-  const ui = useMemo<IntakeUploadUi>(() => {
-    let base: Base = { id: 0, project: '', folder: '' }
-    let run: { meter: SpeedMeter; files: number; bytes: number; latest: UploadProgress; stop(): void; stopping: boolean; timer: ReturnType<typeof setTimeout> | null; flushed: number } | null = null
-    let closer: ReturnType<typeof setTimeout> | null = null
-    const set = (next: IntakeUploadPanelState | null) => { stateRef.current = next; setStateRaw(next) }
-    const clearTimers = () => {
-      if (run?.timer) { clearTimeout(run.timer); run.timer = null }
-      if (closer) { clearTimeout(closer); closer = null }
-    }
-    const flush = () => {
+  let base: Base = { id: 0, project: '', folder: '' }
+  let run: { meter: SpeedMeter; files: number; bytes: number; latest: UploadProgress; stop(): void; stopping: boolean; timer: ReturnType<typeof setTimeout> | null; flushed: number } | null = null
+  let closer: ReturnType<typeof setTimeout> | null = null
+  const set = (next: IntakeUploadPanelState | null) => { state = next; options.onChange(next) }
+  const clearTimers = () => {
+    if (run?.timer) { clearTimeout(run.timer); run.timer = null }
+    if (closer) { clearTimeout(closer); closer = null }
+  }
+  const flush = () => {
+    if (!run) return
+    run.timer = null; run.flushed = Date.now()
+    const now = Date.now(), current = run
+    const speed = current.meter.sample(current.latest.doneBytes, now)
+    set({ ...base, phase: 'uploading', files: current.files, bytes: current.bytes, progress: current.latest, speed,
+      eta: current.meter.eta(current.bytes - current.latest.doneBytes, now), stopping: current.stopping,
+      stop: () => { if (run !== current || current.stopping) return; current.stopping = true; current.stop(); flush() } })
+  }
+  const ui: IntakeUploadUi = {
+    reading: project => { clearTimers(); run = null; base = { id: options.nextId ? options.nextId() : base.id + 1, project: project ?? '', folder: '' }; set({ ...base, phase: 'reading' }) },
+    choose: async plan => {
+      base = { ...base, folder: folderOf(plan.files) }
+      if (!plan.files.length && !plan.skippedFiles) { set({ ...base, phase: 'error', message: 'В выбранном нет файлов.' }); return null }
+      if (plan.files.length > MAX_UPLOAD_FILES) {
+        set({ ...base, phase: 'error', message: `После отбора служебных файлов осталось ${groupDigits(plan.files.length)} ${filesWord(plan.files.length)} — больше ${groupDigits(MAX_UPLOAD_FILES)} за один раз. Разделите папку на части.` })
+        return null
+      }
+      if (!plan.skippedFiles && plan.files.length < CONFIRM_THRESHOLD) return plan.files
+      pending?.(null)
+      const choice = await new Promise<'filtered' | 'all' | null>(resolve => {
+        const choose = (value: 'filtered' | 'all' | null) => { if (pending !== choose) return; pending = null; resolve(value) }
+        pending = choose
+        set({ ...base, phase: 'confirm', plan, choose })
+      })
+      if (choice === null) { set(null); return null }
+      if (choice === 'filtered') return plan.files
+      set({ ...base, phase: 'reading' })
+      return plan.allFiles()
+    },
+    start: (files, stop) => {
+      clearTimers()
+      run = { meter: new SpeedMeter(), files: files.length, bytes: files.reduce((sum, { file }) => sum + file.size, 0),
+        latest: { doneFiles: 0, doneBytes: 0, failed: 0, current: '' }, stop, stopping: false, timer: null, flushed: 0 }
+      run.meter.sample(0, Date.now())
+      flush()
+    },
+    progress: progress => {
       if (!run) return
-      run.timer = null; run.flushed = Date.now()
-      const now = Date.now(), current = run
-      const speed = current.meter.sample(current.latest.doneBytes, now)
-      set({ ...base, phase: 'uploading', files: current.files, bytes: current.bytes, progress: current.latest, speed,
-        eta: current.meter.eta(current.bytes - current.latest.doneBytes, now), stopping: current.stopping,
-        stop: () => { if (run !== current || current.stopping) return; current.stopping = true; current.stop(); flush() } })
-    }
-    return {
-      reading: project => { clearTimers(); run = null; base = { id: base.id + 1, project: project ?? '', folder: '' }; set({ ...base, phase: 'reading' }) },
-      choose: async plan => {
-        base = { ...base, folder: folderOf(plan.files) }
-        if (!plan.files.length && !plan.skippedFiles) { set({ ...base, phase: 'error', message: 'В выбранном нет файлов.' }); return null }
-        if (plan.files.length > MAX_UPLOAD_FILES) {
-          set({ ...base, phase: 'error', message: `После отбора служебных файлов осталось ${groupDigits(plan.files.length)} ${filesWord(plan.files.length)} — больше ${groupDigits(MAX_UPLOAD_FILES)} за один раз. Разделите папку на части.` })
-          return null
-        }
-        if (!plan.skippedFiles && plan.files.length < CONFIRM_THRESHOLD) return plan.files
-        pending.current?.(null)
-        const choice = await new Promise<'filtered' | 'all' | null>(resolve => {
-          const choose = (value: 'filtered' | 'all' | null) => { if (pending.current !== choose) return; pending.current = null; resolve(value) }
-          pending.current = choose
-          set({ ...base, phase: 'confirm', plan, choose })
-        })
-        if (choice === null) { set(null); return null }
-        if (choice === 'filtered') return plan.files
-        set({ ...base, phase: 'reading' })
-        return plan.allFiles()
-      },
-      start: (files, stop) => {
-        clearTimers()
-        run = { meter: new SpeedMeter(), files: files.length, bytes: files.reduce((sum, { file }) => sum + file.size, 0),
-          latest: { doneFiles: 0, doneBytes: 0, failed: 0, current: '' }, stop, stopping: false, timer: null, flushed: 0 }
-        run.meter.sample(0, Date.now())
-        flush()
-      },
-      progress: progress => {
-        if (!run) return
-        run.latest = progress
-        if (run.timer) return
-        const wait = Math.max(0, PROGRESS_INTERVAL_MS - (Date.now() - run.flushed))
-        run.timer = setTimeout(flush, wait)
-      },
-      done: result => {
-        clearTimers(); run = null
-        set({ ...base, phase: 'done', ...result })
-        // Итог с отказами не закрывается сам: человек должен увидеть, какие файлы не приняты и почему.
-        if (!result.failed.length && !result.stopped && !result.refused.length && autoClose > 0) {
-          const id = base.id
-          closer = setTimeout(() => { closer = null; if (stateRef.current?.id === id && stateRef.current.phase === 'done') set(null) }, autoClose)
-        }
-      },
-      error: message => { clearTimers(); run = null; set({ ...base, phase: 'error', message }) },
-      reset: () => { clearTimers(); run = null; pending.current?.(null); pending.current = null; set(null) },
-    }
-  }, [autoClose])
-  useEffect(() => () => ui.reset(), [ui])
-  return { state, ui, current: () => stateRef.current }
+      run.latest = progress
+      if (run.timer) return
+      const wait = Math.max(0, PROGRESS_INTERVAL_MS - (Date.now() - run.flushed))
+      run.timer = setTimeout(flush, wait)
+    },
+    done: result => {
+      clearTimers(); run = null
+      set({ ...base, phase: 'done', ...result })
+      // Итог с отказами не закрывается сам: человек должен увидеть, какие файлы не приняты и почему.
+      if (!result.failed.length && !result.stopped && !result.refused.length && autoClose > 0) {
+        const id = base.id
+        closer = setTimeout(() => { closer = null; if (state?.id === id && state.phase === 'done') set(null) }, autoClose)
+      }
+    },
+    error: message => { clearTimers(); run = null; set({ ...base, phase: 'error', message }) },
+    reset: () => { clearTimers(); run = null; pending?.(null); pending = null; set(null) },
+  }
+  return { ui, current: () => state }
+}
+
+export function useIntakeUploadPanel(options: { autoCloseMs?: number } = {}): { state: IntakeUploadPanelState | null; ui: IntakeUploadUi; current(): IntakeUploadPanelState | null } {
+  const [state, setState] = useState<IntakeUploadPanelState | null>(null)
+  const autoClose = options.autoCloseMs ?? AUTO_CLOSE_MS
+  const panel = useMemo(() => createUploadPanel({ autoCloseMs: autoClose, onChange: setState }), [autoClose])
+  useEffect(() => () => panel.ui.reset(), [panel])
+  return { state, ui: panel.ui, current: panel.current }
 }
 
 /** Состояние для фрейма: только числа, имена и пути. */
@@ -188,7 +199,7 @@ export function toUploadView(state: IntakeUploadPanelState | null): UploadView |
       doneBytes: state.progress.doneBytes, failed: state.progress.failed, current: state.progress.current, speed: state.speed, eta: state.eta, stopping: state.stopping }
     case 'done': return { phase: 'done', id, project, files: state.files, accepted: state.accepted, acceptedBytes: state.acceptedBytes,
       failed: state.failed.slice(0, FAILED_PATHS_SHOWN), failedCount: state.failed.length, stopped: state.stopped, personal: state.personal, note: state.note,
-      refused: groupRefusals(state.refused) }
+      refused: groupRefusals(state.refused), ...(state.interrupted ? { interrupted: true } : {}) }
     case 'error': return { phase: 'error', id, project, message: state.message }
   }
 }
@@ -246,11 +257,13 @@ export function IntakeUploadPanel({ state, onClose }: { state: IntakeUploadPanel
         <p className="m-0 break-words font-semibold text-kumo-default">Загружено {filesCount(state.accepted)} · {bytesText(state.acceptedBytes)}{state.accepted < state.files ? ` из ${groupDigits(state.files)}` : ''}</p>
         {!failed && !state.stopped && <p className="m-0 mt-1">{state.note}</p>}
         {state.refused.length > 0 && <p className="m-0 mt-1 break-words text-kumo-subtle" data-testid="intake-upload-refused">{refusedLine(groupRefusals(state.refused))}.</p>}
-        {state.stopped > 0 && <p className="m-0 mt-1">Остановлено: не загружено {filesCount(state.stopped)}.</p>}
+        {state.stopped > 0 && <p className="m-0 mt-1">{state.interrupted
+          ? `Загрузка прервана закрытием вкладки: не загружено ${filesCount(state.stopped)}. Выберите ту же папку снова — принятые файлы пропустим.`
+          : `Остановлено: не загружено ${filesCount(state.stopped)}.`}</p>}
         {failed > 0 && <p className="m-0 mt-1 break-words text-kumo-danger">Не загрузилось {failed} {filesWord(failed)}: {state.failed.slice(0, 3).join(', ')}{failed > 3 ? '…' : ''}</p>}
         <div className="mt-2 flex flex-wrap gap-2">
           {state.retry && <button type="button" className={primary} onClick={state.retry}>Повторить</button>}
-          {state.resume && <button type="button" className={secondary} onClick={state.resume}>Продолжить</button>}
+          {state.resume && <button type="button" className={secondary} onClick={state.resume}>{state.interrupted ? 'Догрузить остальные' : 'Продолжить'}</button>}
           <button type="button" className={secondary} onClick={onClose}>Закрыть</button>
         </div>
       </div>

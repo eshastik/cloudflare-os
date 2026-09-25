@@ -1,3 +1,4 @@
+import { HISTORY_PREPARING } from "./history-preparing.ts";
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 
 /** Формат редактора по типу содержимого Mnemos; null — документ не для редактора. */
@@ -201,8 +202,10 @@ export class NativeWriteSelector extends RpcTarget {
       await this.#session.markSharedDocumentSeen(project, owner, node).catch(() => {});
     } else {
       // Приглашённому «только к документу» работать в проекте нельзя (403): свой черновик ему не нужен.
+      // Пока история проекта переносится (429 history_preparing), черновик не открыть, но документ
+      // читается, как позволяет каталог; ход подготовки оболочка узнает из следующего запроса.
       try { await this.#session.openDraft(project); }
-      catch (error) { if (!(error instanceof MnemosAPIError && error.status === 403)) throw error; }
+      catch (error) { if (!(error instanceof MnemosAPIError && (error.status === 403 || error.code === HISTORY_PREPARING))) throw error; }
       let own;
       try { own = await this.#session.readDraftDocument(project, node); }
       catch (error) { if (!(error instanceof MnemosAPIError && [403, 404].includes(error.status))) throw error; }

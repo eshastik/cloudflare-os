@@ -1,3 +1,4 @@
+import { HISTORY_PREPARING, historyPreparingMessage, historyProgress, type HistoryProgress } from "./history-preparing.ts";
 import { checkedIntakeSubmit, type IntakeReceipt, type IntakeStatus, type IntakeAlerts, type IntakeAlert, type IntakeDecision } from "./intake.ts";
 import { checkedAdminRight, type AdminPersonCreate, type AdminPerson, type AdminPeopleResult, type AdminRight, type AdminRights } from "./admin-people.ts";
 import type {CentroidResult} from './centroid.ts';
@@ -93,7 +94,7 @@ export class MnemosAPI {
     try {
       response = await this.#fetch(this.#origin + path, { method, redirect: "manual", cache: "no-store", signal: combined, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     } catch { throw new MnemosAPIError(503); }
-    if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal); }
+    if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal,failure?.progress); }
     if (response.status === 204 && allowNoContent) return undefined as T;
     // Read bounded metadata; files are downloaded directly through separate tickets.
     const reader = response.body?.getReader();
@@ -1087,12 +1088,12 @@ export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 /** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
 export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
-type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS;
+type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING;
 /** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
 export interface IngestRefusal {reason:string;detail:string}
 /** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
 function publicText(value:unknown):string{return typeof value==='string'?[...value].filter(char=>char.charCodeAt(0)>=32).join('').trim().slice(0,600):'';}
-async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal}|undefined>{
+async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal;progress?:HistoryProgress}|undefined>{
  if(response.status!==400&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==503){await response.body?.cancel();return undefined;}
  // Отказ политики несёт готовый абзац по-русски, поэтому у 400 предел тела больше.
  const limit=response.status===400?4096:1024;
@@ -1101,7 +1102,7 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   const body:unknown=JSON.parse(new TextDecoder().decode(bytes));
   if(!body||typeof body!=='object'||!('code' in body))return undefined;
-  const fields=body as {code:unknown;reason?:unknown;detail?:unknown;message?:unknown};
+  const fields=body as {code:unknown;reason?:unknown;detail?:unknown;message?:unknown;progress?:unknown};
   if(response.status===400&&fields.code===INGEST_REFUSED){
    const reason=typeof fields.reason==='string'&&/^[a-z_]{1,32}$/.test(fields.reason)?fields.reason:'';
    return {code:INGEST_REFUSED,refusal:{reason,detail:publicText(fields.detail)||publicText(fields.message)}};
@@ -1111,6 +1112,8 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
   if(response.status===429&&fields.code==='request.rate_limit')return {code:'request.rate_limit'};
   if(response.status===429&&fields.code==='external_db.query_busy')return {code:'external_db.query_busy'};
   if(response.status===429&&fields.code===UPLOAD_IN_PROGRESS)return {code:UPLOAD_IN_PROGRESS};
+  // История проекта ещё переносится в граф ядра: ход — в progress, опрос ведёт оболочка.
+  if(response.status===429&&fields.code===HISTORY_PREPARING)return {code:HISTORY_PREPARING,progress:historyProgress(fields.progress)};
   if(response.status!==400&&typeof fields.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as GitFailureCode};
  }catch{return undefined;}finally{reader.releaseLock();}
  return undefined;
@@ -1128,7 +1131,9 @@ export class MnemosAPIError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly refusal?: IngestRefusal;
-  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; }
+  /** Ход переноса истории проекта при project.history_preparing. */
+  readonly progress?: HistoryProgress;
+  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */

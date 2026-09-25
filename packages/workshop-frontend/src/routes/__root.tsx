@@ -16,6 +16,7 @@ import AppShell from '../components/AppShell/AppShell'
 import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
+import UploadDock from '../UploadDock'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -207,6 +208,8 @@ function AuthenticatedShell({
       <AppShell bare={isWorkspaceEditor}>
         <Outlet />
       </AppShell>
+      {/* Загрузка файлов живёт вне страниц и видна в любом разделе. */}
+      <UploadDock />
     </>
   )
 }
