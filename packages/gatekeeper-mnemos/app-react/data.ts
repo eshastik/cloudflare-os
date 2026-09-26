@@ -77,6 +77,8 @@ export interface DocumentRow {
   /** Папка внутри проекта, если её узлы загружены вместе со списком. */
   folder?: string;
   status: { tone: "neutral" | "success" | "warning" | "danger"; label: string };
+  /** Файл принят, но не разобран: по содержимому его не найти. Причина — словами сервера. */
+  parseFailure?: string;
 }
 
 /** Документы проекта: общая версия плюс то, что есть только в личной. Каталоги не показываются. */
@@ -99,7 +101,7 @@ export function documentRows(project: ProjectData, reviews: PublicationReview[])
     if (node.is_dir) continue;
     seen.add(node.node_id);
     const folder = folderOf(node.parent_id);
-    rows.push({ projectId: project.id, projectName: project.name, nodeId: node.node_id, name: node.name || UNNAMED_DOCUMENT, ...(folder ? { folder } : {}), status: documentStatus(project, node.node_id, false, reviews) });
+    rows.push({ projectId: project.id, projectName: project.name, nodeId: node.node_id, name: node.name || UNNAMED_DOCUMENT, ...(folder ? { folder } : {}), ...(node.parse_failure ? { parseFailure: node.parse_failure } : {}), status: documentStatus(project, node.node_id, false, reviews) });
   }
   for (const [nodeId, doc] of project.privateDocs) {
     if (seen.has(nodeId)) continue;

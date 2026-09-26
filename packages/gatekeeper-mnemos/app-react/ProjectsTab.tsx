@@ -287,6 +287,7 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
               meta={row.status.tone === "success" ? undefined : <StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge>}>
               <button type="button" className={row.nodeId === highlighted ? `${name} font-semibold text-kumo-brand` : name} onClick={() => { setHighlighted(row.nodeId); openDocument(row.nodeId); }}>{row.name}</button>
               {described.get(row.nodeId) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(row.nodeId)}</div>}
+              {row.parseFailure && <div data-parse-failure="" className="mt-0.5 line-clamp-2 text-[13px] text-kumo-warning" title={row.parseFailure}>{row.parseFailure}</div>}
             </ListRow>
           ))}
           {(shared.value ?? []).map(doc => (

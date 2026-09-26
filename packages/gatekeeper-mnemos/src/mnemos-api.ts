@@ -1288,7 +1288,8 @@ export const CODE_PROJECT_LIMITS = { files: 2000, fileBytes: 4 * 1024 * 1024, to
 /** visibility, can_edit, created_by и pending_share приходят с сервером, где есть видимость проектов. */
 export interface ProjectPage { projects: { id: string; name: string; slug: string; org_unit_id?: string; visibility?: ProjectVisibility; can_edit?: boolean; created_by?: string; pending_share?: ProjectVisibility }[] }
 
-export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean }[]; next_cursor?: string; truncated: boolean }
+/** parse_failure — файл принят, но не разобран: причина словами от сервера. */
+export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean; parse_failure?: string }[]; next_cursor?: string; truncated: boolean }
 export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean }
 
 export interface UploadTicket { upload_id: string; url: string; method: string; checksum_header: string; checksum_value: string; content_length: number }

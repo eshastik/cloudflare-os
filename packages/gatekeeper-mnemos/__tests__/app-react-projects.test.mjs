@@ -316,3 +316,20 @@ test("ссылка на документ: строка выделена и ви�
     assert.deepEqual(app.calls.filter(c => c[0] === "openNativeDocument").at(-1), ["openNativeDocument", "two", "n3"]);
   } finally { app.dispose(); }
 });
+
+test("«Файлы»: принятый, но не разобранный файл помечен причиной сервера", async () => {
+  const why = "Файл не разобран, по содержимому не ищется; исходный файл сохранён: не архив OOXML";
+  const app = await mountMemoryApp({
+    async browseProject(id) {
+      if (id !== "two") return { nodes: [], truncated: false };
+      return { nodes: [{ node_id: "bad", name: "отчёт.docx", is_dir: false, parse_failure: why }, ...nodePage(0, 2)], truncated: false };
+    },
+  }, { section: "projects", project: "two" });
+  try {
+    await app.until(() => filesSection(app)?.querySelector('[data-document="n0"]'), "список файлов");
+    const marks = [...filesSection(app).querySelectorAll("[data-parse-failure]")];
+    assert.equal(marks.length, 1, "помечен только неразобранный файл");
+    assert.equal(marks[0].closest("[data-document]")?.getAttribute("data-document"), "bad");
+    assert.equal(marks[0].textContent, why);
+  } finally { app.dispose(); }
+});
