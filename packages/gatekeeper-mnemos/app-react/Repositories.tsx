@@ -255,7 +255,7 @@ function Repository({ row, data, overview, onChanged }: { row: RepoRow; data: Me
     {row.records.map(rec => <ProjectRecord key={`${rec.project_id}/${rec.connection_id}`} rec={rec} data={data} onChanged={onChanged} />)}
     {open && row.entry && <AddRepository key={open} mode={open} row={row} data={data} admin={!!overview?.admin} taken={taken}
       onCancel={() => setOpen(null)}
-      onDone={async (text, project) => { setOpen(null); setNotice({ tone: "success", text }); onChanged(); if (project) await data.reloadProjects(); }} />}
+      onDone={async (text, project) => { setOpen(null); setNotice({ tone: "success", text }); onChanged(); if (project || open === "create") await data.reloadProjects(); }} />}
   </li>;
 }
 
@@ -464,7 +464,8 @@ function AddRepository({ mode, row, data, admin, taken, onCancel, onDone }: { mo
     try {
       const out = await ui.addRepository(input);
       const target = out.project?.id ?? project;
-      const title = out.project?.name ?? chosen?.name ?? "";
+      // Имя — из ответа, иначе из формы: пустых кавычек в сообщении быть не должно.
+      const title = out.project?.name || (mode === "create" ? name.trim() : chosen?.name) || "";
       const what = [files ? "файлы начали загружаться" : "", agents ? "агенты кода включены" : ""].filter(Boolean).join(", ");
       await onDone(out.message || (mode === "create" ? `Проект «${title}» создан: ${what}.` : `«${row.name}» добавлен в проект «${title}»: ${what}.`), out.project?.id);
       if (mode === "create" && target) await host.openSection("projects", target).catch(() => {});
