@@ -101,7 +101,8 @@ test("«Репозитории»: переключатели сохраняют�
     await app.until(() => toggle("Файлы в проекте").getAttribute("aria-checked") === "false", "сохранено сразу");
     const sent = calls.filter(([m]) => m === "setRepositoryCapabilities").map(c => c[4]);
     assert.deepEqual(sent, [{ expected_revision: 4, files: false }, { expected_revision: 4, files: false, consent: true }]);
-    assert.ok(site().textContent.includes("312 файлов остались в проекте"), "файлы остались, не обновляются");
+    // Подпись приходит с ответом сервера, позже оптимистичного переключателя: ждать её, а не проверять сразу.
+    await app.until(() => site().textContent.includes("312 файлов остались в проекте"), "файлы остались, не обновляются");
   } finally { app.dispose(); }
 });
 
