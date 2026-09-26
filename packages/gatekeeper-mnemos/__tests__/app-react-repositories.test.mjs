@@ -52,7 +52,13 @@ async function mount(calls, over = {}, count = 4) {
   const app = await mountMemoryApp(methods(calls, over), { section: "connections", view: "repositories" });
   const page = () => app.document.querySelector("#root");
   const repo = name => page().querySelector(`[data-repo="${name}"]`);
-  const press = (root, name) => { const b = [...root.querySelectorAll("button")].find(x => x.textContent === name); assert.ok(b, `кнопка «${name}»`); b.click(); };
+  // Кнопки строки выключены, пока идёт прежний запрос: нажатие ждёт доступной
+  // кнопки, иначе под нагрузкой оно уходит в выключенную и теряется.
+  const press = async (root, name) => {
+    const find = () => [...root.querySelectorAll("button")].find(x => x.textContent === name && !x.disabled);
+    await app.until(find, `кнопка «${name}» доступна`);
+    find().click();
+  };
   await app.until(() => page().querySelectorAll("[data-repo]").length === count, "репозитории строками");
   return { app, page, repo, press };
 }
@@ -120,7 +126,7 @@ test("«Репозитории»: «Создать проект» из прив�
   const calls = [];
   const { app, repo, press } = await mount(calls);
   try {
-    press(repo("acme/billing"), "Создать проект");
+    await press(repo("acme/billing"), "Создать проект");
     await app.until(() => repo("acme/billing").querySelector('input[aria-label="Название проекта"]'), "форма в строке");
     const form = repo("acme/billing");
     assert.equal(form.querySelectorAll("select").length, 0, "без выпадающих списков");
@@ -151,7 +157,7 @@ test("«Репозитории»: «Добавить в проект…» — п
   const calls = [];
   const { app, repo, press } = await mount(calls);
   try {
-    press(repo("acme/notes"), "Добавить в проект…");
+    await press(repo("acme/notes"), "Добавить в проект…");
     await app.until(() => repo("acme/notes").querySelector('input[aria-label="Найти проект"]'), "поиск проекта");
     const form = repo("acme/notes");
     app.type(form.querySelector('input[aria-label="Найти проект"]'), "втор");
@@ -174,10 +180,10 @@ test("«Репозитории»: доступ отозван в GitHub — «О
     const site = () => repo("acme/site");
     assert.ok(site().textContent.includes("Доступ отозван в GitHub."), site().textContent);
     await app.until(() => page().querySelector("[data-ledger]")?.textContent.includes("требуют внимания: 1"), "счёт внимания");
-    press(site(), "Убрать файлы из проекта");
+    await press(site(), "Убрать файлы из проекта");
     await app.until(() => site().textContent.includes("изменённые останутся"), "подтверждение на месте");
     assert.equal(calls.some(([m]) => m === "resolveRevokedRepository"), false);
-    press(site(), "Да, убрать");
+    await press(site(), "Да, убрать");
     await app.until(() => calls.some(([m]) => m === "resolveRevokedRepository"), "решение отправлено");
     assert.deepEqual(calls.find(([m]) => m === "resolveRevokedRepository"), ["resolveRevokedRepository", "l1", true]);
   } finally { app.dispose(); }
@@ -187,12 +193,12 @@ test("«Репозитории»: «Отвязать» — с подтвержд
   const calls = [];
   const { app, repo, press } = await mount(calls);
   try {
-    press(repo("acme/site"), "Обновить сейчас");
+    await press(repo("acme/site"), "Обновить сейчас");
     await app.until(() => calls.some(([m]) => m === "refreshGitSyncLink"), "обновление");
-    press(repo("acme/site"), "Отвязать");
+    await press(repo("acme/site"), "Отвязать");
     await app.until(() => repo("acme/site").textContent.includes("Файлы останутся в проекте"), "подтверждение на месте");
     assert.equal(calls.some(([m]) => m === "detachRepository"), false, "до подтверждения ничего не отвязано");
-    press(repo("acme/site"), "Да, отвязать");
+    await press(repo("acme/site"), "Да, отвязать");
     await app.until(() => calls.some(([m]) => m === "detachRepository"), "отвязка");
     assert.deepEqual(calls.find(([m]) => m === "detachRepository"), ["detachRepository", "one", "github-app-11", "101", 4]);
   } finally { app.dispose(); }
@@ -203,23 +209,23 @@ test("«Репозитории»: администратор отключает 
   const { app, page, press } = await mount(calls, { admin: true });
   try {
     const internal = () => page().querySelector('[data-source="internal"]');
-    press(internal(), "Отключить");
+    await press(internal(), "Отключить");
     await app.until(() => internal().textContent.includes("выключится для всей организации"), "предупреждение");
-    press(internal(), "Да, отключить");
+    await press(internal(), "Да, отключить");
     await app.until(() => calls.some(([m]) => m === "disableInternalCodeHosting"), "отключение");
     assert.deepEqual(calls.find(([m]) => m === "disableInternalCodeHosting"), ["disableInternalCodeHosting", 3]);
 
     const sources = page().querySelector('[aria-label="Источники"]');
-    press(sources, "Дополнительно");
+    await press(sources, "Дополнительно");
     await app.until(() => sources.querySelector('[aria-label="Подключить GitLab или свой сервер"]'), "форма ключа");
     const form = sources.querySelector('[aria-label="Подключить GitLab или свой сервер"]');
     assert.equal(form.querySelectorAll("select").length, 0, "служба выбирается чипами");
-    press(form, "Свой сервер GitLab");
+    await press(form, "Свой сервер GitLab");
     await app.until(() => form.querySelector('input[aria-label="Адрес сервера GitLab"]'), "адрес своего сервера");
     app.type(form.querySelector('input[aria-label="Адрес сервера GitLab"]'), "https://git.company.ru/");
     app.type(form.querySelector('input[aria-label="Название подключения"]'), "Код компании");
     app.type(form.querySelector('input[aria-label="Ключ доступа"]'), "glpat-secret");
-    press(form, "Подключить");
+    await press(form, "Подключить");
     await app.until(() => calls.some(([m]) => m === "executeGitRegistrationIntent"), "ключ отправлен");
     assert.deepEqual(calls.find(([m]) => m === "saveGitRegistrationIntent")[1], { provider: "gitlab", api_base: "https://git.company.ru/api/v4", name: "Код компании" });
   } finally { app.dispose(); }
@@ -359,7 +365,7 @@ test("«Репозитории»: репозиторий по ключу без 
   try {
     assert.match(repo("team/secret").textContent, /приватный/);
     assert.match(repo("team/open").textContent, /публичный/);
-    press(repo("team/secret"), "Добавить в проект…");
+    await press(repo("team/secret"), "Добавить в проект…");
     await app.until(() => repo("team/secret").querySelector('[aria-label="Проект"] [role="radio"]'), "проекты");
     const form = repo("team/secret");
     [...form.querySelectorAll('[aria-label="Проект"] [role="radio"]')].find(b => b.textContent.includes("Второй проект")).click();
@@ -378,7 +384,7 @@ test("«Репозитории»: сервер знает о приватнос�
   const calls = [];
   const { app, repo, press } = await mount(calls, { addError: CONSENT });
   try {
-    press(repo("acme/notes"), "Добавить в проект…");
+    await press(repo("acme/notes"), "Добавить в проект…");
     await app.until(() => repo("acme/notes").querySelector('[aria-label="Проект"] [role="radio"]'), "проекты");
     const form = repo("acme/notes");
     form.querySelector('[aria-label="Проект"] [role="radio"]').click();
