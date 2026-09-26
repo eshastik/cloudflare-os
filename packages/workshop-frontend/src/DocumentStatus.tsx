@@ -360,6 +360,9 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const [saveFailed, setSaveFailed] = useState(false)
   /** Идёт сохранение правок в документ: только тогда шапка пишет «сохраняю…». */
   const [savingNow, setSavingNow] = useState(false)
+  /** Сколько привязок ещё дочитывают ревизию редактора. Пока хоть одна идёт, привязка временно без ревизии
+   *  сохранения, опрос видит «сверить не с чем», и автосохранение записало бы нетронутый документ новой версией. */
+  const [awaitingRevision, setAwaitingRevision] = useState(0)
   /** Подтверждение публикации в шапке; снимается таймером. */
   const [flash, setFlash] = useState('')
   useEffect(() => {
@@ -486,6 +489,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   function bind(next: DocumentBinding | null): Promise<void> {
     if (!bindingKey) return Promise.resolve()
     if (next) sessionStorage.setItem(bindingKey, JSON.stringify(next)); else sessionStorage.removeItem(bindingKey)
+    // Ссылка обновляется сразу, а не при отрисовке: идущий подсчёт правок сверяется уже с новой ревизией.
+    bindingRef.current = next
     setBindingState(next)
     // Вкладка хранит копию; источник истины — сервер рабочего места.
     return mnemos ? Promise.resolve(gadget.setMnemosDocument(next)).then(() => {}, () => {}) : Promise.resolve()
@@ -495,15 +500,22 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
    *  и привязка без ревизии после неё показывала бы несохранённые правки у нетронутого документа.
    *  unsaved — содержимое редактора ещё не в Mnemos (возврат старой версии): ревизия не объявляется, и автосохранение запишет его новой версией. */
   async function bindAtEditorRevision(next: DocumentBinding, unsaved = false) {
-    await bind(next)
     // Ревизию уже сообщил редактор (открытие версии): второй запрос снимка не нужен.
-    if (unsaved || next.savedRevision !== undefined) return
-    const key = bindingKey
-    let revision: number | undefined
-    // Не сигнал перечитывания состояния: новая привязка сама перезапускает перечитывание и оборвала бы этот запрос.
-    try { revision = await readEditorRevision(snapshotSource, format, mounted.current.signal) } catch { /* без ревизии привязка остаётся: шапка скажет «сверить не с чем» */ }
-    if (revision === undefined || !key || !sameDocument(readBinding(key), next)) return
-    await bind({ ...next, savedRevision: revision })
+    if (unsaved || next.savedRevision !== undefined) return bind(next)
+    setAwaitingRevision(count => count + 1)
+    try {
+      await bind(next)
+      const key = bindingKey
+      let revision: number | undefined
+      // Не сигнал перечитывания состояния: новая привязка сама перезапускает перечитывание и оборвала бы этот запрос.
+      try { revision = await readEditorRevision(snapshotSource, format, mounted.current.signal) } catch { /* без ревизии привязка остаётся: шапка скажет «сверить не с чем» */ }
+      if (revision === undefined || !key || !sameDocument(readBinding(key), next)) return
+      const written = bind({ ...next, savedRevision: revision })
+      // Ревизия только что прочитана и объявлена сохранённой: правок ноль. Без этого «сверить не с чем»,
+      // насчитанное до привязки, держалось бы до следующего подсчёта и после снятия запрета запустило бы сохранение.
+      setChanges(0)
+      await written
+    } finally { setAwaitingRevision(count => count - 1) }
   }
   async function run(action: (selector: Selector, signal: AbortSignal) => Promise<void>) {
     if (working.current || !source.current) return
@@ -630,7 +642,8 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   // Только чтение и отклонённое из-за чужой правки не сохраняются: второе ждёт решения человека.
   // Упавшее сохранение само не повторяется: шапка показывает отказ, повтор — кнопкой «Сохранить».
   // Прерванное перечитыванием состояния (связь закрыта) повторяется после него: data тогда новая.
-  const autosave = !!binding?.resource && !!data?.state && data.access !== 'read' && !changedByOther && !saveFailed && data.conflict === false &&
+  // Пока привязка дочитывает ревизию редактора, правок не видно: число сравнивалось бы не с той ревизией.
+  const autosave = !!binding?.resource && !!data?.state && data.access !== 'read' && !changedByOther && !saveFailed && data.conflict === false && awaitingRevision === 0 &&
     (changes === 'no-baseline' || (typeof changes === 'number' && changes > 0))
   // Попытка повторяется, пока условие держится: сохранение, не начавшееся из-за занятой шапки или скрытой
   // вкладки, иначе не повторилось бы никогда, и строка осталась бы «сохраняю…».

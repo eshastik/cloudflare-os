@@ -383,6 +383,8 @@ it.each([['сохранено', false], ['изменил другой участ
 function sharedHarness({ saveFails = false, binding }: { saveFails?: boolean; binding?: Record<string, unknown> } = {}) {
   const saves: string[][] = [], serverBindings: unknown[] = []
   const revision = { current: 7 }
+  /** Задержка ближайшего чтения снимка, мс: так медленный редактор отдаёт ревизию привязке позже, чем её ждёт опрос. */
+  const nextRead = { delayMs: 0 }
   class Writer extends RpcTarget {
     async head() { return 'c'.repeat(64) }
     async access() { return 'write' as const }
@@ -411,10 +413,11 @@ function sharedHarness({ saveFails = false, binding }: { saveFails?: boolean; bi
     async ensureNativeDocumentTitle() { return 'План' }
   }
   const snapshotSource = { current: (_format: string, signal: AbortSignal) => new Promise<{ format: 'cloudflareos.document'; formatVersion: 1; document: { revision: number; title: string; blocks: never[] } }>((resolve, reject) => {
-    const timer = setTimeout(() => resolve({ format: 'cloudflareos.document', formatVersion: 1, document: { revision: revision.current, title: 'План', blocks: [] } }), 20)
+    const delay = nextRead.delayMs || 20; nextRead.delayMs = 0
+    const timer = setTimeout(() => resolve({ format: 'cloudflareos.document', formatVersion: 1, document: { revision: revision.current, title: 'План', blocks: [] } }), delay)
     signal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('Редактор не отдал документ.')) }, { once: true })
   }) }
-  return { saves, serverBindings, revision, snapshotSource, gadget: new RpcStub(new Gadget()) }
+  return { saves, serverBindings, revision, nextRead, snapshotSource, gadget: new RpcStub(new Gadget()) }
 }
 
 async function mountShared(harness: ReturnType<typeof sharedHarness>) {
@@ -440,6 +443,9 @@ it('общий документ открыт без правок: строка �
   try {
     // Открытие из «Поделились с вами»: редактор получил документ, шапка привязывается к нему; следом страница перезагружается.
     // Как в браузере: React отрисовывает новую привязку, пока редактор ещё готовит снимок.
+    // Медленное устройство: ревизию для привязки редактор отдаёт позже, чем шапка дочитывает состояние и
+    // считает правки. Пока привязка не закончилась, документ не считается изменённым и не сохраняется.
+    harness.nextRead.delayMs = 300
     let opened: Promise<void> = Promise.resolve()
     await act(async () => { opened = view.handle().bindAtEditorRevision({ accountId: null, scope: 'project', resource: 'doc', savedHead: 'd'.repeat(64) }) })
     await act(async () => { await opened })
