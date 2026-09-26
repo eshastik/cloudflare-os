@@ -39,6 +39,7 @@ export const CANDIDATE_PUBLISHED_NOTICE = 'Согласованные измен
 /** Публикует готовую заявку; возвращает текст для человека, ответ сервера не перепроверяется повтором. */
 export async function publishCandidate(selector: Selector, signal: AbortSignal, scope: string, candidateId: string): Promise<string> {
   const result = await selector.publishReview(scope, candidateId); signal.throwIfAborted()
+  if (result.refused) return result.refused
   if (result.published) {
     sessionStorage.removeItem(reviewKey(scope))
     return CANDIDATE_PUBLISHED_NOTICE

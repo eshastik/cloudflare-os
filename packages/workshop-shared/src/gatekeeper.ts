@@ -692,7 +692,7 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Publish only this author's ready proposal at its exact heads; the service rechecks authorization atomically. */
   /** Withdraw an unpublished review on the server; only its human author may cancel it. */
   withdrawReview(id: string): Promise<void>;
-  publishReview(scope: string, id: string): Promise<{ personal_head: string; shared_head: string; published: boolean; conflicted: boolean }>;
+  publishReview(scope: string, id: string): Promise<{ personal_head: string; shared_head: string; published: boolean; conflicted: boolean; refused?: string }>;
   /** List service scopes currently accessible to this account. */
   scopes(): Promise<{ scopes: { id: string; name: string }[] }>;
   /** List document choices, with an explicit cursor and truncation indication. */
@@ -733,11 +733,13 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Restore the exact creation request from this account's receipt; saving rechecks current rights. */
   resumeCreation(receipt: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
   /** «Опубликовать» при показанных головах: заявка на согласование; без согласования в проекте — публикация сразу.
-   *  denied — нет права записи в место изменённого документа; отказ состоянием, чтобы интерфейс мог его назвать. */
+   *  denied — нет права записи в место изменённого документа; folder_removed — папку документа удалили,
+   *  message называет папку и документы. Отказы состоянием, чтобы интерфейс мог их назвать. */
   publishOrRequestReview(scope: string, personalHead: string, sharedHead: string): Promise<
     | { status: 'review'; candidate_id: string }
     | { status: 'published' | 'conflict' | 'unchanged'; personal_head: string; shared_head: string }
-    | { status: 'denied' }>;
+    | { status: 'denied' }
+    | { status: 'folder_removed'; message: string }>;
 }
 
 /** A human-only, account-bound authorization flow for an external agent. */

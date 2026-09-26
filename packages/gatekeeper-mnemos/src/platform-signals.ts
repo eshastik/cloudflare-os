@@ -9,6 +9,7 @@ export const KNOWN_SIGNALS:readonly string[]=[
  ...CORE_SIGNAL_KEYS.flatMap(key=>[`${key} ok check_passed`,`${key} firing check_failed`,
   ...(key==="dependencies"?["check_unavailable"]:["source_unavailable","observations_missing","observations_stale"]).map(r=>`${key} unknown ${r}`)]),
  "shared_projection ok check_passed","shared_projection firing jobs_stalled","shared_projection unknown check_unavailable",
+ "project_main ok check_passed","project_main firing mains_missing","project_main unknown check_unavailable",
 ];
 const KNOWN=new Set(KNOWN_SIGNALS);
 const KNOWN_KEYS=new Set(KNOWN_SIGNALS.map(s=>s.split(" ")[0]));

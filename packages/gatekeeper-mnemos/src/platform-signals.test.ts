@@ -23,6 +23,12 @@ test('шестой сигнал — застрявшая индексация �
  const negative=structuredClone(rows);Object.assign(negative[5]!,{count:-1});
  assert.equal(validPlatformSignals(negative),false);
 });
+test('седьмой сигнал — новые проекты без истории — принимается со своей причиной и числом проектов',()=>{
+ const rows=[...core(),{key:'shared_projection',state:'ok',reason:'check_passed',observed_at:'2026-09-25T10:00:00Z'},{key:'project_main',state:'firing',reason:'mains_missing',observed_at:'2026-09-25T10:00:00Z',count:2}];
+ assert.equal(validPlatformSignals(rows),true);
+ const wrong=structuredClone(rows);Object.assign(wrong[6]!,{reason:'check_failed'});
+ assert.equal(validPlatformSignals(wrong),false,'сбой называет свою причину');
+});
 test('незнакомый сигнал сервера не роняет страницу, а знакомый не может врать',()=>{
  const rows=[...core(),{key:'future.check',state:'firing',reason:'something_new',observed_at:'2026-09-25T10:00:00Z'}];
  assert.equal(validPlatformSignals(rows),true,'новая проверка — общей строкой');

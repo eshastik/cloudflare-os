@@ -20,6 +20,10 @@ const SUBSYSTEMS: Subsystem[] = [
     const n = own.find(sig => sig.state === "firing")?.count ?? 0;
     return `Индексация новых файлов застряла: ${n ? `${n} ${tasksWord(n)}` : "есть задания"} дольше 10 минут — поиск их пока не находит.`;
   } },
+  { title: "История новых проектов", keys: ["project_main"], optional: true, ok: "Новые проекты получают историю сразу.", problem: own => {
+    const n = own.find(sig => sig.state === "firing")?.count ?? 0;
+    return `Новым проектам не удалось завести историю: ${n} — повторяется автоматически.`;
+  } },
 ];
 /** «задание», «задания», «заданий» — по числу. */
 function tasksWord(n: number): string {
@@ -33,9 +37,9 @@ type Health = "ok" | "problem" | "unknown";
 const DOT: Record<Health, string> = { ok: "bg-kumo-success", problem: "bg-kumo-danger", unknown: "bg-kumo-fill" };
 
 /** Проверки и их итог словами — для раскрытия «Подробнее для администратора». */
-const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт открывается", "external.login": "Вход сотрудников", dependencies: "База данных и хранилище файлов", "external.read": "Чтение материалов", "external.save": "Сохранение материалов", shared_projection: "Индексация новых файлов" };
+const SIGNAL_TITLES: Record<string, string> = { "external.readiness": "Сайт открывается", "external.login": "Вход сотрудников", dependencies: "База данных и хранилище файлов", "external.read": "Чтение материалов", "external.save": "Сохранение материалов", shared_projection: "Индексация новых файлов", project_main: "История новых проектов" };
 const SIGNAL_STATES: Record<string, string> = { ok: "в порядке", firing: "есть сбой", unknown: "нет свежих данных" };
-const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила", jobs_stalled: "задания индексации не завершаются" };
+const SIGNAL_REASONS: Record<string, string> = { check_passed: "проверка прошла", check_failed: "проверка не прошла", observations_stale: "проверка давно не приходила", jobs_stalled: "задания индексации не завершаются", mains_missing: "новые проекты ждут историю" };
 
 /** Страница обновляется сама: раз в `every` мс, пока вкладка видна, и сразу при возврате на вкладку. */
 function useLiveRefresh(refresh: () => void, every: number) {

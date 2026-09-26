@@ -58,8 +58,8 @@ export interface PlatformDeployment {environment:string;release:string;source_re
 /** Bounded last-day groups; unknown collector builds remain a separate group. */
 export interface UIReadinessVersions {groups:(UIReadinessUsage & {client_version:string;deployment?:PlatformDeployment|null})[];total_groups:number;truncated:boolean}
 /** Известные ключи и причины; сервер может прислать новые — они показываются общей строкой, а не роняют страницу. */
-export type KnownPlatformSignalKey="dependencies"|"external.readiness"|"external.login"|"external.read"|"external.save"|"shared_projection";
-export type KnownPlatformSignalReason="check_unavailable"|"source_unavailable"|"observations_missing"|"observations_stale"|"check_failed"|"check_passed"|"jobs_stalled";
+export type KnownPlatformSignalKey="dependencies"|"external.readiness"|"external.login"|"external.read"|"external.save"|"shared_projection"|"project_main";
+export type KnownPlatformSignalReason="check_unavailable"|"source_unavailable"|"observations_missing"|"observations_stale"|"check_failed"|"check_passed"|"jobs_stalled"|"mains_missing";
 export interface PlatformSignal {key:KnownPlatformSignalKey|(string&{});state:"ok"|"firing"|"unknown";reason:KnownPlatformSignalReason|(string&{});observed_at:string|null;/** Сколько единиц работы стоит за сбоем (застрявшие задания проекции). */count?:number}
 export interface PlatformSignalNotification extends PlatformSignal {id:string;created_at:string;read_at:string|null}
 export interface PlatformSignalInbox {items:PlatformSignalNotification[];unread:number;next_before:string}
@@ -98,7 +98,7 @@ export class MnemosAPI {
     try {
       response = await this.#fetch(this.#origin + path, { method, redirect: "manual", cache: "no-store", signal: combined, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     } catch { throw new MnemosAPIError(503); }
-    if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal,failure?.progress); }
+    if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal,failure?.progress,failure?.removedFolder,failure?.removedFolderMore,failure?.folderDrafts); }
     if (response.status === 204 && allowNoContent) return undefined as T;
     // Read bounded metadata; files are downloaded directly through separate tickets.
     const reader = response.body?.getReader();
@@ -142,6 +142,10 @@ export class MnemosAPI {
   removePerson(principal: string, signal?: AbortSignal): Promise<PersonRemoval> { return this.#request(`/v1/admin/users/${segment(principal)}/remove`, 'POST', signal, {}); }
   /** Вернуть выбывшего сотрудника: вход снова открыт, прежние права не возвращаются. */
   returnPerson(principal: string, signal?: AbortSignal): Promise<PersonReturn> { return this.#request(`/v1/admin/users/${segment(principal)}/return`, 'POST', signal, {}); }
+  /** Удалить узел проекта; папку с неопубликованными черновиками сервер не удаляет (node.folder_has_drafts). */
+  deleteNode(project:string,node:string,recursive:boolean,signal?:AbortSignal):Promise<{nodes_deleted:number}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}?recursive=${recursive}`,"DELETE",signal);}
+  /** Администратор переносит чужие черновики из папки в папку target, чтобы папку можно было удалить. */
+  relocateFolderDrafts(project:string,folder:string,target:string,signal?:AbortSignal):Promise<{people:number;documents:number}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(folder)}/drafts/relocate`,"POST",signal,{target_parent_id:target});}
   listPrivateVersions(project:string,node:string,cursor='',signal?:AbortSignal):Promise<{versions:Array<{head:string;content_type:string;recorded_at:string;author_name?:string}>;next_cursor?:string;limited?:boolean}>{return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions?cursor=${encodeURIComponent(cursor)}`,"GET",signal);}
   restorePrivateDraftContent(project:string,node:string,source:string,expectedHead:string,signal?:AbortSignal):Promise<DraftHead>{return this.#request(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/restore-private`,"POST",signal,{source_head:source,expected_head:expectedHead});}
   checkPrivateVersionRead(project: string, node: string, version: string, signal?: AbortSignal): Promise<{node_id: string; head: string}> {
@@ -1155,29 +1159,80 @@ export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 /** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
 export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
-type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
+/** Папку документа черновика удалили (409): публикация отказала целиком, черновик не изменён. */
+export const FOLDER_REMOVED = "publication.folder_removed";
+/** Документ черновика, чью папку удалили, и прежний путь папки. */
+export interface RemovedFolderDocument {node_id:string;name:string;folder_path:string}
+/** Отказ «папка удалена» словами: папка, документы и что сделать. */
+export function folderRemovedMessage(docs:readonly RemovedFolderDocument[],more=0):string{
+ const text=folderRemovedText(docs);
+ return more>0?`${text} И ещё ${more} ${more%10===1&&more%100!==11?'документ':more%10>=2&&more%10<=4&&(more%100<12||more%100>14)?'документа':'документов'} в удалённых папках.`:text;
+}
+function folderRemovedText(docs:readonly RemovedFolderDocument[]):string{
+ const byFolder=new Map<string,string[]>();
+ for(const d of docs){const list=byFolder.get(d.folder_path)??[];list.push(d.name||d.node_id);byFolder.set(d.folder_path,list);}
+ if(byFolder.size===0)return "Папка документа удалена. Перенесите документ в другую папку и опубликуйте снова.";
+ return [...byFolder].map(([folder,names])=>`${folder?`Папка «${folder.replace(/^\//,'')}» удалена.`:'Папка документа удалена.'} Перенесите ${names.length===1?'документ':'документы'} «${names.join('», «')}» в другую папку и опубликуйте снова.`).join(' ');
+}
+function removedFolderDocuments(value:unknown):RemovedFolderDocument[]{
+ if(!Array.isArray(value))return [];
+ return value.slice(0,100).flatMap(item=>{if(!item||typeof item!=='object')return [];const f=item as Record<string,unknown>;const node=publicText(f.node_id),name=publicText(f.name),folder=publicText(f.folder_path);return node?[{node_id:node,name,folder_path:folder}]:[];});
+}
+/** Папку нельзя удалить (409): в ней документы неопубликованных черновиков. Чужие — числом, свои — перечнем. */
+export const FOLDER_HAS_DRAFTS = "node.folder_has_drafts";
+export interface FolderDrafts {folder_path:string;people:number;own:{node_id:string;name:string}[];own_more?:number;
+ /** Авторы чужих черновиков поимённо — только администратору организации. */
+ authors?:{principal_id:string;name:string}[]}
+/** Подтверждение переноса чужих черновиков администратором. */
+export function relocateDraftsConfirmation(people:number,folder:string):string{
+ return `Черновики ${people} ${people%10===1&&people%100!==11?'сотрудника':'сотрудников'} будут перенесены в «${folder.replace(/^\//,'')}». Их авторы увидят их там.`;
+}
+/** Отказ удаления папки словами; имён чужих черновиков сервер не присылает. */
+export function folderHasDraftsMessage(d:FolderDrafts):string{
+ const folder=d.folder_path.replace(/^\//,'')||'…';
+ const parts=[`Папку нельзя удалить: в папке «${folder}» есть неопубликованные черновики`];
+ if(d.people>0)parts[0]+=` ${d.people} ${d.people%10===1&&d.people%100!==11?'сотрудника':'сотрудников'}`;
+ parts[0]+='.';
+ if(d.authors&&d.authors.length>0)parts.push(`Черновики у сотрудников: ${d.authors.map(a=>a.name||a.principal_id).join(', ')}.`);
+ if(d.own.length>0)parts.push(`Ваши черновики в ней: «${d.own.map(o=>o.name||o.node_id).join('», «')}»${d.own_more?` и ещё ${d.own_more}`:''} — их можно перенести самому.`);
+ parts.push('Удалить её можно, когда черновики опубликуют, перенесут или удалят.');
+ return parts.join(' ');
+}
+function folderDrafts(value:unknown):FolderDrafts{
+ const f=value&&typeof value==='object'?value as Record<string,unknown>:{};
+ const people=typeof f.people==='number'&&Number.isSafeInteger(f.people)&&f.people>0?f.people:0;
+ const own=Array.isArray(f.own)?f.own.slice(0,100).flatMap(item=>{if(!item||typeof item!=='object')return [];const o=item as Record<string,unknown>;const node=publicText(o.node_id);return node?[{node_id:node,name:publicText(o.name)}]:[];}):[];
+ const more=typeof f.own_more==='number'&&Number.isSafeInteger(f.own_more)&&f.own_more>0?f.own_more:0;
+ const authors=Array.isArray(f.authors)?f.authors.slice(0,100).flatMap(item=>{if(!item||typeof item!=='object')return [];const a=item as Record<string,unknown>;const id=publicText(a.principal_id);return id?[{principal_id:id,name:publicText(a.name)}]:[];}):[];
+ return {folder_path:publicText(f.folder_path),people,own,...(more?{own_more:more}:{}),...(authors.length?{authors}:{})};
+}
+type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|typeof FOLDER_REMOVED|typeof FOLDER_HAS_DRAFTS|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
 /** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
 export interface IngestRefusal {reason:string;detail:string}
 /** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
 function publicText(value:unknown):string{return typeof value==='string'?[...value].filter(char=>char.charCodeAt(0)>=32).join('').trim().slice(0,600):'';}
-async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal;progress?:HistoryProgress}|undefined>{
+async function safeFailureCode(response:Response):Promise<{code:FailureCode;refusal?:IngestRefusal;progress?:HistoryProgress;removedFolder?:RemovedFolderDocument[];removedFolderMore?:number;folderDrafts?:FolderDrafts}|undefined>{
  // 403 разбирается только ради отказов раздела «Репозитории»: у них понятная человеку причина.
  // 404 и 501 — ради отказов раздела «Репозитории» (git_repo.missing, git_sync.unavailable): прочие коды там не разбираются.
  if(response.status!==400&&response.status!==403&&response.status!==404&&response.status!==409&&response.status!==422&&response.status!==429&&response.status!==501&&response.status!==503){await response.body?.cancel();return undefined;}
  // Отказ политики несёт готовый абзац по-русски, поэтому у 400 предел тела больше.
- const limit=response.status===400?4096:1024;
+ const limit=response.status===400?4096:response.status===409?16384:1024;
  const reader=response.body?.getReader();if(!reader)return undefined;
  try{const chunks:Uint8Array[]=[];let size=0;for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>limit){await reader.cancel();return undefined;}chunks.push(part.value);}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   const body:unknown=JSON.parse(new TextDecoder().decode(bytes));
   if(!body||typeof body!=='object'||!('code' in body))return undefined;
   const fields=body as {code:unknown;reason?:unknown;detail?:unknown;message?:unknown;progress?:unknown};
+  // Больший предел у 409 — только ради перечня документов отказа «папка удалена».
+  if(response.status===409&&fields.code!==FOLDER_REMOVED&&fields.code!==FOLDER_HAS_DRAFTS&&size>1024)return undefined;
+  if(response.status===409&&fields.code===FOLDER_HAS_DRAFTS)return {code:FOLDER_HAS_DRAFTS,folderDrafts:folderDrafts((body as {folder_drafts?:unknown}).folder_drafts)};
   if(response.status===400&&fields.code===INGEST_REFUSED){
    const reason=typeof fields.reason==='string'&&/^[a-z_]{1,32}$/.test(fields.reason)?fields.reason:'';
    return {code:INGEST_REFUSED,refusal:{reason,detail:publicText(fields.detail)||publicText(fields.message)}};
   }
   if(response.status===409&&fields.code==='agent.memory_unavailable')return {code:'agent.memory_unavailable'};
   if(response.status===409&&fields.code===REVIEW_NOT_REQUIRED)return {code:REVIEW_NOT_REQUIRED};
+  if(response.status===409&&fields.code===FOLDER_REMOVED){const extra=(body as {removed_folder_more?:unknown}).removed_folder_more;return {code:FOLDER_REMOVED,removedFolder:removedFolderDocuments((body as {removed_folder_documents?:unknown}).removed_folder_documents),removedFolderMore:typeof extra==='number'&&Number.isSafeInteger(extra)&&extra>0?extra:0};}
   if(response.status===429&&fields.code==='request.rate_limit')return {code:'request.rate_limit'};
   if(response.status===429&&fields.code==='external_db.query_busy')return {code:'external_db.query_busy'};
   if(response.status===429&&fields.code===UPLOAD_IN_PROGRESS)return {code:UPLOAD_IN_PROGRESS};
@@ -1204,7 +1259,11 @@ export class MnemosAPIError extends Error {
   readonly refusal?: IngestRefusal;
   /** Ход переноса истории проекта при project.history_preparing. */
   readonly progress?: HistoryProgress;
-  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress) { super(code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):code&&code in REPOSITORY_FAILURES?REPOSITORY_FAILURES[code as RepositoryFailureCode]:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; }
+  /** Документы с удалённой папкой при publication.folder_removed. */
+  readonly removedFolder?: RemovedFolderDocument[];
+  /** Подробности отказа node.folder_has_drafts. */
+  readonly folderDrafts?: FolderDrafts;
+  constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress,removedFolder?:RemovedFolderDocument[],removedFolderMore=0,folderDraftsValue?:FolderDrafts) { super(code===FOLDER_HAS_DRAFTS?folderHasDraftsMessage(folderDraftsValue??{folder_path:'',people:0,own:[]}):code===FOLDER_REMOVED?folderRemovedMessage(removedFolder??[],removedFolderMore):code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):code&&code in REPOSITORY_FAILURES?REPOSITORY_FAILURES[code as RepositoryFailureCode]:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; if(code===FOLDER_REMOVED)this.removedFolder=removedFolder??[]; if(code===FOLDER_HAS_DRAFTS)this.folderDrafts=folderDraftsValue??{folder_path:'',people:0,own:[]}; }
 }
 export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */
@@ -1239,7 +1298,7 @@ function head(value: string): void {
 }
 export interface DraftHead { head: string }
 export interface DraftState { personal_head: string; shared_head: string; personal_exists: boolean }
-export interface PublicationResult { personal_head: string; shared_head: string; published: boolean; conflicted: boolean }
+export interface PublicationResult { personal_head: string; shared_head: string; published: boolean; conflicted: boolean; /** Отказ словами: папку документа удалили, ничего не опубликовано. */ refused?: string }
 
 export interface DraftDocument {
   recorded_by?: {actor: string; on_behalf_of: string; recorded_at: string};

@@ -102,6 +102,26 @@ test("«Журнал и состояние»: застрявшая индекс�
   } finally { app.dispose(); }
 });
 
+test("«Журнал и состояние»: новые проекты без истории — строкой с числом и тем, что повтор идёт сам", async () => {
+  const at = "2026-09-25T10:00:00Z";
+  const ok = key => ({ key, state: "ok", reason: "check_passed", observed_at: at });
+  const metrics = { ...METRICS, signals: [ok("dependencies"), ok("external.readiness"), ok("external.login"), ok("external.read"), ok("external.save"), ok("shared_projection"),
+    { key: "project_main", state: "firing", reason: "mains_missing", observed_at: at, count: 2 }] };
+  const app = await mountMemoryApp({
+    async readPlatformMetrics() { return metrics; },
+    readOperationAuditPage: auditPages(EVENTS),
+    async listWorkJournal() { return { entries: [], truncated: false }; },
+    async listPeople() { return PEOPLE; },
+  }, { section: "journal" });
+  try {
+    const panel = () => app.document.querySelector("#root [data-system-state]");
+    await app.until(() => panel(), "панель состояния");
+    const text = panel().textContent;
+    assert.match(text, /Новым проектам не удалось завести историю: 2 — повторяется автоматически/);
+    assert.doesNotMatch(text, /Проверка «project_main»/, "сигнал назван словами, а не ключом");
+  } finally { app.dispose(); }
+});
+
 test("журнал действий: отделы и приглашения из аудита организации видны словами сквозь толщу служебных записей", async () => {
   // Как на установке: каждое обращение интерфейса оставляет request.admit, дела людей тонут в них.
   const events = [

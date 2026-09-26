@@ -719,6 +719,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   const submit = () => run(async (selector, signal) => {
     if (!binding || !data?.state) return
     const outcome = await selector.publishOrRequestReview(binding.scope, data.state.personal_head, data.state.shared_head); signal.throwIfAborted()
+    if (outcome.status === 'folder_removed') { setError(outcome.message); return }
     if (outcome.status === 'denied') {
       const place = await describePublishPlace(selector, binding, format); signal.throwIfAborted()
       setError(publishDeniedMessage(place.project, place.folder))

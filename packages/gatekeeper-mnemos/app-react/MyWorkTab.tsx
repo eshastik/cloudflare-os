@@ -109,7 +109,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
       const state = await ui.draftState(review.project_id);
       if (state.personal_head !== review.personal_head || state.shared_head !== review.shared_head) throw new Error("changed");
       const result = await ui.publishDraft(review.project_id, state.personal_head, state.shared_head, "Publish reviewed changes");
-      setNotice(result.published
+      setNotice(result.refused ? { tone: "danger", text: result.refused } : result.published
         ? { tone: "success", text: "Изменения проекта опубликованы." }
         : result.conflicted ? { tone: "danger", text: "При публикации обнаружен конфликт. Откройте черновик и разрешите его." } : { tone: "danger", text: "Публикация не выполнена. Проверьте состояние черновика." });
       await data.reloadReviews();

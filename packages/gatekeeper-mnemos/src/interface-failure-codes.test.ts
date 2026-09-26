@@ -4,10 +4,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPOSITORY_FAILURES } from "./git-repositories.ts";
-import { GIT_FAILURE_CODES } from "./mnemos-api.ts";
+import { FOLDER_HAS_DRAFTS, FOLDER_REMOVED, GIT_FAILURE_CODES } from "./mnemos-api.ts";
 
 // Коды отказа, которые сервер Mnemos отдаёт интерфейсу на маршрутах /v1/git/…, /v1/projects/{p}/git/…,
-// /v1/projects/{p}/code/… и /v1/projects/{p}/visibility. Перечень ОБЯЗАН совпадать с файлом сервера
+// /v1/projects/{p}/code/…, /v1/projects/{p}/visibility и отказ «папка удалена» публикации. Перечень ОБЯЗАН совпадать с файлом сервера
 // services/storage-api/internal/httpapi/testdata/interface_failure_codes.txt: там его сверяет с обработчиками
 // TestInterfaceFailureCodesAreListedForTheInterface. Здесь — что у каждого кода есть текст для человека.
 const SERVER_CODES = [
@@ -18,10 +18,14 @@ const SERVER_CODES = [
   "git_sync.connect_unconfigured", "git_sync.duplicate", "git_sync.forbidden", "git_sync.github_access_unconfirmed", "git_sync.github_missing", "git_sync.github_not_connected",
   "git_sync.invalid", "git_sync.missing", "git_sync.project_create_forbidden", "git_sync.repository", "git_sync.signature", "git_sync.stale", "git_sync.unavailable",
   "project.personal_disabled", "project.private_code_admin", "project.private_code_consent", "project.share_forbidden", "project.share_no_department", "project.sharing_settings_invalid",
+  // Удаление папки с неопубликованными черновиками — текст собирает folderHasDraftsMessage.
+  "node.folder_has_drafts",
+  // Публикация документа, чью папку удалили до запрета, — текст собирает folderRemovedMessage.
+  "publication.folder_removed",
 ];
 
 test("каждый код отказа сервера на маршрутах кода и видимости имеет текст для человека", () => {
-  const texts = new Set<string>([...Object.keys(REPOSITORY_FAILURES), ...GIT_FAILURE_CODES]);
+  const texts = new Set<string>([...Object.keys(REPOSITORY_FAILURES), ...GIT_FAILURE_CODES, FOLDER_REMOVED, FOLDER_HAS_DRAFTS]);
   const missing = SERVER_CODES.filter(code => !texts.has(code)).sort();
   assert.deepEqual(missing, [], "коды без текста");
   // Лишний текст — код, которого сервер на этих маршрутах не отдаёт: сверяются множества, а не количество.

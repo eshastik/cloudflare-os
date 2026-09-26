@@ -32,7 +32,7 @@ import { validActivityWindows } from "./activity-periods.ts";
 import { validExternalSnapshot } from "./external-metrics.ts";
 import { validServiceSnapshot } from "./service-metrics.ts";
 import { SelectedDocumentReader, parseDocumentResource, type DocumentResource } from "./document-resource.ts";
-import { MnemosAPI, MnemosAPIError, type UIReadinessSample, type AgentTaskOutcome, type TeamBudgetCreate, type AgentConnectionPage, type AgentConsentPreview, type AgentCredential, type PolicyDomain, type PrivateDocumentCreate, type PrivateParticipantMode } from "./mnemos-api.ts";
+import { MnemosAPI, MnemosAPIError, FOLDER_REMOVED, type PublicationResult, type UIReadinessSample, type AgentTaskOutcome, type TeamBudgetCreate, type AgentConnectionPage, type AgentConsentPreview, type AgentCredential, type PolicyDomain, type PrivateDocumentCreate, type PrivateParticipantMode } from "./mnemos-api.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 
 interface CredentialRecord { token: string; generation: string; expiresAt: number; owner?: StoredAccountOwner; epoch?: string; audit_account_id?: string; connection_audit?: ConnectionAuditEvent[] }
@@ -525,9 +525,15 @@ export class MnemosAccountSession {
     const result = await this.#client.requestPublicationReview(projectId, personalHead, sharedHead, this.#lifetime.signal);
     this.#check(); return result;
   }
-  async publishDraft(projectId: string, expectedHead: string, sharedHead: string, message: string) {
+  /** Отказ «папка удалена» возвращается состоянием со словами: исключение через RPC теряет причину. */
+  async publishDraft(projectId: string, expectedHead: string, sharedHead: string, message: string): Promise<PublicationResult> {
     this.#check();
-    const result = await this.#client.publishDraft(projectId, expectedHead, sharedHead, message, this.#lifetime.signal);
+    let result: PublicationResult;
+    try { result = await this.#client.publishDraft(projectId, expectedHead, sharedHead, message, this.#lifetime.signal); }
+    catch (error) {
+      if (!(error instanceof MnemosAPIError && error.code === FOLDER_REMOVED)) throw error;
+      result = { personal_head: expectedHead, shared_head: sharedHead, published: false, conflicted: false, refused: error.message };
+    }
     this.#check(); return result;
   }
   /** Bind the human's publication action to the reviewed proposal, never newer draft content. */

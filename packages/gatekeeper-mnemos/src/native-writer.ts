@@ -11,7 +11,7 @@ import {OfficeUpdateWriter} from "./office-update-writer.ts";
 import {reviewOfficeUpdate} from "./office-update-review.ts";
 import { RpcStub, RpcTarget } from "cloudflare:workers";
 import { MnemosAPIError, type PrivateParticipantMode } from "./mnemos-api.ts";
-import { REVIEW_NOT_REQUIRED } from "./mnemos-api.ts";
+import { FOLDER_REMOVED, REVIEW_NOT_REQUIRED } from "./mnemos-api.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import { NativeCreationRecovery, type NativeCreationIntent } from "./native-creation-recovery.ts";
 import type { MnemosAccountSession } from "./account-session.ts";
@@ -234,10 +234,12 @@ export class NativeWriteSelector extends RpcTarget {
       return { status: "review", candidate_id };
     } catch (error) {
       if (error instanceof MnemosAPIError && error.status === 403) return { status: "denied" };
+      if (error instanceof MnemosAPIError && error.code === FOLDER_REMOVED) return { status: "folder_removed", message: error.message };
       if (!(error instanceof MnemosAPIError && error.status === 409 && error.code === REVIEW_NOT_REQUIRED)) throw error;
     }
     try {
       const result = await this.#session.publishDraft(project, personal, shared, "Публикация из шапки документа");
+      if (result.refused) return { status: "folder_removed", message: result.refused };
       return { status: result.published ? "published" : result.conflicted ? "conflict" : "unchanged", personal_head: result.personal_head, shared_head: result.shared_head };
     } catch (error) {
       if (error instanceof MnemosAPIError && error.status === 403) return { status: "denied" };
@@ -251,7 +253,9 @@ export class NativeWriteSelector extends RpcTarget {
 export type NativePublishOutcome =
   | { status: "review"; candidate_id: string }
   | { status: "published" | "conflict" | "unchanged"; personal_head: string; shared_head: string }
-  | { status: "denied" };
+  | { status: "denied" }
+  /** Папку документа удалили: ничего не опубликовано, message — что сделать человеку. */
+  | { status: "folder_removed"; message: string };
 
 /** Frozen conflict authority retained by the trusted host; no arbitrary manifest inputs. */
 class NativeConflict extends RpcTarget {

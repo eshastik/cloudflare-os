@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MnemosAPI, MnemosAPIError } from "./mnemos-api.ts";
+import { MnemosAPI, MnemosAPIError, relocateDraftsConfirmation } from "./mnemos-api.ts";
 
 test("общий документ: правка уходит в ветку владельца от версии редактора, конфликт — 409 без повтора", async () => {
   const requests: { path: string; method?: string; body: unknown }[] = [];
@@ -16,6 +16,38 @@ test("общий документ: правка уходит в ветку вл�
     { path: "/v1/projects/project/draft/nodes/doc/shared-save", method: "POST", body: { owner_id: "user-owner", base_head: base, upload_id: "upload" } },
     { path: "/v1/me/shared-documents/seen", method: "POST", body: { project_id: "project", owner_id: "user-owner", node_id: "doc" } },
   ]);
+});
+
+test("публикация с документом в удалённой папке: отказ называет папку и документы словами", async () => {
+  const api = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code: "publication.folder_removed", message: "папка удалена",
+    removed_folder_documents: [{ node_id: "y", name: "Y.txt", folder_path: "/Отчёты" }, { node_id: "w", name: "W.txt", folder_path: "/Отчёты" }] }, { status: 409 }));
+  await assert.rejects(api.publishDraft("project", "a".repeat(64), "b".repeat(64), "m"), (e: unknown) => e instanceof MnemosAPIError && e.status === 409 && e.code === "publication.folder_removed"
+    && e.message === "Папка «Отчёты» удалена. Перенесите документы «Y.txt», «W.txt» в другую папку и опубликуйте снова." && e.removedFolder?.length === 2);
+});
+
+test("отказ «папка удалена» с усечённым перечнем называет, сколько документов ещё", async () => {
+  const api = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({ code: "publication.folder_removed", message: "папка удалена",
+    removed_folder_documents: [{ node_id: "y", name: "Y.txt", folder_path: "/Отчёты" }], removed_folder_more: 22 }, { status: 409 }));
+  await assert.rejects(api.publishDraft("project", "a".repeat(64), "b".repeat(64), "m"), (e: unknown) => e instanceof MnemosAPIError
+    && e.message === "Папка «Отчёты» удалена. Перенесите документ «Y.txt» в другую папку и опубликуйте снова. И ещё 22 документа в удалённых папках.");
+});
+
+test("папку с черновиками нельзя удалить: отказ словами, свои черновики поимённо, чужие числом", async () => {
+  const text = (drafts: object) => new MnemosAPIError(409, "node.folder_has_drafts", undefined, undefined, undefined, 0, drafts as never).message;
+  assert.equal(text({ folder_path: "/Отчёты", people: 2, own: [] }), "Папку нельзя удалить: в папке «Отчёты» есть неопубликованные черновики 2 сотрудников. Удалить её можно, когда черновики опубликуют, перенесут или удалят.");
+  assert.equal(text({ folder_path: "/Отчёты", people: 0, own: [{ node_id: "y", name: "Y.txt" }] }), "Папку нельзя удалить: в папке «Отчёты» есть неопубликованные черновики. Ваши черновики в ней: «Y.txt» — их можно перенести самому. Удалить её можно, когда черновики опубликуют, перенесут или удалят.");
+});
+
+test("администратор видит авторов черновиков в отказе и подтверждает перенос словами", async () => {
+  const text = (drafts: object) => new MnemosAPIError(409, "node.folder_has_drafts", undefined, undefined, undefined, 0, drafts as never).message;
+  assert.equal(text({ folder_path: "/Отчёты", people: 2, own: [], authors: [{ principal_id: "u1", name: "Анна" }, { principal_id: "u2", name: "Борис" }] }),
+    "Папку нельзя удалить: в папке «Отчёты» есть неопубликованные черновики 2 сотрудников. Черновики у сотрудников: Анна, Борис. Удалить её можно, когда черновики опубликуют, перенесут или удалят.");
+  assert.equal(relocateDraftsConfirmation(2, "/Архив"), "Черновики 2 сотрудников будут перенесены в «Архив». Их авторы увидят их там.");
+  const calls: { url: string; method?: string; body?: string }[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => { calls.push({ url: String(url), method: init?.method, body: String(init?.body) }); return Response.json({ people: 2, documents: 3 }); });
+  assert.deepEqual(await api.relocateFolderDrafts("p", "f", "t"), { people: 2, documents: 3 });
+  assert.equal(calls[0].url, "https://memory.example/v1/projects/p/nodes/f/drafts/relocate");
+  assert.deepEqual(JSON.parse(calls[0].body ?? ""), { target_parent_id: "t" });
 });
 
 test("credentials stay on the configured server and are refreshed per request", async () => {
