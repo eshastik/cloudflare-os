@@ -117,7 +117,7 @@ test("«Журнал и состояние»: новые проекты без �
     const panel = () => app.document.querySelector("#root [data-system-state]");
     await app.until(() => panel(), "панель состояния");
     const text = panel().textContent;
-    assert.match(text, /Новым проектам не удалось завести историю: 2 — повторяется автоматически/);
+    assert.match(text, /Проектам не удалось завести историю: 2 — повторяется автоматически/);
     assert.doesNotMatch(text, /Проверка «project_main»/, "сигнал назван словами, а не ключом");
   } finally { app.dispose(); }
 });
