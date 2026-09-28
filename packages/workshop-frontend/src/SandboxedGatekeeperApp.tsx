@@ -275,6 +275,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.navigateSection(target, project)
   }
 
+  /** Личный экран «Telegram» в настройках оболочки: адрес постоянный, из фрейма приходит только нажатие. */
+  openTelegramSettings(): void {
+    this.#uploadLifetime.signal.throwIfAborted()
+    this.openPath('/telegram')
+  }
+
   /** Opens the human inbox without granting approval authority to the frame. */
   openApprovals(): void {
     this.#uploadLifetime.signal.throwIfAborted()

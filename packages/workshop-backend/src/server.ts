@@ -34,6 +34,8 @@ import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PAT
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
+import { handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramPersonalBot } from "./telegram/durable";
+import type { TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
 import { handleClientErrorRequest } from "./client-errors.js";
@@ -74,6 +76,9 @@ export { OverseerDurableObject, GatekeeperLoopback, GatekeeperHookLoopback,
 
 // Re-export service-binding entrypoint for external channel integrations.
 export { ExternalMessageGateway };
+
+// Личные боты Telegram (ADR 0027 Mnemos).
+export { TelegramPersonalBot, TelegramBotClaim };
 
 // Declare optional environment variables here since they may be omitted from wrangler.jsonc.
 type Env = Cloudflare.Env & ChatVoiceConfig & {
@@ -246,6 +251,19 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   }
   mnemosPrincipals(userIds: string[]): Promise<Record<string, string>> {
     return this.user.mnemosPrincipals(userIds);
+  }
+  // Личный бот Telegram: объект выбирается по имени вошедшего человека, а не по вводу клиента.
+  getTelegramBot(): Promise<TelegramBotState> {
+    return telegramBotFor(this.ctx.exports.TelegramPersonalBot, this.user.id.name!).getState(this.user.id.name!);
+  }
+  connectTelegramBot(token: string): Promise<TelegramBotState> {
+    return telegramBotFor(this.ctx.exports.TelegramPersonalBot, this.user.id.name!).connectBot(this.user.id.name!, token);
+  }
+  renewTelegramCode(): Promise<TelegramBotState> {
+    return telegramBotFor(this.ctx.exports.TelegramPersonalBot, this.user.id.name!).renewCode(this.user.id.name!);
+  }
+  disconnectTelegramBot(): Promise<TelegramDisconnectResult> {
+    return telegramBotFor(this.ctx.exports.TelegramPersonalBot, this.user.id.name!).disconnectBot(this.user.id.name!);
   }
   async getAvatar(userId: string): Promise<Uint8Array | null> {
     let result = await this.env.AVATARS.get(userId, "arrayBuffer");
@@ -955,6 +973,11 @@ export default {
 
     if (url.pathname === "/api/client-errors") {
       return handleClientErrorRequest(req, env, ctx);
+    }
+
+    // Вебхук личного бота Telegram: подлинность проверяет объект бота по secret_token.
+    if (url.pathname.startsWith("/api/telegram/")) {
+      return handleTelegramWebhook(req, ctx.exports.TelegramPersonalBot);
     }
 
     if (url.pathname === "/api") {

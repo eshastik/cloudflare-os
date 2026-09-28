@@ -329,6 +329,8 @@ export interface Host extends RpcTarget {
   resumeUpload(id: number): Promise<void>;
   dismissUpload(id: number): Promise<void>;
   openSection(section: string, project?: string): void;
+  /** Экран «Telegram» в личных настройках оболочки: бот подключается там. Старый хост — отказ. */
+  openTelegramSettings(): Promise<void>;
   openApprovals(): Promise<void>;
   getSelectedProject(): Promise<string>;
   /** Вкладка раздела из адреса хоста; пусто — вкладка по умолчанию. */

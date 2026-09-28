@@ -73,6 +73,7 @@ declare global {
 
       LOGIN_ALIASES?: string;        // {"почта": "имя"} — вход через гейткипер в существующую учётную запись
       SHELL_SERVICE_TOKEN?: string;  // токен служебного маршрута /__service/* для скрипта настройки
+      SHELL_SECRETS_KEY?: string;    // ключ шифрования секретов оболочки (токены личных ботов Telegram)
 
       // Enables the Cloudflare free-tier limits + top-up flow when set to "true".
       ENABLE_CLOUDFLARE_LIMITS?: string;

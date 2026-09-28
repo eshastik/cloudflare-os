@@ -53,6 +53,7 @@ interface TestHost extends RpcTarget {
   getPresentationMode(): Promise<string>;
   openSection(section:string): Promise<void>;
   openLink(url: string): Promise<boolean>;
+  openTelegramSettings(): Promise<void>;
   openGitHubAppPage(url: string): Promise<boolean>;
   startGitHubConnect(ticket: string): Promise<boolean>;
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
@@ -209,6 +210,24 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await vi.waitFor(() => expect(router.state.location.pathname).toBe("/workspace/abc"));
     expect(router.state.location.search).toEqual({ chat: 1 });
     expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("«Открыть настройки» Telegram из фрейма ведёт на личный экран оболочки", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute();
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId", component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    const telegramRoute = createRoute({ getParentRoute: () => rootRoute, path: "/telegram" });
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: ["/gatekeepers/mnemos?section=connections"] }), routeTree: rootRoute.addChildren([appRoute, telegramRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const { port1, port2 } = new MessageChannel();
+    host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "handshake" }, origin: "null", source: iframe.contentWindow, ports: [port2] }));
+    await host.getSelectedSection();
+    await act(async () => { await host!.openTelegramSettings(); });
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/telegram"));
   });
 
   it("routes validated targets and bounded prompts from the iframe host", async () => {

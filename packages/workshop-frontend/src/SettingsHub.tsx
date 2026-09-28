@@ -108,6 +108,7 @@ export default function SettingsHub() {
         <h2 className={SECTION_TITLE}>Работа</h2>
         <div className={GROUP_CARD}>
           <RowLink to="/outputs" title="Результаты бесед" note="Документы и файлы, которые получились в ваших беседах." />
+          <RowLink to="/telegram" title="Telegram" note="Свой бот: пишите агенту беседы из Telegram." />
         </div>
       </section>
 
@@ -137,7 +138,7 @@ export default function SettingsHub() {
   )
 }
 
-function RowLink({ to, title, note }: { to: '/outputs' | '/providers' | '/gatekeepers' | '/admin'; title: string; note: string }) {
+function RowLink({ to, title, note }: { to: '/outputs' | '/telegram' | '/providers' | '/gatekeepers' | '/admin'; title: string; note: string }) {
   return (
     <Link
       to={to}

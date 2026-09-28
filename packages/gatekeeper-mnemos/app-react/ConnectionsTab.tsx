@@ -30,7 +30,7 @@ export default function ConnectionsTab({ data }: { data: MemoryData }) {
       <DriveRow />
       <RepositoriesRow data={data} />
       <DatabaseRow data={data} />
-      <TelegramRow data={data} />
+      <TelegramRow />
     </div>
   </section>;
 }
@@ -314,57 +314,25 @@ function DatabaseForm({ data, done }: { data: MemoryData; done(): void }) {
   </ActionForm>;
 }
 
-function TelegramRow({ data }: { data: MemoryData }) {
-  const ui = useUi();
-  const bots = useLoad(() => ui.listTelegram(), FAILURE, [ui]);
-  const agents = agentNames(data.connections);
-  const items: Item[] = (bots.value?.connections ?? []).filter(c => !c.disconnected || c.cleanup_pending).map(c => ({ key: `tg/${c.bot}`, title: `Бот @${c.username}`,
-    note: `отвечает ${agents.get(c.binding) ?? "ваш агент"}`, problem: c.channel_registered ? "" : c.ready ? "подтвердите подключение в чате с ботом" : "бот недоступен", disconnect: () => ui.disconnectTelegram(c.bot) }));
-  return <ConnectionRow title="Telegram" icon="telegram" what="Задачи агенту можно ставить сообщением в Telegram; ответы приходят туда же." loading={bots.loading} error={bots.error} items={items} reload={bots.reload}
-    connect={done => <TelegramForm data={data} done={done} />} />;
-}
-
-function TelegramForm({ data, done }: { data: MemoryData; done(): void }) {
-  const ui = useUi();
-  const managed = data.connections.filter(c => !c.revoked && c.managed_runtime === true);
-  const names = agentNames(data.connections);
-  const [token, setToken] = useState("");
-  const [agent, setAgent] = useState(managed[0]?.binding_id ?? "");
-  const [consent, setConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [state, setState] = useState<{ bot: string; epoch: string; code: string | null; candidate: number | null; sender: number | null; channel_registered: boolean } | null>(null);
-  async function connect() {
-    if (busy || !token.trim() || !agent || !consent) return;
-    setBusy(true); setError("");
-    try { const out = await ui.connectTelegram(crypto.randomUUID(), token.trim(), agent, true); setToken(""); setState(out); }
-    catch { setToken(""); setError("Бот не подключился. Проверьте токен от BotFather и повторите."); }
-    finally { setBusy(false); }
+/** Telegram — личная настройка каждого человека (ADR 0027): бот подключается в настройках оболочки,
+ * а не в подключениях организации. Здесь только переход туда. */
+function TelegramRow() {
+  const host = useHost();
+  const [failed, setFailed] = useState(false);
+  async function open() {
+    setFailed(false);
+    try { await host.openTelegramSettings(); } catch { setFailed(true); }
   }
-  async function check() {
-    if (!state || busy) return;
-    setBusy(true); setError("");
-    try {
-      let out = await ui.describeTelegram(state.bot);
-      if (out.candidate !== null && out.sender === null) out = await ui.confirmTelegram(out.bot, out.epoch, out.candidate);
-      setState(out);
-      if (out.channel_registered) done();
-    } catch { setError("Подтверждение не прошло. Отправьте боту команду ещё раз и повторите."); }
-    finally { setBusy(false); }
-  }
-  if (!managed.length) return <Notice>Сначала нужен агент на платформе агентов: ему бот будет передавать сообщения.</Notice>;
-  if (state && !state.channel_registered) return <div className="grid gap-2 text-[13px]">
-    <p className="m-0">Откройте бота в Telegram и отправьте ему: <strong>/start {state.code}</strong></p>
-    <div><Pill tone="primary" disabled={busy} onClick={() => void check()}>Я отправил — проверить</Pill></div>
-    {error && <Notice tone="danger">{error}</Notice>}
-  </div>;
-  return <ActionForm aria-label="Подключить Telegram" onAction={() => void connect()} className="grid max-w-[480px] gap-3 text-[14px]">
-    <Field label="Токен бота от BotFather"><FieldInput aria-label="Токен бота" type="password" autoComplete="off" value={token} disabled={busy} onChange={e => setToken(e.target.value)} /></Field>
-    <Field label="Кто отвечает в боте"><FieldSelect aria-label="Агент бота" value={agent} disabled={busy} onChange={e => setAgent(e.target.value)}>{managed.map(a => <option key={a.binding_id} value={a.binding_id}>{names.get(a.binding_id) ?? "Агент"}</option>)}</FieldSelect></Field>
-    <label className="flex items-center gap-2"><input type="checkbox" checked={consent} disabled={busy} onChange={e => setConsent(e.target.checked)} />Разрешаю агенту получать мои сообщения и отвечать через Telegram</label>
-    {error && <Notice tone="danger">{error}</Notice>}
-    <div><Pill tone="primary" disabled={busy || !token.trim() || !agent || !consent} onClick={() => void connect()}>{busy ? "Подключаем…" : "Подключить"}</Pill></div>
-  </ActionForm>;
+  return <section aria-label="Telegram" className="border-t border-kumo-fill first:border-t-0">
+    <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
+      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-kumo-tint text-kumo-default"><TelegramLogo size={18} /></span>
+      <span className="block min-w-0 flex-1 basis-52">
+        <h2 className="m-0 text-[15px] font-medium text-kumo-default">Telegram</h2>
+        <p className="m-0 text-[13px] text-kumo-subtle">{failed ? "Откройте «Настройки» → «Telegram» в меню." : "Telegram подключается в личных настройках: у каждого свой бот."}</p>
+      </span>
+      <Pill className="max-sm:ml-[50px]" tone="secondary" onClick={() => void open()}>Открыть настройки</Pill>
+    </div>
+  </section>;
 }
 
 type Grant = { connection_id: string; principal_id: string; connection_revision: number; revision: number; enabled: boolean };

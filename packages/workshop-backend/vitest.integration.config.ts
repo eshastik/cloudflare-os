@@ -8,6 +8,8 @@ const EXPECTED_OPEN_ERROR_CODES = new Set([
   // Отказ обмена кода входа (повтор, чужой браузер, чужая страница).
   "LOGIN_CODE_REJECTED",
   "CONNECT_CODE_REJECTED",
+  // Отказ подключения личного бота Telegram (нет ключа шифрования, неверный токен).
+  "TELEGRAM_SETUP_REJECTED",
 ]);
 
 export default defineConfig({

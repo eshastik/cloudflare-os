@@ -56,6 +56,11 @@
       // login back to the waiting browser.
       "tag": "v2",
       "new_sqlite_classes": [ "PendingLogin" ]
+    },
+    {
+      // Личные боты Telegram: объект на пользователя и занятость бота по его номеру.
+      "tag": "v3",
+      "new_sqlite_classes": [ "TelegramPersonalBot", "TelegramBotClaim" ]
     }
   ],
 

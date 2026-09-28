@@ -20,6 +20,7 @@ import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as TelegramRouteImport } from './routes/telegram'
 import { Route as WorkspacesRouteImport } from './routes/workspaces'
 import { Route as BlueprintIdRouteImport } from './routes/blueprint.$id'
 import { Route as GadgetIdRouteImport } from './routes/gadget.$id'
@@ -81,6 +82,11 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TelegramRoute = TelegramRouteImport.update({
+  id: '/telegram',
+  path: '/telegram',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkspacesRoute = WorkspacesRouteImport.update({
   id: '/workspaces',
   path: '/workspaces',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
+  '/telegram': typeof TelegramRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
   '/gadget/$id': typeof GadgetIdRoute
@@ -137,6 +144,7 @@ export interface FileRoutesByTo {
   '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
+  '/telegram': typeof TelegramRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
   '/gadget/$id': typeof GadgetIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/providers': typeof ProvidersRoute
   '/settings': typeof SettingsRoute
   '/signup': typeof SignupRoute
+  '/telegram': typeof TelegramRoute
   '/workspaces': typeof WorkspacesRoute
   '/blueprint/$id': typeof BlueprintIdRoute
   '/gadget/$id': typeof GadgetIdRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/signup'
+    | '/telegram'
     | '/workspaces'
     | '/blueprint/$id'
     | '/gadget/$id'
@@ -194,6 +204,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/signup'
+    | '/telegram'
     | '/workspaces'
     | '/blueprint/$id'
     | '/gadget/$id'
@@ -212,6 +223,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/signup'
+    | '/telegram'
     | '/workspaces'
     | '/blueprint/$id'
     | '/gadget/$id'
@@ -231,6 +243,7 @@ export interface RootRouteChildren {
   ProvidersRoute: typeof ProvidersRoute
   SettingsRoute: typeof SettingsRoute
   SignupRoute: typeof SignupRoute
+  TelegramRoute: typeof TelegramRoute
   WorkspacesRoute: typeof WorkspacesRoute
   BlueprintIdRoute: typeof BlueprintIdRoute
   GadgetIdRoute: typeof GadgetIdRoute
@@ -317,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/telegram': {
+      id: '/telegram'
+      path: '/telegram'
+      fullPath: '/telegram'
+      preLoaderRoute: typeof TelegramRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/workspaces': {
       id: '/workspaces'
       path: '/workspaces'
@@ -367,6 +387,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProvidersRoute: ProvidersRoute,
   SettingsRoute: SettingsRoute,
   SignupRoute: SignupRoute,
+  TelegramRoute: TelegramRoute,
   WorkspacesRoute: WorkspacesRoute,
   BlueprintIdRoute: BlueprintIdRoute,
   GadgetIdRoute: GadgetIdRoute,

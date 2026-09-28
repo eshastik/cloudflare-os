@@ -432,6 +432,13 @@ export interface AuthenticatedApi extends RpcTarget {
   // аватар берёт фото человека из Mnemos. Пользователь без связи с Mnemos в ответе отсутствует.
   mnemosPrincipals(userIds: string[]): Promise<Record<string, string>>;
 
+  // Личный бот Telegram (ADR 0027 Mnemos): состояние, подключение по токену от BotFather, новый
+  // код подключения, отключение. Токен после проверки хранится зашифрованным и наружу не выходит.
+  getTelegramBot(): Promise<import("./telegram-bot.js").TelegramBotState>;
+  connectTelegramBot(token: string): Promise<import("./telegram-bot.js").TelegramBotState>;
+  renewTelegramCode(): Promise<import("./telegram-bot.js").TelegramBotState>;
+  disconnectTelegramBot(): Promise<import("./telegram-bot.js").TelegramDisconnectResult>;
+
   // Open an existing gadget.
   //
   // If `shareKey` is provided, the server redeems it before opening, adding the caller as a

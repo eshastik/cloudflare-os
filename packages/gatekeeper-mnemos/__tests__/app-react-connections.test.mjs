@@ -155,6 +155,33 @@ test("«Репозитории»: оболочка не смогла начат�
   } finally { app.dispose(); }
 });
 
+test("«Подключения»: Telegram не подключается здесь — только переход в личные настройки", async () => {
+  const calls = [];
+  const app = await mountMemoryApp({ ...SOURCES,
+    async listTelegram() { calls.push(["listTelegram"]); return { connections: [], unavailable: 0 }; },
+    async connectTelegram() { calls.push(["connectTelegram"]); throw new Error("не должно вызываться"); },
+  }, { section: "connections" });
+  try {
+    const row = () => app.document.querySelector('#root section[aria-label="Telegram"]');
+    await app.until(() => row()?.textContent.includes("личных настройках"), "строка Telegram");
+    assert.equal(row().querySelector("input, select, form"), null, "ни токена, ни выбора агента");
+    assert.equal([...row().querySelectorAll("button")].some(b => /Подключить|Настроить/.test(b.textContent)), false);
+    [...row().querySelectorAll("button")].find(b => b.textContent === "Открыть настройки").click();
+    await app.until(() => app.calls.some(([m]) => m === "openTelegramSettings"), "переход в настройки оболочки");
+    assert.deepEqual(calls, [], "старый путь подключения не вызывается");
+  } finally { app.dispose(); }
+});
+
+test("«Подключения»: старый хост без перехода — подсказка словами", async () => {
+  const app = await mountMemoryApp(SOURCES, { section: "connections", telegramSettingsFail: true });
+  try {
+    const row = () => app.document.querySelector('#root section[aria-label="Telegram"]');
+    await app.until(() => row(), "строка Telegram");
+    [...row().querySelectorAll("button")].find(b => b.textContent === "Открыть настройки").click();
+    await app.until(() => row().textContent.includes("«Настройки» → «Telegram»"), "подсказка");
+  } finally { app.dispose(); }
+});
+
 test("«Подключения»: отказ чтения показан честно", async () => {
   const app = await mountMemoryApp({ ...SOURCES, async listImapAccounts() { throw new Error("forbidden"); } }, { section: "connections" });
   try {

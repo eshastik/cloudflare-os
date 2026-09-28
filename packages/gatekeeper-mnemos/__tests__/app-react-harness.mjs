@@ -125,6 +125,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async openSharedDocument(project, owner, resource) { calls.push(["openSharedDocument", project, owner, resource]); if (options.sharedOpenError) throw new Error(options.sharedOpenError); return options.sharedOpen ?? options.nativeOpen ?? false; }
     async openPrompt(prompt,project) { calls.push(["openPrompt",prompt,project]); }
     async openApprovals() { calls.push(["openApprovals"]); }
+    async openTelegramSettings() { calls.push(["openTelegramSettings"]); if (options.telegramSettingsFail) throw new Error("старый хост"); }
     async sendMailDraft(id, sha256) { calls.push(["sendMailDraft", id, sha256]); return { state: "accepted" }; }
     async createCalendarDraft(id, sha256) { calls.push(["createCalendarDraft", id, sha256]); return { state: "created", event_id: "ev" }; }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
