@@ -1,6 +1,7 @@
 import ChatTemplateLibrary from './ChatTemplateLibrary'
 import {Dialog, DropdownMenu} from '@cloudflare/kumo'
 import { reportShellStage } from "./shellReadiness"
+import { clampChatWidth, dragChatWidth, DEFAULT_CHAT_WIDTH, MIN_CHAT_WIDTH } from './chatWidth'
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useNavigate, useSearch } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
@@ -328,13 +329,10 @@ const CHAT_WIDTH_STORAGE_KEY = 'gadgets:workshop:chatWidth'
 // Keep the old key prefix so existing "open" / "closed" preferences can migrate lazily.
 const WORKSPACE_VIEW_STORAGE_KEY_PREFIX = 'gadgets:workshop:workspaceVisibility:'
 const APP_RAIL_EXPANDED_STORAGE_KEY = 'gadgets:workshop:appRailExpanded'
-const MIN_CHAT_WIDTH = 280
 /** Нативный формат документа по идентификатору вывода гаджета; для прочих гаджетов панели «Версия» нет. */
 function nativeFormatOf(outputId?: string) {
   return outputId === 'document' ? 'cloudflareos.document' as const : outputId === 'spreadsheet' ? 'cloudflareos.spreadsheet' as const : outputId === 'presentation' ? 'cloudflareos.presentation' as const : null
 }
-const MIN_WORKSPACE_WIDTH = 400
-const DEFAULT_CHAT_WIDTH = 440
 const CARD_GAP = 12
 const GADGET_HEADER_H = 56
 const FULLSCREEN_HEADER_H = 64
@@ -349,11 +347,6 @@ const WORKSPACE_TRANSITION_MS = 200
 
 const isBrowser = typeof window !== 'undefined'
 
-function clampChatWidth(width: number) {
-  if (!isBrowser) return Math.max(MIN_CHAT_WIDTH, Math.min(DEFAULT_CHAT_WIDTH, width))
-  const max = Math.max(MIN_CHAT_WIDTH, window.innerWidth - MIN_WORKSPACE_WIDTH)
-  return Math.max(MIN_CHAT_WIDTH, Math.min(max, width))
-}
 
 function getInitialChatWidth() {
   if (!isBrowser) return DEFAULT_CHAT_WIDTH
@@ -1090,19 +1083,25 @@ export default function GadgetEditor() {
   // ── resize handle ─────────────────────────────────────────────────────────────
   //
   // Pointer capture keeps resizing reliable when dragging across the gadget iframe.
+  const resizeDragRef = useRef<{ startX: number; startWidth: number; available: number } | null>(null)
   const handleResizePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!showFullEditor) return
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
+      // Место под беседу и документ — ряд, в котором стоит ручка, а не всё окно.
+      const row = e.currentTarget.parentElement
+      const available = (row?.clientWidth ?? window.innerWidth) - CARD_GAP
+      resizeDragRef.current = { startX: e.clientX, startWidth: chatWidthRef.current, available }
       setIsResizing(true)
     },
     [showFullEditor],
   )
   const handleResizePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-      setChatWidth(clampChatWidth(e.clientX))
+      const drag = resizeDragRef.current
+      if (!drag || !e.currentTarget.hasPointerCapture(e.pointerId)) return
+      setChatWidth(dragChatWidth(drag, e.clientX))
     },
     [],
   )
@@ -1111,9 +1110,11 @@ export default function GadgetEditor() {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId)
       }
-      const width = e.type === 'pointercancel'
+      const drag = resizeDragRef.current
+      resizeDragRef.current = null
+      const width = e.type === 'pointercancel' || !drag
         ? chatWidthRef.current
-        : clampChatWidth(e.clientX)
+        : dragChatWidth(drag, e.clientX)
       setChatWidth(width)
       persistChatWidth(width)
       setIsResizing(false)
