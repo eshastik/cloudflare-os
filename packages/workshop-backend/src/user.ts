@@ -978,9 +978,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     this.storage.gadgets.put({id, title, created});
   }
 
-  async ensureGadgetRegistered(id: string, title: string): Promise<void> {
+  async ensureGadgetRegistered(id: string, title: string, channel?: "telegram"): Promise<void> {
     if (this.storage.gadgets.get(id)) return;
-    await this.newGadget(id, title);
+    this.storage.gadgets.put({id, title, created: new Date(), ...(channel ? {channel} : {})});
   }
 
   async setGadgetLastActive(id: string, time: Date, totalCost: number | undefined): Promise<void> {

@@ -34,7 +34,7 @@ import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PAT
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
-import { handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramPersonalBot } from "./telegram/durable";
+import { handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramChatTarget, TelegramPersonalBot } from "./telegram/durable";
 import type { TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
@@ -78,7 +78,7 @@ export { OverseerDurableObject, GatekeeperLoopback, GatekeeperHookLoopback,
 export { ExternalMessageGateway };
 
 // Личные боты Telegram (ADR 0027 Mnemos).
-export { TelegramPersonalBot, TelegramBotClaim };
+export { TelegramPersonalBot, TelegramBotClaim, TelegramChatTarget };
 
 // Declare optional environment variables here since they may be omitted from wrangler.jsonc.
 type Env = Cloudflare.Env & ChatVoiceConfig & {

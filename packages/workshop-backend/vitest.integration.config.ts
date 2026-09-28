@@ -24,6 +24,13 @@ export default defineConfig({
       wrangler: {
         configPath: "./wrangler.jsonc",
       },
+      // Личный бот Telegram: ключ шифрования токенов и публичный адрес вебхука — только тестовые.
+      miniflare: {
+        bindings: {
+          SHELL_SECRETS_KEY: "integration-test-shell-secrets-key-0123456789",
+          PUBLIC_BASE_URL: "https://workshop.invalid",
+        },
+      },
     }),
   ],
   test: {

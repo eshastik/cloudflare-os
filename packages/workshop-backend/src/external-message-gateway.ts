@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { validateRpc } from "capnweb-validate";
 import {
   type ExternalMessageGateway as ExternalMessageGatewayContract,
+  type RenameExternalChatInput,
   type SubmitExternalMessageInput,
   type SubmitExternalMessageResult,
 } from "@gadgets/workshop-shared/external-message-gateway";
@@ -12,15 +13,15 @@ type ExternalMessageGatewayProps = {
 
 @validateRpc()
 export class ExternalMessageGateway extends WorkerEntrypoint<Cloudflare.Env, ExternalMessageGatewayProps> implements ExternalMessageGatewayContract {
-  async submitExternalMessage(input: SubmitExternalMessageInput): Promise<SubmitExternalMessageResult> {
+  #keys(input: { gadgetKey: string; chatKey: string }) {
     let source = this.ctx.props.source;
     if (!source) throw new Error("ExternalMessageGateway source prop is required.");
+    return { source, gadget: `${source}:${input.gadgetKey}`, chat: `${source}:${input.chatKey}` };
+  }
 
-    let externalKeys = {
-      gadget: `${source}:${input.gadgetKey}`,
-      chat: `${source}:${input.chatKey}`,
-      message: `${source}:${input.messageKey}`,
-    };
+  async submitExternalMessage(input: SubmitExternalMessageInput): Promise<SubmitExternalMessageResult> {
+    let keys = this.#keys(input);
+    let externalKeys = { ...keys, message: `${keys.source}:${input.messageKey}` };
 
     // External gateways decide which Gadget receives a prompt by passing gadgetKey.
     // We prefix that key with the binding-owned source before using it as the DO name,
@@ -34,6 +35,14 @@ export class ExternalMessageGateway extends WorkerEntrypoint<Cloudflare.Env, Ext
       prompt: input.prompt,
       chatGatewayRpcTarget: input.chatGatewayRpcTarget,
       title: input.gadgetTitle,
+      ...(input.streamProgress ? { streamProgress: true } : {}),
+      ...(keys.source === "telegram" ? { channel: "telegram" as const } : {}),
     });
+  }
+
+  async renameExternalChat(input: RenameExternalChatInput): Promise<boolean> {
+    let keys = this.#keys(input);
+    return await this.ctx.exports.OverseerDurableObject.getByName(keys.gadget)
+      .renameExternalChat(input.callerEmail, keys.chat, input.title);
   }
 }

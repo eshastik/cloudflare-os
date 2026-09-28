@@ -1,6 +1,8 @@
 // Клиент Bot API для личных ботов. Перенесён из gatekeeper-mnemos/src/telegram-api.ts (старый путь
 // через поручения удаляется на этапе 7 ADR 0027): тот же ограниченный разбор ответа и та же
-// обезличенная ошибка — текст ошибки fetch может содержать адрес с токеном.
+// обезличенная ошибка — текст ошибки fetch может содержать адрес с токеном. Из отказа Telegram
+// берётся только его описание (description): по нему узнаются «тред удалён» и «разметка не
+// разобрана», адреса с токеном в нём нет.
 
 export const TELEGRAM_TOKEN = /^[1-9][0-9]{0,19}:[A-Za-z0-9_-]{30,100}$/;
 
@@ -10,7 +12,51 @@ export type TelegramBotInfo = {
   threads: { enabled: boolean; usersCanCreate: boolean };
 };
 
-type Method = "getMe" | "setWebhook" | "deleteWebhook" | "sendMessage" | "answerCallbackQuery";
+type Method = "getMe" | "setWebhook" | "deleteWebhook" | "sendMessage" | "sendMessageDraft" | "answerCallbackQuery" |
+  "createForumTopic" | "editForumTopic" | "getFile";
+
+/** Отказ Telegram или сбой связи. description — описание отказа от Telegram, если он ответил. */
+export class TelegramApiError extends Error {
+  constructor(readonly description: string | null, readonly retryAfter: number | null = null) {
+    super("Telegram request failed or its result is unconfirmed.");
+    this.name = "TelegramApiError";
+  }
+}
+
+/** Тред удалён пользователем (события об этом нет, узнаём по отказу отправки). */
+export function isThreadNotFound(error: unknown): boolean {
+  return error instanceof TelegramApiError && /message thread not found|thread not found|TOPIC_DELETED|TOPIC_ID_INVALID/i.test(error.description ?? "");
+}
+
+/** Telegram не разобрал HTML-разметку сообщения. */
+export function isParseError(error: unknown): boolean {
+  return error instanceof TelegramApiError && /can't parse entities|unsupported start tag|can't find end tag/i.test(error.description ?? "");
+}
+
+export const MAX_MESSAGE = 4096;
+export const MAX_TOPIC_NAME = 128;
+/** Голосовые больше этого не скачиваем: Bot API отдаёт файлы до 20 МБ, распознавание берёт до 8 МБ. */
+export const MAX_VOICE_BYTES = 8_000_000;
+
+async function readBounded(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
+  let reader = body.getReader();
+  let chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      let part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > limit) throw new Error();
+      chunks.push(part.value);
+    }
+  } catch { await reader.cancel().catch(() => {}); throw new TelegramApiError(null); }
+  finally { reader.releaseLock(); }
+  let bytes = new Uint8Array(size);
+  let offset = 0;
+  for (let chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
 
 export class TelegramBotApi {
   #token: string;
@@ -25,31 +71,24 @@ export class TelegramBotApi {
   get botId(): string { return this.#token.split(":")[0]; }
 
   async #call(method: Method, body: object): Promise<unknown> {
+    let parsed: { ok?: unknown; result?: unknown; description?: unknown; parameters?: { retry_after?: unknown } } | null;
     try {
       let fetcher = this.#fetch;
       let response = await fetcher("https://api.telegram.org/bot" + this.#token + "/" + method, {
         method: "POST", redirect: "manual", signal: AbortSignal.timeout(15000),
         headers: { "content-type": "application/json" }, body: JSON.stringify(body),
       });
-      if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error(); }
-      let reader = response.body.getReader();
-      let text = "", size = 0;
-      let decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
-      try {
-        for (;;) {
-          let { done, value } = await reader.read();
-          if (done) break;
-          size += value.byteLength;
-          if (size > 65536) throw new Error();
-          text += decoder.decode(value, { stream: true });
-        }
-        text += decoder.decode();
-      } catch { await reader.cancel().catch(() => {}); throw new Error(); }
-      finally { reader.releaseLock(); }
-      let result = JSON.parse(text);
-      if (!result || result.ok !== true || !Object.hasOwn(result, "result")) throw new Error();
-      return result.result;
-    } catch { throw new Error("Telegram request failed or its result is unconfirmed."); }
+      // Отказ Telegram (400, 403, 429) приходит с телом {ok:false, description}: его читаем тоже.
+      if (!response.body || response.status >= 500 || (response.status >= 300 && response.status < 400)) {
+        await response.body?.cancel(); throw new Error();
+      }
+      let bytes = await readBounded(response.body, 65536);
+      parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+    } catch { throw new TelegramApiError(null); }
+    if (parsed && parsed.ok === true && Object.hasOwn(parsed, "result")) return parsed.result;
+    let description = typeof parsed?.description === "string" ? parsed.description.slice(0, 200) : null;
+    let retry = parsed?.parameters?.retry_after;
+    throw new TelegramApiError(description, Number.isSafeInteger(retry) ? retry as number : null);
   }
 
   /** Проверка токена без изменения доставки: бот должен быть ботом и совпадать с номером в токене. */
@@ -89,15 +128,72 @@ export class TelegramBotApi {
 
   /** Простой текст в личный чат. Без повторов: потерянный ответ не значит, что сообщение не ушло. */
   async sendText(chat: number, text: string): Promise<number> {
-    if (!Number.isSafeInteger(chat) || chat <= 0 || typeof text !== "string" || !text.trim() || [...text].length > 4096) {
+    return this.send(chat, text);
+  }
+
+  /** Сообщение в личный чат, в тред (thread) или вне тредов; html — текст уже в разметке Telegram. */
+  async send(chat: number, text: string, options: { thread?: number; html?: boolean } = {}): Promise<number> {
+    if (!Number.isSafeInteger(chat) || chat <= 0 || typeof text !== "string" || !text.trim() || text.length > MAX_MESSAGE ||
+        (options.thread !== undefined && (!Number.isSafeInteger(options.thread) || options.thread <= 0))) {
       throw new Error("Invalid Telegram reply.");
     }
-    let result = await this.#call("sendMessage", { chat_id: chat, text, link_preview_options: { is_disabled: true } }) as
-      { message_id?: unknown; chat?: { id?: unknown; type?: unknown } } | null;
+    let result = await this.#call("sendMessage", {
+      chat_id: chat, text, link_preview_options: { is_disabled: true },
+      ...(options.thread !== undefined ? { message_thread_id: options.thread } : {}),
+      ...(options.html ? { parse_mode: "HTML" } : {}),
+    }) as { message_id?: unknown; chat?: { id?: unknown; type?: unknown } } | null;
     if (!result || !Number.isSafeInteger(result.message_id) || result.chat?.id !== chat || result.chat.type !== "private") {
       throw new Error("Telegram reply is unconfirmed.");
     }
     return result.message_id as number;
+  }
+
+  /** Черновик ответа, который растёт на глазах (Bot API 9.3+). Один draftId — один черновик. */
+  async draft(chat: number, thread: number | undefined, draftId: number, text: string): Promise<void> {
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(draftId) || draftId <= 0 ||
+        typeof text !== "string" || !text.trim() || text.length > MAX_MESSAGE) {
+      throw new Error("Invalid Telegram draft.");
+    }
+    await this.#call("sendMessageDraft", {
+      chat_id: chat, draft_id: draftId, text,
+      ...(thread !== undefined ? { message_thread_id: thread } : {}),
+    });
+  }
+
+  /** Новый тред в личном чате; возвращает его номер. */
+  async createTopic(chat: number, name: string): Promise<number> {
+    let title = name.trim().slice(0, MAX_TOPIC_NAME);
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !title) throw new Error("Invalid Telegram topic.");
+    let result = await this.#call("createForumTopic", { chat_id: chat, name: title }) as { message_thread_id?: unknown } | null;
+    if (!result || !Number.isSafeInteger(result.message_thread_id) || (result.message_thread_id as number) <= 0) {
+      throw new Error("Telegram topic is unconfirmed.");
+    }
+    return result.message_thread_id as number;
+  }
+
+  async renameTopic(chat: number, thread: number, name: string): Promise<void> {
+    let title = name.trim().slice(0, MAX_TOPIC_NAME);
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(thread) || thread <= 0 || !title) {
+      throw new Error("Invalid Telegram topic.");
+    }
+    await this.#call("editForumTopic", { chat_id: chat, message_thread_id: thread, name: title });
+  }
+
+  /** Содержимое файла по file_id (голосовое сообщение), не больше limit байт. */
+  async fileBytes(fileId: string, limit: number = MAX_VOICE_BYTES): Promise<Uint8Array> {
+    if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(fileId)) throw new Error("Invalid Telegram file.");
+    let file = await this.#call("getFile", { file_id: fileId }) as { file_path?: unknown; file_size?: unknown } | null;
+    if (!file || typeof file.file_path !== "string" || !/^[A-Za-z0-9_./-]{1,256}$/.test(file.file_path) || file.file_path.includes("..")) {
+      throw new TelegramApiError(null);
+    }
+    if (Number.isSafeInteger(file.file_size) && (file.file_size as number) > limit) throw new TelegramApiError("file is too big");
+    try {
+      let response = await this.#fetch("https://api.telegram.org/file/bot" + this.#token + "/" + file.file_path, {
+        method: "GET", redirect: "manual", signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error(); }
+      return await readBounded(response.body, limit);
+    } catch { throw new TelegramApiError(null); }
   }
 
   /** Убрать «часики» с нажатой кнопки. */

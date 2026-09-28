@@ -1,14 +1,80 @@
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { validateRpc } from "capnweb-validate";
 import type { TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
-import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError } from "./personal-bot";
+import type { ChatGatewayRpcTarget, GadgetProgress, GadgetResponse } from "@gadgets/workshop-shared/external-message-gateway";
+import type { RpcStub } from "cloudflare:workers";
+import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "../chat-voice";
+import { spendingEntry, type ModelSpend } from "../spend-ledger.js";
+import { createWorkshopLogger } from "../observability";
+import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, type PersonalBotDeps, type TelegramTurnRef } from "./personal-bot";
+import { DraftLimiter } from "./progress";
+
+const logger = createWorkshopLogger("workshop.telegram");
 
 /** Код ожидаемого отказа настройки: клиент показывает текст ошибки человеку как есть. */
 export const TELEGRAM_SETUP_REJECTED = "TELEGRAM_SETUP_REJECTED";
 
+/** Источник внешнего входа для личных ботов: префикс имён бесед Telegram. */
+export const TELEGRAM_SOURCE = "telegram";
+
+type Env = Cloudflare.Env & ChatVoiceConfig;
+
+/** Зависимости ядра бота из объекта Durable Object; overrides — только для тестов. */
+export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: DraftLimiter, voice: { busy: boolean }, overrides: Partial<PersonalBotDeps> = {}): PersonalBotDeps {
+  let exports = ctx.exports;
+  let routeId = ctx.id.toString();
+  return {
+    storage: ctx.storage.kv,
+    secretsKey: env.SHELL_SECRETS_KEY,
+    publicBase: env.PUBLIC_BASE_URL,
+    routeId,
+    fetch: (input, init) => fetch(input, init),
+    claim: (botId, owner) => exports.TelegramBotClaim.getByName(botId).claim(owner),
+    release: (botId, owner) => exports.TelegramBotClaim.getByName(botId).release(owner),
+    mnemosOf: async owner => {
+      let snapshot = await exports.AdminSettings.getByName("").directorySnapshot();
+      return snapshot.entries.find(entry => entry.id === owner)?.mnemos ?? null;
+    },
+    now: () => Date.now(),
+    waitUntil: promise => ctx.waitUntil(promise),
+    gateway: {
+      submit: async (input, ref) => {
+        let gateway = exports.ExternalMessageGateway({ props: { source: TELEGRAM_SOURCE } });
+        // Получатель ответа — точка входа с адресом хода в props: внешний вход хранит её и зовёт
+        // «хотя бы один раз», даже после перезапуска объекта беседы.
+        let target = exports.TelegramChatTarget({ props: ref }) as unknown as RpcStub<ChatGatewayRpcTarget>;
+        return gateway.submitExternalMessage({ ...input, chatGatewayRpcTarget: target });
+      },
+      rename: input => exports.ExternalMessageGateway({ props: { source: TELEGRAM_SOURCE } }).renameExternalChat(input),
+    },
+    transcribe: async (owner, bytes, mimeType) => {
+      if (!chatVoiceAvailable(env)) throw new VoiceUnavailableError();
+      let spend: ModelSpend | undefined;
+      try { return await transcribeChatVoice(env, bytes, mimeType, fetch, s => { spend = s; }); }
+      finally { if (spend) await recordVoiceSpend(exports.UserDurableObject.getByName(owner), spend); }
+    },
+    drafts,
+    voice,
+    ...overrides,
+  };
+}
+
+/** Распознавание голоса — в учёт владельца, как диктовка на сайте (server.ts). */
+async function recordVoiceSpend(user: { recordOwnSpending(entries: ReturnType<typeof spendingEntry>[], accountId: number | null): Promise<"sent" | "unavailable"> }, spend: ModelSpend): Promise<void> {
+  let entry = spendingEntry(`voice:${crypto.randomUUID()}`, "service", "voice.transcribe", spend);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { if (await user.recordOwnSpending([entry], null) === "sent") return; } catch { /* повтор ниже */ }
+  }
+  logger.error("voice spend not recorded", { event: "spend.record.lost", spendEntry: JSON.stringify(entry) });
+}
+
 /** Объект личного бота одного пользователя оболочки; имя — «user:<имя пользователя>». Методы RPC
- *  зовёт только AuthenticatedApi от имени вошедшего человека; по HTTP открыт один вебхук. */
-export class TelegramPersonalBot extends DurableObject<Cloudflare.Env> {
+ *  зовёт только AuthenticatedApi от имени вошедшего человека и точка входа ответа хода
+ *  (TelegramChatTarget); по HTTP открыт один вебхук. */
+export class TelegramPersonalBot extends DurableObject<Env> {
   #tail: Promise<unknown> = Promise.resolve();
+  #drafts = new DraftLimiter();
+  #voice = { busy: false };
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
     let result = this.#tail.then(operation);
@@ -17,22 +83,7 @@ export class TelegramPersonalBot extends DurableObject<Cloudflare.Env> {
   }
 
   #core(): PersonalTelegramBot {
-    let exports = this.ctx.exports;
-    return new PersonalTelegramBot({
-      storage: this.ctx.storage.kv,
-      secretsKey: this.env.SHELL_SECRETS_KEY,
-      publicBase: this.env.PUBLIC_BASE_URL,
-      routeId: this.ctx.id.toString(),
-      fetch: (input, init) => fetch(input, init),
-      claim: (botId, owner) => exports.TelegramBotClaim.getByName(botId).claim(owner),
-      release: (botId, owner) => exports.TelegramBotClaim.getByName(botId).release(owner),
-      mnemosOf: async owner => {
-        let snapshot = await exports.AdminSettings.getByName("").directorySnapshot();
-        return snapshot.entries.find(entry => entry.id === owner)?.mnemos ?? null;
-      },
-      now: () => Date.now(),
-      waitUntil: promise => this.ctx.waitUntil(promise),
-    });
+    return new PersonalTelegramBot(personalBotDeps(this.ctx, this.env, this.#drafts, this.#voice));
   }
 
   // Ошибки настройки уходят человеку словами; остальные — общим отказом без подробностей.
@@ -60,8 +111,43 @@ export class TelegramPersonalBot extends DurableObject<Cloudflare.Env> {
     return this.#serialize(() => this.#human(() => this.#core().disconnect(owner)));
   }
 
+  /** Итог хода агента для треда. Ответы одного бота уходят по очереди: порядок кусков и учёт
+   *  отправленного не перемешиваются. */
+  async deliverResponse(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> {
+    return this.#serialize(async () => {
+      try { await this.#core().deliver(ref, response); }
+      catch (error) {
+        logger.warn("telegram reply not delivered", { event: "telegram.reply.failed", error });
+        // Внешний вход повторит доставку позже; подробности наружу не нужны.
+        throw new Error("Telegram reply is not delivered yet.");
+      }
+    });
+  }
+
+  async deliverProgress(ref: TelegramTurnRef, progress: GadgetProgress): Promise<void> {
+    await this.#core().progress(ref, progress);
+  }
+
   async fetch(request: Request): Promise<Response> {
     return this.#core().webhook(request);
+  }
+}
+
+/** Получатель ответа хода, начатого из треда Telegram. Адрес хода (объект бота, чат, тред,
+ *  номер обновления) — в props: их задаёт только объект бота при отправке хода. */
+@validateRpc()
+export class TelegramChatTarget extends WorkerEntrypoint<Env, TelegramTurnRef> {
+  #bot() {
+    let namespace = this.ctx.exports.TelegramPersonalBot;
+    return namespace.get(namespace.idFromString(this.ctx.props.route));
+  }
+
+  async onGadgetResponse(response: GadgetResponse): Promise<void> {
+    await this.#bot().deliverResponse(this.ctx.props, response);
+  }
+
+  async onGadgetProgress(progress: GadgetProgress): Promise<void> {
+    await this.#bot().deliverProgress(this.ctx.props, progress);
   }
 }
 

@@ -1161,6 +1161,9 @@ export type GadgetMetadata = {
   // be shared with additional users or links.
   sharingProhibited?: boolean;
 
+  // Внешний канал, из которого беседа начата (тред личного бота Telegram); нет — беседа сайта.
+  channel?: "telegram";
+
   // Various objects in the API specify a gadgetId, but make the property optional. When omitted,
   // the default gadget ID should be assumed. This is largely for backwards compatibility with
   // records that were stored before workspaces could have multiple gadgets.

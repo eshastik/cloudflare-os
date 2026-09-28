@@ -5,8 +5,19 @@
 
 export type TelegramSender = { id: number; name: string; username: string | null };
 
+/** Служебное сообщение о треде: создан клиентом (implicit — название дал сам клиент по тексту) или переименован. */
+export type TelegramTopicEvent = { kind: "created"; name: string; implicit: boolean } | { kind: "edited"; name: string };
+
+export type TelegramVoice = { fileId: string; size: number | null; mimeType: string };
+
 export type TelegramInput =
-  | { kind: "message"; update: number; message: number; sender: TelegramSender; text: string | null }
+  | {
+      kind: "message"; update: number; message: number; sender: TelegramSender; text: string | null;
+      /** Тред личного чата (Bot API 9.3+); null — сообщение вне тредов. */
+      thread: number | null;
+      voice: TelegramVoice | null;
+      topic: TelegramTopicEvent | null;
+    }
   | { kind: "callback"; update: number; id: string; sender: TelegramSender };
 
 export const MAX_UPDATE_BYTES = 65536;
@@ -77,5 +88,24 @@ export function parseTelegramUpdate(bytes: Uint8Array): TelegramInput | null | u
       message.sender_chat || message.via_bot || message.business_connection_id) return null;
   let text = typeof message.text === "string" && message.text.trim() && new TextEncoder().encode(message.text).byteLength <= 16384
     ? message.text : null;
-  return { kind: "message", update: id, message: message.message_id, sender: from, text };
+
+  let topic: TelegramTopicEvent | null = null;
+  let created = record(message.forum_topic_created);
+  let edited = record(message.forum_topic_edited);
+  if (typeof created.name === "string" && created.name.trim()) {
+    topic = { kind: "created", name: created.name.trim().slice(0, 128), implicit: created.is_name_implicit === true };
+  } else if (typeof edited.name === "string" && edited.name.trim()) {
+    topic = { kind: "edited", name: edited.name.trim().slice(0, 128) };
+  }
+  // Тред — только у сообщений в треде (is_topic_message): в обычном чате message_thread_id бывает
+  // и у ответа на реплику. Служебное сообщение о треде всегда лежит в самом треде.
+  let thread = positive(message.message_thread_id) && (message.is_topic_message === true || topic)
+    ? message.message_thread_id : null;
+
+  let voiceRecord = record(message.voice);
+  let voice: TelegramVoice | null = typeof voiceRecord.file_id === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(voiceRecord.file_id)
+    ? { fileId: voiceRecord.file_id, size: positive(voiceRecord.file_size) ? voiceRecord.file_size : null,
+        mimeType: typeof voiceRecord.mime_type === "string" ? voiceRecord.mime_type.slice(0, 64) : "audio/ogg" }
+    : null;
+  return { kind: "message", update: id, message: message.message_id, sender: from, text, thread, voice, topic };
 }

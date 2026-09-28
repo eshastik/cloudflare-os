@@ -2,8 +2,7 @@ import { exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import type { PublicApi } from "@gadgets/workshop-shared/api";
-import { expect, it } from "vitest";
-import { SECRETS_KEY_MISSING } from "../src/telegram/secret-box";
+import { afterEach, expect, it, vi } from "vitest";
 
 async function connect(): Promise<RpcStub<PublicApi>> {
   const response = await exports.default.fetch(new Request("https://workshop.invalid/api", { headers: { Upgrade: "websocket" } }));
@@ -18,14 +17,18 @@ async function account(api: RpcStub<PublicApi>): Promise<{ name: string; token: 
   return { name, token: token! };
 }
 
-// В тестовой конфигурации ключа SHELL_SECRETS_KEY нет — как на установке, которую ещё не обновили.
-it("без ключа шифрования экран видит «недоступно», а подключение отказывает понятной ошибкой", async () => {
+afterEach(() => { vi.unstubAllGlobals(); });
+
+// Отказ без ключа шифрования проверяют модульные тесты; здесь ключ задан тестовой конфигурацией.
+it("токен, который Telegram не принял, — понятная ошибка через RPC, запись не появляется", async () => {
+  vi.stubGlobal("fetch", async () => Response.json({ ok: false, error_code: 401, description: "Unauthorized" }, { status: 401 }));
   using api = await connect();
   const alice = await account(api);
   using session = await api.authenticate(alice.token);
-  expect(await session.getTelegramBot()).toEqual({ status: "unavailable", reason: "no_key" });
+  expect(await session.getTelegramBot()).toEqual({ status: "none" });
   const refused = await Promise.resolve(session.connectTelegramBot("123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ")).then(() => null, (error: Error) => error);
-  expect(refused?.message).toBe(SECRETS_KEY_MISSING);
+  expect(refused?.message).toContain("Telegram не принял токен");
+  expect(await session.getTelegramBot()).toEqual({ status: "none" });
   expect(await session.disconnectTelegramBot()).toEqual({ webhookRemoved: true });
 });
 
@@ -54,10 +57,10 @@ it("запись бота видна только своему пользова�
   using aliceSession = await api.authenticate(alice.token);
   expect(await aliceSession.getTelegramBot()).toMatchObject({ status: "connected", bot: { username: "alice_helper_bot" } });
   using bobSession = await api.authenticate(bob.token);
-  expect(await bobSession.getTelegramBot()).toEqual({ status: "unavailable", reason: "no_key" });
-  // Отключение без ключа: вебхук снять нечем, но запись стёрта.
+  expect(await bobSession.getTelegramBot()).toEqual({ status: "none" });
+  // Подложенный шифртекст ключом установки не расшифровывается: вебхук снять нечем, но запись стёрта.
   expect(await aliceSession.disconnectTelegramBot()).toEqual({ webhookRemoved: false });
-  expect(await aliceSession.getTelegramBot()).toEqual({ status: "unavailable", reason: "no_key" });
+  expect(await aliceSession.getTelegramBot()).toEqual({ status: "none" });
 });
 
 it("один бот — у одного пользователя: занятость держится до освобождения владельцем", async () => {

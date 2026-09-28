@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PersonalTelegramBot, STAGE_ONE_REPLY, PAIRING_TTL_MS, TelegramSetupError, telegramWebhookRoute, webhookUrl, type BotRecord } from "../src/telegram/personal-bot";
+import { PersonalTelegramBot, PAIRED_REPLY, PAIRING_TTL_MS, TelegramSetupError, telegramWebhookRoute, webhookUrl, type BotRecord, type TelegramAgentGateway } from "../src/telegram/personal-bot";
+import { DraftLimiter } from "../src/telegram/progress";
 import { openSecret, sealSecret, sameSecret, SECRETS_KEY_MISSING } from "../src/telegram/secret-box";
 import { parseTelegramUpdate } from "../src/telegram/updates";
 
@@ -27,6 +28,8 @@ function telegram(options: { failSetWebhook?: boolean; failDelete?: boolean; fla
     if (method === "setWebhook") return options.failSetWebhook ? new Response("{}", { status: 500 }) : ok(true);
     if (method === "deleteWebhook") return options.failDelete ? new Response("{}", { status: 500 }) : ok(true);
     if (method === "sendMessage") return ok({ message_id: 7, chat: { id: body.chat_id, type: "private" } });
+    if (method === "sendMessageDraft" || method === "editForumTopic") return ok(true);
+    if (method === "createForumTopic") return ok({ message_thread_id: 500, name: body.name, icon_color: 1 });
     if (method === "answerCallbackQuery") return ok(true);
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
@@ -39,6 +42,7 @@ function harness(options: { key?: string | undefined; publicBase?: string; failS
     get: <T>(key: string) => structuredClone(map.get(key)) as T | undefined,
     put: <T>(key: string, value: T) => { map.set(key, structuredClone(value)); },
     delete: (key: string) => map.delete(key),
+    list: <T>({ prefix }: { prefix: string }) => [...map.entries()].filter(([key]) => key.startsWith(prefix)) as [string, T][],
   };
   let tg = telegram(options);
   let claims = options.claims ?? new Map<string, string>();
@@ -55,8 +59,12 @@ function harness(options: { key?: string | undefined; publicBase?: string; failS
     mnemosOf: async () => ({ tenant: "mnemos", principal: "p-alice" }),
     now: () => clock.now,
     waitUntil: promise => { pending.push(promise); },
+    gateway: { submit: async () => ({ accepted: true, chatPath: "/workspace/w1?chat=0" }), rename: async () => true } satisfies TelegramAgentGateway,
+    transcribe: async () => "текст",
+    drafts: new DraftLimiter(),
+    voice: { busy: false },
   });
-  let settle = async () => { await Promise.all(pending.splice(0)); };
+  let settle = async () => { while (pending.length) await Promise.all(pending.splice(0)); };
   return { bot, map, calls: tg.calls, flags: tg.flags, claims, clock, settle };
 }
 
@@ -200,7 +208,7 @@ describe("привязка Telegram-аккаунта владельца", () => 
     let h = await paired();
     let state = await h.bot.state(OWNER);
     expect(state).toMatchObject({ status: "connected", owner: { name: "Алиса", username: null }, connectedAt: 1_000_000 });
-    expect(sent(h.calls)).toEqual([{ method: "sendMessage", body: expect.objectContaining({ chat_id: ALICE, text: STAGE_ONE_REPLY }) }]);
+    expect(sent(h.calls)).toEqual([{ method: "sendMessage", body: expect.objectContaining({ chat_id: ALICE, text: PAIRED_REPLY }) }]);
   });
 
   it("неверный или устаревший код не привязывает никого", async () => {
@@ -245,7 +253,7 @@ describe("вебхук", () => {
     expect(sent(h.calls).length).toBe(before);
   });
 
-  it("чужой отправитель отброшен молча; владельцу — короткий ответ этапа 1", async () => {
+  it("чужой отправитель отброшен молча; сообщение владельца уходит агенту беседы", async () => {
     let h = await paired();
     h.calls.length = 0;
     expect((await h.bot.webhook(hook(privateText(MALLORY, "привет"), h.secret))).status).toBe(200);
@@ -253,7 +261,9 @@ describe("вебхук", () => {
     expect(h.calls).toEqual([]);
     expect((await h.bot.webhook(hook(privateText(ALICE, "привет"), h.secret))).status).toBe(200);
     await h.settle();
-    expect(sent(h.calls)).toEqual([{ method: "sendMessage", body: expect.objectContaining({ chat_id: ALICE, text: STAGE_ONE_REPLY }) }]);
+    // Сообщение вне тредов: бот открывает тред и показывает черновик хода; ответа этапа 1 больше нет.
+    expect(h.calls.map(c => c.method)).toEqual(["createForumTopic", "sendMessageDraft"]);
+    expect(sent(h.calls)).toEqual([]);
   });
 
   it("чужой /start с новым кодом не перехватывает уже привязанного бота", async () => {
@@ -291,7 +301,7 @@ describe("вебхук", () => {
     await h.bot.webhook(hook(body, h.secret));
     await h.bot.webhook(hook(body, h.secret));
     await h.settle();
-    expect(sent(h.calls).length).toBe(1);
+    expect(h.calls.filter(c => c.method === "createForumTopic").length).toBe(1);
   });
 
   it("чужой путь и неподключённый объект — 404, не POST — 405, мусор — 400", async () => {

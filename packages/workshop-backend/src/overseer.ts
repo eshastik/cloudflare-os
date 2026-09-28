@@ -60,6 +60,7 @@ import { findSubmittedAction } from "./action-submission";
 import { collectSlashCommands, invokeSlashCommand } from "./slash-commands";
 import { createWorkshopLogger, obsContext, traced } from "./observability";
 import type { ChatGatewayRpcTarget, SubmitExternalMessageResult } from "@gadgets/workshop-shared/external-message-gateway";
+import { ExternalProgressRelay } from "./external-progress";
 import {
   assertChatAttachmentSupportedByProvider,
   isAllowedChatAttachmentImageMimeType,
@@ -559,6 +560,8 @@ type ExternalMessageRecord = {
       status: "ready";
       chatGatewayRpcTarget: NativeRpcStub<ChatGatewayRpcTarget>;
       responseText: string;
+      // Что ещё известно о ходе на момент его окончания (нужно подтверждение, созданные документы).
+      responseExtras?: ExternalResponseExtras;
     }
   | {
       status: "delivered";
@@ -569,7 +572,32 @@ type ExternalMessageRecord = {
 type ExternalMessageResponseTargetRegistration = {
   idempotencyKey: string;
   chatGatewayRpcTarget: NativeRpcStub<ChatGatewayRpcTarget>;
+  // Слать получателю промежуточные события хода (onGadgetProgress).
+  streamProgress?: boolean;
 };
+
+type ExternalResponseExtras = {
+  needsDecision?: true;
+  documents?: string[];
+  noReply?: true;
+};
+
+// Отказ внешнего хода, когда проверка источников беседы не прошла (доступ отозван).
+export const EXTERNAL_ACCESS_CHANGED = "Доступ к материалам этой беседы изменился — откройте беседу на сайте.";
+
+// Сколько доставка ответа ждёт названия беседы, которое модель придумывает параллельно ходу.
+const EXTERNAL_TITLE_WAIT_MS = 5_000;
+
+// Получатель ответа внешнего входа — либо заглушка объекта RpcTarget (её держат через dup и
+// отпускают dispose), либо точка входа сервиса с props (так её можно хранить в памяти объекта и
+// после перезапуска). У точки входа нет dup: вызов ушёл бы по RPC как метод и упал.
+function holdGatewayTarget(target: NativeRpcStub<ChatGatewayRpcTarget>): NativeRpcStub<ChatGatewayRpcTarget> {
+  return target instanceof NativeRpcStub ? target.dup() : target;
+}
+
+function releaseGatewayTarget(target: NativeRpcStub<ChatGatewayRpcTarget>): void {
+  if (target instanceof NativeRpcStub) target[Symbol.dispose]();
+}
 
 type ExternalMessageResponseTargetRegistrationDecision =
   | {
@@ -587,6 +615,9 @@ type ExternalMessageSubmitInput = {
   prompt: string;
   chatGatewayRpcTarget: NativeRpcStub<ChatGatewayRpcTarget>;
   title: string;
+  streamProgress?: boolean;
+  // Канал, из которого беседа начата: метка в списке бесед владельца.
+  channel?: "telegram";
 };
 
 type ExternalChatRecord = {
@@ -1122,6 +1153,13 @@ class OverseerImpl implements AgentHooks {
   #liveChats = new Map<number, LiveChatContext>();
   #chatSubscribers: Set<RpcStub<AiChatSubscriber>> = new Set();
 
+  // Внешние получатели промежуточных событий хода, по беседе: живут, пока идёт ход. После
+  // перезапуска объекта не восстанавливаются — итоговый ответ всё равно доставляется.
+  #progressRelays = new Map<number, {relay: ExternalProgressRelay; target: NativeRpcStub<ChatGatewayRpcTarget>}>();
+
+  // Идущие генерации названия беседы: доставка внешнего ответа ждёт их недолго, чтобы отдать название.
+  #titleGenerations = new Map<number, Promise<void>>();
+
   #autoApprovalDrainer: AutoApprovalDrainer;
 
   #preparingChatMessages = new Map<number, Promise<void>>();
@@ -1336,7 +1374,7 @@ class OverseerImpl implements AgentHooks {
   #deleteExternalMessageResponseDeliveryRecord(record: ExternalMessageRecord): void {
     this.storage.gadgetResponseDeliveries.delete(record.idempotencyKey);
     if (record.status !== "delivered") {
-      record.chatGatewayRpcTarget[Symbol.dispose]();
+      releaseGatewayTarget(record.chatGatewayRpcTarget);
     }
   }
 
@@ -3633,6 +3671,10 @@ class OverseerImpl implements AgentHooks {
       }
     });
 
+    if (responseTargetRegistration?.streamProgress) {
+      this.#startProgressRelay(chatId, responseTargetRegistration.chatGatewayRpcTarget);
+    }
+
     if (prepared.message !== undefined && userMeta.aiModel) {
       let needsAgentTurnKeepAlive = responseTargetRegistration !== undefined;
       this.startAgent(chatId, userMeta.aiModel, userMeta.profile,
@@ -3643,7 +3685,9 @@ class OverseerImpl implements AgentHooks {
       let titleMessage = prepared.message?.trim() || prepared.slashCommand?.args.trim() ||
         prepared.skillName || (prepared.slashCommand ? "Slash command" : "") ||
         `[user attached ${canonicalAttachments?.length ?? 0} attachment(s)]`;
-      this.generateThreadTitle(chatId, titleMessage, userMeta.quickModel, userMeta.profile);
+      let generation = this.generateThreadTitle(chatId, titleMessage, userMeta.quickModel, userMeta.profile)
+        .finally(() => { if (this.#titleGenerations.get(chatId) === generation) this.#titleGenerations.delete(chatId); });
+      this.#titleGenerations.set(chatId, generation);
     }
 
     this.recordGadgetAnalytics({
@@ -3708,6 +3752,10 @@ class OverseerImpl implements AgentHooks {
       }
     });
 
+    if (responseTargetRegistration?.streamProgress) {
+      this.#startProgressRelay(chatId, responseTargetRegistration.chatGatewayRpcTarget);
+    }
+
     if (runsAgentTurn && userMeta.aiModel) {
       let needsAgentTurnKeepAlive = responseTargetRegistration !== undefined;
       this.startAgent(chatId, userMeta.aiModel, userMeta.profile,
@@ -3730,7 +3778,7 @@ class OverseerImpl implements AgentHooks {
     if (this.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId)) {
       throw new Error("This chat already has an undelivered workspace response target.");
     }
-    chatGatewayRpcTarget = chatGatewayRpcTarget.dup();
+    chatGatewayRpcTarget = holdGatewayTarget(chatGatewayRpcTarget);
     try {
       this.storage.gadgetResponseDeliveries.put({
         idempotencyKey,
@@ -3741,7 +3789,7 @@ class OverseerImpl implements AgentHooks {
         status: "waiting",
       });
     } catch (err) {
-      chatGatewayRpcTarget[Symbol.dispose]();
+      releaseGatewayTarget(chatGatewayRpcTarget);
       throw err;
     }
   }
@@ -3782,6 +3830,8 @@ class OverseerImpl implements AgentHooks {
     let messagesInSameTurn = nextUserMessageIndex === -1
       ? messagesAfterPrompt
       : messagesAfterPrompt.slice(0, nextUserMessageIndex);
+    this.#closeProgressRelay(chatId);
+    let extras = this.#externalResponseExtras(messagesInSameTurn);
     // Prefer the final agent message or terminal agent error in this turn. Отметка о пределе
     // шагов — не ответ: внешнему получателю уходит итог, который агент написал перед ней.
     for (let message of messagesInSameTurn.toReversed()) {
@@ -3790,17 +3840,58 @@ class OverseerImpl implements AgentHooks {
           (message.type === "message" && message.author.type === "agent")) &&
         message.message.trim()
       ) {
-        this.deliverExternalMessageResponse(response, message.message);
+        this.deliverExternalMessageResponse(response, message.message, extras);
         return;
       }
     }
-    this.deliverExternalMessageResponse(response, "Agent turn completed without a response.");
+    this.deliverExternalMessageResponse(response, "Agent turn completed without a response.", {...extras, noReply: true});
   }
 
-  deliverExternalMessageResponse(record: ExternalMessageRecord, text: string): void {
+  // Что внешнему каналу важно знать о ходе, кроме текста: ход ждёт решения человека (карточка
+  // действия или запрос подключения), агент создал документы.
+  #externalResponseExtras(messages: AiChatMessage[]): ExternalResponseExtras {
+    let extras: ExternalResponseExtras = {};
+    let documents: string[] = [];
+    for (let message of messages) {
+      if (message.type === "action") {
+        let action = this.storage.actions.get(message.actionId);
+        if (action?.type === "action" && action.state === "pending" && action.description.awaitDecision) {
+          extras.needsDecision = true;
+        }
+      } else if (message.type === "connectionRequest" && message.state === "pending") {
+        extras.needsDecision = true;
+      } else if (message.type === "changes") {
+        for (let created of message.createdGadgets ?? []) {
+          if (created.title && !documents.includes(created.title)) documents.push(created.title);
+        }
+      }
+    }
+    if (documents.length) extras.documents = documents.slice(0, 10);
+    return extras;
+  }
+
+  #startProgressRelay(chatId: number, target: NativeRpcStub<ChatGatewayRpcTarget>): void {
+    this.#closeProgressRelay(chatId);
+    let own = holdGatewayTarget(target);
+    let relay = new ExternalProgressRelay(async progress => { await own.onGadgetProgress(progress); });
+    this.#progressRelays.set(chatId, {relay, target: own});
+  }
+
+  #closeProgressRelay(chatId: number): void {
+    let entry = this.#progressRelays.get(chatId);
+    if (!entry) return;
+    this.#progressRelays.delete(chatId);
+    entry.relay.close();
+    releaseGatewayTarget(entry.target);
+  }
+
+  deliverExternalMessageResponse(record: ExternalMessageRecord, text: string, extras?: ExternalResponseExtras): void {
     if (record.status === "delivered") return;
 
-    let readyRecord: ExternalMessageRecord = { ...record, status: "ready", responseText: text };
+    let readyRecord: ExternalMessageRecord = {
+      ...record, status: "ready", responseText: text,
+      ...(extras ? {responseExtras: extras} : {}),
+    };
     this.storage.gadgetResponseDeliveries.put(readyRecord);
     this.#updateExternalMessageResponseDeliveryAlarm();
     this.ctx.waitUntil(this.#deliverExternalMessageResponseToTarget(readyRecord).finally(() => {
@@ -3808,12 +3899,31 @@ class OverseerImpl implements AgentHooks {
     }));
   }
 
+  // Название беседы для внешнего канала: придумывается моделью параллельно ходу, поэтому доставка
+  // недолго ждёт идущую генерацию. Служебное название («Новая беседа») не отдаётся.
+  async #externalChatTitle(chatId: number): Promise<string | undefined> {
+    let generation = this.#titleGenerations.get(chatId);
+    if (generation) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([generation, new Promise<void>(resolve => { timer = setTimeout(resolve, EXTERNAL_TITLE_WAIT_MS); })]);
+      clearTimeout(timer);
+    }
+    let title = this.storage.title.get();
+    return title && !isDefaultWorkspaceTitle(title) ? title : undefined;
+  }
+
   async #deliverExternalMessageResponseToTarget(record: ExternalMessageRecord): Promise<void> {
     if (record.status !== "ready") return;
 
     try {
+      let title = await this.#externalChatTitle(record.chatId);
+      let extras = record.responseExtras ?? {};
       await record.chatGatewayRpcTarget.onGadgetResponse({
         text: record.responseText,
+        ...(title ? {title} : {}),
+        ...(extras.needsDecision ? {needsDecision: true} : {}),
+        ...(extras.documents?.length ? {documents: extras.documents} : {}),
+        ...(extras.noReply ? {noReply: true} : {}),
       });
     } catch (err) {
       this.logger.error("failed to deliver external message response", {
@@ -3831,7 +3941,7 @@ class OverseerImpl implements AgentHooks {
       createdAt: record.createdAt,
       deliveredAt: Date.now(),
     });
-    record.chatGatewayRpcTarget[Symbol.dispose]();
+    releaseGatewayTarget(record.chatGatewayRpcTarget);
   }
 
   async deliverReadyExternalMessageResponses(): Promise<void> {
@@ -6187,6 +6297,7 @@ class OverseerImpl implements AgentHooks {
   }
 
   emitChatStreamEvent(chatId: number, event: AiChatStreamEvent): void {
+    this.#progressRelays.get(chatId)?.relay.push(event);
     for (let subscriber of this.#chatSubscribers) {
       subscriber.stream(chatId, event).catch(() => {
         subscriber[Symbol.dispose]();
@@ -6943,7 +7054,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     input: ExternalMessageSubmitInput,
   ): Promise<SubmitExternalMessageResult> {
     if (!input.prompt.trim()) {
-      return { accepted: false, message: "Please include a prompt." };
+      return { accepted: false, message: "Сообщение пустое. Напишите, что нужно сделать." };
     }
 
     // Resolve the caller.
@@ -6954,7 +7065,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       let siteName = resolveSiteName((await readAdminConfig(this.impl.env)).siteName);
       return {
         accepted: false,
-        message: `Please create a ${siteName} account to continue.`,
+        message: `Чтобы продолжить, войдите в ${siteName} на сайте.`,
       };
     }
 
@@ -6975,14 +7086,14 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       if ((this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get())) {
         return {
           accepted: false,
-          message: "This workspace has sharing disabled, so only its owner can access it.",
+          message: "Доступ к этой беседе есть только у её владельца.",
         };
       }
       let role = (await this.impl.getSharingManager()).getEffectiveRole(callerProfile.id);
       if (role !== "build") {
         return {
           accepted: false,
-          message: "You do not have access to interact with this workspace through its agent.",
+          message: "У вас нет доступа к агенту этой беседы.",
         };
       }
     }
@@ -6990,8 +7101,31 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     // Complete pending registration in the owner's UserDO.
     if (this.impl.storage.ownerRegistrationPending.get()) {
       let owner = this.impl.users.get(this.impl.users.idFromString(ownerId));
-      await owner.ensureGadgetRegistered(this.ctx.id.toString(), this.impl.storage.title.get());
+      await owner.ensureGadgetRegistered(this.ctx.id.toString(), this.impl.storage.title.get(), input.channel);
       this.impl.storage.ownerRegistrationPending.put(false);
+    }
+
+    // Подключения владельца (Mnemos и другие постоянные ресурсы) — как при открытии беседы на
+    // сайте. Беседа внешнего канала на сайте может не открываться вовсе, а без этого у агента нет
+    // env.MNEMOS. Права при этом не запоминаются: каждый вызов идёт через подключение человека.
+    if (ownerId === callerId) {
+      await this.impl.ensureAmbientCapsules().catch(err => {
+        this.impl.logger.error("failed to ensure singleton gatekeeper capsules", {
+          event: "singleton.capsules.ensure.failed", error: err,
+        });
+      });
+    }
+
+    // Та же проверка источников, что при открытии беседы на сайте (open → ensureObserver): у
+    // владельца — источники импортированных корпоративных документов, у соавтора — все. Иначе
+    // после отзыва доступа агент отвечал бы из внешнего канала по локальной копии документа.
+    try {
+      await this.impl.ensureObserver(callerProfile.id, caller, "build");
+    } catch (err) {
+      this.impl.logger.warn("external message denied by source verification", {
+        event: "external.message.sources.denied", error: err,
+      });
+      return { accepted: false, message: EXTERNAL_ACCESS_CHANGED };
     }
 
     // Find the external conversation's chat if it exists.
@@ -7016,7 +7150,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       let siteName = resolveSiteName((await readAdminConfig(this.impl.env)).siteName);
       return {
         accepted: false,
-        message: `Your ${siteName} account needs an AI model configured before it can respond.`,
+        message: `В ${siteName} для вашей учётной записи не выбрана модель агента. Выберите её в настройках на сайте.`,
       };
     }
 
@@ -7027,6 +7161,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     let responseTargetRegistration: ExternalMessageResponseTargetRegistration = {
       idempotencyKey: input.idempotencyKey,
       chatGatewayRpcTarget: input.chatGatewayRpcTarget,
+      ...(input.streamProgress ? {streamProgress: true} : {}),
     };
     let chatId: number;
     if (externalChat) {
@@ -7053,6 +7188,25 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     }
 
     return { accepted: true, chatPath: `/workspace/${this.ctx.id.toString()}?chat=${chatId}` };
+  }
+
+  // Название беседы внешнего канала, заданное человеком в канале (переименовал тред Telegram).
+  // Только владелец беседы и только существующая беседа этого канала.
+  async renameExternalChat(callerEmail: string, externalChatKey: string, rawTitle: string): Promise<boolean> {
+    let title = typeof rawTitle === "string" ? rawTitle.replace(/[\r\n]+/g, " ").trim().slice(0, 128) : "";
+    if (!title || !this.impl.ownerId) return false;
+    let caller = this.impl.users.getByName(callerEmail);
+    if (caller.id.toString() !== this.impl.ownerId) return false;
+    let externalChat = this.#getExternalChat(externalChatKey);
+    if (!externalChat) return false;
+    let meta = this.impl.storage.chatMeta.get(externalChat.chatId);
+    if (meta) {
+      meta.title = title;
+      this.impl.storage.chatMeta.put(meta);
+    }
+    this.impl.storage.title.put(title);
+    await this.impl.users.get(this.impl.users.idFromString(this.impl.ownerId)).updateTitle(this.ctx.id.toString(), title);
+    return true;
   }
 
   // Initialize this workspace's default gadget from a blueprint's code snapshot. Called by

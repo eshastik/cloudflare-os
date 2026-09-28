@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { DotsThree, Star, ShareNetwork, Trash, Pencil } from '@phosphor-icons/react'
+import { DotsThree, Star, ShareNetwork, Trash, Pencil, PaperPlaneTilt } from '@phosphor-icons/react'
 import { DropdownMenu } from '@cloudflare/kumo'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from '../menuStyles'
 import { useState, useEffect, useRef } from 'react'
@@ -10,6 +10,20 @@ function initials(title: string | undefined): string {
   if (!t) return 'Б'
   const parts = t.split(/\s+/).slice(0, 2)
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || t.slice(0, 2).toUpperCase()
+}
+
+// Беседа, начатая в треде личного бота Telegram: в боковой панели — значок (строка узкая), в
+// списке «Все беседы» — нейтральный бейдж словом.
+function TelegramMark({ variant }: { variant: 'sidebar' | 'list' }) {
+  if (variant === 'list') {
+    return <span className="shrink-0 rounded-full bg-kumo-fill px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">Telegram</span>
+  }
+  return (
+    <span className="shrink-0 text-kumo-subtle" title="Беседа из Telegram">
+      <PaperPlaneTilt size={13} aria-hidden="true" />
+      <span className="sr-only">Беседа из Telegram</span>
+    </span>
+  )
 }
 
 const ROW = 'group flex h-8 touch:h-10 items-center gap-2 rounded-[10px] pl-3 pr-1 text-[14px] leading-5 text-kumo-default transition-colors hover:bg-kumo-tint'
@@ -95,11 +109,17 @@ export default function SidebarGadgetRow({
             />
           ) : variant === 'list' ? (
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[15px] leading-5 font-medium">{gadget.title || 'Беседа без названия'}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[15px] leading-5 font-medium">{gadget.title || 'Беседа без названия'}</span>
+                {gadget.channel === 'telegram' && <TelegramMark variant="list" />}
+              </span>
               {subtitle && <span className="mt-[3px] block truncate text-[13px] leading-4 text-kumo-subtle">{subtitle}</span>}
             </span>
           ) : (
-            <span className="min-w-0 flex-1 truncate">{gadget.title || 'Беседа без названия'}</span>
+            <>
+              <span className="min-w-0 flex-1 truncate">{gadget.title || 'Беседа без названия'}</span>
+              {gadget.channel === 'telegram' && <TelegramMark variant="sidebar" />}
+            </>
           )}
 
           {/* Inside the row's <Link>: stopPropagation blocks the Link's SPA handler, so preventDefault
