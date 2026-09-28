@@ -51,6 +51,16 @@ export default function AppShell({ children, bare = false }: { children: React.R
     return () => document.removeEventListener('keydown', handler)
   }, [mobileOpen])
 
+  // Пока ящик открыт, страница под ним не прокручивается: иначе палец, дошедший до края списка
+  // в ящике, начинает листать страницу (особенно в Safari на iPhone).
+  useEffect(() => {
+    if (!mobileOpen) return
+    const root = document.documentElement
+    const prev = root.style.overflow
+    root.style.overflow = 'hidden'
+    return () => { root.style.overflow = prev }
+  }, [mobileOpen])
+
   // Close the mobile drawer on navigation. Links in the drawer (primary nav, Gatekeepers, the user
   // menu, workspace rows) otherwise navigate while leaving the drawer covering the page — so on a
   // phone it looks like nothing happened. Watching the pathname catches every navigation source
@@ -90,12 +100,14 @@ export default function AppShell({ children, bare = false }: { children: React.R
       {mobileOpen && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] md:hidden"
+            className="fixed inset-0 z-40 touch-none overscroll-none bg-black/30 backdrop-blur-[1px] md:hidden"
             onClick={() => setMobileOpen(false)}
             aria-hidden="true"
           />
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden">
-            <Sidebar collapsed={false} onToggleCollapsed={() => setMobileOpen(false)} />
+          {/* Высота — видимая область (dvh), а не 100vh: в Safari 100vh включает место под панелями
+              браузера, и строка профиля уходила под нижнюю панель. */}
+          <div data-mobile-drawer className="fixed top-0 left-0 z-50 h-dvh md:hidden">
+            <Sidebar mobile collapsed={false} onToggleCollapsed={() => setMobileOpen(false)} />
           </div>
         </>
       )}

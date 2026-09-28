@@ -42,3 +42,24 @@ export function accentCSSVariables(seed:string):Record<string,string> {
     "--color-selection-text":`light-dark(${c.lightText}, #f7f7f8)`,
   };
 }
+/** Режим темы: светлая, тёмная или как в системе. */
+export type ThemeModeChoice = "light" | "dark" | "system";
+/** Проверяет значение режима темы из хранилища или от клиента. */
+export function isThemeModeChoice(value: unknown): value is ThemeModeChoice {return value==="light"||value==="dark"||value==="system";}
+/** Оформление, сохранённое в аккаунте. null в поле — человек его не выбирал. */
+export interface AppearancePreference {
+  /** Вариант из ACCENT_PALETTE; null — действует общий цвет установки. */
+  accent: AccentChoice | null;
+  /** Режим темы; null — как в системе. */
+  themeMode: ThemeModeChoice | null;
+}
+/** Строгий разбор: лишние поля и значения вне палитры отвергаются, а не отбрасываются. */
+export function parseAppearancePreference(value: unknown): AppearancePreference | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== 2 || !keys.includes("accent") || !keys.includes("themeMode")) return null;
+  const {accent, themeMode} = value as Record<string, unknown>;
+  if (accent !== null && !isAccentChoice(accent)) return null;
+  if (themeMode !== null && !isThemeModeChoice(themeMode)) return null;
+  return {accent, themeMode};
+}

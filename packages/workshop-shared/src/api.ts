@@ -28,6 +28,7 @@ import type { UIReadinessSample } from "./ui-readiness.js";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, ActionOutcome, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
+import type { AppearancePreference } from "./accent-theme.js";
 import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
 
 export const SERVICE_SALT = new Uint8Array([
@@ -349,6 +350,12 @@ export interface AuthenticatedApi extends RpcTarget {
 
   // Set the user's own display name, seen in chats, etc.
   setOwnDisplayName(name: string): Promise<void>;
+
+  /** Оформление из аккаунта; null — человек ещё ничего не сохранял. */
+  getAppearance(): Promise<AppearancePreference | null>;
+
+  /** Сохраняет оформление в аккаунт. Значение вне палитры или лишнее поле — отказ. */
+  setAppearance(appearance: AppearancePreference): Promise<void>;
 
   // Change the user's password, if using password-based authentication.
   //

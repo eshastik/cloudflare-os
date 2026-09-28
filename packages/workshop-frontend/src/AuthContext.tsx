@@ -2,6 +2,7 @@ import { reportShellStage } from "./shellReadiness"
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi, AiChatAuthorInfo } from '@gadgets/workshop-shared/api'
+import { useAccountAppearance } from './ThemeContext'
 
 interface AuthContextType {
   authenticatedApi: RpcStub<AuthenticatedApi>
@@ -56,6 +57,8 @@ export function AuthProvider({ children, authenticatedApi, onLogout }: AuthProvi
     : currentProfile && currentAdmin ? "ready" : "loading"
 
   useEffect(() => { reportShellStage("identity", initialization, authenticatedApi) }, [authenticatedApi, initialization])
+  // Оформление хранится в аккаунте: после входа берётся оттуда на любом устройстве.
+  useAccountAppearance(authenticatedApi, currentUser?.id)
 
   return (
     <AuthContext.Provider value={{ authenticatedApi, logout: onLogout, currentUser, isAdmin, initialization }}>

@@ -28,6 +28,7 @@ import { collectMnemosPeople, mnemosAccountOwner, type MnemosPeople, type Mnemos
 import { MAX_PRINCIPAL_LOOKUP, principalsForUsers } from "./user-directory.js";
 import { ConnectFlows, confirmConnectBrowser, type Flow, type FlowRequest, type ConnectPort } from "./auth/connect-return.js";
 import type { ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
+import { parseAppearancePreference, type AppearancePreference } from "@gadgets/workshop-shared/accent-theme";
 
 /** Сколько держать список людей Mnemos для подсказок «Поделиться». */
 const MNEMOS_PEOPLE_TTL_MS = 60_000;
@@ -215,6 +216,8 @@ function makeUserStorage(storage: DurableObjectStorage) {
       },
       quickModel: <string | null>null,
       preferredModel: <string | null>null,
+      // Личное оформление (акцент и тема); null — ещё не сохранялось, клиент перенесёт выбор браузера.
+      appearance: <AppearancePreference | null>null,
       onboardingCompleted: false,
 
       // Set once the user's pre-existing workspaces have been asked to populate the outputs index
@@ -789,6 +792,17 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       }
     }
     this.storage.preferredModel.put(id);
+  }
+
+  async getAppearance(): Promise<AppearancePreference | null> {
+    // Запись прошлой версии с неверным значением не должна ломать оформление: считаем её пустой.
+    return parseAppearancePreference(this.storage.appearance.get());
+  }
+
+  async setAppearance(appearance: AppearancePreference): Promise<void> {
+    const parsed = parseAppearancePreference(appearance);
+    if (!parsed) throw new Error("Недопустимое оформление: цвет или тема вне списка.");
+    this.storage.appearance.put(parsed);
   }
 
   async isOnboardingCompleted(): Promise<boolean> {

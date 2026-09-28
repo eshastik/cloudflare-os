@@ -1,37 +1,18 @@
 // Личная палитра меняет только акцентные токены. Светлая и тёмная основы остаются в styles.css.
 // Оттенки общие с панелью Mnemos и проверяются по числовому контрасту.
 
-import { ACCENT_PALETTE, accentCSSVariables, isAccentChoice, isAccentHex, type AccentChoice } from '@gadgets/workshop-shared/accent-theme'
+import { ACCENT_PALETTE, accentCSSVariables, isAccentChoice, isAccentHex, isThemeModeChoice, type AccentChoice, type AppearancePreference, type ThemeModeChoice } from '@gadgets/workshop-shared/accent-theme'
 export { ACCENT_PALETTE, type AccentChoice } from '@gadgets/workshop-shared/accent-theme'
 
-export type ThemeMode = 'light' | 'dark' | 'system'
+export type ThemeMode = ThemeModeChoice
 export type ResolvedThemeMode = 'light' | 'dark'
-
-const THEME_MODE_STORAGE_KEY = 'gadgets:theme-mode'
-
-function isThemeMode(value: string | null): value is ThemeMode {
-  return value === 'light' || value === 'dark' || value === 'system'
-}
 
 export function getSystemThemeMode(): ResolvedThemeMode {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 export function readThemeMode(): ThemeMode {
-  try {
-    const stored = window.localStorage.getItem(THEME_MODE_STORAGE_KEY)
-    return isThemeMode(stored) ? stored : 'system'
-  } catch {
-    return 'system'
-  }
-}
-
-export function writeThemeMode(mode: ThemeMode): void {
-  try {
-    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, mode)
-  } catch {
-    // Ignore storage failures; the selected mode still applies for this session.
-  }
+  return readCachedAppearance().appearance.themeMode ?? 'system'
 }
 
 export function resolveThemeMode(mode: ThemeMode): ResolvedThemeMode {
@@ -69,17 +50,63 @@ export function applyAccentColor(color: string | null | undefined): void {
 // The base/default accent, shown in the admin picker when no custom color is set.
 export const DEFAULT_ACCENT_COLOR = '#21664f'
 
-const ACCENT_STORAGE_KEY = 'mnemos:accent-choice'
-/** Выбор действует в этом браузере. При первом посещении используется оформление организации. */
-export function readAccentChoice(): AccentChoice | null {
-  try { const value=window.localStorage.getItem(ACCENT_STORAGE_KEY);return isAccentChoice(value)?value:null; } catch { return null; }
-}
-/** Ошибка хранилища не мешает применить оформление в текущей вкладке. */
-export function writeAccentChoice(choice: AccentChoice): boolean {
-  if(!isAccentChoice(choice)) return false;
-  try {window.localStorage.setItem(ACCENT_STORAGE_KEY,choice);return true;}catch{return false;}
-}
 /** Личный выбор имеет приоритет над общим оформлением организации. */
 export function resolveAccentColor(choice: AccentChoice | null, deploymentColor?: string | null): string {
   return ACCENT_PALETTE.find(option=>option.id===choice)?.color ?? (isAccentHex(deploymentColor)?deploymentColor:DEFAULT_ACCENT_COLOR);
+}
+
+export const EMPTY_APPEARANCE: AppearancePreference = { accent: null, themeMode: null }
+
+// Настройка хранится в аккаунте; здесь только кэш, чтобы при загрузке не мигало.
+// Кэш помечен владельцем: чужой кэш не применяется после входа другого человека.
+export const APPEARANCE_CACHE_KEY = 'mnemos:appearance'
+// Ключи версии, где выбор жил только в браузере. Читаются один раз, чтобы перенести выбор в аккаунт.
+export const LEGACY_ACCENT_KEY = 'mnemos:accent-choice'
+export const LEGACY_THEME_MODE_KEY = 'gadgets:theme-mode'
+
+export interface CachedAppearance {
+  /** Чей это кэш; null — выбор из прежней версии, владелец неизвестен. */
+  user: string | null
+  appearance: AppearancePreference
+}
+
+function storageGet(key: string): string | null {
+  try { return window.localStorage.getItem(key) } catch { return null }
+}
+
+/** Кэш текущего браузера. Без кэша — выбор прежней версии, если он есть. */
+export function readCachedAppearance(): CachedAppearance {
+  const raw = storageGet(APPEARANCE_CACHE_KEY)
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      const user = parsed && typeof parsed === 'object' ? (parsed as { user?: unknown }).user : undefined
+      if (typeof user === 'string' || user === null) {
+        const { accent, themeMode } = parsed as Record<string, unknown>
+        return {
+          user,
+          appearance: { accent: isAccentChoice(accent) ? accent : null, themeMode: isThemeModeChoice(themeMode) ? themeMode : null },
+        }
+      }
+    } catch { /* испорченный кэш равен пустому */ }
+  }
+  const accent = storageGet(LEGACY_ACCENT_KEY), themeMode = storageGet(LEGACY_THEME_MODE_KEY)
+  return { user: null, appearance: { accent: isAccentChoice(accent) ? accent : null, themeMode: isThemeModeChoice(themeMode) ? themeMode : null } }
+}
+
+/** user=null — выбор сделан до сверки с аккаунтом; при сверке он переносится в пустой аккаунт.
+ * Ошибка хранилища не мешает применить оформление в текущей вкладке. */
+export function writeCachedAppearance(user: string | null, appearance: AppearancePreference): void {
+  try {
+    window.localStorage.setItem(APPEARANCE_CACHE_KEY, JSON.stringify({ user, accent: appearance.accent, themeMode: appearance.themeMode }))
+    window.localStorage.removeItem(LEGACY_ACCENT_KEY)
+    window.localStorage.removeItem(LEGACY_THEME_MODE_KEY)
+  } catch { /* см. выше */ }
+}
+
+/** При выходе: следующий человек в этом браузере не должен увидеть чужое оформление. */
+export function clearCachedAppearance(): void {
+  for (const key of [APPEARANCE_CACHE_KEY, LEGACY_ACCENT_KEY, LEGACY_THEME_MODE_KEY]) {
+    try { window.localStorage.removeItem(key) } catch { /* нечего чистить */ }
+  }
 }

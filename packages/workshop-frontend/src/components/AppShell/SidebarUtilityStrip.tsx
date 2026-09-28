@@ -6,14 +6,15 @@ import { MyAvatar } from '../MnemosAvatar'
 
 // Низ панели по макету: одна строка «Настройки» — аватар, имя и шестерёнка. Тема, профиль и выход
 // живут на странице настроек, отдельного меню профиля здесь нет.
-export default function SidebarUtilityStrip({ collapsed = false }: { collapsed?: boolean }) {
+// safeBottom — отступ под домашний индикатор iPhone в мобильном ящике.
+export default function SidebarUtilityStrip({ collapsed = false, safeBottom = false }: { collapsed?: boolean; safeBottom?: boolean }) {
   const { currentUser } = useAuthenticatedApi()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const active = pathname === '/settings' || pathname.startsWith('/settings/') || pathname === '/profile'
   const name = currentUser?.name?.trim() || 'Настройки'
 
   return (
-    <div className={`shrink-0 border-t border-kumo-fill bg-kumo-base py-2 ${collapsed ? 'px-2' : 'px-3.5'}`}>
+    <div className={`shrink-0 border-t border-kumo-fill bg-kumo-base pt-2 ${safeBottom ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]' : 'pb-2'} ${collapsed ? 'px-2' : 'px-3.5'}`}>
       <Link
         to="/settings"
         aria-current={active ? 'page' : undefined}
