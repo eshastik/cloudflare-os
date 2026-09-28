@@ -130,9 +130,11 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, req
     setToolOpened(true)
     if (initial) setTool(initial)
   }
-  // Fill the viewport below the header so the embedded app can manage its own internal layout.
+  // Фрейм занимает ровно область содержимого оболочки и прокручивается сам. Прежняя высота
+  // calc(100vh - 56px) на iPhone выходила за видимую часть экрана (100vh там — экран без панелей Safari),
+  // и низ фрейма уходил под панель браузера.
   return (
-    <div style={{ height: embeddedIntake ? '100%' : 'calc(100vh - 56px)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Dialog.Root open={tool !== null} onOpenChange={open => { if (!open) setTool(null) }}>
         <Dialog size="lg" className="!w-[min(600px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto bg-kumo-base p-0">
           <div className="flex items-start justify-between gap-4 border-b border-kumo-line p-5">

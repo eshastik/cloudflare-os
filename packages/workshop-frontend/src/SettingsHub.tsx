@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { CaretRight } from '@phosphor-icons/react'
+import { CaretRight, Palette, SignOut } from '@phosphor-icons/react'
 import AppearanceSettings from './components/AppearanceSettings'
 import { useAuthenticatedApi } from './AuthContext'
 import { useTheme } from './ThemeContext'
 import type { ThemeMode } from './theme'
 import { useDocumentTitle } from './useDocumentTitle'
 import { MyAvatar } from './components/MnemosAvatar'
-import { GROUP_CARD, SECONDARY_PILL, SECTION_TITLE } from './components/AppShell/pageStyles'
+import { GROUP_CARD, GROUP_ROW, PAGE_TITLE, SECONDARY_PILL, SECTION_TITLE } from './components/AppShell/pageStyles'
 import { clearMyPhoto, saveMyPhoto, useMnemosPhotos } from './mnemosPhotos'
 
 // Настройки (макет Settings): одна страница, секции друг под другом, без вложенных вкладок.
@@ -42,10 +42,10 @@ export default function SettingsHub() {
   const [accentOpen, setAccentOpen] = useState(false)
 
   return (
-    <div className="mx-auto flex w-full max-w-[640px] flex-col gap-[26px] px-4 py-11 sm:px-0">
-      <h1 className="m-0 text-[34px] leading-10 font-semibold tracking-[-1px] text-kumo-default">Настройки</h1>
+    <div className="mx-auto flex w-full max-w-[640px] flex-col gap-6 px-4 pt-6 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-[26px] sm:px-0 sm:py-11">
+      <h1 className={PAGE_TITLE}>Настройки</h1>
 
-      <section aria-label="Профиль" className="flex items-center gap-4 rounded-[18px] border border-kumo-fill bg-kumo-overlay px-[22px] py-5">
+      <section aria-label="Профиль" className="flex items-center gap-4 rounded-[18px] border border-kumo-fill bg-kumo-overlay px-4 py-4 sm:px-[22px] sm:py-5">
         <MyAvatar size={56} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[17px] leading-6 font-semibold text-kumo-default">{currentUser?.name || 'Профиль'}</div>
@@ -92,9 +92,16 @@ export default function SettingsHub() {
             </button>
           ))}
         </div>
-        <button type="button" onClick={() => setAccentOpen(true)} className="self-start cursor-pointer text-[14px] text-kumo-link hover:underline">
-          Цвет акцента
-        </button>
+        <div className={GROUP_CARD}>
+          <button type="button" onClick={() => setAccentOpen(true)} className={GROUP_ROW}>
+            <Palette size={18} className="shrink-0 text-kumo-subtle" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] leading-5 text-kumo-default">Цвет акцента</span>
+              <span className="block text-[13px] leading-5 text-kumo-subtle">Цвет кнопок, ссылок и выделения.</span>
+            </span>
+            <CaretRight size={14} className="shrink-0 text-kumo-subtle" aria-hidden="true" />
+          </button>
+        </div>
       </section>
 
       <section aria-label="Работа" className="flex flex-col gap-2.5">
@@ -115,9 +122,15 @@ export default function SettingsHub() {
         </section>
       )}
 
-      <button type="button" onClick={logout} className="mt-2 self-start cursor-pointer py-2 text-[14px] text-kumo-danger hover:underline">
-        Выйти
-      </button>
+      <section aria-label="Аккаунт" className="flex flex-col gap-2.5">
+        <h2 className={SECTION_TITLE}>Аккаунт</h2>
+        <div className={GROUP_CARD}>
+          <button type="button" onClick={logout} className={GROUP_ROW}>
+            <SignOut size={18} className="shrink-0 text-kumo-danger" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-[15px] leading-5 text-kumo-danger">Выйти из аккаунта</span>
+          </button>
+        </div>
+      </section>
 
       {accentOpen && <AppearanceSettings open={accentOpen} onOpenChange={setAccentOpen} />}
     </div>
@@ -128,7 +141,7 @@ function RowLink({ to, title, note }: { to: '/outputs' | '/providers' | '/gateke
   return (
     <Link
       to={to}
-      className="flex items-center gap-3 border-b border-kumo-tint px-[18px] py-3.5 transition-colors last:border-b-0 hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring"
+      className={GROUP_ROW}
     >
       <span className="min-w-0 flex-1">
         <span className="block text-[15px] leading-5 text-kumo-default">{title}</span>

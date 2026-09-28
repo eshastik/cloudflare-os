@@ -30,7 +30,7 @@ it('первый щелчок по документу коллеги сразу 
     expect(chip().textContent).not.toContain('открываю')
     await act(async () => { chip().click() })
     // Подключение Mnemos и рабочее место поднимаются секунды: щелчок виден сразу.
-    expect(chip().textContent).toContain('открываю…')
+    expect(chip().textContent).toContain('Открываю…')
     expect(chip().getAttribute('aria-busy')).toBe('true')
     await act(async () => { chip().click() })
     expect(open).toHaveBeenCalledTimes(1)

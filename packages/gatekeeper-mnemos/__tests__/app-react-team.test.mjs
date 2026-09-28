@@ -20,7 +20,9 @@ test("«Мой отдел»: сотрудники, проекты отдела �
   }, { section: "team" });
   try {
     await app.until(() => app.text().includes("Борис хочет открыть проект «Прайс» отделу «Продажи»"), "запрос на решение");
-    await app.until(() => app.text().includes("Алиса") && app.text().includes("Руководитель"), "сотрудники отдела");
+    await app.until(() => app.text().includes("Алиса") && app.text().includes("руководитель"), "сотрудники отдела");
+    assert.match(app.text(), /Вы руководите отделом «Продажи»\./, "подпись шапки — предложением, без перечня через точки");
+    assert.ok(app.document.querySelector('#root button[aria-label="Открыть проект «Прайс»"]').textContent.includes("файл"), "у строки проекта подпись: сколько файлов");
     const text = app.text();
     assert.ok(text.includes("Проекты отдела") && text.includes("Прайс"), "проект отдела");
     assert.ok(text.includes("Вы отвечаете за проекты") && text.includes("Склад"), "проект ответственного");
@@ -29,7 +31,7 @@ test("«Мой отдел»: сотрудники, проекты отдела �
     app.button("Разрешить").click();
     await app.until(() => app.calls.some(c => c[0] === "decideShareRequest") && app.text().includes("Проект «Прайс» открыт отделу «Продажи»."), "решение записано");
     assert.deepEqual(app.calls.find(c => c[0] === "decideShareRequest"), ["decideShareRequest", "r1", true]);
-    await app.until(() => app.text().includes("Запросов «Поделиться» на решение нет."), "список обновлён");
+    await app.until(() => !app.document.querySelector('#root section[aria-label="Ждёт вашего решения"]'), "пустой раздел решений скрыт");
     app.buttons().find(b => b.getAttribute("aria-label") === "Открыть проект «Склад»").click();
     await app.until(() => app.calls.some(c => c[0] === "openSection" && c[1] === "projects" && c[2] === "two"), "переход в проект");
   } finally { app.dispose(); }

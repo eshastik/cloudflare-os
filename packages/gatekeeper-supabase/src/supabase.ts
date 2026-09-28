@@ -121,16 +121,16 @@ const SUPABASE_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(SUPABASE_LOGO
 
 const PROJECT_RESOURCE: SupportedResource = {
   urlPattern: "https://supabase.com/dashboard/project/:ref",
-  title: "Supabase Project",
+  title: "Проект Supabase",
   description:
-      "Query and manage a project's Postgres database, and inspect its edge functions and storage.",
+      "Запросы к базе Postgres проекта и её ведение, просмотр edge-функций и хранилища.",
   icon: { url: SUPABASE_LOGO_URL },
 };
 
 const ORGANIZATION_RESOURCE: SupportedResource = {
   urlPattern: "https://supabase.com/dashboard/org/:slug",
-  title: "Supabase Organization",
-  description: "Discover and manage every project in a Supabase organization.",
+  title: "Организация Supabase",
+  description: "Поиск и ведение всех проектов организации Supabase.",
   icon: { url: SUPABASE_LOGO_URL },
 };
 
@@ -338,10 +338,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://supabase.com",
       logo: { url: SUPABASE_LOGO_URL },
       color: "#f0fdf4",
-      tagline: "Query Postgres, inspect schema, and manage projects",
+      tagline: "Запросы к Postgres, просмотр схемы и ведение проектов",
       description:
-          "Connect your Supabase account so Cloudflare OS can run SQL against your project databases, " +
-          "explore schema, and inspect edge functions and storage for the projects you choose.",
+          "Подключите аккаунт Supabase, чтобы платформа могла выполнять SQL в базах выбранных вами " +
+          "проектов, изучать схему и просматривать edge-функции и хранилище.",
     };
   }
 

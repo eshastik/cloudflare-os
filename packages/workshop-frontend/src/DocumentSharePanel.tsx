@@ -8,6 +8,7 @@ import { plural } from './versionDiff'
 import { useAuthenticatedApi } from './AuthContext'
 import { listAccounts, storesDocuments } from './accountCapabilities'
 import MnemosAvatar from './components/MnemosAvatar'
+import { PANEL_CLASS, PANEL_HEADER_CLASS } from './DocumentVersionPanel'
 
 /** Отделы организации для выбора людей (метод моста `departments`). */
 export type ShareUnit = { id: string; name: string; members: { id: string; name: string }[] }
@@ -115,14 +116,14 @@ function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabl
   const value: Right = person.mode === 'write' ? 'write' : 'read'
   return <div ref={box} className="relative">
     <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`Право: ${person.name || 'Коллега'}`} disabled={disabled} onClick={() => setOpen(o => !o)}
-      className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-full border-0 bg-transparent px-2.5 text-[14px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default disabled:cursor-not-allowed">
+      className="inline-flex h-10 cursor-pointer items-center gap-1 rounded-full border-0 bg-transparent px-2.5 text-[14px] sm:h-8 text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default disabled:cursor-not-allowed">
       {RIGHTS.find(r => r.id === value)!.title}<CaretDown size={12} aria-hidden="true" /></button>
     {open && <div role="menu" className="absolute top-9 right-0 z-10 flex w-48 flex-col rounded-xl border border-kumo-fill bg-kumo-overlay p-1 shadow-[0_8px_24px_rgba(24,32,28,0.12)]">
       {RIGHTS.map(r => {
         // Право правки даёт само приглашение: своё право записи в папку не требуется.
         return <button key={r.id} type="button" role="menuitemradio" aria-checked={value === r.id}
           onClick={() => { setOpen(false); if (r.id !== value) onChange(r.id) }}
-          className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 text-left text-[14px] text-kumo-default hover:bg-kumo-tint disabled:cursor-not-allowed disabled:text-kumo-inactive disabled:hover:bg-transparent">
+          className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 text-left sm:h-9 text-[14px] text-kumo-default hover:bg-kumo-tint disabled:cursor-not-allowed disabled:text-kumo-inactive disabled:hover:bg-transparent">
           <span className="w-4">{value === r.id && <Check size={14} aria-hidden="true" />}</span>{r.title}</button>
       })}
     </div>}
@@ -262,16 +263,16 @@ export default function DocumentSharePanel({ selector, binding, format, document
     </li>
   }
 
-  return <aside data-share-panel aria-label="Поделиться" className="absolute top-0 right-0 z-30 flex max-h-full w-[min(640px,100%)] flex-col rounded-[20px] bg-kumo-overlay shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]">
-    <header className="flex shrink-0 items-center gap-3 px-7 pt-[26px] pb-5">
+  return <aside data-share-panel aria-label="Поделиться" className={PANEL_CLASS}>
+    <header className={PANEL_HEADER_CLASS}>
       <button type="button" aria-label="Назад к документу" onClick={onClose}
-        className="inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><CaretLeft size={16} /></button>
+        className="inline-flex h-10 w-10 sm:h-[34px] sm:w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><CaretLeft size={16} /></button>
       <div className="min-w-0 flex-1">
         <h2 className="m-0 text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">Поделиться</h2>
-        {documentName && <p title={documentName} className="m-0 truncate text-[14px] leading-5 text-kumo-subtle">{documentName}</p>}
+        {documentName && <p title={documentName} className="m-0 text-[14px] leading-5 text-kumo-subtle [overflow-wrap:anywhere] sm:truncate">{documentName}</p>}
       </div>
     </header>
-    <div className="flex min-h-0 flex-col gap-6 overflow-y-auto px-7 pb-[26px] text-[14px] text-kumo-default">
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 pb-[26px] text-[14px] text-kumo-default sm:flex-initial sm:px-7">
       {!binding && <p className="m-0 text-kumo-subtle">Документ ещё не сохранён в проект. Поделиться можно, когда он сохранится.</p>}
       {binding && owner === false && <p className="m-0 text-kumo-subtle">С вами поделились этим документом.{documentOnly ? ' Вам открыт только он, без папки проекта.' : ''} Приглашать других может его владелец.</p>}
       {binding && owner && <>
@@ -290,7 +291,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
               {documentOnlyWith(p, p.mode === 'write' ? 'write' : 'read') && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">только этот документ</span>}
             </span>
             <button type="button" disabled={busy} onClick={() => { void change([{ person: p, mode: '' }], `${p.name || 'Коллега'} больше не видит документ.`) }}
-              className="h-8 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-kumo-danger focus-visible:opacity-100 disabled:cursor-not-allowed">Убрать</button>
+              className="h-10 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-kumo-danger focus-visible:opacity-100 disabled:cursor-not-allowed sm:h-8 [@media(hover:none)]:opacity-100">Убрать</button>
             <RightMenu person={p} disabled={busy} onChange={mode => { void change([{ person: p, mode }], `${p.name || 'Коллега'} теперь ${mode === 'write' ? 'может править' : 'может смотреть'}.`) }} />
           </div>)}
         </section>
@@ -302,7 +303,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
             <MagnifyingGlass size={16} aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-kumo-subtle" />
             <input id="share-person" type="search" autoComplete="off" placeholder="Найти по имени" value={query} disabled={people === null}
               onChange={e => setQuery(e.target.value)}
-              className="h-10 w-full rounded-full border border-kumo-fill-hover bg-kumo-overlay pr-4 pl-10 text-[15px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30" />
+              className="h-10 w-full rounded-full border border-kumo-fill-hover bg-kumo-overlay pr-4 pl-10 text-[16px] sm:text-[15px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30" />
           </label>
           {found && <ul aria-label="Найденные коллеги" className="m-0 flex list-none flex-col p-0">{found.map(c => row(c, true))}</ul>}
           {found?.length === 0 && <p className="m-0 px-2 text-[13px] text-kumo-subtle">Никого не нашли по «{query.trim()}».</p>}
@@ -312,12 +313,12 @@ export default function DocumentSharePanel({ selector, binding, format, document
             return <div key={g.id} data-group={g.id} className="flex flex-col">
               <div className="flex items-center gap-1">
                 <button type="button" aria-expanded={isOpen(g)} onClick={() => setOpen(o => ({ ...o, [g.id]: !isOpen(g) }))}
-                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg border-0 bg-transparent px-1 py-1.5 text-left text-[13px] leading-[18px] font-medium text-kumo-subtle hover:text-kumo-default">
+                  className="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-lg border-0 bg-transparent px-1 py-1.5 text-left sm:min-h-0 text-[13px] leading-[18px] font-medium text-kumo-subtle hover:text-kumo-default">
                   {isOpen(g) ? <CaretDown size={12} aria-hidden="true" /> : <CaretRight size={12} aria-hidden="true" />}
                   <span className="truncate">{g.mine && g.unit ? `Мой отдел · ${g.title}` : g.title}</span><span className="text-kumo-inactive">{g.people.length}</span>
                 </button>
                 {g.unit && eligible.length > 1 && <button type="button" disabled={busy} onClick={() => setPicked(old => all ? old.filter(id => !eligible.some(c => c.id === id)) : [...new Set([...old, ...eligible.map(c => c.id)])])}
-                  className="h-7 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-brand hover:bg-kumo-tint">{all ? 'Снять отдел' : 'Весь отдел'}</button>}
+                  className="h-10 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-brand hover:bg-kumo-tint sm:h-7">{all ? 'Снять отдел' : 'Весь отдел'}</button>}
               </div>
               {isOpen(g) && <ul aria-label={g.title} className="m-0 flex list-none flex-col p-0">{g.people.map(c => row(c, !g.unit))}</ul>}
             </div>
@@ -329,14 +330,14 @@ export default function DocumentSharePanel({ selector, binding, format, document
       {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
       {notice && <p role="status" className="m-0">{notice}</p>}
     </div>
-    {pickedPeople.length > 0 && <footer className="flex shrink-0 flex-wrap items-center gap-3 rounded-b-[20px] border-t border-kumo-fill bg-kumo-overlay px-7 py-3.5">
-      <div role="radiogroup" aria-label="Право приглашённых" className="inline-flex rounded-full bg-kumo-tint p-0.5">
+    {pickedPeople.length > 0 && <footer className="flex shrink-0 flex-wrap items-center gap-3 border-t border-kumo-fill bg-kumo-overlay px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:rounded-b-[20px] sm:px-7 sm:py-3.5">
+      <div role="radiogroup" aria-label="Право приглашённых" className="flex w-full rounded-full bg-kumo-tint p-0.5 sm:inline-flex sm:w-auto">
         {RIGHTS.map(r => <button key={r.id} type="button" role="radio" aria-checked={right === r.id} disabled={busy} onClick={() => setRight(r.id)}
-          className={`h-8 cursor-pointer rounded-full border-0 px-3 text-[13px] transition-colors ${right === r.id ? 'bg-kumo-overlay font-medium text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]' : 'bg-transparent text-kumo-subtle hover:text-kumo-default'}`}>{r.title}</button>)}
+          className={`h-10 flex-1 cursor-pointer rounded-full border-0 px-3 text-[13px] sm:h-8 sm:flex-initial transition-colors ${right === r.id ? 'bg-kumo-overlay font-medium text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]' : 'bg-transparent text-kumo-subtle hover:text-kumo-default'}`}>{r.title}</button>)}
       </div>
-      <button type="button" disabled={busy} onClick={() => setPicked([])} className="h-8 cursor-pointer rounded-full border-0 bg-transparent px-2 text-[13px] text-kumo-subtle hover:text-kumo-default">Сбросить</button>
+      <button type="button" disabled={busy} onClick={() => setPicked([])} className="h-10 cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-kumo-subtle hover:text-kumo-default sm:h-8 sm:px-2">Сбросить</button>
       <button type="button" data-share-invite="" disabled={busy} onClick={() => { void invite() }}
-        className="ml-auto inline-flex h-[38px] cursor-pointer items-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] font-medium text-white hover:bg-kumo-brand-hover disabled:cursor-wait disabled:opacity-60">{busy ? 'Приглашаю…' : `Пригласить ${pickedPeople.length}`}</button>
+        className="ml-auto inline-flex h-10 flex-1 justify-center cursor-pointer sm:h-[38px] sm:flex-initial items-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] font-medium text-white hover:bg-kumo-brand-hover disabled:cursor-wait disabled:opacity-60">{busy ? 'Приглашаю…' : `Пригласить ${pickedPeople.length}`}</button>
     </footer>}
   </aside>
 }

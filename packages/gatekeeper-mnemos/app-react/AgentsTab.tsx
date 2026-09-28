@@ -31,7 +31,7 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
     <section aria-label="Бюджеты проектов"><Head title="Бюджеты проектов" /><BudgetPanel data={data} /></section>
     <section aria-label="Агенты">
       <Head title="Агенты" count={data.connectionsError || data.connectionsLoading ? undefined : data.connections.filter(c => !c.revoked).length}>
-        <Pill aria-expanded={external} onClick={() => setExternal(!external)}>{external ? "Свернуть" : "Подключить Codex или Claude Code"}</Pill>
+        <Pill aria-expanded={external} onClick={() => setExternal(!external)}>{external ? "Свернуть" : "Подключить свой агент"}</Pill>
       </Head>
       {external && <ExternalAgentSetup data={data} />}
       <AgentList data={data} />
@@ -347,13 +347,16 @@ function ExpensesPanel({ data }: { data: MemoryData }) {
   const rate = s?.usd_rub_rate;
   const section = (title: string, key: SpendKey, name: (g: SpendingGroup) => string, skipEmptyKey = false) => {
     const rows = (s?.[key] ?? []).filter(g => !(skipEmptyKey && !g.key));
+    // Пустая разбивка не показывается: шесть строк «Трат нет» подряд ничего не сообщали сверх итога «0 $».
+    if (s && !rows.length) return null;
     return <section aria-label={title} key={key}>
       <Head title={title} />
-      {rows.length ? <Card>{rows.map(g => <SpendRow key={g.key || "-"} title={name(g)} group={g} rate={rate} />)}</Card> : <Notice>{s ? "Трат нет." : "…"}</Notice>}
+      {rows.length ? <Card>{rows.map(g => <SpendRow key={g.key || "-"} title={name(g)} group={g} rate={rate} />)}</Card> : <Notice>Загружаем…</Notice>}
     </section>;
   };
   return <section aria-label="Расходы" className="grid gap-5">
-    <div className="flex flex-wrap gap-2" aria-label="Период расходов">
+    {/* Период — один переключатель, как в «Правилах», а не ряд отдельных кнопок. */}
+    <div role="group" className="inline-flex w-fit max-w-full overflow-x-auto rounded-full bg-kumo-tint p-1 [scrollbar-width:none] [&>*]:shrink-0" aria-label="Период расходов">
       {SPENDING_PERIODS.map(p => <Pill key={p} tone={p === period ? "secondary" : "ghost"} aria-pressed={p === period} onClick={() => setPeriod(p)}>{PERIOD_LABELS[p]}</Pill>)}
     </div>
     <Card className="p-5">

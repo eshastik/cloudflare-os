@@ -140,7 +140,7 @@ const HOMEASSISTANT_ICON: AvatarImage = { url: HOMEASSISTANT_LOGO_URL };
 const INSTANCE_RESOURCE: SupportedResource = {
   urlPattern: "https://*",
   title: "Home Assistant",
-  description: "Access to a Home Assistant instance: every area, device, entity, and dashboard.",
+  description: "Доступ к установке Home Assistant целиком: все зоны, устройства, сущности и панели.",
   icon: HOMEASSISTANT_ICON,
 };
 
@@ -149,29 +149,29 @@ const INSTANCE_RESOURCE: SupportedResource = {
 // `https://*` whole-instance resource, and so URLPattern.test() routes correctly.
 const AREA_RESOURCE: SupportedResource = {
   urlPattern: "https://homeassistant.local/_resource/area/:areaId",
-  title: "Home Assistant Area",
-  description: "Access to a single Home Assistant area (room): its devices and entities only.",
+  title: "Зона Home Assistant",
+  description: "Доступ к одной зоне Home Assistant (комнате): только её устройства и сущности.",
   icon: HOMEASSISTANT_ICON,
 };
 
 const LABEL_RESOURCE: SupportedResource = {
   urlPattern: "https://homeassistant.local/_resource/label/:labelId",
-  title: "Home Assistant Label",
-  description: "Access to all Home Assistant entities carrying a particular label.",
+  title: "Метка Home Assistant",
+  description: "Доступ ко всем сущностям Home Assistant с определённой меткой.",
   icon: HOMEASSISTANT_ICON,
 };
 
 const DEVICE_RESOURCE: SupportedResource = {
   urlPattern: "https://homeassistant.local/_resource/device/:deviceId",
-  title: "Home Assistant Device",
-  description: "Access to a single physical device and the entities it provides.",
+  title: "Устройство Home Assistant",
+  description: "Доступ к одному физическому устройству и его сущностям.",
   icon: HOMEASSISTANT_ICON,
 };
 
 const ENTITY_RESOURCE: SupportedResource = {
   urlPattern: "https://homeassistant.local/_resource/entity/:entityId",
-  title: "Home Assistant Entity",
-  description: "Access to a single Home Assistant entity (light, sensor, switch, etc).",
+  title: "Сущность Home Assistant",
+  description: "Доступ к одной сущности Home Assistant (свет, датчик, выключатель и т. п.).",
   icon: HOMEASSISTANT_ICON,
 };
 
@@ -349,11 +349,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       displayName: "Home Assistant",
       url: "https://www.home-assistant.io/",
       logo: HOMEASSISTANT_ICON,
-      tagline: "Control your smart home, read sensor state, and edit Lovelace dashboards.",
+      tagline: "Управление умным домом, показания датчиков и правка панелей Lovelace",
       description:
-          "Connect your Home Assistant instance so Cloudflare OS can read entity state, call services " +
-          "to control devices, edit dashboards, and render templates. Build agents that automate " +
-          "your home, alert on sensor changes, or generate custom dashboards.",
+          "Подключите установку Home Assistant, чтобы платформа могла читать состояние сущностей, " +
+          "вызывать службы для управления устройствами, править панели и отрисовывать шаблоны. " +
+          "Агенты смогут автоматизировать дом, предупреждать об изменениях датчиков и собирать свои панели.",
     };
   }
 

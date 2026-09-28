@@ -168,7 +168,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
     switch (entry.kind) {
       case "approval": {
         const r = entry.review!, d = entry.domain!, project = projectName(data.projects, r.project_id);
-        return { title: `Согласовать «${docs(r, d.node_ids)}»`, from: personName(r.author_id), project, extra: `направление ${d.domain_id} · одобрили ${d.decisions.filter(x => x.approved).length} из ${d.approvers.length}`,
+        return { title: `Согласовать «${docs(r, d.node_ids)}»`, from: personName(r.author_id), project, extra: `направление ${d.domain_id}, одобрили ${d.decisions.filter(x => x.approved).length} из ${d.approvers.length}`,
           chat: `Помоги проверить изменения в «${docs(r, d.node_ids)}» перед согласованием: что поменялось и есть ли риски?`, chatProject: r.project_id };
       }
       case "publish": {
@@ -238,7 +238,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
         {entries.map(entry => {
           const card = describe(entry);
           const age = relativeTime(entry.at);
-          const note = [card.from && `От: ${card.from}`, card.project && `проект «${card.project}»`, card.extra, age].filter(Boolean).join(" · ");
+          const note = sentences([card.from && `От: ${card.from}`, card.project && `проект «${card.project}»`, card.extra, age]);
           const open = selected?.key === entry.key;
           return (
             <DecisionCard key={entry.key} data-inbox={entry.kind} data-decision={entry.kind === "approval" ? "approve" : entry.kind} aria-current={open ? "true" : undefined}
@@ -275,17 +275,17 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
           ))}
           {blocked.map(({ review, waitingFor, domains }) => (
             <Row key={review.candidate_id} className="items-start">
-              <RowText title={`«${docs(review)}» ждёт согласования`} note={`проект «${projectName(data.projects, review.project_id)}» · направление ${domains.join(", ")} · решение за ${waitingFor.map(id => personName(id)).join(", ")}`} />
+              <RowText title={`«${docs(review)}» ждёт согласования`} note={sentences([`проект «${projectName(data.projects, review.project_id)}», направление ${domains.join(", ")}`, `решение за ${waitingFor.map(id => personName(id)).join(", ")}`])} />
             </Row>
           ))}
           {waitingCollaborations.map(item => (
             <Row key={item.request.request_id} className="items-start">
-              <RowText title={`Поручение «${item.request.title}» ждёт результата`} note={`проект «${projectName(data.projects, item.request.project_id)}» · результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
+              <RowText title={`Поручение «${item.request.title}» ждёт результата`} note={`Проект «${projectName(data.projects, item.request.project_id)}». Результат за: ${actorName(data.connections, item.request.target_agent_id, item.request.target_user_id)}`} />
             </Row>
           ))}
           {budgetBlocked && (
             <Row className="items-start">
-              <RowText title="Задача агента ждёт согласования бюджета" note={`проект «${projectName(data.projects, budgetBlocked.team_budget!.project_id)}» · решение за владельцем бюджета проекта`} />
+              <RowText title="Задача агента ждёт согласования бюджета" note={`Проект «${projectName(data.projects, budgetBlocked.team_budget!.project_id)}». Решение за владельцем бюджета проекта.`} />
             </Row>
           )}
         </RowList>
@@ -347,9 +347,14 @@ function CollaborationRow({ item, data, onChat }: { item: CollaborationItem; dat
   const state = item.progress ? COLLABORATION_STATES[item.progress.state] : "Состояние недоступно";
   return (
     <Row className="items-start" data-collaboration="">
-      <RowText title={item.request.title} note={`проект «${projectName(data.projects, item.request.project_id)}» · от: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)} · срок не задан`} />
+      <RowText title={item.request.title} note={`Проект «${projectName(data.projects, item.request.project_id)}». Поручил: ${actorName(data.connections, item.request.requester_agent_id, item.request.requester_user_id)}. Срок не задан.`} />
       <StatusBadge tone={item.progress?.state === "accepted" ? "success" : item.progress?.state === "changes_requested" ? "danger" : "neutral"}>{state}</StatusBadge>
       <Button variant="secondary" size="sm" onClick={onChat}>Открыть в беседе</Button>
     </Row>
   );
+}
+
+/** Подпись строки предложениями, а не перечнем через точки: «От: Борис. Проект «Прайс». Вчера.» */
+function sentences(parts: (string | false | undefined | null)[]): string {
+  return parts.filter((part): part is string => !!part).map(part => part.replace(/[.\s]+$/, "")).map(part => part[0].toLocaleUpperCase("ru-RU") + part.slice(1)).join(". ") + ".";
 }

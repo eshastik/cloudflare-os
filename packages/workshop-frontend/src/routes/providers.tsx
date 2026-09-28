@@ -71,12 +71,12 @@ function ModelRow({
             {model.name}
           </span>
           {isBuiltIn && (
-            <span className="shrink-0 rounded-full bg-kumo-tint px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.4px] text-kumo-subtle">
+            <span className="shrink-0 rounded-full bg-kumo-tint px-1.5 py-0.5 text-[11px] font-semibold text-kumo-subtle">
               встроенная
             </span>
           )}
           {isQuick && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[rgba(255,72,1,0.10)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.4px] text-kumo-brand">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[rgba(255,72,1,0.10)] px-1.5 py-0.5 text-[11px] font-semibold text-kumo-brand">
               <Lightning size={9} weight="fill" />
               быстрая
             </span>
@@ -94,7 +94,7 @@ function ModelRow({
             render={
               <button
                 aria-label="Действия с моделью"
-                className="cursor-pointer rounded-md p-1.5 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                className="cursor-pointer rounded-md p-1.5 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 touch:opacity-100 sm:group-hover:opacity-100"
               >
                 <DotsThreeVertical size={16} />
               </button>

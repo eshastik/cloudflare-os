@@ -66,7 +66,8 @@ test("«Проекты»: пустая политика и отказ серве
     app.button("Второй проект").click();
     // Вкладки первого проекта ещё на экране: ждём заголовок второго, иначе щелчок уйдёт в старую страницу.
     await app.until(() => [...app.document.querySelectorAll("#root h2")].some(h => h.textContent === "Второй проект"), "второй проект");
-    await app.until(() => section("Сейчас")?.textContent.includes("ничего не ждёт вашего решения"), "у второго проекта ничего не ждёт решения");
+    // Пустой блок «Сейчас» не показывается: у второго проекта ничего не ждёт решения.
+    await app.until(() => section("Согласование") && !section("Сейчас"), "у второго проекта блока «Сейчас» нет");
     await app.until(() => section("Согласование")?.textContent.includes("нет права или сервер отказал"), "отказ показан");
   } finally { app.dispose(); }
 });
@@ -98,7 +99,7 @@ test("Файлы и папки загружаются в выбранный пр
     await app.until(() => app.text().includes("Принято файлов: 1 из 1"), "результат загрузки");
     assert.ok(app.calls.some(c => c[0] === "pickInboxFiles" && c[1] === false && c[2] === "two"));
     assert.ok(app.text().includes("личные черновики проекта"));
-    app.button("Выбрать папку").click();
+    app.button("Папку").click();
     await app.until(() => app.calls.some(c => c[0] === "pickInboxFiles" && c[1] === true && c[2] === "two"), "папка в том же проекте");
     assert.equal(app.calls.some(c => c[0] === "openPrompt"), false);
   } finally { app.dispose(); }

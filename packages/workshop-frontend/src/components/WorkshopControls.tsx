@@ -34,7 +34,7 @@ export function WorkshopButton({
     <Button
       {...props}
       variant={variant}
-      className={`${buttonBaseClassName} ${buttonToneClassNames[tone]} ${className}`}
+      className={`${buttonBaseClassName} ${buttonToneClassNames[tone]} touch:!h-10 ${className}`}
     />
   )
 }
@@ -65,7 +65,7 @@ export function WorkshopIconButton({
       {...props}
       variant={variant}
       shape="square"
-      className={`!flex !h-8 !w-8 shrink-0 cursor-pointer items-center justify-center rounded-md !p-0 transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 ${toneClassName} ${className}`}
+      className={`!flex !h-8 !w-8 shrink-0 cursor-pointer items-center justify-center rounded-md !p-0 transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 touch:!h-10 touch:!w-10 ${toneClassName} ${className}`}
     >
       {children}
     </Button>

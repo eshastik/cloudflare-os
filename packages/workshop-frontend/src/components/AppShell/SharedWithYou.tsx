@@ -35,20 +35,26 @@ export default function SharedWithYou() {
     } catch (error) { toasts.add({ title: sharedDocumentFailure(item.name, error), variant: 'error' }) }
     finally { setOpening('') }
   }
-  return <section aria-label="Поделились с вами" className="mt-8 flex flex-col items-center gap-3">
-    <h2 className="m-0 text-[14px] leading-5 font-medium text-kumo-subtle">Поделились с вами</h2>
-    <div className="flex flex-wrap justify-center gap-2.5">
-      {items.slice(0, SHOWN).map(item => {
+  // Раздел под примерами задач: заголовок блока и список строк в рамке — как остальные списки оболочки.
+  return <section aria-label="Поделились с вами" className="mt-10 flex flex-col gap-2">
+    <h2 className="m-0 px-1 text-[15px] leading-5 font-semibold text-kumo-default">Поделились с вами</h2>
+    <ul className="m-0 list-none overflow-hidden rounded-xl border border-kumo-line bg-kumo-overlay p-0">
+      {items.slice(0, SHOWN).map((item, index) => {
         const key = `${item.accountId}/${item.scope}/${item.owner}/${item.resource}`
+        const from = item.grantedByName || item.ownerName || 'коллега'
         // Открытие поднимает подключение Mnemos и рабочее место — это секунды; без видимого хода щелчок кажется пропавшим.
-        return <button key={key} type="button" data-shared-document="" disabled={!!opening} aria-busy={opening === key || undefined} title={sharedDocumentNote(item)} onClick={() => { void open(item) }}
-          className="flex h-[38px] max-w-[320px] cursor-pointer items-center gap-2 rounded-full border border-kumo-fill-hover bg-kumo-overlay pr-4 pl-3 text-[14px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:opacity-60">
-          {!item.seen && <i aria-label="новое" className="h-2 w-2 shrink-0 rounded-full bg-kumo-brand" />}
-          <MnemosAvatar name={item.ownerName || 'Коллега'} id={item.owner} size={22} />
-          <span className="truncate">«{item.name}»</span>
-          <span className="shrink-0 text-kumo-subtle">· {opening === key ? 'открываю…' : item.grantedByName || item.ownerName || 'коллега'}</span>
-        </button>
+        return <li key={key} className={index ? 'border-t border-kumo-line' : ''}>
+          <button type="button" data-shared-document="" disabled={!!opening} aria-busy={opening === key || undefined} title={sharedDocumentNote(item)} onClick={() => { void open(item) }}
+            className="flex min-h-14 w-full cursor-pointer items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kumo-ring disabled:opacity-60">
+            <MnemosAvatar name={item.ownerName || 'Коллега'} id={item.owner} size={32} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[14px] leading-5 font-medium text-kumo-default">{item.name}</span>
+              <span className="block truncate text-[12px] leading-4 text-kumo-subtle">{opening === key ? 'Открываю…' : `Кто поделился: ${from}`}</span>
+            </span>
+            {!item.seen && <i aria-label="новое" className="h-2 w-2 shrink-0 rounded-full bg-kumo-brand" />}
+          </button>
+        </li>
       })}
-    </div>
+    </ul>
   </section>
 }

@@ -208,11 +208,13 @@ describe("«Что изменилось»", () => {
 });
 
 describe("переключатель «Код» у поля ввода", () => {
-  it("три положения, выбранное отмечено, подсказка словами; нажатие меняет режим", () => {
+  it("чип «Код: Авто» открывает три положения, выбранное отмечено, подсказка словами; нажатие меняет режим", () => {
     const onChange = vi.fn();
     const view = render(<CodeModeSwitch mode="auto" onChange={onChange} />);
+    expect(view.querySelector('[role="radio"]')).toBeNull();
+    act(() => button(view, "Работа с кодом: Авто").click());
     const radios = [...view.querySelectorAll('[role="radio"]')] as HTMLButtonElement[];
-    expect(radios.map(r => r.textContent)).toEqual(["Выкл", "Авто", "Вкл"]);
+    expect(radios.map(r => r.querySelector("span.min-w-0 > span")?.textContent)).toEqual(["Выкл", "Авто", "Вкл"]);
     expect(radios.map(r => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
     expect(radios.every(r => (r.title ?? "").length > 20)).toBe(true);
     expect(view.textContent).toContain("Код:");
@@ -225,6 +227,7 @@ describe("переключатель «Код» у поля ввода", () => {
   it("стоит в строке проектов беседы", () => {
     const view = render(<ProjectChips projects={[]} onChange={() => {}} loadChoices={async () => []}
       trailing={<CodeModeSwitch mode="off" onChange={() => {}} />} />);
+    act(() => button(view, "Работа с кодом: Выкл").click());
     expect(view.querySelector('[aria-label="Проекты беседы"] [role="radiogroup"]')).not.toBeNull();
   });
 
@@ -245,21 +248,21 @@ describe("переключатель «Код» у поля ввода", () => {
     const pending = new Promise<boolean>(r => { resolve = r; });
     const loadPending = () => pending;
     const view = render(<Row load={loadPending} />);
-    expect(view.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(view.querySelector('[aria-label^="Работа с кодом"]')).toBeNull();
     await act(async () => { resolve(true); await pending; });
-    expect(view.querySelector('[role="radiogroup"]')).not.toBeNull();
+    expect(view.querySelector('[aria-label^="Работа с кодом"]')).not.toBeNull();
     act(() => root?.unmount()); container?.remove();
 
     const denied = async () => false;
     const offView = render(<Row load={denied} />);
     await flush();
-    expect(offView.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(offView.querySelector('[aria-label^="Работа с кодом"]')).toBeNull();
     act(() => root?.unmount()); container?.remove();
 
     const broken = async () => { throw new Error("нет связи"); };
     const brokenView = render(<Row load={broken} />);
     await flush();
-    expect(brokenView.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(brokenView.querySelector('[aria-label^="Работа с кодом"]')).toBeNull();
     // Беседа показывает переключатель только по праву.
     expect(chatInterfaceSource).toContain("codeWorkAllowed ? <CodeModeSwitch");
   });

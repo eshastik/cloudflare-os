@@ -77,8 +77,8 @@ function getBasePath(env: Env) {
 function getEmailMailboxResource(env: Env): SupportedResource {
   return {
     urlPattern: `${getBaseUrl(env)}/mailbox/:user`,
-    title: "Email Mailbox",
-    description: "Send and receive emails.",
+    title: "Почтовый ящик",
+    description: "Отправка и получение писем.",
   };
 }
 
@@ -255,10 +255,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: getBaseUrl(this.env),
       logo: { url: EMAIL_LOGO_URL },
       color: "#fff5df",
-      tagline: "Trigger gadgets from incoming email",
+      tagline: "Запуск гаджетов по входящим письмам",
       description:
-          "Give Cloudflare OS an email address it can receive messages from. Useful for triage " +
-          "agents, ticket-from-email workflows, or anything driven by mail.",
+          "Выдаёт платформе почтовый адрес, на который можно присылать письма. Подходит для агентов " +
+          "разбора входящих, заявок из писем и любых процессов, которые запускает почта.",
     };
   }
 

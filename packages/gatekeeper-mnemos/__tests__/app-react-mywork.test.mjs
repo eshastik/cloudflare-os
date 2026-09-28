@@ -107,7 +107,7 @@ test("«Входящие»: поручено мне и ожидание чужи
   try {
     const block = name => app.document.querySelector(`#root section[aria-label="${name}"]`);
     await app.until(() => block("Поручено мне")?.textContent.includes("Проверить ТЗ на страницу цен"), "поручение мне");
-    assert.ok(block("Поручено мне").textContent.includes("Общий проект") && block("Поручено мне").textContent.includes("срок не задан"));
+    assert.ok(block("Поручено мне").textContent.includes("Общий проект") && block("Поручено мне").textContent.includes("Срок не задан"));
     assert.ok(!block("Поручено мне").textContent.includes("Согласовать подрядчика"), "своё обращение не в «поручено мне»");
     await app.until(() => block("Жду решения других")?.textContent.includes("Согласовать подрядчика"), "моё обращение ждёт результата");
     assert.ok(block("Жду решения других").textContent.includes("carol"), "кто может разблокировать");

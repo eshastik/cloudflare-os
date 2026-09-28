@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validExternalSnapshot } from "./external-metrics.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { STALE_AFTER_MS, validExternalSnapshot } from "./external-metrics.ts";
 
 test("external metrics preserve unknown, stale failures and reject invented successes", () => {
-  const fixture = { window_start:"2026-09-07T12:00:00Z", observed_at:"2026-09-08T12:00:00Z", operations:["readiness","login","read","save"].map(operation=>({operation,source_status:"ready",samples:1,successes:0,last_observed_at:"2026-09-08T11:55:00Z",last_success:false,last_outcome:"timeout",stale:true,mean_duration_ms:5000})) };
+  const fixture = { window_start:"2026-09-07T12:00:00Z", observed_at:"2026-09-08T12:00:00Z", operations:["readiness","login","read","save"].map(operation=>({operation,source_status:"ready",samples:1,successes:0,last_observed_at:"2026-09-08T11:55:00Z",last_success:false,last_outcome:"timeout",stale:operation!=="save",mean_duration_ms:5000})) };
   assert.equal(validExternalSnapshot(fixture),true);
   for (const patch of [{successes:2},{last_success:true},{stale:false},{mean_duration_ms:null},{source_status:"unavailable"}]) {
     const changed=structuredClone(fixture);Object.assign(changed.operations[2]!,patch);
@@ -15,7 +18,7 @@ test("external metrics preserve unknown, stale failures and reject invented succ
 });
 
 test("external duration percentiles are ordered and absent without attempts",()=>{
- const fixture = { window_start:"2026-09-07T12:00:00Z", observed_at:"2026-09-08T12:00:00Z", operations:["readiness","login","read","save"].map(operation=>({operation,source_status:"ready",samples:1,successes:0,last_observed_at:"2026-09-08T11:55:00Z",last_success:false,last_outcome:"timeout",stale:true,mean_duration_ms:5000,duration_percentiles_ms:{p50:5000,p95:5000,p99:5000}})) };
+ const fixture = { window_start:"2026-09-07T12:00:00Z", observed_at:"2026-09-08T12:00:00Z", operations:["readiness","login","read","save"].map(operation=>({operation,source_status:"ready",samples:1,successes:0,last_observed_at:"2026-09-08T11:55:00Z",last_success:false,last_outcome:"timeout",stale:operation!=="save",mean_duration_ms:5000,duration_percentiles_ms:{p50:5000,p95:5000,p99:5000}})) };
  assert.equal(validExternalSnapshot(fixture),true);
  const bad=structuredClone(fixture);bad.operations[2]!.duration_percentiles_ms.p50=6000;
  assert.equal(validExternalSnapshot(bad),false);
@@ -41,4 +44,25 @@ test("target deployments split readiness groups without splitting equivalent pro
  assert.equal(validExternalSnapshot(fixture),true);
  fixture.versions.groups[1]!.target_deployment={schema_version:112,go_version:"",source_modified:null,source_revision:"",release:"a",environment:"local"};
  assert.equal(validExternalSnapshot(fixture),false);
+});
+
+// Сохранение монитор проверяет раз в 30 минут: строка save возрастом 10 минут свежая, 50 минут — устаревшая.
+// Раньше порог был 3 минуты для всех, и ответ сервера с save stale=false отвергался целиком.
+test("save stays fresh between half-hourly checks and goes stale after 45 minutes",()=>{
+ const at=(minutes:number)=>new Date(Date.parse("2026-09-08T12:00:00Z")-minutes*60000).toISOString();
+ const snapshot=(saveAge:number,saveStale:boolean)=>({window_start:"2026-09-07T12:00:00Z",observed_at:"2026-09-08T12:00:00Z",operations:["readiness","login","read","save"].map(operation=>({operation,source_status:"ready",samples:1,successes:1,last_observed_at:at(operation==="save"?saveAge:1),last_success:true,last_outcome:operation==="readiness"?"ready":"ok",stale:operation==="save"?saveStale:false,mean_duration_ms:10}))});
+ assert.equal(validExternalSnapshot(snapshot(10,false)),true,"save 10 минут — свежее");
+ assert.equal(validExternalSnapshot(snapshot(10,true)),false);
+ assert.equal(validExternalSnapshot(snapshot(50,true)),true,"save 50 минут — устаревшее");
+ assert.equal(validExternalSnapshot(snapshot(50,false)),false);
+ const read=snapshot(10,false);Object.assign(read.operations[2]!,{last_observed_at:at(10),stale:false});
+ assert.equal(validExternalSnapshot(read),false,"чтение 10 минут назад — устаревшее");
+});
+
+// Серверный перечень порогов — рядом с форком (../../../mnemos от пакета) или по MNEMOS_REPO. Сверяются множества.
+const SERVER_STALE=join(process.env.MNEMOS_REPO?resolve(process.env.MNEMOS_REPO):resolve(dirname(fileURLToPath(import.meta.url)),"../../../../mnemos"),"services/internal/obs/testdata/external_stale_after.txt");
+test("пороги устаревания форка совпадают с серверным перечнем",t=>{
+ if(!existsSync(SERVER_STALE)){t.skip(`пропущено: нет серверного перечня (${SERVER_STALE})`);return;}
+ const server=Object.fromEntries(readFileSync(SERVER_STALE,"utf8").split("\n").map(l=>l.trim()).filter(l=>l&&!l.startsWith("#")).map(l=>{const [op,seconds]=l.split(/\s+/);return [op!,Number(seconds)*1000];}));
+ assert.deepEqual({...STALE_AFTER_MS},server,"пороги устаревания разошлись с сервером");
 });

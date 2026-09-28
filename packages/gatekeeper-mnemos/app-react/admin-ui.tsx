@@ -28,22 +28,23 @@ export function Card({ children, className = "", ...rest }: { children: ReactNod
 
 /** Строка карточки; первая — без верхней линии. */
 export function CardRow({ children, className = "", ...rest }: { children: ReactNode; className?: string } & Record<string, unknown>) {
-  return <div className={`flex items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-t-0 ${className}`} {...rest}>{children}</div>;
+  // Строка переносится: на узком экране действия уходят под текст, а не сжимают его в колонку.
+  return <div className={`flex flex-wrap items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-t-0 ${className}`} {...rest}>{children}</div>;
 }
 
 /** Название строки и подпись под ним. */
 export function RowTitle({ title, note, noteTone = "subtle" }: { title: ReactNode; note?: ReactNode; noteTone?: "subtle" | "warning" | "danger" }) {
   const color = noteTone === "warning" ? "text-kumo-warning" : noteTone === "danger" ? "text-kumo-danger" : "text-kumo-subtle";
-  return <span className="block min-w-0 flex-1">
+  return <span className="block min-w-0 flex-1 basis-40">
     <span className="block break-words text-[15px] font-medium text-kumo-default">{title}</span>
     {note && <span className={`block text-[13px] ${color}`}>{note}</span>}
   </span>;
 }
 
-/** Заголовок секции страницы (17 px) и действия справа. */
-export function SectionHead({ title, children }: { title: string; children?: ReactNode }) {
+/** Заголовок секции страницы (17 px), необязательный счётчик и действия справа. */
+export function SectionHead({ title, count, children }: { title: string; count?: number; children?: ReactNode }) {
   return <div className="mb-2.5 flex flex-wrap items-center gap-2.5">
-    <h2 className="m-0 flex-1 text-[17px] font-semibold text-kumo-default">{title}</h2>
+    <h2 className="m-0 flex flex-1 items-center gap-2 text-[17px] font-semibold text-kumo-default">{title}{count !== undefined && <span className="rounded-full bg-kumo-tint px-2 text-[12px] leading-5 font-normal text-kumo-subtle">{count}</span>}</h2>
     {children}
   </div>;
 }

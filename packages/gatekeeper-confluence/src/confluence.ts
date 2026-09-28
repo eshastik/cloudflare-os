@@ -151,18 +151,18 @@ const CONFLUENCE_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(CONFLUENCE_
 
 const SITE_RESOURCE: SupportedResource = {
   urlPattern: "https://*.atlassian.net/wiki",
-  title: "Confluence Site",
-  description: "Search, browse, and edit any space or page on a Confluence site.",
+  title: "Сайт Confluence",
+  description: "Поиск, просмотр и правка любых пространств и страниц сайта Confluence.",
 };
 const SPACE_RESOURCE: SupportedResource = {
   urlPattern: "https://*.atlassian.net/wiki/spaces/:spaceKey",
-  title: "Confluence Space",
-  description: "Read and edit the pages and blog posts in a single Confluence space.",
+  title: "Пространство Confluence",
+  description: "Чтение и правка страниц и записей блога в одном пространстве Confluence.",
 };
 const PAGE_RESOURCE: SupportedResource = {
   urlPattern: "https://*.atlassian.net/wiki/spaces/:spaceKey/pages/:pageId/*?",
-  title: "Confluence Page or Blog Post",
-  description: "Read and edit a specific Confluence page or blog post (and its child pages).",
+  title: "Страница или запись блога Confluence",
+  description: "Чтение и правка одной страницы или записи блога Confluence (вместе с дочерними страницами).",
 };
 const SUPPORTED_RESOURCES = [SITE_RESOURCE, SPACE_RESOURCE, PAGE_RESOURCE];
 
@@ -243,11 +243,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://www.atlassian.com/software/confluence",
       logo: { url: CONFLUENCE_LOGO_URL },
       color: "#deebff",
-      tagline: "Read and write your Confluence pages and spaces",
+      tagline: "Чтение и правка страниц и пространств Confluence",
       description:
-        "Connect your Atlassian Confluence site to let Cloudflare OS search, read, and edit the pages, " +
-        "blog posts, and spaces you share. Build agents that draft documentation, organize " +
-        "knowledge bases, or keep pages up to date.",
+        "Подключите сайт Atlassian Confluence, чтобы платформа могла искать, читать и править " +
+        "открытые вами страницы, записи блога и пространства. Агенты смогут готовить документацию, " +
+        "упорядочивать базы знаний и поддерживать страницы в актуальном виде.",
     };
   }
 

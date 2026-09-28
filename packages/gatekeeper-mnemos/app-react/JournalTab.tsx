@@ -5,7 +5,7 @@ import { useUi } from "./host.ts";
 import { agentNames, looksLikeId, UNNAMED_DOCUMENT, useLoad, type MemoryData } from "./data.ts";
 import { MEANINGFUL_ACTIONS, mergeJournal, unitNamesFrom, type JournalNames } from "./journal-words.ts";
 import { Notice, StatusBadge } from "./ui.tsx";
-import { Card, Pill, PillInput, PillSelect } from "./admin-ui.tsx";
+import { Card, Pill, PillInput, PillSelect, plural } from "./admin-ui.tsx";
 import { relativeTime } from "./time.ts";
 
 /** Подсистемы состояния: название и сигналы, из которых складывается строка.
@@ -92,9 +92,12 @@ function SystemState({ admin }: { admin: boolean }) {
     {metrics.error && <Notice tone="danger">{metrics.error}</Notice>}
     {usage && <Card data-system-state="">
       <div className="flex flex-wrap items-center gap-3 px-5 py-4">
-        <span aria-hidden="true" className={`h-3 w-3 shrink-0 rounded-full ${DOT[overall]}`} />
-        <span className="flex-1 text-[15px] text-kumo-default">{problems ? `Есть проблемы: ${problems} из ${rows.length}.` : allOk ? "Всё работает." : "Часть проверок давно не приходила."}</span>
-        <span className="text-[13px] text-kumo-subtle">{allOk ? rows.map(r => r.title.toLocaleLowerCase("ru-RU")).join(", ").replace(/^./, c => c.toLocaleUpperCase("ru-RU")) : `Проверено ${relativeTime(usage.readiness?.checked_at || usage.recorded_at) || "недавно"}`}</span>
+        <span aria-hidden="true" className={`h-3 w-3 shrink-0 self-start mt-1.5 rounded-full ${DOT[overall]}`} />
+        {/* Итог и время проверки — заголовок и подпись одной строки, а не две колонки: на телефоне колонки сжимались. */}
+        <span className="block min-w-0 flex-1">
+        <span className="block text-[15px] text-kumo-default">{problems ? `Есть проблемы: ${problems} из ${rows.length}.` : allOk ? "Всё работает." : "Часть проверок давно не приходила."}</span>
+        <span className="block text-[13px] text-kumo-subtle">{allOk ? rows.map(r => r.title.toLocaleLowerCase("ru-RU")).join(", ").replace(/^./, c => c.toLocaleUpperCase("ru-RU")) : `Проверено ${relativeTime(usage.readiness?.checked_at || usage.recorded_at) || "недавно"}`}</span>
+        </span>
       </div>
       {!allOk && <div className="grid gap-2 border-t border-kumo-fill px-5 py-3">{rows.map(r => <div key={r.title} data-subsystem={r.health} className="flex items-start gap-3 text-[13px]">
         <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${DOT[r.health]}`} />
@@ -151,14 +154,11 @@ function OwnerPicker({ onChanged }: { onChanged(): Promise<void> }) {
   </div>;
 }
 
-/** Журнал операций читается страницами по 1000 записей (предел сервера) назад от вершины.
- * На установке его забивают технические записи — каждый запрос интерфейса оставляет
- * «request.admit», — поэтому страниц за одно чтение много, а служебных в памяти
- * держится не больше TECHNICAL_KEEP. */
-const AUDIT_PAGE = 1000;
+/** Журнал операций читается окнами по 10 000 записей назад от вершины. Сервер сам отбрасывает технические
+ * записи (request.admit, внешняя проверка установки) и отдаёт только значимые: окно может прийти пустым. */
+const AUDIT_PAGE = 10000;
 const AUDIT_PAGES = 10;
 const JOURNAL_WANTED = 50;
-const TECHNICAL_KEEP = 300;
 const MEANINGFUL = new Set(MEANINGFUL_ACTIONS);
 
 interface AuditSource {
@@ -167,15 +167,33 @@ interface AuditSource {
   end: number;
   /** Вершина журнала на момент последнего чтения: новые записи дочитываются выше неё. */
   top: number;
-  /** Время самой старой прочитанной записи, в том числе служебной. */
+  /** Время самой старой прочитанной значимой записи. */
   oldestAt: string;
-  /** Сколько служебных записей прочитано и сколько из них не сохранено. */
-  technical: number;
-  dropped: number;
   failed: boolean;
 }
 interface WorkSource { entries: WorkJournalEntry[]; cursor: string; failed: boolean }
-const NO_AUDIT: AuditSource = { events: [], end: -1, top: -1, oldestAt: "", technical: 0, dropped: 0, failed: false };
+const NO_AUDIT: AuditSource = { events: [], end: -1, top: -1, oldestAt: "", failed: false };
+
+/** Значимые записи окна (after, end]: сервер может остановиться раньше конца окна, тогда окно дочитывается. */
+async function readSignificant(ui: { readOperationAuditPage(after: number, limit: number, significant?: boolean): Promise<{ events: OperationAuditEvent[]; next?: number }> }, start: number, end: number): Promise<OperationAuditEvent[]> {
+  const found: OperationAuditEvent[] = [];
+  for (let after = start; after < end;) {
+    const out = await ui.readOperationAuditPage(after, Math.min(AUDIT_PAGE, end - after), true);
+    found.push(...out.events.filter(e => Number(e.id) > after && !(Number(e.id) > end)));
+    const next = Number(out.next ?? end);
+    if (!(next > after)) break;
+    after = next;
+  }
+  return found;
+}
+
+/** «5 часов», «2 дня»: сколько времени охватили прочитанные записи. */
+function spanWords(since: string, now = Date.now()): string {
+  const hours = Math.max(1, Math.round((now - Date.parse(since)) / 3_600_000));
+  if (hours < 24) return `${hours} ${plural(hours, "час", "часа", "часов")}`;
+  const days = Math.round(hours / 24);
+  return `${days} ${plural(days, "день", "дня", "дней")}`;
+}
 
 function isMeaningful(e: OperationAuditEvent): boolean {
   return MEANINGFUL.has(e.action) && e.reason !== "requested" && e.actor !== SYNTHETIC_MONITOR && e.on_behalf_of !== SYNTHETIC_MONITOR;
@@ -189,7 +207,6 @@ function Journal({ data }: { data: MemoryData }) {
   const [audit, setAudit] = useState<AuditSource>(NO_AUDIT);
   const [work, setWork] = useState<Map<string, WorkSource>>(new Map());
   const [loading, setLoading] = useState(0);
-  const [technical, setTechnical] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
   // Номер чтения: ответ устаревшего чтения (после «Обновить») отбрасывается.
@@ -204,24 +221,20 @@ function Journal({ data }: { data: MemoryData }) {
       const top = from ? from.top : (await ui.readOperationAuditPage(0, 1)).checkpoint.sequence;
       let end = from ? from.end : top;
       const meaningful: OperationAuditEvent[] = [];
-      const kept: OperationAuditEvent[] = [];
-      let technicalSeen = 0, oldestAt = from?.oldestAt ?? "";
-      const keptBefore = from ? from.events.filter(e => !isMeaningful(e)).length : 0;
+      let oldestAt = from?.oldestAt ?? "";
       for (let page = 0; page < AUDIT_PAGES && end > 0 && meaningful.length < JOURNAL_WANTED; page++) {
         const start = Math.max(0, end - AUDIT_PAGE);
-        const out = await ui.readOperationAuditPage(start, end - start);
-        for (const e of out.events.filter(e => !(Number(e.id) > end)).reverse()) {
+        for (const e of (await readSignificant(ui, start, end)).reverse()) {
           oldestAt = e.at;
           if (isMeaningful(e)) meaningful.push(e);
-          else { technicalSeen++; if (keptBefore + kept.length < TECHNICAL_KEEP) kept.push(e); }
         }
         end = start;
       }
       if (!alive.current || run !== auditRun.current) return;
-      const events = [...meaningful, ...kept].sort((a, b) => Number(b.id) - Number(a.id));
+      const events = meaningful.sort((a, b) => Number(b.id) - Number(a.id));
       setAudit(prev => {
         const base = from ? prev : NO_AUDIT;
-        return { events: [...base.events, ...events], end, top: from ? prev.top : top, oldestAt, technical: base.technical + technicalSeen, dropped: base.dropped + technicalSeen - kept.length, failed: false };
+        return { events: [...base.events, ...events], end, top: from ? prev.top : top, oldestAt, failed: false };
       });
     } catch {
       if (alive.current && run === auditRun.current) setAudit(prev => ({ ...(from ? prev : NO_AUDIT), failed: true, end: 0 }));
@@ -237,22 +250,13 @@ function Journal({ data }: { data: MemoryData }) {
       const from = auditTop.current;
       if (from < 0 || top <= from) return;
       if (top - from > AUDIT_PAGE * AUDIT_PAGES) { void loadAudit(null); return; }
-      const fresh: OperationAuditEvent[] = [];
-      for (let after = from; after < top;) {
-        const out = await ui.readOperationAuditPage(after, Math.min(AUDIT_PAGE, top - after));
-        const page = out.events.filter(e => Number(e.id) > after && !(Number(e.id) > top));
-        if (!page.length) break;
-        fresh.push(...page);
-        after = Number(page.at(-1)!.id);
-      }
+      const meaningful = (await readSignificant(ui, from, top)).filter(isMeaningful);
       if (!alive.current || run !== auditRun.current) return;
-      const meaningful = fresh.filter(isMeaningful);
-      const technical = fresh.filter(e => !isMeaningful(e));
       setAudit(prev => {
         if (prev.top !== from) return prev;
         const known = new Set(prev.events.map(e => e.id));
-        const added = [...meaningful, ...technical.slice(-TECHNICAL_KEEP)].filter(e => !known.has(e.id)).sort((a, b) => Number(b.id) - Number(a.id));
-        return { ...prev, events: [...added, ...prev.events], top, technical: prev.technical + technical.length, dropped: prev.dropped + Math.max(0, technical.length - TECHNICAL_KEEP) };
+        const added = meaningful.filter(e => !known.has(e.id)).sort((a, b) => Number(b.id) - Number(a.id));
+        return { ...prev, events: [...added, ...prev.events], top };
       });
     } catch { /* следующий опрос повторит */ }
   }), [ui, loadAudit]);
@@ -336,13 +340,12 @@ function Journal({ data }: { data: MemoryData }) {
   const bounds = [audit.end > 0 ? audit.oldestAt : "", ...sources.filter(([, w]) => w.cursor).map(([, w]) => w.entries.at(-1)?.recorded_at ?? "")].filter(Boolean).map(at => Date.parse(at));
   const horizon = bounds.length ? Math.max(...bounds) : -Infinity;
   const loaded = items.filter(item => !(Date.parse(item.at) < horizon));
-  const visible = loaded.filter(({ line }) => technical || !line.technical);
+  const visible = loaded.filter(({ line }) => !line.technical);
   const actors = [...new Set(visible.flatMap(item => item.people))];
   // Чипы проектов — только тех, где в прочитанной ленте что-то было; выбранный держится, даже если записей не осталось.
   const projectsInFeed = data.projects.filter(p => p.id === project || visible.some(item => item.line.projectId === p.id));
   const shown = visible.filter(({ people: involved, line }) => (!actor || involved.includes(actor)) && (!project || line.projectId === project)
     && (!query.trim() || line.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
-  const hidden = audit.technical;
   const more = audit.end > 0 || sources.some(([, w]) => w.cursor);
   const started = audit.end !== -1 || audit.failed;
   const deniedProjects = sources.filter(([, w]) => w.failed).map(([id]) => names.project(id) || "без названия");
@@ -354,13 +357,18 @@ function Journal({ data }: { data: MemoryData }) {
   return <section aria-label="Журнал действий" className="grid gap-3">
     <div className="flex flex-wrap items-center gap-2">
       <h2 className="m-0 flex-1 text-[17px] font-semibold text-kumo-default">Что происходило</h2>
-      <PillInput type="search" aria-label="Поиск по журналу" placeholder="Кто, что, где" value={query} onChange={e => setQuery(e.target.value)} className="w-[200px]" />
+      <PillInput type="search" aria-label="Поиск по журналу" placeholder="Кто, что, где" value={query} onChange={e => setQuery(e.target.value)} className="w-full sm:w-[200px]" />
     </div>
     <FilterChips label="Кто" value={actor} onChange={setActor} options={[...new Set([...(actor ? [actor] : []), ...actors])].map(a => ({ id: a, name: who(a) }))} />
     <FilterChips label="Проект журнала" value={project} onChange={setProject} options={projectsInFeed.map(p => ({ id: p.id, name: p.name }))} />
     {loading > 0 && !items.length && <Notice>Загрузка…</Notice>}
     {allFailed && <Notice tone="danger">Журнал не прочитан. Для просмотра нужны права администратора.</Notice>}
-    {!loading && started && !allFailed && shown.length === 0 && <Notice>{visible.length ? "Под выбранные условия ничего не подходит." : "Действий людей и агентов пока не было."}</Notice>}
+    {!loading && started && !allFailed && shown.length === 0 && <div data-journal-empty="" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <Notice>{visible.length ? "Под выбранные условия ничего не подходит. Снимите фильтр или измените поиск."
+        : more && audit.end > 0 && audit.oldestAt ? `За последние ${spanWords(audit.oldestAt)} никто ничего не менял.`
+        : more ? "Среди последних записей действий людей и агентов нет."
+        : "Здесь появятся действия людей и агентов: загрузка файлов, приглашения, решения о доступе."}</Notice>
+    </div>}
     {groups.map(group => <div key={group.day} className="grid gap-1.5">
       <div className="px-1 text-[13px] font-medium text-kumo-subtle">{group.day}</div>
       <Card>{group.items.map(item => {
@@ -394,21 +402,14 @@ function Journal({ data }: { data: MemoryData }) {
     {!allFailed && (audit.failed || deniedProjects.length > 0) && <p data-journal-unavailable="" className="m-0 text-[12px] text-kumo-subtle">
       Показано не всё.{audit.failed ? " Журнал операций организации не прочитан: нужны права администратора." : ""}{deniedProjects.length ? ` Нет доступа к журналу работ ${deniedProjects.length === 1 ? "проекта" : "проектов"}: ${deniedProjects.map(n => `«${n}»`).join(", ")}.` : ""}
     </p>}
-    <details aria-label="Настройки журнала" className="text-[13px]">
-      <summary className="cursor-pointer text-kumo-subtle">Настройки журнала</summary>
-      <label className="mt-2 flex items-center gap-2">
-        <input type="checkbox" aria-label="Показывать служебные" checked={technical} onChange={e => setTechnical(e.target.checked)} />
-        Показывать служебные записи{hidden ? ` (скрыто: ${hidden})` : ""}
-      </label>
-      <p className="mt-1 mb-0 text-kumo-subtle">Служебные записи — это технические шаги системы: чтения, продление входа, работа хранилища и поиска.{audit.dropped ? ` Их много, поэтому показаны только последние ${TECHNICAL_KEEP}.` : ""}</p>
-    </details>
   </section>;
 }
 
 /** Фильтр строкой чипов: нажатый чип сужает ленту, повторное нажатие снимает. */
 function FilterChips({ label, value, options, onChange }: { label: string; value: string; options: { id: string; name: string }[]; onChange(id: string): void }) {
   if (!options.length) return null;
-  return <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1.5">
+  // На телефоне чипы — одной строкой с прокруткой вбок, как проекты в «Материалах».
+  return <div role="group" aria-label={label} className="flex items-center gap-1.5 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:[scrollbar-width:none] sm:flex-wrap">
     {options.map(o => <Pill key={o.id} aria-pressed={value === o.id} tone={value === o.id ? "primary" : "secondary"} onClick={() => onChange(value === o.id ? "" : o.id)}>{o.name}</Pill>)}
   </div>;
 }

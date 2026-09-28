@@ -115,16 +115,16 @@ const SPOTIFY_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(SPOTIFY_LOGO_S
 const ACCOUNT_RESOURCE: SupportedResource = {
   // Whole-instance catch-all (matches any URL), like other single-tenant gatekeepers.
   urlPattern: "https://*",
-  title: "Spotify Account",
+  title: "Аккаунт Spotify",
   description:
-    "Whole-account access: profile, catalog search, your library, your playlists, and playback control.",
+    "Доступ ко всему аккаунту: профиль, поиск по каталогу, медиатека, плейлисты и управление воспроизведением.",
   icon: { url: SPOTIFY_LOGO_URL },
 };
 
 const PLAYLIST_RESOURCE: SupportedResource = {
   urlPattern: "https://open.spotify.com/playlist/:playlistId",
-  title: "Spotify Playlist",
-  description: "Read and edit a single Spotify playlist.",
+  title: "Плейлист Spotify",
+  description: "Чтение и правка одного плейлиста Spotify.",
   icon: { url: SPOTIFY_LOGO_URL },
 };
 
@@ -457,11 +457,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://www.spotify.com",
       logo: { url: SPOTIFY_LOGO_URL },
       color: "#1DB954",
-      tagline: "Manage playlists, your library, and playback",
+      tagline: "Плейлисты, медиатека и воспроизведение",
       description:
-        "Connect your Spotify account so Cloudflare OS can search the catalog, read and edit your " +
-        "library and playlists, and control playback on your devices. Grant whole-account access " +
-        "or scope a Gadget to a single playlist.",
+        "Подключите аккаунт Spotify, чтобы платформа могла искать по каталогу, читать и править " +
+        "вашу медиатеку и плейлисты и управлять воспроизведением на ваших устройствах. Доступ " +
+        "можно дать ко всему аккаунту или ограничить гаджет одним плейлистом.",
     };
   }
 

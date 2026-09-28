@@ -80,7 +80,7 @@ export default function AppShell({ children, bare = false }: { children: React.R
   }, [])
 
   return (
-    <div className="flex h-screen min-h-screen w-screen overflow-hidden bg-kumo-base">
+    <div className="flex h-dvh min-h-dvh w-screen overflow-hidden bg-kumo-base">
       {/* Desktop sidebar — hidden on mobile in favor of the drawer. */}
       <div className="hidden md:flex">
         <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
@@ -101,22 +101,34 @@ export default function AppShell({ children, bare = false }: { children: React.R
       )}
 
       {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col">
         {/* Верхней полосы на компьютере нет (макет): страница начинается сразу под краем окна.
-            На телефоне полоса несёт кнопку меню. Объявление администратора показывается, только
-            если оно задано. */}
-        <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-fill bg-kumo-base px-3 md:hidden">
+            На телефоне полоса несёт кнопку меню. У беседы (bare) своя шапка: полосы нет, кнопка меню
+            стоит в левом углу её шапки, чтобы не тратить 56 px высоты экрана. Объявление
+            администратора показывается, только если оно задано. */}
+        {bare ? (
           <button
             type="button"
             onClick={() => setMobileOpen((o) => !o)}
             aria-label={mobileOpen ? 'Закрыть меню' : 'Открыть меню'}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-kumo-default transition-colors hover:bg-kumo-tint"
+            className="absolute top-3 left-2 z-30 flex h-10 w-10 items-center justify-center rounded-lg text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring md:hidden"
           >
-            {mobileOpen ? <X size={16} /> : <List size={16} />}
+            {mobileOpen ? <X size={18} /> : <List size={18} />}
           </button>
-          <TopBarNotice />
-          <span aria-hidden="true" className="h-7 w-7" />
-        </div>
+        ) : (
+          <div className="relative flex h-14 shrink-0 items-center justify-between border-b border-kumo-fill bg-kumo-base px-2 md:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileOpen((o) => !o)}
+              aria-label={mobileOpen ? 'Закрыть меню' : 'Открыть меню'}
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+            >
+              {mobileOpen ? <X size={18} /> : <List size={18} />}
+            </button>
+            <TopBarNotice />
+            <span aria-hidden="true" className="h-10 w-10" />
+          </div>
+        )}
         {!bare && announcement && (
           <div className="relative hidden h-10 shrink-0 md:block">
             <TopBarNotice />
@@ -124,7 +136,7 @@ export default function AppShell({ children, bare = false }: { children: React.R
         )}
 
         {/* Routed content. Flat enterprise canvas — no texture. */}
-        <main className={`min-h-0 flex-1 ${bare ? 'overflow-hidden [--shell-top:56px] md:[--shell-top:0px]' : 'overflow-y-auto'}`}>{children}</main>
+        <main className={`min-h-0 flex-1 ${bare ? 'overflow-hidden [--shell-top:0px]' : 'overflow-y-auto'}`}>{children}</main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

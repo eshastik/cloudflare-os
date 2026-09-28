@@ -298,7 +298,7 @@ export default function Activity({
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto">
-              <div className="grid grid-cols-[54px_minmax(0,1fr)_auto_16px] items-center gap-3 border-b border-kumo-line bg-kumo-elevated/50 px-5 py-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-kumo-inactive">
+              <div className="grid grid-cols-[54px_minmax(0,1fr)_auto_16px] items-center gap-3 border-b border-kumo-line bg-kumo-elevated/50 px-5 py-1.5 text-[12px] font-medium text-kumo-subtle max-md:px-3">
                 <span>Время</span>
                 <span>Событие</span>
                 <span>Статус</span>
@@ -582,7 +582,7 @@ function HistoryRow({
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="group grid w-full cursor-pointer grid-cols-[54px_minmax(0,1fr)_auto_16px] items-center gap-3 border-b border-kumo-line/70 px-5 py-[7px] text-left transition-colors hover:bg-kumo-elevated/50"
+        className="group grid w-full cursor-pointer grid-cols-[54px_minmax(0,1fr)_auto_16px] items-center gap-3 border-b border-kumo-line/70 px-5 py-[7px] max-md:gap-2 max-md:px-3 max-md:py-2.5 text-left transition-colors hover:bg-kumo-elevated/50"
       >
         <time className="text-[11.5px] tabular-nums leading-4 text-kumo-inactive">
           {formatClockTime(at)}

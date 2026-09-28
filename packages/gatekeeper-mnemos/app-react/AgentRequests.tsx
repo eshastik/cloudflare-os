@@ -90,7 +90,7 @@ function RequestCard({ request, data, onDone }: { request: Request; data: Memory
       : <Button disabled={busy} onClick={() => void act(async () => { await ui.decideMailDraft(d.id, d.sha256, true); if (canSend) await host.sendMailDraft(d.id, d.sha256); }, canSend ? "Письмо согласовано и отправлено." : "Письмо согласовано.", "Не получилось. Обновите страницу и проверьте письмо ещё раз.")}>{canSend ? "Согласовать и отправить" : "Согласовать"}</Button>;
     if (d.state === "pending") reject = () => void act(() => ui.decideMailDraft(d.id, d.sha256, false), "Письмо отклонено.", "Решение не записано. Обновите страницу.");
     details = <>
-      <p className="m-0">Кому: {d.content.to.join(", ")}{d.content.cc?.length ? ` · копия: ${d.content.cc.join(", ")}` : ""}</p>
+      <p className="m-0">Кому: {d.content.to.join(", ")}{d.content.cc?.length ? `. Копия: ${d.content.cc.join(", ")}` : ""}</p>
       <pre className="m-0 whitespace-pre-wrap rounded-[12px] bg-kumo-base p-3 font-sans">{d.content.body}</pre>
       {!!d.content.attachments?.length && <p className="m-0 text-kumo-subtle">Вложения: {d.content.attachments.map(a => a.filename).join(", ")}</p>}
     </>;
@@ -105,13 +105,13 @@ function RequestCard({ request, data, onDone }: { request: Request; data: Memory
       : <Button disabled={busy} onClick={() => void act(async () => { await ui.decideCalendarDraft(d.id, d.sha256, true); if (canCreate) await host.createCalendarDraft(d.id, d.sha256); }, canCreate ? "Встреча согласована и создана." : "Встреча согласована.", "Не получилось. Обновите страницу и проверьте встречу ещё раз.")}>{canCreate ? "Согласовать и создать" : "Согласовать"}</Button>;
     if (d.state === "pending") reject = () => void act(() => ui.decideCalendarDraft(d.id, d.sha256, false), "Встреча отклонена.", "Решение не записано. Обновите страницу.");
     details = <>
-      <p className="m-0">С {when} до {new Date(d.content.end).toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" })}{d.content.location ? ` · ${d.content.location}` : ""}</p>
+      <p className="m-0">С {when} до {new Date(d.content.end).toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" })}{d.content.location ? `, ${d.content.location}` : ""}</p>
       {d.content.description && <pre className="m-0 whitespace-pre-wrap rounded-[12px] bg-kumo-base p-3 font-sans">{d.content.description}</pre>}
     </>;
   } else {
     const p = request.proposal;
     title = `Расход до ${formatBudgetUSD(p.proposal.limit_usd_micros)} $ на задачу «${p.proposal.task.slice(0, 80)}»`;
-    note = `проект «${projectName(data.projects, request.project)}» · оценка ${formatBudgetUSD(p.proposal.estimate_usd_micros)} $ · агентов: ${p.proposal.members.length}`;
+    note = `Проект «${projectName(data.projects, request.project)}». Оценка ${formatBudgetUSD(p.proposal.estimate_usd_micros)} $, агентов: ${p.proposal.members.length}.`;
     const decide = (decision: "approved" | "rejected") => ui.decideTeamBudget(request.project, p.id, { decision_id: crypto.randomUUID(), expected_revision: p.decision?.revision ?? 0, policy_revision: request.policyRevision, decision, comment: comment.trim() || (decision === "approved" ? "Разрешено." : "Отклонено.") });
     primary = <Button disabled={busy} onClick={() => void act(() => decide("approved"), "Расход разрешён.", "Решение не записано: заявка или правила бюджета могли измениться.")}>Разрешить</Button>;
     reject = () => void act(() => decide("rejected"), "Расход отклонён.", "Решение не записано. Обновите страницу.");

@@ -89,7 +89,7 @@ export default function BlueprintsPage() {
 
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-3 px-3 pb-3">
-        <span className="text-[12px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
+        <span className="text-[13px] font-medium text-kumo-subtle">
           Подборка
         </span>
         <div className="relative sm:w-64">

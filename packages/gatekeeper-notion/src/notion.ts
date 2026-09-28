@@ -153,14 +153,14 @@ const NOTION_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(NOTION_LOGO_SVG
 
 const WORKSPACE_RESOURCE: SupportedResource = {
   urlPattern: "https://*",
-  title: "Notion Workspace",
-  description: "Search, read, and edit any page or database shared with this connection.",
+  title: "Рабочее пространство Notion",
+  description: "Поиск, чтение и правка любых страниц и баз данных, открытых этому подключению.",
 };
 
 const ITEM_RESOURCE: SupportedResource = {
   urlPattern: "https://www.notion.so/:path+",
-  title: "Notion Page or Database",
-  description: "Read and edit a specific Notion page or database (and its rows).",
+  title: "Страница или база данных Notion",
+  description: "Чтение и правка одной страницы или базы данных Notion (вместе с её строками).",
 };
 
 const SUPPORTED_RESOURCES: SupportedResource[] = [WORKSPACE_RESOURCE, ITEM_RESOURCE];
@@ -287,11 +287,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://www.notion.so",
       logo: { url: NOTION_LOGO_URL },
       color: "#f7f6f3",
-      tagline: "Read and write your Notion pages and databases",
+      tagline: "Чтение и правка страниц и баз данных Notion",
       description:
-          "Connect your Notion workspace to let Cloudflare OS search, read, and edit the pages and " +
-          "databases you share. Build agents that draft documents, organize notes, or manage " +
-          "database records.",
+          "Подключите рабочее пространство Notion, чтобы платформа могла искать, читать и править " +
+          "открытые вами страницы и базы данных. Агенты смогут готовить документы, упорядочивать " +
+          "заметки и вести записи в базах данных.",
     };
   }
 

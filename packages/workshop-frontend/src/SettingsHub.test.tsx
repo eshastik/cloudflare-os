@@ -36,7 +36,7 @@ it("сотруднику: профиль, тема, результаты и вы
   const { el, done } = await renderHub();
   try {
     const sections = [...el.querySelectorAll("section")].map(s => s.getAttribute("aria-label"));
-    expect(sections).toEqual(["Профиль", "Оформление", "Работа"]);
+    expect(sections).toEqual(["Профиль", "Оформление", "Работа", "Аккаунт"]);
     const text = el.textContent ?? "";
     expect(text).toContain("Мария Иванова");
     expect(text).toContain("МИ");
@@ -49,10 +49,10 @@ it("сотруднику: профиль, тема, результаты и вы
     expect(radios.find(r => r.getAttribute("aria-checked") === "true")?.textContent).toBe("Как в системе");
     await React.act(async () => (radios[1] as HTMLButtonElement).click());
     expect(state.setThemeMode).toHaveBeenCalledWith("dark");
-    const accent = [...el.querySelectorAll("button")].find(b => b.textContent === "Цвет акцента")!;
+    const accent = [...el.querySelectorAll("button")].find(b => b.textContent?.startsWith("Цвет акцента"))!;
     await React.act(async () => accent.click());
     expect(el.textContent).toContain("Окно оформления");
-    const logout = [...el.querySelectorAll("button")].find(b => b.textContent === "Выйти")!;
+    const logout = [...el.querySelectorAll("button")].find(b => b.textContent === "Выйти из аккаунта")!;
     await React.act(async () => logout.click());
     expect(state.logout).toHaveBeenCalled();
     expect(el.querySelector('a[href="/profile"]')?.textContent).toBe("Изменить");

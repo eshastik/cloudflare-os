@@ -321,7 +321,7 @@ export function describeScheduleAccount(): AccountDescription {
     displayName: "Scheduled Tasks",
     avatar: SCHEDULER_ICON,
     singleton: { tsType: "ScheduleSession" },
-    providesUi: { title: "Scheduled", icon: SCHEDULER_ICON },
+    providesUi: { title: "Расписание", icon: SCHEDULER_ICON },
   };
 }
 
@@ -408,8 +408,8 @@ export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env> {
       displayName: "Scheduled Tasks",
       url: "https://workers.cloudflare.com/",
       logo: SCHEDULER_ICON,
-      tagline: "Run workspace tasks on a schedule",
-      description: "Register recurring and one-shot workspace tasks.",
+      tagline: "Запуск задач по расписанию",
+      description: "Регулярные и разовые задачи рабочего пространства.",
       autoProvisionsAccount: true,
       providesAuth: false,
     };

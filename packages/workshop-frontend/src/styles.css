@@ -5,6 +5,26 @@
 @import "@cloudflare/kumo/styles";
 @import "tailwindcss";
 @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
+/* Устройства без наведения (телефон, планшет): действия, которые на компьютере появляются при
+   наведении, здесь видны всегда — иначе до них не добраться пальцем. */
+@custom-variant touch (@media (hover: none));
+
+/* Пальцем: строки меню, списков выбора и вкладки не ниже 40 px. */
+@media (hover: none) {
+  [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], [role="tab"] {
+    min-height: 40px;
+  }
+}
+
+/* iOS приближает страницу, когда фокус попадает в поле со шрифтом мельче 16 px. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select {
+    font-size: 16px !important;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not(.sr-only), select {
+    min-height: 40px;
+  }
+}
 
 @theme {
   /* ===== FONTS ===== */

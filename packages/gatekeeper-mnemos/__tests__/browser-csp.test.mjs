@@ -81,5 +81,5 @@ test("Chrome allows the app RPC but blocks network and unapproved inline code", 
       });
     });
 
-  } finally { await rm(dir,{recursive:true,force:true}); }
+  } finally { await rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100}); } // Chrome дописывает профиль после SIGTERM
 });

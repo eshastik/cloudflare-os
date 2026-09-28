@@ -33,7 +33,7 @@ test("сводка перед загрузкой: числа, причины п�
     assert.equal(floating(app), null);
     // Пока ждём ответа, «Документов пока нет» не показывается, кнопки выбора заблокированы.
     assert.equal(section(app).textContent.includes("Документов пока нет"), false);
-    assert.equal(app.button("Выбрать папку").disabled, true);
+    assert.equal(app.button("Папку").disabled, true);
     assert.equal(card.querySelector('[aria-label="Причины пропуска"]'), null);
     card.querySelector("[data-upload-skipped]").closest("button").click();
     await app.until(() => card.querySelector('[aria-label="Причины пропуска"]'), "список причин");
@@ -153,7 +153,7 @@ test("очередь и прерванная загрузка: пока идёт
     await app.until(() => section(app)?.querySelector('[data-upload="uploading"]'), "ход");
     assert.equal(section(app).querySelector("[data-upload-queued]").textContent, " · ещё 2 в очереди");
     // Оболочка ставит новую загрузку в очередь: кнопки выбора не блокируются, пока файлы уходят.
-    assert.equal(app.button("Выбрать папку").disabled, false);
+    assert.equal(app.button("Папку").disabled, false);
     await app.pushUpload({ phase: "done", id: 9, project: "two", files: 3, accepted: 2, acceptedBytes: 10, failed: [], failedCount: 0, stopped: 1, personal: false, note: "", refused: [], interrupted: true });
     await app.until(() => section(app).querySelector('[data-upload="done"]'), "итог");
     assert.equal(section(app).querySelector("[data-upload-stopped]").textContent,

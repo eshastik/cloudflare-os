@@ -1132,7 +1132,7 @@ function BlueprintScreenshotHero({
               alt={`Снимок экрана: ${title}`}
               className="aspect-[16/9] w-full object-cover"
             />
-            <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle opacity-0 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[opacity,color,background-color] duration-150 ease-out group-hover:opacity-100 group-hover:text-kumo-default">
+            <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full border border-kumo-line bg-kumo-base/90 text-kumo-subtle opacity-0 touch:opacity-100 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[opacity,color,background-color] duration-150 ease-out group-hover:opacity-100 group-hover:text-kumo-default">
               <ArrowsOutSimple size={14} weight="bold" />
             </span>
           </button>

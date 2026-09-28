@@ -55,7 +55,7 @@ export function AccountChooser({
   onReconnect: (id: number) => void
   onGrantAccess?: (id: number) => void
 }) {
-  const isEmailMailbox = vendorId === 'email' && resourceTitle === 'Email Mailbox'
+  const isEmailMailbox = vendorId === 'email' && (resourceTitle === 'Почтовый ящик' || resourceTitle === 'Email Mailbox')
 
   return (
     <section className="overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">

@@ -165,7 +165,7 @@ export async function describePublishPlace(selector: Selector, binding: Document
 
 const dotTone = { neutral: 'bg-kumo-inactive', warning: 'bg-kumo-warning', danger: 'bg-kumo-danger', success: 'bg-kumo-success', info: 'bg-kumo-info' } as const
 
-export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, saving, error, flash, preparing, onPrimary, onSecondary, onOpenVersion, onSaveToProject }: {
+export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, saving, error, flash, preparing, compact, onShare, onShareShown, onPrimary, onSecondary, onOpenVersion, onSaveToProject }: {
   /** Привязка есть, но модели нет — состояние не прочитано, а не «не привязан». */
   model: DocumentStatusModel | null; bound?: boolean; busy?: boolean; disabled?: boolean; versionOpen: boolean
   /** Отказ последнего действия шапки (публикации, сохранения): строка рядом с кнопкой, а не тишина. */
@@ -179,31 +179,44 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
   onPrimary(kind: PrimaryKind): void; onSecondary(): void; onOpenVersion(): void
   /** Документ не сохранён в Mnemos: открыть выбор проекта. */
   onSaveToProject?(): void
+  /** Узкий экран: короткая строка состояния и одна главная кнопка; «Версии» уходят в меню «…» шапки. */
+  compact?: boolean
+  /** В узкой шапке без главного действия единственной кнопкой становится «Поделиться». */
+  onShare?(): void
+  /** Сообщает, видна ли кнопка «Поделиться», чтобы меню «…» шапки не повторяло её. */
+  onShareShown?(shown: boolean): void
 }) {
   const unsaved = !model && !bound && !busy && !saving
   // Шапка гаджета по макету: одна строка состояния некрупным серым текстом и пилюли действий.
   // Полный текст состояния — во всплывающей подсказке, если строка не помещается.
   const statusText = model ? `${model.version} · ${model.audience} · ${model.saved}` : undefined
+  const button = compact ? '!h-10 !rounded-full !px-4' : '!h-8 !rounded-full'
+  const shareShown = !!(compact && onShare && !model?.primary && !(unsaved && onSaveToProject))
+  useEffect(() => { onShareShown?.(shareShown) }, [shareShown, onShareShown])
   return <div className="flex min-w-0 items-center gap-2">
-    <span data-document-status title={statusText} className="flex min-w-0 max-w-[340px] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[13px] leading-4 text-kumo-subtle">
+    <span data-document-status title={statusText} className={`flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[13px] leading-4 text-kumo-subtle ${compact ? 'max-w-[120px]' : 'max-w-[340px]'}`}>
       {flash ? <span role="status" className="flex min-w-0 items-center gap-1.5 text-kumo-default">
         <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone.success}`} />
         <span className="min-w-0 truncate">{flash}</span>
       </span> : preparing ? <HistoryPreparingLine progress={preparing} /> : model ? <>
         <i className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone[model.tone]}`} />
         <span className={`min-w-0 max-w-full shrink truncate ${model.tone === 'warning' ? 'text-kumo-warning' : model.tone === 'neutral' ? '' : 'text-kumo-default'}`}>{model.saved}</span>
-        <span className="min-w-0 flex-1 truncate text-kumo-inactive">· {model.version} · {model.audience}</span>
-      </> : <span className="truncate">{saving ?? (busy ? 'Читаю состояние в Mnemos…' : bound ? 'Состояние документа не прочитано' : 'Не сохранён в Mnemos, версий нет')}</span>}
+        {!compact && <span className="min-w-0 flex-1 truncate text-kumo-inactive">· {model.version} · {model.audience}</span>}
+      </> : <span className="truncate">{saving ?? (busy ? (compact ? 'Читаю…' : 'Читаю состояние в Mnemos…') : bound ? (compact ? 'Не прочитано' : 'Состояние документа не прочитано') : (compact ? 'Не в Mnemos' : 'Не сохранён в Mnemos, версий нет'))}</span>}
     </span>
-    <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
-      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>
-    {error && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger">{error}</span>}
-    {model?.secondary && <WorkshopButton className="!h-8 !rounded-full" disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
-    {model?.primary && <WorkshopButton tone="primary" className="!h-8 !rounded-full" data-primary-action title={model.primary.hint} disabled={disabled || busy || model.primary.disabled} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
-    {unsaved && onSaveToProject && <WorkshopButton tone="primary" className="!h-8 !rounded-full" data-primary-action title="Документ сохранится в выбранный проект Mnemos как ваш личный черновик; после этого появятся версии, согласование и скачивание в Word." disabled={disabled} onClick={onSaveToProject}>Сохранить в проект…</WorkshopButton>}
+    {!compact && <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
+      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>}
+    {error && !compact && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger">{error}</span>}
+    {error && compact && <span role="alert" title={error} className="h-2 w-2 shrink-0 rounded-full bg-kumo-danger" aria-label={error} />}
+    {model?.secondary && (!compact || !model.primary) && <WorkshopButton className={button} disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
+    {model?.primary && <WorkshopButton tone="primary" className={button} data-primary-action title={model.primary.hint} disabled={disabled || busy || model.primary.disabled} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
+    {shareShown && <WorkshopButton tone="primary" className={button} onClick={onShare}>Поделиться</WorkshopButton>}
+    {unsaved && onSaveToProject && <WorkshopButton tone="primary" className={button} data-primary-action title="Документ сохранится в выбранный проект Mnemos как ваш личный черновик; после этого появятся версии, согласование и скачивание в Word." disabled={disabled} onClick={onSaveToProject}>{compact ? 'Сохранить' : 'Сохранить в проект…'}</WorkshopButton>}
   </div>
 }
 
+/** Событие окна: меню «…» шапки на телефоне открывает панель «Версии» (там «Версии» не помещаются кнопкой). */
+export const DOCUMENT_VERSIONS_EVENT = 'mnemos-document-versions'
 /** Событие окна: кнопка «Поделиться» гаджета документа просит открыть доступ к документу. */
 export const DOCUMENT_SHARE_EVENT = 'mnemos-document-share'
 /** Событие окна: меню «…» просит сменить документ Mnemos, к которому привязан редактор (редкое действие). */
@@ -785,7 +798,11 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   return { gadgetId, bindingKey, binding, projectLink, data, changes, model, busy, error, notice, flash, preparing, saving, changedByOther, suggestedProject: mnemos?.project ?? null, creationElsewhere, saveToProject, refresh, bind, bindAtEditorRevision, submit, withdraw, publish, saveNow, reopened, selector, writesOrigin, listScopes, listDocuments, comparison, lifetime }
 }
 
-export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs, flashMs, historyPollMs }: {
+export default function DocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, disabled, panelHost, onCollapseChat, changesPollMs, autosaveMs, flashMs, historyPollMs, compact, onShare, onShareShown }: {
+  /** Узкий экран: см. DocumentStatusView. */
+  compact?: boolean
+  onShare?(): void
+  onShareShown?(shown: boolean): void
   gadget: RpcStub<GadgetClient>; format: NativeDocumentFormat; snapshotSource: NativeSnapshotSourceRef; chatId?: number; disabled?: boolean
   /** Открытая беседа рабочего места: её проект — место автосохранения. */
   projectChatId?: number
@@ -817,9 +834,11 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   useEffect(() => {
     const share = () => setPanel({ open: true, section: 'share' })
     const bind = () => setPanel({ open: true, section: 'bind' })
+    const versions = () => setPanel(old => ({ open: !old.open || old.section !== null, section: null }))
     window.addEventListener(DOCUMENT_SHARE_EVENT, share)
     window.addEventListener(DOCUMENT_BIND_EVENT, bind)
-    return () => { window.removeEventListener(DOCUMENT_SHARE_EVENT, share); window.removeEventListener(DOCUMENT_BIND_EVENT, bind) }
+    window.addEventListener(DOCUMENT_VERSIONS_EVENT, versions)
+    return () => { window.removeEventListener(DOCUMENT_SHARE_EVENT, share); window.removeEventListener(DOCUMENT_BIND_EVENT, bind); window.removeEventListener(DOCUMENT_VERSIONS_EVENT, versions) }
   }, [])
 
   const onPrimary = (kind: PrimaryKind) => {
@@ -838,9 +857,9 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
     status={status} section={panel.section} onSection={section => setPanel({ open: true, section })}
     onClose={() => setPanel({ open: false, section: null })} onCollapseChat={onCollapseChat} /> : null
   return <>
-    {status.projectLink && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
+    {status.projectLink && !compact && <a className="max-w-[140px] shrink-0 truncate text-[13px] text-kumo-subtle hover:text-kumo-default" title={`Проект: ${status.projectLink.name}`} href={status.projectLink.href}>{status.projectLink.name}</a>}
     <DocumentStatusView model={status.model} bound={!!status.binding} busy={status.busy} disabled={disabled} versionOpen={panel.open} saving={status.saving ?? (status.creationElsewhere && !status.binding ? 'Сохраняет другая ваша вкладка…' : undefined)} flash={status.flash || undefined}
-      error={panel.open ? undefined : status.error || undefined} preparing={status.preparing}
+      error={panel.open ? undefined : status.error || undefined} preparing={status.preparing} compact={compact} onShare={onShare} onShareShown={onShareShown}
       onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))}
       onSaveToProject={() => setPanel({ open: true, section: 'save' })} />
     {panelHost ? createPortal(panelNode, panelHost) : panelNode}

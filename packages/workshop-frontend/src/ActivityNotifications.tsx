@@ -43,7 +43,7 @@ export default function ActivityNotifications({
             aria-label={pending.length > 0
               ? `Журнал — ждут разрешения: ${pending.length}`
               : 'Журнал'}
-            className={`relative flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring ${
+            className={`relative flex h-8 w-8 touch:h-10 touch:w-10 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring ${
               pending.length > 0 ? 'text-kumo-strong' : 'text-kumo-subtle hover:text-kumo-default'
             }`}
           >
@@ -61,7 +61,7 @@ export default function ActivityNotifications({
         className="themed-floating-shadow !z-[1100] !w-[min(340px,calc(100vw-24px))] !min-w-0 overflow-hidden rounded-lg border border-kumo-line !outline-none bg-kumo-base !p-0 [&>:first-child]:hidden"
       >
         <div className="flex items-center justify-between gap-2 px-3.5 pb-1 pt-2.5">
-          <Popover.Title className="text-[11px] font-medium uppercase tracking-[0.06em] text-kumo-inactive">
+          <Popover.Title className="text-[13px] font-medium text-kumo-subtle">
             Ждут разрешения
           </Popover.Title>
           <CountBadge count={pending.length} />

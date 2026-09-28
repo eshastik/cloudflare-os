@@ -135,7 +135,7 @@ export class ContextAccount
       displayName: "Context",
       avatar: LIBRARY_ICON,
       singleton: { tsType: "ContextLibrary" },
-      providesUi: { title: "Context & Skills", icon: LIBRARY_ICON },
+      providesUi: { title: "Контекст и навыки", icon: LIBRARY_ICON },
     };
   }
 
@@ -393,11 +393,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env, Gatekeepe
       displayName: "Context",
       url: "https://workers.cloudflare.com/",
       logo: LIBRARY_ICON,
-      tagline: "Author and consult shared context collections",
+      tagline: "Общие подборки контекста: создание и справка",
       description:
-        "The Context Library lets you and your team author collections of context documents " +
-        "that agents can consult to learn how to perform tasks. It is always available — no " +
-        "connection needed.",
+        "Библиотека контекста позволяет вам и команде собирать подборки справочных документов, " +
+        "к которым агенты обращаются, чтобы понять, как выполнять задачи. Она доступна всегда — " +
+        "подключать её не нужно.",
       autoProvisionsAccount: true,
       providesAuth: false,
     };

@@ -30,8 +30,11 @@ function main() {
 
   // Оболочка показывает слой загрузки файлов, но не видит перетаскивание внутри фрейма.
   // dragenter приходит на каждый элемент под курсором, поэтому сообщение не чаще раза в 300 мс.
+  // На сенсорном экране файлы не перетаскивают: долгое нажатие на ссылку или картинку в Safari даёт
+  // dragenter с типом Files, и оболочка ошибочно показала бы слой загрузки.
   let dragAnnounced = 0;
-  window.addEventListener("dragenter", event => {
+  const touchOnly = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches;
+  if (!touchOnly) window.addEventListener("dragenter", event => {
     const types = event.dataTransfer?.types;
     if (!types || !Array.from(types).includes("Files") || Date.now() - dragAnnounced < 300) return;
     dragAnnounced = Date.now();

@@ -333,6 +333,72 @@ describe("SandboxedGatekeeperApp navigation", () => {
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:window}));expect(closed).not.toHaveBeenCalled();
     window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-intake-close"},origin:"null",source:iframe.contentWindow}));expect(closed).toHaveBeenCalledOnce();
   });
+  it("слой перетаскивания не копит сигналы вне проекта и не вспыхивает при переходе в проект", async () => {
+    const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new EmptyUi())}} as unknown as GatekeeperUiFrame;
+    const rootRoute=createRootRoute();
+    const appRoute=createRoute({getParentRoute:()=>rootRoute,path:"/gatekeepers/$appId",component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>});
+    window.history.replaceState(null,"","/gatekeepers/mnemos?section=team");
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/gatekeepers/mnemos?section=team"]}),routeTree:rootRoute.addChildren([appRoute])});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const iframe=container.querySelector("iframe")!;
+    const layer=()=>container!.querySelector('[data-testid="intake-drop-layer"]');
+    // «Мой отдел»: фрейм сообщил о перетаскивании (например, долгое нажатие на ссылку) — слоя здесь нет.
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:iframe.contentWindow})));
+    expect(layer()).toBeNull();
+    // Нажали на проект отдела: слой не появляется, пока не начато настоящее перетаскивание.
+    window.history.replaceState(null,"","/gatekeepers/mnemos?section=projects&project=p1");
+    await act(async()=>{await router.navigate({to:"/gatekeepers/$appId",params:{appId:"mnemos"},search:{section:"projects",project:"p1"} as never})});
+    expect(layer()).toBeNull();
+    // Настоящее перетаскивание показывает слой; переход в другой раздел его снимает.
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:iframe.contentWindow})));
+    expect(layer()).not.toBeNull();
+    window.history.replaceState(null,"","/gatekeepers/mnemos?section=projects&project=p2");
+    await act(async()=>{await router.navigate({to:"/gatekeepers/$appId",params:{appId:"mnemos"},search:{section:"projects",project:"p2"} as never})});
+    expect(layer()).toBeNull();
+    window.history.replaceState(null,"","/");
+  });
+  it("слой перетаскивания гаснет сам, когда перетаскивание пропало без dragleave", async () => {
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new EmptyUi())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/?chat=17"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    vi.useFakeTimers({toFake:["setTimeout","clearTimeout"]});
+    try {
+      const layer=()=>container!.querySelector('[data-testid="intake-drop-layer"]');
+      await act(async()=>dragFiles("dragenter"));expect(layer()).not.toBeNull();
+      // Пока над слоем идёт dragover, слой держится.
+      await act(async()=>{vi.advanceTimersByTime(1000);layer()!.dispatchEvent(Object.assign(new Event("dragover",{bubbles:true,cancelable:true}),{dataTransfer:{types:["Files"]}}));vi.advanceTimersByTime(1000)});
+      expect(layer()).not.toBeNull();
+      await act(async()=>{vi.advanceTimersByTime(1600)});
+      expect(layer()).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+  it("на сенсорном экране слой перетаскивания не показывается", async () => {
+    vi.stubGlobal("matchMedia",(query:string)=>({matches:query==="(pointer: coarse)",media:query,addEventListener(){},removeEventListener(){}}));
+    const frame={iframeHtml:"<!doctype html><title>Intake</title>",ui:new RpcStub(new EmptyUi()),inboxUploads:{storageOrigin:"https://storage.example",issuer:new RpcStub(new EmptyUi())}} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" embeddedIntake/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/?chat=17"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const iframe=container.querySelector("iframe")!;
+    await act(async()=>dragFiles("dragenter"));
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:iframe.contentWindow})));
+    expect(container.querySelector('[data-testid="intake-drop-layer"]')).toBeNull();
+  });
+  it("до рукопожатия фрейма видна заглушка загрузки", async () => {
+    const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi())} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const loading=()=>container!.querySelector('[data-testid="gatekeeper-frame-loading"]');
+    expect(loading()?.textContent).toContain("Загружаем приложение");
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]})));
+    expect(loading()).toBeNull();
+  });
   it("перетаскивание уходит в ту организацию, где его начали, даже если фрейм сменился", async () => {
     const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");
     const {File:RealFile}=await vi.importActual<{File:typeof File}>("node:buffer");vi.stubGlobal("crypto",webcrypto);vi.stubGlobal("File",RealFile);

@@ -246,7 +246,7 @@ export default function ConnectConnectorModal({
 
           {supportedResources.length > 0 && (
             <div className="mt-5">
-              <h3 className="mb-2 text-[12px] leading-4 font-semibold uppercase tracking-[0.6px] text-kumo-inactive">
+              <h3 className="mb-2 text-[13px] leading-4 font-semibold text-kumo-subtle">
                 {granular
                   ? isManage
                     ? 'Ресурсы'
@@ -369,7 +369,7 @@ export default function ConnectConnectorModal({
                       tone="danger"
                       onClick={handleDisconnect}
                       disabled={disconnecting}
-                      className="!h-9 min-w-[140px]"
+                      className="!h-9 min-w-[min(140px,100%)]"
                     >
                       {disconnecting ? 'Отключаем…' : 'Да, отключить'}
                     </WorkshopButton>
@@ -383,7 +383,7 @@ export default function ConnectConnectorModal({
                       tone="primary"
                       onClick={handleAddResources}
                       disabled={ensuringBusy}
-                      className="min-w-[140px]"
+                      className="min-w-[min(140px,100%)]"
                     >
                       {ensuringBusy
                         ? 'Открываем…'
@@ -423,7 +423,7 @@ export default function ConnectConnectorModal({
                   tone="primary"
                   onClick={handleConfirm}
                   disabled={connecting || (granular && noneSelected)}
-                  className="min-w-[140px]"
+                  className="min-w-[min(140px,100%)]"
                 >
                   {autoProvisions
                     ? connecting

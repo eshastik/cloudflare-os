@@ -55,7 +55,7 @@ export function useInvitations(): { list: OrganizationInvitation[] | null; faile
 function invitationNote(i: OrganizationInvitation): string {
   return [i.display_name ? i.email : "", i.org_unit_name ? `отдел «${i.org_unit_name}»` : "", i.role && i.role !== "employee" ? ROLE_WORDS[i.role].toLowerCase() : "",
     i.status === "open" ? `приглашение ждёт входа, ссылка действует до ${dateOf(i.expires_at)}` : i.status === "expired" ? "срок ссылки истёк" : i.status === "revoked" ? "приглашение отозвано" : "",
-    i.created_by_name ? `пригласил(а) ${i.created_by_name}` : ""].filter(Boolean).join(" · ");
+    i.created_by_name ? `пригласил(а) ${i.created_by_name}` : ""].filter(Boolean).join(", ");
 }
 
 /** Открытые приглашения строками карточки: приглашённый выглядит как будущий сотрудник, рядом — «Отозвать». */

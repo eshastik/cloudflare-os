@@ -12,7 +12,7 @@ function initials(title: string | undefined): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || t.slice(0, 2).toUpperCase()
 }
 
-const ROW = 'group flex h-8 items-center gap-2 rounded-[10px] pl-3 pr-1 text-[14px] leading-5 text-kumo-default transition-colors hover:bg-kumo-tint'
+const ROW = 'group flex h-8 touch:h-10 items-center gap-2 rounded-[10px] pl-3 pr-1 text-[14px] leading-5 text-kumo-default transition-colors hover:bg-kumo-tint'
 const COLLAPSED_ROW = 'group flex h-8 w-8 items-center justify-center rounded-[10px] transition-colors hover:bg-kumo-tint'
 // Строка страницы «Все беседы» (макет Chats): крупнее, с подписью под названием.
 const LIST_ROW = 'group flex items-center gap-3.5 border-b border-kumo-tint py-3.5 pl-5 pr-3 text-kumo-default transition-colors last:border-b-0 hover:bg-kumo-tint'
@@ -111,7 +111,7 @@ export default function SidebarGadgetRow({
                   <button
                     type="button"
                     aria-label="Действия с беседой"
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-kumo-subtle opacity-0 transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100"
+                    className="flex h-6 w-6 touch:h-10 touch:w-10 items-center justify-center rounded-md text-kumo-subtle opacity-0 touch:opacity-100 transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100"
                   >
                     <DotsThree size={14} weight="bold" />
                   </button>

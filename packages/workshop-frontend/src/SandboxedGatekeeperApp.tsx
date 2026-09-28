@@ -73,6 +73,16 @@ const WORKSPACE_TITLES_TTL_MS = 10_000
 // Сколько фото фрейм просит за один вызов: экран людей собирает запросы в пакет.
 const MAX_PHOTO_IDS = 200
 
+// Сколько слой перетаскивания живёт без событий перетаскивания: dragover над слоем идёт каждые 50–350 мс.
+const DRAG_IDLE_MS = 1500
+
+/** Экран только сенсорный: файлы там не перетаскивают, а долгое нажатие на ссылку или картинку в Safari
+ * даёт dragenter с типом Files. Слой перетаскивания на таком экране не показывается. */
+function touchOnlyScreen(): boolean {
+  if (typeof matchMedia !== 'function') return false
+  return matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches
+}
+
 // Near the max int, so the full-viewport iframe sits above all Workshop chrome.
 const overlayZIndex = 2147483000
 
@@ -666,7 +676,19 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   // Прогон загрузки закончился (в том числе начатый из другого фрейма): приложение перечитывает файлы.
   useEffect(()=>uploadCenter.subscribeRuns(()=>{if(connectedRef.current)iframeRef.current?.contentWindow?.postMessage({type:'mnemos-inbox-updated'},'*')}),[])
   const dropBusy=useRef(false)
-  const [dragOver,setDragOver]=useState(false)
+  const [dragOver,setDragOverState]=useState(false)
+  // Слой перетаскивания гаснет сам, если перетаскивание больше не видно: пока файл над слоем, браузер
+  // шлёт dragover непрерывно. Без этого пропущенный dragleave (жест ушёл из фрейма) оставлял слой навсегда.
+  const dragTimer=useRef<ReturnType<typeof setTimeout>|null>(null)
+  const setDragOver=useCallback((on:boolean)=>{
+    if(dragTimer.current!==null){clearTimeout(dragTimer.current);dragTimer.current=null}
+    if(on)dragTimer.current=setTimeout(()=>{dragTimer.current=null;setDragOverState(false)},DRAG_IDLE_MS)
+    setDragOverState(on)
+  },[])
+  useEffect(()=>()=>{if(dragTimer.current!==null)clearTimeout(dragTimer.current)},[])
+  const dropAllowedRef=useRef(false)
+  // Фрейм считается загруженным, когда приложение прислало рукопожатие: до этого видна заглушка загрузки.
+  const [frameReady,setFrameReady]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   const overlayRef = useRef<OverlayState>(null)
   // Push the Workshop's resolved light/dark mode to the app whenever it changes.
@@ -743,6 +765,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   useEffect(() => {
     connectedRef.current = false
     invalidatedRef.current = false
+    setFrameReady(false)
     let closeRecording: (() => void) | undefined
 
     const connect = (port: MessagePort) => {
@@ -807,6 +830,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
       connectedRef.current = true
+      setFrameReady(true)
     }
 
     const handleMessage = (event: MessageEvent) => {
@@ -819,7 +843,9 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       if (embeddedIntake && event.data?.type === 'mnemos-intake-close') { closePanelRef.current?.(); return }
       // The sandboxed frame receives drag events itself; it may ask the host to
       // raise the drop layer, which then takes the rest of the gesture.
-      if (event.data?.type === 'mnemos-drag-enter') { setDragOver(true); return }
+      // Сигнал учитывается только там, где слой вообще показывается; иначе он «копился» и слой
+      // вспыхивал позже, при переходе в проект, без всякого перетаскивания.
+      if (event.data?.type === 'mnemos-drag-enter') { if (dropAllowedRef.current) setDragOver(true); return }
       if (event.data?.type === 'gatekeeper-audio-cancel') {
         closeRecording?.()
         closeRecording = undefined
@@ -868,8 +894,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     if (!connectedRef.current || embeddedIntake) return
     iframeRef.current?.contentWindow?.postMessage({ type: 'gatekeeper-location' }, '*')
   }, [locationKey, embeddedIntake])
+  // Смена раздела или проекта снимает слой перетаскивания: перетаскивание через переход не продолжается.
+  useEffect(() => { setDragOver(false) }, [locationKey, setDragOver])
 
-  const intakeDrop=!!frame.inboxUploads && (embeddedIntake || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
+  const intakeDrop=!!frame.inboxUploads && !touchOnlyScreen() && (embeddedIntake || (new URLSearchParams(window.location.search).get('section')==='projects' && !!new URLSearchParams(window.location.search).get('project')))
+  dropAllowedRef.current=intakeDrop
   const drop=async(transfer:DataTransfer)=>{
     if(dropBusy.current)return
     const targetHost=hostRef.current
@@ -893,23 +922,30 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     let depth=0
     const files=(event:DragEvent)=>!!event.dataTransfer&&Array.from(event.dataTransfer.types).includes('Files')
     const enter=(event:DragEvent)=>{if(!files(event))return;depth++;setDragOver(true)}
+    const over=(event:DragEvent)=>{if(files(event))setDragOver(true)}
     const leave=(event:DragEvent)=>{if(!files(event))return;depth=Math.max(0,depth-1);if(!depth)setDragOver(false)}
     const end=()=>{depth=0;setDragOver(false)}
     window.addEventListener('dragenter',enter)
+    window.addEventListener('dragover',over)
     window.addEventListener('dragleave',leave)
     window.addEventListener('drop',end)
     window.addEventListener('dragend',end)
-    return()=>{window.removeEventListener('dragenter',enter);window.removeEventListener('dragleave',leave);window.removeEventListener('drop',end);window.removeEventListener('dragend',end)}
-  },[intakeDrop])
+    window.addEventListener('blur',end)
+    return()=>{window.removeEventListener('dragenter',enter);window.removeEventListener('dragover',over);window.removeEventListener('dragleave',leave);window.removeEventListener('drop',end);window.removeEventListener('dragend',end);window.removeEventListener('blur',end);setDragOver(false)}
+  },[intakeDrop,setDragOver])
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
     {intakeDrop&&dragOver&&<div role="region" aria-label="Перетащите материалы организации" data-testid="intake-drop-layer"
-      onDragOver={event=>{event.preventDefault();event.stopPropagation()}}
+      onDragOver={event=>{event.preventDefault();event.stopPropagation();setDragOver(true)}}
       onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false)}}
       onDrop={event=>{event.preventDefault();event.stopPropagation();setDragOver(false);void drop(event.dataTransfer)}}
       className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border border-dashed border-kumo-brand bg-kumo-base/85 text-center">
       <div><p className="m-0 text-[15px] font-semibold text-kumo-strong">Отпустите, чтобы загрузить</p><p className="mb-0 mt-1 text-[12px] text-kumo-subtle">Файлы и папки попадут в приёмную{new URLSearchParams(window.location.search).get('project')?' проекта':''}.</p></div>
+    </div>}
+    {!frameReady&&<div role="status" data-testid="gatekeeper-frame-loading" className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-kumo-base text-[14px] text-kumo-subtle">
+      <span aria-hidden="true" className="h-6 w-6 animate-spin rounded-full border-2 border-kumo-brand border-t-transparent motion-reduce:animate-none" />
+      Загружаем приложение…
     </div>}
     <div className="min-h-0 flex-1"><iframe
       ref={iframeRef}

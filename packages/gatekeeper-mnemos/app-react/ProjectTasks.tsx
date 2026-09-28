@@ -76,8 +76,8 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
   }
   return (
     <Dialog.Root open={open} onOpenChange={value => { if (!value && !busy) onClose(); }}>
-      <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto rounded-[24px] bg-kumo-overlay p-8">
-        <Dialog.Title className="text-[24px] leading-[30px] font-semibold tracking-[-0.5px]">Поручить агенту</Dialog.Title>
+      <Dialog size="lg" className="!w-[min(640px,calc(100vw-32px))] max-h-[85dvh] overflow-y-auto rounded-[20px] bg-kumo-overlay p-5 sm:rounded-[24px] sm:p-8">
+        <Dialog.Title className="text-[20px] leading-[26px] font-semibold tracking-[-0.5px] sm:text-[24px] sm:leading-[30px]">Поручить агенту</Dialog.Title>
         <Dialog.Description className="mt-2 text-[15px] leading-[22px] text-kumo-subtle">Агент работает в отдельной копии кода проекта. Основная версия меняется только после вашего решения.</Dialog.Description>
         <ActionForm aria-label="Задача агенту" className="mt-5 grid gap-3 text-sm" onAction={() => void submit()}>
           {repositories.length > 1 && (
@@ -93,7 +93,7 @@ function AssignDialog({ open, onClose, projectId, repositories, onStarted }: { o
               className={textAreaClass} />
           </label>
           {error && <Notice tone="danger">{error}</Notice>}
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 max-sm:[&>*]:flex-1">
             <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>Отмена</Button>
             <Button type="button" disabled={busy || !prompt.trim() || !selected} onClick={() => void submit()}>{busy ? "Поручаем…" : "Поручить"}</Button>
           </div>

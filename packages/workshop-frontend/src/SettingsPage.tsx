@@ -19,7 +19,7 @@ import { useDocumentTitle } from './useDocumentTitle'
 const PRIMARY_BTN =
   'press inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-kumo-brand px-4 text-[14px] font-medium text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60'
 const ICON_BTN =
-  'press grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default'
+  'press grid h-8 w-8 touch:h-10 touch:w-10 shrink-0 cursor-pointer place-items-center rounded-full text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default'
 const INPUT =
   'h-10 w-full rounded-xl border border-kumo-fill-hover bg-kumo-overlay px-3 text-[15px] text-kumo-default placeholder:text-kumo-inactive transition-[border-color,box-shadow] focus:border-kumo-ring focus:outline-none focus:ring-[3px] focus:ring-kumo-ring/15'
 
@@ -74,7 +74,7 @@ function PasswordField({
           type="button"
           onClick={() => setShow((s) => !s)}
           aria-label={show ? 'Скрыть пароль' : 'Показать пароль'}
-          className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-kumo-inactive transition-colors hover:text-kumo-default"
+          className="absolute right-1.5 top-1/2 grid h-7 w-7 touch:h-10 touch:w-10 -translate-y-1/2 cursor-pointer place-items-center rounded-md text-kumo-inactive transition-colors hover:text-kumo-default"
         >
           {show ? <EyeSlash size={15} /> : <Eye size={15} />}
         </button>
@@ -241,10 +241,10 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col px-4 py-11 sm:px-0">
       <header>
-        <Link to="/settings" className="mb-3 inline-flex items-center gap-1 text-[14px] text-kumo-link hover:underline">
+        <Link to="/settings" className="mb-3 inline-flex min-h-8 touch:min-h-10 items-center gap-1 text-[14px] text-kumo-link hover:underline">
           <CaretLeft size={12} /> Настройки
         </Link>
-        <h1 className="m-0 text-[34px] leading-10 font-semibold tracking-[-1px] text-kumo-default">Профиль</h1>
+        <h1 className="m-0 text-[24px] leading-8 font-semibold tracking-[-0.6px] text-kumo-default sm:text-[34px] sm:leading-10 sm:tracking-[-1px]">Профиль</h1>
         <p className="mt-2 mb-0 text-[15px] text-kumo-subtle">
           Имя, фотография и пароль вашей учётной записи.
         </p>
@@ -269,7 +269,7 @@ export default function SettingsPage() {
                 ) : (
                   <User size={26} className="text-selection-text" />
                 )}
-                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 touch:opacity-100 transition-opacity group-hover:opacity-100">
                   <Camera size={18} className="text-white" />
                 </div>
                 {avatarUploading && (

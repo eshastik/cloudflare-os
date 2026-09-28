@@ -331,7 +331,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
             {recentShown.map(row)}
             <Link
               to="/workspaces"
-              className="flex h-8 items-center rounded-[10px] px-3 text-[14px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+              className="flex h-8 touch:h-10 items-center rounded-[10px] px-3 text-[14px] text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default"
             >
               {recentHidden > 0 ? `Все беседы (${recent.length})` : 'Все беседы'}
             </Link>

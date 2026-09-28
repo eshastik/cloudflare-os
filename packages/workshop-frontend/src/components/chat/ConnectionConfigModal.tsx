@@ -116,7 +116,7 @@ export default function ConnectionConfigModal({
                   </span>
                   <button
                     onClick={() => handleRemove(r.id)}
-                    className="p-0.5 text-kumo-inactive opacity-0 group-hover:opacity-100 hover:text-kumo-danger rounded transition-all"
+                    className="p-0.5 text-kumo-inactive opacity-0 touch:opacity-100 group-hover:opacity-100 hover:text-kumo-danger rounded transition-all"
                   >
                     <X size={12} />
                   </button>

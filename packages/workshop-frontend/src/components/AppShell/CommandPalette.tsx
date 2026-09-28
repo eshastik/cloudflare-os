@@ -449,9 +449,13 @@ export default function CommandPalette({
             placeholder="Найти беседу, проект или файл"
             className="w-full bg-transparent text-[18px] leading-6 text-kumo-default placeholder:text-kumo-inactive focus:outline-none"
           />
-          <kbd className="shrink-0 rounded-md border border-kumo-fill-hover px-1.5 py-0.5 font-sans text-[12px] leading-4 text-kumo-subtle">
+          <kbd className="shrink-0 rounded-md border border-kumo-fill-hover px-1.5 py-0.5 font-sans text-[12px] leading-4 text-kumo-subtle touch:hidden">
             Esc
           </kbd>
+          {/* На телефоне клавиши Esc нет: закрытие — кнопкой. */}
+          <button type="button" onClick={onClose} className="hidden h-10 shrink-0 cursor-pointer items-center rounded-lg px-2 text-[14px] text-kumo-subtle hover:bg-kumo-tint touch:inline-flex">
+            Закрыть
+          </button>
         </div>
 
         <div ref={listRef} className="sidebar-scroll max-h-[min(60vh,480px)] overflow-y-auto p-2">

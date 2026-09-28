@@ -93,7 +93,7 @@ function RoleSwitch({ value, onValueChange, disabled, ariaLabel }: {
           title={ROLE_DESCRIPTIONS[role]}
           disabled={disabled}
           onClick={() => onValueChange(role)}
-          className={`h-8 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed ${
+          className={`h-8 touch:h-10 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed ${
             value === role
               ? 'bg-kumo-overlay font-medium text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]'
               : 'bg-transparent text-kumo-subtle hover:text-kumo-default'
@@ -780,11 +780,11 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
   const canInvite = !!addUsername.trim() && !adding && !sharingProhibited
   const rowClass = (landed: boolean, first: boolean) =>
     `group ${first ? '' : 'border-t border-kumo-fill'} ${landed ? 'share-row-land' : ''} py-2.5`
-  const quietAction = 'h-8 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle transition-colors hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed'
-  const hiddenAction = 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
+  const quietAction = 'h-8 touch:h-10 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle transition-colors hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed'
+  const hiddenAction = 'opacity-0 touch:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'
   // В строке ссылки действия не занимают место, пока строку не навели или не выбрали с клавиатуры (кнопка копирования видна всегда).
-  const collapsedAction = 'hidden group-hover:inline-flex group-focus-within:inline-flex items-center'
-  const pill = 'inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover bg-transparent px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-50'
+  const collapsedAction = 'hidden touch:inline-flex group-hover:inline-flex group-focus-within:inline-flex items-center'
+  const pill = 'inline-flex h-8 touch:h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover bg-transparent px-3 text-[13px] text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-50'
   const primary = (enabled: boolean) => `inline-flex h-[38px] shrink-0 items-center justify-center rounded-full border-0 px-5 text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring ${
     enabled ? 'cursor-pointer bg-kumo-brand text-white hover:bg-kumo-brand-hover' : 'cursor-not-allowed bg-kumo-tint text-kumo-inactive'}`
 
@@ -802,7 +802,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                 {...props}
                 type="button"
                 aria-label="Закрыть"
-                className="inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+                className="inline-flex h-[34px] w-[34px] touch:h-10 touch:w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
               >
                 <CaretLeft size={16} />
               </button>
@@ -833,7 +833,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
           <>
           <section aria-label="Пригласить" className="flex flex-col gap-2.5">
             <div className="flex flex-wrap items-center gap-2" data-keeper-ignore="true" data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
-              <div className="relative min-w-[200px] flex-1">
+              <div className="relative min-w-[min(200px,100%)] flex-1">
                 <input
                   type="search"
                   role="combobox"
@@ -894,7 +894,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <RoleSwitch ariaLabel="Право приглашённого" value={addRole} onValueChange={setAddRole} />
-              <p className="m-0 min-w-0 flex-1 text-[13px] leading-[18px] text-kumo-subtle">{ROLE_DESCRIPTIONS[addRole]}</p>
+              <p className="m-0 min-w-[12rem] flex-1 text-[13px] leading-[18px] text-kumo-subtle">{ROLE_DESCRIPTIONS[addRole]}</p>
             </div>
 
             {invitedName && (
@@ -943,7 +943,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                     onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShareLink() }}
                     placeholder="Название ссылки, например «Для отдела продаж»"
                     aria-label="Название ссылки (необязательно)"
-                    className="h-9 min-w-[200px] flex-1 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30"
+                    className="h-9 min-w-[min(200px,100%)] flex-1 rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] text-kumo-default outline-none placeholder:text-kumo-inactive focus:border-kumo-brand focus:ring-2 focus:ring-kumo-ring/30"
                     disabled={creatingLink}
                   />
                   <button type="button" className={`${primary(!creatingLink)} !h-9`} onClick={handleCreateShareLink} disabled={creatingLink}>
@@ -955,7 +955,7 @@ export default function ShareModal({ open, onClose, overseer, metadata, currentU
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <RoleSwitch ariaLabel="Право по ссылке" value={newLinkRole} onValueChange={setNewLinkRole} disabled={creatingLink} />
-                  <p className="m-0 min-w-0 flex-1 text-[13px] leading-[18px] text-kumo-subtle">Кто откроет ссылку, {roleLabel(newLinkRole)}.</p>
+                  <p className="m-0 min-w-[12rem] flex-1 text-[13px] leading-[18px] text-kumo-subtle">Кто откроет ссылку, {roleLabel(newLinkRole)}.</p>
                 </div>
               </div>
             ) : (

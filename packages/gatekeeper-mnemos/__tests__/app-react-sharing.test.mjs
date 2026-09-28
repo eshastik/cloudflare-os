@@ -61,7 +61,7 @@ test("«Входящие»: карточка запроса руководите
     await app.until(() => cards(app).some(c => c.dataset.inbox === "share"), "карточка запроса");
     const card = cards(app).find(c => c.dataset.inbox === "share");
     assert.ok(card.textContent.includes("Анна хочет открыть проект «Общий проект» отделу «Продажи»"), card.textContent);
-    assert.ok(card.textContent.includes("видящие смогут править"));
+    assert.ok(card.textContent.includes("Видящие смогут править"), card.textContent);
     assert.ok(!card.textContent.includes(REQUEST.request_id), "идентификатор запроса не показан");
     const buttons = [...card.querySelectorAll("button")].map(b => b.textContent);
     assert.ok(buttons.includes("Разрешить") && buttons.includes("Отклонить"), "обе кнопки решения на карточке, как в макете");
@@ -86,7 +86,7 @@ test("«Входящие»: карточки без таблиц — от ког
     assert.equal(app.document.querySelector('#root section[aria-label="Ждут вашего решения"] table'), null, "во «Входящих» нет таблиц");
     const acceptance = cards(app).find(c => c.dataset.inbox === "acceptance");
     assert.ok(acceptance.textContent.includes("Принять работу «Сверить прайс»"));
-    assert.ok(acceptance.textContent.includes("От: Свой агент (Claude Code или Codex)") && acceptance.textContent.includes("проект «Второй проект»"), acceptance.textContent);
+    assert.ok(acceptance.textContent.includes("От: Свой агент (Claude Code или Codex)") && acceptance.textContent.includes("Проект «Второй проект»"), acceptance.textContent);
     assert.ok(!acceptance.textContent.includes("agent-5f0c"), "исполнитель по имени, а не по идентификатору");
     assert.deepEqual([...acceptance.querySelectorAll("button")].slice(1).map(b => b.textContent), ["Проверить результат", "Открыть в беседе"], "одна главная кнопка и беседа");
     const approval = cards(app).find(c => c.dataset.inbox === "approval");

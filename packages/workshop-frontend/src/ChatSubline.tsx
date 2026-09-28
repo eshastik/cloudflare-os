@@ -8,9 +8,10 @@ export function ChatSubline({ chatCount, projectTitle, onBack }: { chatCount: nu
   return (
     <div data-testid="chat-subline" className="flex flex-shrink-0 items-center gap-3 px-4 pt-2 text-[12px] leading-4 text-kumo-subtle">
       {chatCount > 1 && (
-        <button type="button" onClick={onBack} className="inline-flex cursor-pointer items-center gap-1 rounded-md hover:text-kumo-default">
+        <button type="button" onClick={onBack} className="-ml-1 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-1 hover:text-kumo-default touch:h-10">
           <CaretLeft size={12} />
-          Все чаты · {chatCount}
+          Все беседы
+          <span className="rounded-full bg-kumo-fill px-1.5 text-[11px] leading-[18px] font-medium">{chatCount}</span>
         </button>
       )}
       {projectTitle && <span className="min-w-0 truncate">Проект: {projectTitle}</span>}

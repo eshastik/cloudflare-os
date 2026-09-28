@@ -54,13 +54,14 @@ function ConnectionRow({ title, icon, what, loading, error, items, connect, conn
     finally { setBusy(false); }
   }
   return <section aria-label={title} className="border-t border-kumo-fill first:border-t-0">
-    <div className="flex items-center gap-3.5 px-5 py-4">
+    {/* На узком экране кнопка уходит под описание: рядом с ней описание сжималось в колонку по слову. */}
+    <div className="flex flex-wrap items-center gap-3.5 px-5 py-4">
       <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-kumo-tint text-kumo-default"><Icon size={18} /></span>
-      <span className="block min-w-0 flex-1">
+      <span className="block min-w-0 flex-1 basis-52">
         <h2 className="m-0 text-[15px] font-medium text-kumo-default">{title}</h2>
         <p role="status" className={`m-0 text-[13px] ${error || broken ? "text-kumo-danger" : "text-kumo-subtle"}`}>{state}</p>
       </span>
-      {connect && <Pill tone={items.length ? "secondary" : "primary"} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Свернуть" : items.length ? "Настроить" : connectLabel ?? "Подключить"}</Pill>}
+      {connect && <Pill className="max-sm:ml-[50px]" tone={items.length ? "secondary" : "primary"} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Свернуть" : items.length ? "Настроить" : connectLabel ?? "Подключить"}</Pill>}
     </div>
     {(items.length > 0 || notice || open) && <div className="grid gap-2 px-5 pb-4 sm:pl-[70px]">
       {items.length > 0 && <p className="m-0 text-[13px] text-kumo-subtle">{what}</p>}

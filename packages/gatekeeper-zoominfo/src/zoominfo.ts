@@ -141,10 +141,11 @@ const ZOOMINFO_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(ZOOMINFO_LOGO
 // Whole-account catch-all resource (matches any URL), like other single-tenant gatekeepers.
 const ACCOUNT_RESOURCE: SupportedResource = {
   urlPattern: "https://*",
-  title: "ZoomInfo Account",
+  title: "Аккаунт ZoomInfo",
   description:
-    "Whole-account access: lookup, company/contact/intent/scoop/news search, record enrichment " +
-    "(consumes credits), recommendations, and account intelligence — subject to entitlements.",
+    "Доступ ко всему аккаунту: справочники, поиск компаний, контактов, сигналов намерения, scoops и " +
+    "новостей, обогащение записей (расходует кредиты), рекомендации и сведения о клиентах — в " +
+    "пределах вашего тарифа.",
   icon: { url: ZOOMINFO_LOGO_URL },
 };
 
@@ -322,12 +323,12 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://www.zoominfo.com",
       logo: { url: ZOOMINFO_LOGO_URL },
       color: "#EE3524",
-      tagline: "Search and enrich B2B company & contact intelligence",
+      tagline: "Поиск и обогащение B2B-данных о компаниях и контактах",
       description:
-        "Connect your ZoomInfo account so Cloudflare OS can resolve filter values, search companies, " +
-        "contacts, intent signals, scoops, and news, and enrich matched records into full detail. " +
-        "Search is free; enrichment consumes ZoomInfo credits. Build agents that assemble target " +
-        "account lists, research accounts, and prioritize outreach on buying signals.",
+        "Подключите аккаунт ZoomInfo, чтобы платформа могла подбирать значения фильтров, искать " +
+        "компании, контакты, сигналы намерения, scoops и новости и обогащать найденные записи " +
+        "полными сведениями. Поиск бесплатный, обогащение расходует кредиты ZoomInfo. Агенты смогут " +
+        "составлять списки целевых клиентов, изучать их и расставлять приоритеты по сигналам покупки.",
     };
   }
 

@@ -66,8 +66,12 @@ export default function NativeDocumentOpen({ open = true, onClose, ...props }: P
   return <OpenSection {...props} storageKey={key} resume={pending} close={close} />
 }
 
-function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
+function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
+  // Незавершённое открытие продолжается само: человек уже выбрал документ до перезагрузки. «Выбрать версию»
+  // после ошибки переводит карточку в ручной выбор и забывает незавершённое открытие.
+  const [resume, setResume] = useState(resumed), [manual, setManual] = useState(false)
+  const auto = !manual && (!!resume || !!autoApply)
   const [accounts, setAccounts] = useState<{ id: number; name: string; valid: boolean }[]>([])
   const [accountId, setAccountId] = useState<number | null>(initialAccountId ?? null)
   const [scopes, setScopes] = useState<Item[]>([]), [documents, setDocuments] = useState<Item[]>([])
@@ -230,6 +234,8 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify({ ...intent, sourceId: prepared.sourceId }))
       if (prepared.restartRequired) {
+        // Перезагрузка для этого открытия уже была: вторая означала бы петлю перезагрузок без открытия.
+        if (resume?.sourceId !== undefined) throw new Error('Restart repeated')
         // Wait for the old session to close: reloading on the prepare response can reconnect
         // to that same instance before its deferred abort, leaving the editor with dead RPCs.
         await new Promise<void>((resolve, reject) => {
@@ -272,21 +278,40 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })
       close(); reconnect()
     } catch {
-      if (!signal.aborted) setError('Открытие не подтверждено. Документ мог измениться или доступ недоступен. Закройте диалог и выберите публикацию заново; после переподключения можно продолжить сохранённый выбор.')
+      if (!signal.aborted) setError('Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
     } finally { if (!signal.aborted) setBusy(false) }
   }
   // Открытие без кнопки: один раз, когда заданная версия выбрана и адрес документа прочитан.
   const autoTried = useRef(false)
   useEffect(() => {
-    if (!autoApply || autoTried.current || busy || loading) return
+    if (!auto || autoTried.current || busy || loading) return
     if (!resume && (accountId === null || !resourceUrl || !publication || publication !== initialPublication)) return
     autoTried.current = true
     void apply()
-  }, [autoApply, resume, accountId, resourceUrl, publication, busy, loading])
-  const selectClass = 'block w-full border border-kumo-line rounded-lg p-2 bg-kumo-base'
+  }, [auto, resume, accountId, resourceUrl, publication, busy, loading])
+  // Заданной версии нет среди публикаций документа: ждать нечего, человек выбирает сам.
+  useEffect(() => {
+    if (!auto || resume || autoTried.current || busy || loading || !resourceUrl || !initialPublication) return
+    if (!publications.some(p => p.id === initialPublication) && !pubCursor) setError('Этой версии документа больше нет. Выберите другую.')
+  }, [auto, resume, busy, loading, resourceUrl, publications, pubCursor, initialPublication])
+  function chooseManually() {
+    sessionStorage.removeItem(storageKey); setResume(null); setManual(true); setError(''); setLoading(true)
+  }
+  // На телефоне поле выбора 40 px и шрифт 16 px: мельче iOS приближает страницу при касании.
+  const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[13px]'
+  const opening = resume?.label || documents.find(d => d.id === document)?.name || ''
+  if (auto) return <section aria-label="Открытие документа" className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
+      {error ? <p role="alert" className="m-0 text-kumo-danger">{error}</p>
+        : <p role="status" className="m-0">{opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
+      {preparing && !error && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
+        {error && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
+      </div>
+    </section>
   return <section className="flex flex-col gap-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">
-      <p className="m-0 text-[12px] leading-4 text-kumo-subtle">Опубликованная версия заменит содержимое этого редактора. При первом подключении пространство переподключится для проверки доступа. Участникам нужно завершить ввод и дождаться сохранения правок.</p>
-      {resume ? <p className="m-0">Продолжить открытие: {resume.label}</p> : <>
+      <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle">Выбранная версия заменит то, что сейчас в редакторе.</p>
+      {resume ? <p className="m-0">{resume.label}</p> : <>
         <label className="block">Подключение<select aria-label="Подключение Mnemos" className={selectClass} disabled={loading || busy} value={accountId ?? ''} onChange={e => setAccountId(e.target.value === '' ? null : Number(e.target.value))}>
           <option value="">Выберите подключение</option>{accounts.map(a => <option key={a.id} value={a.id} disabled={!a.valid}>{a.name}{a.valid ? '' : ' — нужно переподключить'}</option>)}</select></label>
         <label className="block">Проект<select aria-label="Проект для открытия" className={selectClass} disabled={loading || busy || accountId === null} value={scope} onChange={e => setScope(e.target.value)}>
@@ -317,7 +342,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       {loading && <p role="status">Загрузка…</p>}
       {preparing && <HistoryPreparingNotice progress={preparing} subject="Публикации документа появятся" />}
       {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
-      <div className="flex justify-end gap-2 mt-1"><WorkshopButton disabled={busy} onClick={close}>Отмена</WorkshopButton>
-        <WorkshopButton tone="primary" className="!h-8" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открытие…' : initialPublication ? 'Открыть документ' : 'Заменить содержимое редактора'}</WorkshopButton></div>
+      <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
+        <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-8 sm:w-auto" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открываю…' : 'Открыть версию'}</WorkshopButton></div>
   </section>
 }

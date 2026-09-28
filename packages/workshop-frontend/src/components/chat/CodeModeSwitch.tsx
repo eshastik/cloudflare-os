@@ -1,7 +1,9 @@
-// Переключатель «Код: Выкл · Авто · Вкл» у поля ввода: кто отвечает на сообщения беседы.
+// Переключатель «Код: Авто ▾» в нижней строке поля ввода: кто отвечает на сообщения беседы.
 // Значение хранится в метаданных беседы; по умолчанию «Авто».
 import { useEffect, useState } from "react";
+import { CaretDown, Check, Code } from "@phosphor-icons/react";
 import type { ChatCodeMode } from "@gadgets/workshop-shared/code-work";
+import { COMPOSER_CHIP, COMPOSER_POPOVER, useDismiss } from "./ProjectChips";
 
 /** Право человека «Агент кода» (его включает администратор). Пока не прочитано и при сбое — нет:
  *  переключатель без права только ввёл бы в заблуждение, а окончательно право проверяет сервер. */
@@ -28,37 +30,51 @@ export type CodeModeSwitchProps = {
 };
 
 export function CodeModeSwitch({ mode, onChange, disabled = false }: CodeModeSwitchProps) {
-  // Сегментный переключатель по макету «Работа с кодом»: подпись «Код:» и три положения.
+  const [open, setOpen] = useState(false);
+  const rootRef = useDismiss(open, () => setOpen(false));
+  const current = OPTIONS.find((option) => option.mode === mode) ?? OPTIONS[1];
   return (
-    <div className="inline-flex flex-shrink-0 items-center gap-0.5 rounded-xl bg-kumo-tint p-[3px] text-[13px] leading-4">
-      <span aria-hidden className="pr-2 pl-1.5 text-kumo-subtle">Код:</span>
-      <div
-        role="radiogroup"
-        aria-label="Работа с кодом"
-        className="inline-flex items-center gap-0.5"
+    <div ref={rootRef} className="inline-flex min-w-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label={`Работа с кодом: ${current.label}`}
+        title={current.hint}
+        className={COMPOSER_CHIP}
       >
-        {OPTIONS.map((option) => {
-          const checked = option.mode === mode;
-          return (
-            <button
-              key={option.mode}
-              type="button"
-              role="radio"
-              aria-checked={checked}
-              title={option.hint}
-              disabled={disabled}
-              onClick={() => { if (!checked) onChange(option.mode); }}
-              className={`h-[26px] cursor-pointer rounded-[9px] px-2.5 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-50 ${
-                checked
-                  ? "bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]"
-                  : "text-kumo-subtle hover:text-kumo-default"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
+        <Code size={15} className="flex-shrink-0" />
+        <span className="truncate"><span className="max-sm:hidden">Код: </span>{current.label}</span>
+        <CaretDown size={11} className="flex-shrink-0 opacity-70" aria-hidden="true" />
+      </button>
+      {open && (
+        <div className={COMPOSER_POPOVER}>
+          <p className="m-0 px-2.5 pt-1.5 pb-1 text-[12px] leading-4 text-kumo-subtle">Кто отвечает на сообщения беседы</p>
+          <div role="radiogroup" aria-label="Работа с кодом" className="flex flex-col">
+            {OPTIONS.map((option) => {
+              const checked = option.mode === mode;
+              return (
+                <button
+                  key={option.mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  title={option.hint}
+                  onClick={() => { setOpen(false); if (!checked) onChange(option.mode); }}
+                  className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+                >
+                  <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center text-kumo-brand">{checked && <Check size={13} weight="bold" />}</span>
+                  <span className="min-w-0">
+                    <span className={`block text-kumo-default ${checked ? "font-medium" : ""}`}>{option.label}</span>
+                    <span className="block text-[12px] leading-4 text-kumo-subtle">{option.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { logRpcFailure } from '../rpcErrors'
 import { startAccountConnect } from '../auth/accountConnect'
 import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import PageLoading from '../components/PageLoading'
+import { SectionEyebrow } from '../components/SectionEyebrow'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import {
   MagnifyingGlass,
@@ -131,7 +133,7 @@ function ConnectorCard({
 
   const badgeEl = badge ? (
     <span
-      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] leading-3 font-semibold uppercase tracking-[0.4px] ${
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[11px] leading-3 font-semibold ${
         badge.tone === 'new'
           ? 'bg-[rgba(255,72,1,0.10)] text-kumo-brand'
           : 'bg-kumo-tint text-kumo-subtle'
@@ -253,21 +255,6 @@ function ConnectorCard({
   )
 }
 
-function SectionEyebrow({ label, count }: { label: string; count?: number }) {
-  return (
-    <div className="mb-3.5 flex items-center gap-3 px-1">
-      <h2 className="m-0 text-[11px] leading-4 font-semibold uppercase tracking-[0.9px] text-kumo-subtle">
-        {label}
-      </h2>
-      <div className="h-px flex-1 bg-kumo-line" />
-      {typeof count === 'number' && (
-        <span className="text-[11px] leading-4 font-semibold tracking-[-0.1px] text-kumo-inactive">
-          {count}
-        </span>
-      )}
-    </div>
-  )
-}
 
 function ConnectorsHeroDiagram({
   accounts,
@@ -745,10 +732,10 @@ function ConnectorsPage() {
 
   return (
     <div className="min-h-[calc(100vh-3.5rem-1px)] bg-kumo-base">
-      <div className="mx-auto w-full max-w-5xl px-4 py-12 sm:px-8 sm:py-14">
+      <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-14">
         <header className="mb-8 grid gap-8 lg:grid-cols-[minmax(0,540px)_444px] lg:items-center lg:justify-between">
           <div>
-            <h1 className="m-0 text-3xl font-semibold leading-tight tracking-tight text-kumo-default sm:text-[34px]">
+            <h1 className="m-0 text-[24px] leading-8 font-semibold tracking-[-0.6px] text-kumo-default sm:text-[34px] sm:leading-tight sm:tracking-tight">
               Подключения
             </h1>
             <p className="mt-2 text-[14px] leading-[20px] font-normal tracking-[-0.25px] text-kumo-subtle">
@@ -786,11 +773,7 @@ function ConnectorsPage() {
           </div>
         )}
 
-        {initialLoading && (
-          <div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center text-[13px] leading-[18px] font-normal tracking-[-0.25px] text-kumo-subtle">
-            Загрузка…
-          </div>
-        )}
+        {initialLoading && <PageLoading label="Загружаю подключения…" />}
 
         {filteredAccounts.length > 0 && (
           <section className="mb-10">

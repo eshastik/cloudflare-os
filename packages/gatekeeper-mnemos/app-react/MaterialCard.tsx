@@ -65,16 +65,17 @@ export function MaterialCard({ row, at, fragment, folder, showProject, terms, se
       className={`group relative flex gap-3 border-b border-kumo-fill px-4 py-3 last:border-b-0 ${selected ? "bg-kumo-tint" : "hover:bg-kumo-tint/60"}`}>
       <Icon size={20} className="mt-0.5 shrink-0 text-kumo-subtle" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-3">
+        {/* На узком экране проект и время уходят под имя: в одной строке они вытесняли имя файла целиком. */}
+        <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-3">
           <button type="button" onClick={onOpen}
-            className="m-0 min-w-0 flex-1 truncate bg-transparent p-0 text-left text-[15px] leading-5 font-medium text-kumo-default outline-none after:absolute after:inset-0 focus-visible:underline"><Highlight text={row.name} terms={terms} /></button>
-          <span className="shrink-0 text-[13px] leading-5 text-kumo-subtle">
+            className="m-0 min-w-0 flex-1 bg-transparent p-0 text-left text-[15px] leading-5 font-medium text-kumo-default outline-none line-clamp-2 [overflow-wrap:anywhere] after:absolute after:inset-0 focus-visible:underline sm:truncate"><Highlight text={row.name} terms={terms} /></button>
+          <span className="truncate text-[13px] leading-5 text-kumo-subtle sm:shrink-0">
             {showProject && row.projectName}{showProject && at && ", "}{at && <time dateTime={at}>{relativeTime(at)}</time>}
           </span>
         </div>
         {folder && <div className="mt-0.5 truncate text-[13px] leading-[18px] text-kumo-subtle" title={folder}>{folder}</div>}
         {text && <p className={`mt-1 mb-0 line-clamp-2 text-kumo-default/85 [overflow-wrap:anywhere] ${code ? "font-mono text-[12.5px] leading-5" : "text-[14px] leading-5"}`}><Highlight text={text} terms={terms} /></p>}
-        <div className={`mt-2 flex flex-wrap items-center gap-1 ${selected ? "" : "sr-only group-hover:not-sr-only group-focus-within:not-sr-only"}`}>
+        <div className={`mt-2 flex flex-wrap items-center gap-1 ${selected ? "" : "sr-only group-hover:not-sr-only group-focus-within:not-sr-only [@media(hover:none)]:not-sr-only"}`}>
           <Button variant="secondary" size="sm" className="relative" onClick={onOpen}>Открыть</Button>
           <MaterialChatButtons onChat={onChat} />
         </div>

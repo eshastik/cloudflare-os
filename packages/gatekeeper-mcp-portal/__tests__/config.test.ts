@@ -43,7 +43,7 @@ describe("readPortalConfig", () => {
   it("reads the endpoint and strips any fragment, defaulting the name and auth kind", () => {
     const defaulted = readPortalConfig(env({ MCP_PORTAL_URL: "https://gw.example.com/mcp#x" }));
     expect(defaulted?.endpoint).toBe("https://gw.example.com/mcp");
-    expect(defaulted?.name).toBe("MCP Server Portal (gw.example.com)");
+    expect(defaulted?.name).toBe("Портал MCP-серверов (gw.example.com)");
     expect(defaulted?.auth).toBe("oauth");
 
     const configured = readPortalConfig(env({

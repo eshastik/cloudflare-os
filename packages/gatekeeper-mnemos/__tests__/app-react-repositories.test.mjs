@@ -74,13 +74,13 @@ test("«Репозитории»: единый счёт, источники ко
     assert.ok(page().querySelector('[data-source="internal"]').textContent.includes("ресурс организации"), "внутреннее хранилище — ресурс организации");
     assert.equal([...page().querySelectorAll('[data-source="internal"] button')].some(b => b.textContent === "Отключить"), false, "сотрудник не отключает хранилище организации");
     assert.deepEqual([...page().querySelectorAll("[data-repo]")].map(r => r.dataset.repo), ["acme/site", "projects/mnemos", "acme/billing", "acme/notes"], "связанные сверху, дальше по свежести");
-    assert.match(repo("acme/billing").textContent, /billing · acme.*GitHub · приватный · Go · изменён вчера/);
+    assert.match(repo("acme/billing").textContent, /acme\/billing.*GitHub, приватный, Go, изменён вчера/);
     const site = repo("acme/site").textContent;
     assert.ok(site.includes("Проект «Общий проект»"), site);
     assert.ok(site.includes("синхронизировано") && site.includes("312 файлов") && site.includes("пропущено 12 (двоичные 9, >1 МБ 3)"), site);
     await app.until(() => repo("acme/site").textContent.includes("2 ветки ждут «Принять»"), "ветки агентов ждут «Принять»");
     const internal = repo("projects/mnemos").textContent;
-    assert.ok(internal.includes("внутреннее хранилище Mnemos") && internal.includes("переносятся только из GitHub"), internal);
+    assert.ok(internal.includes("Внутреннее хранилище Mnemos") && internal.includes("переносятся только из GitHub"), internal);
     // Пропущенные файлы раскрываются путями.
     [...repo("acme/site").querySelectorAll("button")].find(b => b.textContent.startsWith("пропущено 12")).click();
     await app.until(() => repo("acme/site").querySelector('[aria-label="Пропущенные файлы"]'), "список пропусков");

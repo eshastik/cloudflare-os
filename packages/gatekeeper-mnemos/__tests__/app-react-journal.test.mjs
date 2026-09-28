@@ -14,11 +14,14 @@ const METRICS = {
   ],
   signal_owners: [{ signal_key: "dependencies", owner_id: "", owner_name: "", owner_active: false, revision: 0 }],
 };
-/** Журнал операций как у сервера: страница (after, after+limit], вершина — номер последней записи. */
-function auditPages(events) {
-  return async (after, limit) => {
-    const page = events.filter(e => Number(e.id) > after).slice(0, limit);
-    return { events: page, checkpoint: { sequence: events.length, hash: "h" }, next: page.length ? Number(page.at(-1).id) : after, truncated: false };
+/** Журнал операций как у сервера: окно (after, after+limit], вершина — номер последней записи. С significant
+ * сервер отбрасывает request.admit и записи внешней проверки, а next — последняя просмотренная запись. */
+function auditPages(events, seen = []) {
+  return async (after, limit, significant) => {
+    seen.push([after, limit, significant]);
+    const window = events.filter(e => Number(e.id) > after).slice(0, limit);
+    const page = significant ? window.filter(e => e.action !== "request.admit" && e.actor !== "synthetic-monitor") : window;
+    return { events: page, checkpoint: { sequence: events.length, hash: "h" }, next: window.length ? Number(window.at(-1).id) : after, truncated: false };
   };
 }
 const PEOPLE = { users: [{ userName: "alice", displayName: "Алиса", active: true }, { userName: "bob", displayName: "Борис", active: true }, { userName: "carol", displayName: "Кира", active: true }] };
@@ -34,9 +37,10 @@ const EVENTS = [
 ];
 
 test("«Журнал и состояние»: одна панель состояния словами, без технических строк; подробности — раскрытием", async () => {
+  const seen = [];
   const app = await mountMemoryApp({
     async readPlatformMetrics() { return METRICS; },
-    readOperationAuditPage: auditPages(EVENTS),
+    readOperationAuditPage: auditPages(EVENTS, seen),
     async listWorkJournal() { return { entries: [], truncated: false }; },
     async listPeople() { return { users: [{ userName: "alice", displayName: "Алиса", active: true }, { userName: "bob", displayName: "Борис", active: true }, { userName: "carol", displayName: "Кира", active: true }] }; },
   }, { section: "journal" });
@@ -60,10 +64,9 @@ test("«Журнал и состояние»: одна панель состоя
     assert.ok(rows()[0].textContent.includes("Кира выдала право читать проект «Второй проект»: Борис"), `новое сверху, законченным предложением: ${rows()[0].textContent}`);
     assert.ok(rows()[1].textContent.includes("Борис создал документ «Заметка команды» в проекте «Общий проект»"), rows()[1].textContent);
     assert.doesNotMatch(journal().textContent, /служебное действие/, "«служебное действие» в обычном виде не показывается");
-    const settings = journal().querySelector('details[aria-label="Настройки журнала"]');
-    assert.equal(settings.open, false, "переключатель свёрнут");
-    const toggle = settings.querySelector('input[aria-label="Показывать служебные"]');
-    assert.equal(toggle.checked, false, "и выключен");
+    assert.equal(journal().querySelector('details[aria-label="Настройки журнала"]'), null, "переключателя служебных записей нет: их не отдаёт сервер");
+    const reads = seen.filter(([, limit]) => limit > 1);
+    assert.ok(reads.length > 0 && reads.every(([, , significant]) => significant === true), `записи журнала читаются только значимые: ${JSON.stringify(seen)}`);
     assert.equal(app.buttons().some(b => /Обновить/.test(b.textContent)), false, "кнопки «Обновить» нет: журнал обновляется сам");
     assert.equal(app.document.querySelector('#root select[aria-label="Проект журнала"]'), null, "проект выбирается чипом, не выпадающим списком");
     chip(app, "Проект журнала", "Общий проект").click();
@@ -71,11 +74,6 @@ test("«Журнал и состояние»: одна панель состоя
     assert.equal(chip(app, "Проект журнала", "Общий проект").getAttribute("aria-pressed"), "true");
     rows()[0].querySelector("button").click();
     await app.until(() => rows()[0].textContent.includes("Действие выполнено"), "строка раскрывается на месте");
-    chip(app, "Проект журнала", "Общий проект").click();
-    toggle.click();
-    await app.until(() => rows().length === 4, "служебные записи показываются по запросу");
-    assert.ok(rows().some(r => r.textContent.includes("Алиса: проверка работы системы")), "служебная запись тоже словами");
-    assert.doesNotMatch(journal().textContent, /служебное действие/);
     assert.equal(app.document.querySelector('#root details[aria-label="Служебное"]'), null, "подвала «Служебное» нет");
   } finally { app.dispose(); }
 });
@@ -189,9 +187,10 @@ test("журнал действий: журнал операций и журна
 });
 
 test("журнал действий: «Показать более ранние» догружает из всех источников и держит порядок по времени", async () => {
+  // Первое чтение просматривает 10 окон по 10 000 записей; отдел создан глубже.
   const events = [ev(1, "org_unit.create", { resource: "unit-1", at: "2026-09-20T09:00:00Z" })];
-  for (let i = 2; i <= 10001; i++) events.push(ev(i, "request.admit", { at: "2026-09-24T09:00:00Z" }));
-  events.push(ev(10002, "org_invitation.create", { resource: "inv-1", at: "2026-09-24T12:00:00Z" }));
+  for (let i = 2; i <= 100001; i++) events.push(ev(i, "request.admit", { at: "2026-09-24T09:00:00Z" }));
+  events.push(ev(100002, "org_invitation.create", { resource: "inv-1", at: "2026-09-24T12:00:00Z" }));
   const calls = [];
   const app = await mountMemoryApp({
     readOperationAuditPage: auditPages(events),
@@ -261,5 +260,35 @@ test("журнал действий обновляется сам: новые з
     assert.ok(texts()[0].includes("пригласила"), texts()[0]);
     assert.ok(rows()[1].textContent.includes("Действие выполнено"), "раскрытая строка осталась раскрытой");
     assert.doesNotMatch(app.text(), /Проверка доступности/, "действия внешней проверки установки — служебные");
+  } finally { app.dispose(); }
+});
+
+test("журнал действий: пустое окно говорит, за какой срок действий не было, и зовёт смотреть ранее", async () => {
+  const events = [];
+  for (let i = 1; i <= 150000; i++) events.push(ev(i, "request.admit", { at: "2026-09-20T09:00:00Z" }));
+  events.push(ev(150001, "workspace-activity.record", { at: new Date(Date.now() - 5 * 3_600_000).toISOString() }));
+  const app = await mountMemoryApp({
+    readOperationAuditPage: auditPages(events),
+    async listWorkJournal() { return { entries: [], truncated: false }; },
+    async listPeople() { return PEOPLE; },
+  }, { section: "journal" });
+  try {
+    await app.until(() => app.document.querySelector("#root [data-journal-empty]"), "пустое состояние");
+    assert.match(app.document.querySelector("#root [data-journal-empty]").textContent, /За последние 5 часов никто ничего не менял/);
+    assert.ok(app.buttons().some(b => b.textContent === "Показать более ранние"), "рядом — кнопка ранних записей");
+    assert.doesNotMatch(app.text(), /пока не было|Здесь появятся/);
+  } finally { app.dispose(); }
+});
+
+test("журнал действий: журнал прочитан до начала и пуст — сказано, что здесь появится", async () => {
+  const app = await mountMemoryApp({
+    readOperationAuditPage: auditPages([ev(1, "request.admit"), ev(2, "workspace-activity.record")]),
+    async listWorkJournal() { return { entries: [], truncated: false }; },
+    async listPeople() { return PEOPLE; },
+  }, { section: "journal" });
+  try {
+    await app.until(() => app.document.querySelector("#root [data-journal-empty]"), "пустое состояние");
+    assert.match(app.document.querySelector("#root [data-journal-empty]").textContent, /Здесь появятся действия людей и агентов/);
+    assert.equal(app.buttons().some(b => b.textContent === "Показать более ранние"), false);
   } finally { app.dispose(); }
 });

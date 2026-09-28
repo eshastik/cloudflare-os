@@ -87,7 +87,7 @@ function OutputMenu({
             <button
               type="button"
               aria-label="Действия с результатом"
-              className="cursor-pointer rounded-md p-1.5 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+              className="grid cursor-pointer place-items-center rounded-md p-1.5 touch:h-10 touch:w-10 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 touch:opacity-100 sm:group-hover:opacity-100"
             >
               <DotsThreeVertical size={16} />
             </button>
@@ -187,7 +187,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[14px] transition-colors ${
+      className={`inline-flex h-8 touch:h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[14px] transition-colors ${
         active
           ? 'bg-kumo-fill font-medium text-kumo-default'
           : 'text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default'
@@ -234,7 +234,7 @@ function ScopeSelect({
         render={
           <button
             type="button"
-            className={`inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3.5 text-[14px] transition-colors ${
+            className={`inline-flex h-9 touch:h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3.5 text-[14px] transition-colors ${
               value === 'all'
                 ? 'bg-kumo-overlay text-kumo-subtle hover:text-kumo-default'
                 : 'bg-kumo-fill text-kumo-default'

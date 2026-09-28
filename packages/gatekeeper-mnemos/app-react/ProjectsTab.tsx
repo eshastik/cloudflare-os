@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowClockwise, FileText, Folder, Plus, Robot, UploadSimple } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowLeft, CaretRight, FileText, Folder, Plus, Robot, UploadSimple } from "@phosphor-icons/react";
 import type { PickedIntakeFile } from "../src/intake.ts";
 import { groupRefusals, refusedLine } from "../src/upload-progress.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
 import { VISIBILITY_TITLES } from "../src/project-sharing.ts";
 import { useHost, useUi } from "./host.ts";
-import { actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
+import { projectSummary, actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
 import { SharePanel, VisibilityBadge, VISIBILITY_NOTES } from "./ProjectSharing.tsx";
 import ProjectApproval from "./ProjectApproval.tsx";
 import { useReviewDecision } from "./ApprovalsTab.tsx";
 import { plural } from "./names.ts";
 import PersonAvatar from "./PersonAvatar.tsx";
-import { ActionForm, Block, Button, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput } from "./ui.tsx";
+import { ActionForm, Block, Button, Card, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput, touchOnly } from "./ui.tsx";
 
 import ProjectIntake from "./ProjectIntake.tsx";
 import { uploadActive, useProjectUpload, useUploadChoosing } from "./UploadNotice.tsx";
@@ -23,10 +23,13 @@ const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_revi
 /** Сколько файлов показывать до «Показать все». */
 const FILES_SHOWN = 8;
 
-/** Раздел «Проекты»: слева список проектов, справа страница выбранного проекта одним экраном. */
+/** Раздел «Проекты»: слева список проектов, справа страница выбранного проекта одним экраном.
+ * На телефоне (уже md) — по очереди: список, а выбранный проект во весь экран с кнопкой «Проекты». */
 export default function ProjectsTab({ data, initialProject = "", initialView = "", linkedDocument = null, onSelectProject, onSelectView, onOpenDocuments, onOpenSources }: { initialProject?: string; initialView?: string; linkedDocument?: LinkedDocument | null; data: MemoryData; onSelectProject(project: string): void; onSelectView?(view: string): void; onOpenDocuments(project: string): void; onOpenSources(): void }) {
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState(initialProject);
+  // Что видно на телефоне: список или проект. Проект из адреса (переход из отдела, ссылка) открывается сразу.
+  const [phoneProject, setPhoneProject] = useState(!!initialProject);
   // Вкладка каждого проекта переживает возврат из прежних разделов, которые на время заменяют страницу.
   const [views, setViews] = useState<Record<string, ProjectView>>({});
   const selected = selectedId ? data.projects.find(p => p.id === selectedId) ?? null : data.projects[0] ?? null;
@@ -34,7 +37,7 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
   const linked = viewFromAddress(initialView);
   // Адрес меняется и без перезагрузки фрейма (история, ссылка из другого раздела): выбор следует за ним.
   // Пустая вкладка в адресе ничего не сбрасывает — иначе поздний сигнал отменил бы щелчок пользователя.
-  useEffect(() => { if (initialProject) setSelectedId(initialProject); }, [initialProject]);
+  useEffect(() => { if (initialProject) { setSelectedId(initialProject); setPhoneProject(true); } }, [initialProject]);
   useEffect(() => {
     // Вкладка в адресе относится к проекту в адресе, а не к выбранному щелчком: поздний сигнал не должен
     // переносить вкладку прежнего проекта на новый.
@@ -42,45 +45,54 @@ export default function ProjectsTab({ data, initialProject = "", initialView = "
     if (linked && project) setViews(all => all[project] === linked ? all : { ...all, [project]: linked });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialView, initialProject]);
+  const prioritize = data.prioritizeProject;
+  useEffect(() => { if (selected?.id) prioritize?.(selected.id); }, [selected?.id, prioritize]);
   const viewOf = (id: string) => views[id] ?? (linked && (id === initialProject || !initialProject && id === data.projects[0]?.id) ? linked : "overview");
 
   return (
-    <div className="grid min-h-screen grid-cols-[280px_minmax(0,1fr)] max-md:grid-cols-1">
-      <nav aria-label="Список проектов" className="flex flex-col gap-1.5 border-r border-kumo-fill px-4 py-7 max-md:border-r-0 max-md:border-b">
+    <div className="grid grid-cols-[280px_minmax(0,1fr)] max-md:grid-cols-1 md:min-h-screen">
+      <nav aria-label="Список проектов" className={`flex flex-col gap-1.5 border-r border-kumo-fill px-4 py-7 max-md:border-r-0 ${phoneProject || creating ? "max-md:hidden" : ""}`}>
         <div className="flex items-center gap-2 px-2 pb-3">
           <h1 className="m-0 flex-1 text-[22px] leading-7 font-semibold tracking-[-0.5px] text-kumo-default">Проекты</h1>
           <Button variant="ghost" size="sm" shape="circle" aria-label="Обновить" title="Обновить список" icon={<ArrowClockwise size={16} aria-hidden="true" />} onClick={() => void data.reloadProjects()} />
           {canCreateProjects(data.identity) && <Button variant="secondary" size="sm" shape="circle" aria-label="Новый проект" title="Новый проект" icon={<Plus size={16} aria-hidden="true" />} onClick={() => setCreating(true)} />}
         </div>
+        {/* На телефоне список — одна карточка со строками, как в остальных разделах; выделения выбранного там нет. */}
+        <div className="flex flex-col gap-1.5 max-md:gap-0 max-md:overflow-hidden max-md:rounded-2xl max-md:border max-md:border-kumo-fill max-md:bg-kumo-overlay max-md:empty:hidden">
         {data.projects.map(p => {
           const current = !creating && selected?.id === p.id;
           return (
-            <div key={p.id} className={`relative rounded-[12px] border px-3 py-2.5 ${current ? "border-kumo-fill bg-kumo-overlay" : "border-transparent hover:bg-kumo-tint"}`}>
-              <button type="button" aria-current={current ? "true" : undefined} onClick={() => { setCreating(false); if (selected?.id !== p.id) { setSelectedId(p.id); onSelectProject(p.id); } }}
-                className={`block w-full truncate border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default after:absolute after:inset-0 after:content-[''] ${current ? "font-semibold" : ""}`}>{p.name}</button>
-              {projectNote(p) && <span className="mt-0.5 block truncate text-[13px] leading-[18px] text-kumo-subtle">{projectNote(p)}</span>}
+            <div key={p.id} className={`relative rounded-[12px] border px-3 py-2.5 max-md:rounded-none max-md:border-0 max-md:border-t max-md:border-kumo-fill max-md:bg-transparent max-md:px-4 max-md:py-3 max-md:first:border-t-0 ${current ? "border-kumo-fill bg-kumo-overlay" : "border-transparent hover:bg-kumo-tint"}`}>
+              <button type="button" aria-current={current ? "true" : undefined} onClick={() => { setCreating(false); setPhoneProject(true); toTopOnPhone(); if (selected?.id !== p.id) { setSelectedId(p.id); onSelectProject(p.id); } }}
+                className={`block w-full border-0 bg-transparent p-0 pr-6 text-left text-[15px] leading-5 text-kumo-default after:absolute after:inset-0 after:content-[''] md:truncate md:pr-0 ${current ? "font-semibold" : ""}`}>{p.name}</button>
+              {projectSummary(p) && <span className="mt-0.5 block truncate pr-6 text-[13px] leading-[18px] text-kumo-subtle md:pr-0">{projectSummary(p)}</span>}
+              <CaretRight size={16} aria-hidden="true" className="absolute top-1/2 right-3 -translate-y-1/2 text-kumo-subtle md:hidden" />
             </div>
           );
         })}
-        {data.projectsLoading && <p className="m-0 px-3 py-1 text-[13px] text-kumo-subtle">Загрузка…</p>}
+        </div>
+        {data.projectsLoading && data.projects.length === 0 && <p role="status" className="m-0 px-3 py-1 text-[13px] text-kumo-subtle">Загружаем проекты…</p>}
         {data.projectsError && <div className="px-3"><Notice tone="danger">{data.projectsError}</Notice></div>}
         {!data.projectsLoading && !data.projectsError && data.projects.length === 0 && <div className="px-3"><Notice>Доступных проектов нет.</Notice></div>}
       </nav>
-      <div className="min-w-0 px-4 py-7 sm:px-10">
+      <div className={`min-w-0 px-4 py-7 max-md:pt-3 sm:px-10 ${phoneProject || creating ? "" : "max-md:hidden"}`}>
+        {/* Возврат к списку — как «Подключения» над «Репозиториями»; высота 40 px под палец. */}
+        <button type="button" onClick={() => { setPhoneProject(false); setCreating(false); toTopOnPhone(); }}
+          className="mb-2 inline-flex h-10 items-center gap-1.5 border-0 bg-transparent p-0 text-[14px] text-kumo-brand hover:underline focus-visible:outline-2 focus-visible:outline-kumo-ring md:hidden">
+          <ArrowLeft size={16} aria-hidden="true" />Проекты</button>
         {creating
           ? <CreateProject onCreated={async id => { setSelectedId(id); setCreating(false); await data.reloadProjects(); onSelectProject(id); }} onCancel={() => setCreating(false)} />
           : selected
             ? <ProjectPage key={selected.id} project={selected} data={data} view={viewOf(selected.id)} linkedDocument={selected.id === initialProject ? linkedDocument : null} onView={view => { setViews(all => ({ ...all, [selected.id]: view })); onSelectView?.(ADDRESS[view]); }} onOpenDocuments={() => onOpenDocuments(selected.id)} onOpenSources={onOpenSources} />
-            : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект слева."}</Notice>}
+            : data.projects.length === 0 && data.projectsLoading ? <Notice>Загружаем проект…</Notice> : !data.projectsLoading && <Notice>{selectedId ? "Проект недоступен. Выберите другой проект из списка." : "Выберите проект в списке."}</Notice>}
       </div>
     </div>
   );
 }
 
-/** Подпись проекта в списке: кому виден и сколько в нём файлов. */
-function projectNote(project: ProjectData): string {
-  const files = project.nodes.filter(n => !n.is_dir).length;
-  return [project.visibility ? VISIBILITY_TITLES[project.visibility] : "", files ? `${files}${project.truncated ? "+" : ""} ${plural(files, "файл", "файла", "файлов")}` : ""].filter(Boolean).join(" · ");
+/** На телефоне список и проект сменяют друг друга: новый экран начинается сверху. */
+function toTopOnPhone() {
+  if (typeof matchMedia === "function" && matchMedia("(max-width: 767px)").matches) window.scrollTo(0, 0);
 }
 
 type ProjectView = "overview" | "materials" | "code" | "tasks" | "people";
@@ -155,6 +167,8 @@ function ProjectNow({ project, data }: { project: ProjectData; data: MemoryData 
   const task = data.task && (data.task.tracker?.project_id === project.id || data.task.team_budget?.project_id === project.id || data.task.budget_request?.project_id === project.id) ? data.task : null;
   const nodeName = (id: string) => project.nodes.find(n => n.node_id === id)?.name || project.privateDocs.get(id)?.name || UNNAMED_DOCUMENT;
   const waiting = approvals.length + work.length + (task ? 1 : 0);
+  // Пустой блок «Сейчас» не занимает экран: он появляется, когда есть что решать или что-то сломалось.
+  if (waiting === 0 && !data.collaborationsError && !decision.notice) return null;
   const item = "flex items-center gap-3 border-t border-kumo-fill px-4 py-3.5 first:border-t-0";
   return (
     <Block title="Сейчас" count={waiting} empty={data.collaborationsError || "Сейчас по проекту ничего не ждёт вашего решения."}>
@@ -253,14 +267,21 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
   useEffect(() => {
     if (highlighted) [...document.querySelectorAll("[data-document]")].find(row => row.getAttribute("data-document") === highlighted)?.scrollIntoView?.({ block: "center" });
   }, [highlighted, !!linkedRow]);
-  const name = "block max-w-full truncate border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default hover:text-kumo-brand";
+  // Имя файла переносится в две строки, а не обрезается: на телефоне обрезка оставляла одно начало имени.
+  const name = "block max-w-full line-clamp-2 border-0 bg-transparent p-0 text-left text-[15px] leading-5 text-kumo-default [overflow-wrap:anywhere] hover:text-kumo-brand";
   return (
     <section id="project-materials" aria-label="Файлы" className="mb-7">
       {/* Сервер не отдаёт общего числа: список читается постранично, недочитанный счёт помечен «+». */}
-      <SectionTitle title="Файлы" count={`${materials.length}${project.truncated ? "+" : ""}`} actions={<>
-        <Button variant="secondary" size="sm" disabled={busy} icon={<UploadSimple size={15} aria-hidden="true" />} onClick={() => void pick(false)}>Загрузить файлы</Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void pick(true)}>Выбрать папку</Button>
-      </>} />
+      {/* Одно действие «Загрузить» с выбором: файлы или папка — одной группой, без отдельной висящей ссылки.
+          На телефоне папку выбрать нельзя, там остаются только файлы. */}
+      <SectionTitle title="Файлы" count={`${materials.length}${project.truncated ? "+" : ""}`} actions={
+        <div role="group" aria-label="Загрузить в проект" className="inline-flex h-8 items-stretch overflow-hidden rounded-full border border-kumo-fill-hover bg-kumo-overlay text-[13px]">
+          <button type="button" disabled={busy} onClick={() => void pick(false)}
+            className="inline-flex items-center gap-1.5 border-0 bg-transparent px-3 text-kumo-default hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring disabled:cursor-not-allowed disabled:opacity-50">
+            <UploadSimple size={15} aria-hidden="true" />Загрузить файлы</button>
+          {!touchOnly && <button type="button" disabled={busy} onClick={() => void pick(true)}
+            className="border-0 border-l border-solid border-kumo-fill-hover bg-transparent px-3 text-kumo-default hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring disabled:cursor-not-allowed disabled:opacity-50">Папку</button>}
+        </div>} />
       {upload.card}
       {uploading && !upload.live && <p role="status" className="m-0 mb-2 text-[14px] text-kumo-subtle">Загружаем в проект…</p>}
       {actionError && <div className="mb-2"><Notice tone="danger">{actionError}</Notice></div>}
@@ -273,9 +294,12 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
         {uploaded.filter(file => file.error).length > 5 && <p className="m-0 mt-1 text-kumo-subtle">Не подтверждено ещё {uploaded.filter(file => file.error).length - 5}.</p>}
       </div>}
       <ProjectIntake projectId={project.id} onPlaced={data.reloadProjects} />
-      {total === 0 && !shared.value?.length
+      {total === 0 && !shared.value?.length && project.detailsLoaded === false
+        ? <Notice>Загружаем файлы проекта…</Notice>
+        : total === 0 && !shared.value?.length
         ? !(uploading || uploadActive(upload.view)) && <Notice>{project.nodesError ? "Документы проекта не прочитаны: проверьте доступ." : "Документов пока нет. Загрузите файлы или папку."}</Notice>
         : <div>
+          <Card>
           {shownFolders.map(folder => (
             <ListRow key={folder.node_id} icon={<Folder size={18} />}>
               <button type="button" className={name} onClick={onOpenDocuments}>{folder.name}</button>
@@ -297,10 +321,12 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
               <div className="mt-0.5 text-[13px] text-kumo-subtle">поделился {doc.granted_by_name || doc.owner_name || "коллега"}</div>
             </ListRow>
           ))}
-          <div className="flex flex-wrap items-center gap-3 px-1 pt-3 text-[14px]">
+          {/* Переходы к полному списку — последней строкой той же карточки, а не отдельными ссылками под ней. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-kumo-fill px-4 py-3 text-[14px]">
             {!all && total > shownFolders.length + shownFiles.length && <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={() => setAll(true)}>Показать все {total}</button>}
             <button type="button" className="border-0 bg-transparent p-0 text-kumo-brand hover:text-kumo-brand-hover" onClick={onOpenDocuments}>Все документы проекта</button>
           </div>
+          </Card>
           {project.truncated && <p className="mt-2 mb-0 text-[13px] text-kumo-subtle">Показаны не все файлы: проект слишком большой для списка на этой странице. Остальное — по ссылке «Все документы проекта».</p>}
         </div>}
     </section>

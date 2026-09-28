@@ -276,7 +276,7 @@ function FormatRow({
             on every glance. */}
         <div
           className={`flex shrink-0 items-center gap-1 transition-opacity ${
-            open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+            open ? 'opacity-100' : 'opacity-0 touch:opacity-100 group-hover:opacity-100 focus-within:opacity-100'
           }`}
         >
           <IconButton label="Переместить выше" disabled={busy || isFirst} onClick={() => onMove(-1)}>

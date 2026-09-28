@@ -27,7 +27,7 @@ test("«Подключения»: одна страница строками, с
     for (const name of ["Почта", "Календарь", "Диск", "Репозитории", "Базы данных", "Telegram"]) assert.ok(row(name), `строка «${name}»`);
     assert.equal(row("Код"), null, "прежней строки «Код» с формой «Где хранится код» нет");
     // Единый счёт: ключ GitLab и внутреннее хранилище — два источника, один репозиторий в проекте.
-    assert.ok(row("Репозитории").textContent.includes("Источников: 2 · репозиториев в проектах: 1"), row("Репозитории").textContent);
+    assert.ok(row("Репозитории").textContent.includes("Источников: 2, репозиториев в проектах: 1"), row("Репозитории").textContent);
     assert.ok(row("Почта").textContent.includes("Письма для проекта «Общий проект»"), "проект назван по имени");
     assert.ok(row("Базы данных").textContent.includes("Требует внимания"), "неработающая база видна словами");
     assert.ok(row("Календарь").textContent.includes("Не подключено"), "пустая строка говорит, что не подключено");
@@ -123,7 +123,7 @@ test("«Репозитории»: свои аккаунты GitHub — подк�
     await app.until(() => page().querySelectorAll("[data-repo]").length >= 4, "репозитории строками");
     const repos = [...page().querySelectorAll("[data-repo]")].map(r => r.dataset.repo).sort();
     assert.deepEqual(repos, ["acme/api", "acme/web", "alice/site", "projects/mnemos", "team/site"], "GitHub, ключ GitLab и внутреннее хранилище — одним списком");
-    assert.ok(page().querySelector('[data-repo="acme/api"]').textContent.includes("api · acme"), "имя и аккаунт в строке");
+    assert.ok(page().querySelector('[data-repo="acme/api"]').textContent.includes("acme/api"), "имя и аккаунт в строке");
   } finally { app.dispose(); }
 });
 

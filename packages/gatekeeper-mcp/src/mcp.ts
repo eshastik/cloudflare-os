@@ -174,10 +174,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://modelcontextprotocol.io",
       logo: MCP_AVATAR,
       color: "#1a1d21",
-      tagline: "Connect any Model Context Protocol server",
+      tagline: "Подключение любого сервера Model Context Protocol",
       description:
-        "Connect a Model Context Protocol server and use its tools from a Gadget. Reads happen " +
-        "straight away. Anything that writes waits for your approval.",
+        "Подключите сервер Model Context Protocol и пользуйтесь его инструментами из гаджета. Чтение " +
+        "выполняется сразу. Любая запись ждёт вашего подтверждения.",
     };
   }
 

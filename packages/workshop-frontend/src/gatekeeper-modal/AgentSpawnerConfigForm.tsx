@@ -144,7 +144,7 @@ export function AgentSpawnerConfigForm({
                   value={row.name}
                   disabled={!row.enabled}
                   onChange={(e) => updateRow(index, { name: e.target.value })}
-                  className="!h-8 w-[180px] min-w-0 font-mono"
+                  className="!h-8 w-[min(180px,45%)] min-w-0 shrink-0 font-mono"
                 />
                 <span className="min-w-0 flex-1 truncate text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
                   {row.targetTitle}

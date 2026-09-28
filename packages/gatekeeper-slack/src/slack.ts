@@ -106,24 +106,24 @@ const IDENTITY_SCOPES = ["users:read"];
 // `https://*` denotes account-wide access; the configurator resolves the concrete workspace URL.
 const WORKSPACE_RESOURCE: SupportedResource = {
   urlPattern: "https://*",
-  title: "Slack Workspace",
+  title: "Рабочее пространство Slack",
   description:
-      "Read channels, direct messages, members, and search across the whole connected workspace. " +
-      "The workspace is auto-detected from the connected account — no URL or ID need be supplied.",
+      "Чтение каналов, личных сообщений, участников и поиск по всему подключённому пространству. " +
+      "Пространство определяется по подключённому аккаунту — адрес или идентификатор указывать не нужно.",
   grantable: true,
 };
 
 const CONVERSATION_RESOURCE: SupportedResource = {
   urlPattern: "https://app.slack.com/client/:teamId/:conversationId",
-  title: "Slack Conversation",
-  description: "Read a single channel, direct message, or group DM.",
+  title: "Беседа Slack",
+  description: "Чтение одного канала, личной переписки или группового чата.",
   grantable: true,
 };
 
 const THREAD_RESOURCE: SupportedResource = {
   urlPattern: "https://*.slack.com/archives/:conversationId/:messageId",
-  title: "Slack Thread",
-  description: "Read a single message thread and its replies.",
+  title: "Ветка Slack",
+  description: "Чтение одной ветки сообщений и ответов в ней.",
   grantable: true,
 };
 
@@ -279,11 +279,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://slack.com",
       logo: { url: SLACK_LOGO_URL },
       color: "#f4ede4",
-      tagline: "Read channels, DMs, and threads",
+      tagline: "Чтение каналов, личных сообщений и веток",
       description:
-          "Connect your Slack account to give Cloudflare OS read-only access to the workspaces, " +
-          "channels, direct messages, and threads you can see. Build agents that summarize " +
-          "conversations, monitor channels, or search across your Slack history.",
+          "Подключите аккаунт Slack, чтобы открыть платформе доступ только на чтение к видимым вам " +
+          "пространствам, каналам, личным сообщениям и веткам. Агенты смогут пересказывать беседы, " +
+          "следить за каналами и искать по истории Slack.",
     };
   }
 

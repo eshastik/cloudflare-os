@@ -182,11 +182,11 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       logo: PORTAL_AVATAR,
       color: PORTAL_COLOR,
       tagline: config
-        ? `Connect a server behind ${hostOf(config.endpoint)}`
-        : "No MCP server portal is configured",
+        ? `Подключение сервера за ${hostOf(config.endpoint)}`
+        : "Портал MCP-серверов не настроен",
       description:
-        "Use the MCP servers this organization has approved, through its MCP server portal. Reads " +
-        "happen straight away. Anything that writes waits for your approval.",
+        "Доступ к MCP-серверам, одобренным организацией, через её портал MCP-серверов. Чтение " +
+        "выполняется сразу. Любая запись ждёт вашего подтверждения.",
     };
   }
 

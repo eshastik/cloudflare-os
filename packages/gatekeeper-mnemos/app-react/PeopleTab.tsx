@@ -9,7 +9,7 @@ import { DepartmentsPanel, InvitationRows, InvitePanel, InviteForm, headedUnits,
 import { AdminSwitch, CodeAgentSwitch, CompetenciesPanel, PersonCompetencies } from "./Competencies.tsx";
 import PersonAvatar from "./PersonAvatar.tsx";
 import GitOwnershipTransfer from "./GitOwnership.tsx";
-import { Card, CardRow, Field, FieldSelect, Pill, PillInput, RowTitle, SectionHead } from "./admin-ui.tsx";
+import { Card, CardRow, Field, FieldSelect, Pill, PillInput, RowTitle, SectionHead, plural } from "./admin-ui.tsx";
 
 export default function PeopleTab({ data }: { data: MemoryData }) {
   if (!data.identity?.capabilities?.includes("principal.manage")) return <DepartmentHead data={data} />;
@@ -35,7 +35,7 @@ function DepartmentHead({ data }: { data: MemoryData }) {
 function unitWords(units: OrgUnit[], person: string): string {
   const own = units.filter(u => u.members.some(m => m.principal_id === person));
   if (!own.length) return "без отдела";
-  return own.map(u => `${u.name}${u.members.find(m => m.principal_id === person)?.is_head ? " · руководитель" : ""}`).join("; ");
+  return own.map(u => `${u.name}${u.members.find(m => m.principal_id === person)?.is_head ? ", руководитель" : ""}`).join("; ");
 }
 
 /** «Люди и отделы» — одна страница: приглашение (раскрывается на месте), отделы и люди рядом, компетенции ниже. */
@@ -65,7 +65,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
   return <section aria-label="Люди и отделы" className="grid gap-8">
     <section aria-label="Приглашения" className="grid gap-3">
       <div className="flex flex-wrap items-center gap-3">
-        <p className="m-0 flex-1 text-[15px] text-kumo-subtle">Сотрудников: {current.length}{openInvitations.length ? ` · приглашены и ещё не вошли: ${openInvitations.length}` : ""}</p>
+        <p className="m-0 flex-1 text-[15px] text-kumo-subtle">В организации {current.length} {plural(current.length, "сотрудник", "сотрудника", "сотрудников")}.{openInvitations.length ? ` Ещё не вошли по приглашению: ${openInvitations.length}.` : ""}</p>
         <Pill tone="primary" size="md" aria-expanded={inviting} onClick={() => setInviting(!inviting)}><UserPlus size={16} />{inviting ? "Свернуть" : "Пригласить"}</Pill>
       </div>
       {inviting && (org.loading ? <Notice>Загрузка отделов…</Notice> : <InviteForm units={org.units} allowNoUnit admin onCreated={invitations.reload} />)}
@@ -73,7 +73,7 @@ function PeopleManager({ data }: { data: MemoryData }) {
     <div className="grid items-start gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
       <DepartmentsPanel people={current} org={org} />
       <section aria-label="Люди" className="min-w-0">
-        <SectionHead title="Люди"><PillInput type="search" aria-label="Найти сотрудника" placeholder="Найти" className="w-[180px]" value={query} onChange={e => setQuery(e.target.value)} /></SectionHead>
+        <SectionHead title="Люди"><PillInput type="search" aria-label="Найти сотрудника" placeholder="Найти" className="w-full sm:w-[180px]" value={query} onChange={e => setQuery(e.target.value)} /></SectionHead>
         {error && <div className="mb-2 flex flex-wrap items-center gap-2"><Notice tone="danger">{error}</Notice><Pill tone="ghost" disabled={loading} onClick={() => setRevision(v => v+1)}>Повторить</Pill></div>}
         {loading ? <Notice>Загрузка…</Notice> : <Card>
           {visiblePeople.map(p => {

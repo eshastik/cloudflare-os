@@ -227,23 +227,23 @@ const BIGQUERY_HOST = "bigquery.googleapis.com";
 
 const GMAIL_RESOURCE: SupportedResource = {
   urlPattern: "https://mail.google.com/*",
-  title: "Gmail Mailbox",
-  description: "Read emails and apply labels.",
+  title: "Почтовый ящик Gmail",
+  description: "Чтение писем и расстановка ярлыков.",
   grantable: true,
 };
 
 const GOOGLE_DOC_RESOURCE: SupportedResource = {
   urlPattern: "https://docs.google.com/document/d/:docId/*",
-  title: "Google Doc",
+  title: "Документ Google",
   description:
-      "Read and edit documents you choose.",
+      "Чтение и правка выбранных вами документов.",
   grantable: true,
 };
 
 const GOOGLE_SHEETS_RESOURCE: SupportedResource = {
   urlPattern: "https://docs.google.com/spreadsheets/d/:spreadsheetId/*",
-  title: "Google Spreadsheet",
-  description: "Read values from a spreadsheet you choose.",
+  title: "Таблица Google",
+  description: "Чтение значений из выбранной вами таблицы.",
   grantable: true,
 };
 
@@ -251,14 +251,14 @@ const GOOGLE_CALENDAR_RESOURCE: SupportedResource = {
   urlPattern: "https://calendar.google.com/calendar/:calendarId/*",
   title: "Google Calendar",
   description:
-      "Read and manage a Google Calendar.",
+      "Чтение и ведение календаря Google Calendar.",
   grantable: true,
 };
 
 const BIGQUERY_RESOURCE: SupportedResource = {
   urlPattern: `https://${BIGQUERY_HOST}/:projectId/*`,
   title: "BigQuery",
-  description: "Choose a Google Cloud project, then optionally narrow access to a dataset or table.",
+  description: "Выбор проекта Google Cloud; при желании доступ можно сузить до набора данных или таблицы.",
   grantable: true,
 };
 
@@ -272,8 +272,8 @@ const LEGACY_GRANTED_RESOURCE_URL_PATTERNS = [
 
 const GOOGLE_DRIVE_IMPORT_RESOURCE: SupportedResource = {
   urlPattern: "https://drive.google.com/file/:fileId/*",
-  title: "Google Drive import",
-  description: "Read selected files for import into Mnemos. Original files are never changed.",
+  title: "Импорт из Google Drive",
+  description: "Чтение выбранных файлов для загрузки в Mnemos. Исходные файлы не меняются.",
   grantable: true,
 };
 
@@ -448,12 +448,12 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://google.com",
       logo: { url: GOOGLE_LOGO_URL },
       color: "#e8f0fe",
-      tagline: "Draft replies, edit docs, read sheets, manage calendars, and analyze data",
+      tagline: "Черновики ответов, правка документов, чтение таблиц, календари и анализ данных",
       description:
-          "Connect your Google account to give Cloudflare OS access to Gmail, Google Docs, Google " +
-          "Sheets, Google Calendar, and BigQuery. Build agents that triage email, draft and edit " +
-          "documents, read spreadsheets, find focus time, schedule meetings, or run analytics " +
-          "queries on your data.",
+          "Подключите аккаунт Google, чтобы открыть платформе доступ к Gmail, Google Docs, Google " +
+          "Sheets, Google Calendar и BigQuery. Агенты смогут разбирать почту, готовить и править " +
+          "документы, читать таблицы, находить свободное время, назначать встречи и выполнять " +
+          "аналитические запросы к вашим данным.",
       providesAuth: true,
     };
   }

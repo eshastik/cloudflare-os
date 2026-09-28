@@ -1743,7 +1743,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
       <div className="group">
         <WorkRunFromContext group={group} open={open} onToggle={onToggle} inProgress={inProgress} />
         {footerChangeSequence !== undefined && footerTimestamp && footerLabel && onFooterRevert && (
-          <div className="mt-0.5 flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="mt-0.5 flex items-center gap-1 opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
             <Tooltip content={footerLabel} asChild>
               <button
                 type="button"
@@ -1789,7 +1789,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
             <CaretRight
               size={11}
               weight="bold"
-              className={`flex-shrink-0 text-kumo-inactive opacity-0 transition-[transform,opacity] duration-150 ease-out group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
+              className={`flex-shrink-0 text-kumo-inactive opacity-0 touch:opacity-100 transition-[transform,opacity] duration-150 ease-out group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`}
             />
           </span>
           {group.detailLines.length > 1 && (
@@ -1837,7 +1837,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
         )
       )}
       {footerChangeSequence !== undefined && footerTimestamp && footerLabel && onFooterRevert && (
-        <div className="ml-0 mt-0.5 flex items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
+        <div className="ml-0 mt-0.5 flex items-center gap-1 opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-within:opacity-100">
           <Tooltip content={footerLabel} asChild>
             <button
               type="button"
@@ -1889,7 +1889,10 @@ export const ChatInput = ({
   showThinkingTraces = true,
   onToggleThinkingTraces,
   onFolderProjectCreated,
+  settings,
 }: {
+  /** Настройки беседы в нижней строке поля ввода, рядом с «+»: проекты и работа с кодом. */
+  settings?: ReactNode;
   createCapsuleGatekeeper: (
     accountId: number,
     url: string,
@@ -3387,14 +3390,14 @@ export const ChatInput = ({
           <WorkshopIconButton aria-label="Убрать шаблон" className="!h-6 !w-6" onClick={() => setSelectedTemplate(null)}><X size={13} /></WorkshopIconButton>
         </div>}
         {/* Footer row: connection/options left, model + send right */}
-        <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <div className="flex items-end justify-between gap-1.5 px-3 pb-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             <DropdownMenu>
               <DropdownMenu.Trigger
                 render={
                   <button
                     type="button"
-                    className="group flex h-8 w-8 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle"
+                    className="group flex h-8 w-8 touch:h-10 touch:w-10 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg text-kumo-inactive transition-[background-color,color,transform] duration-150 ease-out hover:bg-kumo-tint hover:text-kumo-subtle focus-visible:bg-kumo-tint focus-visible:text-kumo-subtle focus-visible:outline-none active:scale-[0.96] data-[popup-open]:bg-kumo-tint data-[popup-open]:text-kumo-subtle"
                     aria-label="Вложения и настройки"
                   >
                     <Plus size={18} />
@@ -3459,7 +3462,7 @@ export const ChatInput = ({
                   </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu>
-
+            {settings}
           </div>
 
           {/* Right actions */}
@@ -3474,7 +3477,7 @@ export const ChatInput = ({
                 <button
                   type="button"
                   onClick={onStop}
-                  className="flex h-9 w-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-full bg-kumo-contrast transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
+                  className="flex h-9 w-9 touch:h-10 touch:w-10 flex-shrink-0 cursor-pointer items-center justify-center rounded-full bg-kumo-contrast transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"
                   aria-label="Остановить"
                   title="Остановить агента"
                 >
@@ -3485,7 +3488,7 @@ export const ChatInput = ({
                   onClick={submitMessage}
                   disabled={!canSend}
                   tone="primary"
-                  className="!h-9 !w-9 !rounded-full disabled:cursor-not-allowed disabled:opacity-30"
+                  className="!h-9 !w-9 touch:!h-10 touch:!w-10 !rounded-full disabled:cursor-not-allowed disabled:opacity-30"
                   aria-label="Отправить сообщение"
                 >
                   {/* Arrow-up icon */}
@@ -6659,7 +6662,7 @@ function ChatInterface({
             render={
               <button
                 type="button"
-                className="group flex h-8 -ml-1.5 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-kumo-tint/60 focus-visible:bg-kumo-tint/60 focus-visible:outline-none data-[popup-open]:bg-kumo-tint/60"
+                className="group flex h-8 touch:h-10 -ml-1.5 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left transition-colors duration-150 ease-out hover:bg-kumo-tint/60 focus-visible:bg-kumo-tint/60 focus-visible:outline-none data-[popup-open]:bg-kumo-tint/60"
                 aria-label="Фильтр бесед"
               >
                 <span className="text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
@@ -6825,7 +6828,7 @@ function ChatInterface({
                             <WorkshopIconButton
                               aria-label={`Действия: ${chat.title}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+                              className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 touch:opacity-100 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
                             >
                               <DotsThreeVertical size={14} />
                             </WorkshopIconButton>
@@ -6904,13 +6907,13 @@ function ChatInterface({
         <>
           <div
             className="flex flex-col border-r border-kumo-line flex-shrink-0"
-            style={{ width: sidebarWidth }}
+            style={{ width: `min(${sidebarWidth}px, 100%)` }}
           >
             {chatListPanel}
           </div>
           {/* Resize handle */}
           <div
-            className="w-1 flex-shrink-0 bg-kumo-line hover:bg-kumo-brand cursor-col-resize transition-colors relative touch-none"
+            className="w-1 flex-shrink-0 bg-kumo-line hover:bg-kumo-brand cursor-col-resize transition-colors relative touch-none max-md:hidden"
             onPointerDown={handleSidebarPointerDown}
             onPointerMove={handleSidebarPointerMove}
             onPointerUp={handleSidebarPointerUp}
@@ -6984,7 +6987,7 @@ function ChatInterface({
                   </div>
                 ) : (
                   <div
-                    className={`flex flex-col px-7 pt-7 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
+                    className={`flex flex-col px-4 pt-5 md:px-7 md:pt-7 ${pendingConsoleLogCount > 0 ? "pb-16" : "pb-8"} ${useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}`}
                   >
                     {isLoadingEarlier && (
                       <div className="mx-auto mb-6 text-[12px] leading-4 font-medium text-kumo-inactive">
@@ -7125,7 +7128,7 @@ function ChatInterface({
                               <span className="min-w-0 truncate font-medium">
                                 {label}
                               </span>
-                              <div className="flex flex-shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 ease-out group-hover/savedChanges:opacity-100 group-focus-within/savedChanges:opacity-100">
+                              <div className="flex flex-shrink-0 items-center gap-1 opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/savedChanges:opacity-100 group-focus-within/savedChanges:opacity-100">
                                 <Tooltip content={discardLabel} asChild>
                                   <button
                                     type="button"
@@ -7221,7 +7224,7 @@ function ChatInterface({
                                 />
                               </span>
                             </div>
-                            <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                            <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
                               {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                 <span className="font-medium">{msg.author.name}</span>
                               )}
@@ -7270,7 +7273,7 @@ function ChatInterface({
                                   </div>
                                 )}
                               </div>
-                              <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                              <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
                                 {/* hideOwnUserName implies currentUser is non-null (see memo). */}
                                 {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                   <span className="font-medium">{msg.author.name}</span>
@@ -7332,14 +7335,14 @@ function ChatInterface({
                                 <div className={`mt-0.5 -ml-1 flex items-center gap-1 transition-opacity duration-150 ease-out ${
                                   keepActionsVisible
                                     ? "opacity-100"
-                                    : "opacity-0 group-hover/agentMessage:opacity-100 group-focus-within/agentMessage:opacity-100"
+                                    : "opacity-0 touch:opacity-100 group-hover/agentMessage:opacity-100 group-focus-within/agentMessage:opacity-100"
                                 }`}>
                                   {hasMessageText && (
                                     <Tooltip content="Копировать сообщение" asChild>
                                       <button
                                         type="button"
                                         onClick={() => handleCopyMessage(msg.message)}
-                                        className="flex cursor-pointer items-center rounded-md p-1 text-kumo-inactive transition-[color,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96]"
+                                        className="flex cursor-pointer items-center justify-center rounded-md p-1 touch:h-10 touch:w-10 text-kumo-inactive transition-[color,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96]"
                                         aria-label="Копировать сообщение"
                                       >
                                         <Copy size={15} />
@@ -7749,14 +7752,16 @@ function ChatInterface({
                       />
                     </div>
                   )}
-                  <ProjectChips
-                    projects={chatProjectList}
-                    onChange={changeChatProjects}
-                    loadChoices={loadProjectChoices}
-                    disabled={isAgentActive}
-                    trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={changeCodeMode} /> : undefined}
-                  />
                   <ChatInput
+                    settings={
+                      <ProjectChips
+                        projects={chatProjectList}
+                        onChange={changeChatProjects}
+                        loadChoices={loadProjectChoices}
+                        disabled={isAgentActive}
+                        trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={changeCodeMode} /> : undefined}
+                      />
+                    }
                     chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>
                       overseer.newGatekeeper(accountId, url)

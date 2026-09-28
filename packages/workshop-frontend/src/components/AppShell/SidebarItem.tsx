@@ -64,7 +64,7 @@ export default function SidebarItem({
       title={collapsed ? label : undefined}
       className={[
         'group relative flex items-center rounded-[10px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring',
-        compact ? 'h-8 gap-2.5 px-3 text-[14px] leading-5' : 'h-10 gap-3 px-3 text-[15px] leading-5',
+        compact ? 'h-8 touch:h-10 gap-2.5 px-3 text-[14px] leading-5' : 'h-10 gap-3 px-3 text-[15px] leading-5',
         collapsed ? 'justify-center px-0' : '',
         isActive
           ? 'bg-kumo-fill font-medium text-kumo-default'

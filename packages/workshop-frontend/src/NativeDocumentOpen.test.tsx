@@ -54,11 +54,12 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
   const flush = async () => { calls.push('flush'); return { format: 'cloudflareos.spreadsheet' as const, formatVersion: 1 as const, document: { revision: mode === 'changed' ? 5 : 4 } } }
   try {
     await act(async () => { root.render(<NativeDocumentOpen gadget={{ getId: stub.getId, prepareNativeDocumentRead: stub.prepareNativeDocumentRead, readNativeDocument: stub.readNativeDocument, connectToGadget: stub.connectToGadget, onRpcBroken } as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" snapshotSource={{ current: flush }} reconnect={reconnect} onOpened={onOpened} />) })
-    expect(document.body.textContent).toContain('Продолжить открытие: Fixture')
-    expect(calls).toEqual([])
-    const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Заменить содержимое редактора')
-    expect(button).toBeDefined()
-    await act(async () => { button!.click() })
+    // Незавершённое открытие продолжается само, без кнопки подтверждения: намерение выражено до перезагрузки.
+    expect([...document.querySelectorAll('button')].some(b => /Заменить|Открыть версию/.test(b.textContent ?? ''))).toBe(false)
+    const settled = { restart: ['flush', 'prepare'], restart_probe: ['flush', 'prepare'], changed: ['flush'], revoked: ['flush', 'prepare', 'read', 'issue', 'validate'], restore: ['flush', 'prepare', 'read', 'issue', 'validate', 'connect', 'validate', 'restore'] }[mode]
+    await act(async () => { await vi.waitFor(() => expect(calls).toEqual(settled), { timeout: 1000, interval: 10 }) })
+    if (mode === 'restore') expect(document.body.textContent).toContain('Открываю «Fixture»…')
+    if (mode === 'changed' || mode === 'revoked') expect(document.body.textContent).toContain('Документ не открылся')
     if (mode.startsWith('restart')) {
       expect(calls).toEqual(['flush', 'prepare']); expect(reconnect).not.toHaveBeenCalled()
       expect(onRpcBroken).toHaveBeenCalledOnce()

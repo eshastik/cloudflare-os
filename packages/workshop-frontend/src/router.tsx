@@ -1,5 +1,6 @@
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
+import PageLoading from './components/PageLoading'
 
 export function createRouter() {
   return createTanStackRouter({
@@ -7,6 +8,9 @@ export function createRouter() {
     scrollRestoration: true,
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 0,
+    // Код разделов грузится по требованию: пока он в пути, на месте страницы — признак загрузки.
+    defaultPendingComponent: () => <PageLoading />,
+    defaultPendingMs: 200,
   })
 }
 

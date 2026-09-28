@@ -285,20 +285,20 @@ const AUTH_SCOPES = ["read:user", "user:email"];
 
 const REPO_RESOURCE: SupportedResource = {
   urlPattern: "https://github.com/:owner/:repo",
-  title: "GitHub Repository",
-  description: "Read and manage issues, pull requests, reviews, and discussions in a GitHub repository.",
+  title: "Репозиторий GitHub",
+  description: "Чтение и ведение задач, пул-реквестов, ревью и обсуждений в репозитории GitHub.",
 };
 
 const ISSUE_RESOURCE: SupportedResource = {
   urlPattern: "https://github.com/:owner/:repo/issues/:number",
-  title: "GitHub Issue",
-  description: "Read and manage a specific GitHub issue.",
+  title: "Задача GitHub",
+  description: "Чтение и ведение одной задачи GitHub.",
 };
 
 const PULL_REQUEST_RESOURCE: SupportedResource = {
   urlPattern: "https://github.com/:owner/:repo/pull/:number",
-  title: "GitHub Pull Request",
-  description: "Read and manage a specific GitHub pull request and its review threads.",
+  title: "Пул-реквест GitHub",
+  description: "Чтение и ведение одного пул-реквеста GitHub и обсуждений в его ревью.",
 };
 
 const SUPPORTED_RESOURCES: SupportedResource[] = [
@@ -1003,10 +1003,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://github.com",
       logo: { url: GITHUB_LOGO_URL },
       color: "#f0f0f0",
-      tagline: "Triage issues, review PRs, and manage repos",
+      tagline: "Разбор задач, ревью пул-реквестов и ведение репозиториев",
       description:
-          "Connect your GitHub account so Cloudflare OS can read and update issues, pull requests, " +
-          "and reviews on the repositories you choose.",
+          "Подключите аккаунт GitHub, чтобы платформа могла читать и обновлять задачи, пул-реквесты " +
+          "и ревью в выбранных вами репозиториях.",
       providesAuth: true,
     };
   }

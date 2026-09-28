@@ -1649,7 +1649,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async registerDatabaseConnection(project:string,input:DatabaseRegistration){return this.#session.registerDatabaseConnection(project,input);}
   async removeDatabaseConnection(project:string,name:string){return this.#session.removeDatabaseConnection(project,name);}
   async readOperationAudit(after:number){return this.#session.readOperationAudit(after);}
-  async readOperationAuditPage(after:number,limit:number){return this.#session.readOperationAuditPage(after,limit);}
+  async readOperationAuditPage(after:number,limit:number,significant=false){return this.#session.readOperationAuditPage(after,limit,significant===true);}
   async listWorkJournal(project:string,cursor=""){return this.#session.listWorkJournal(project,cursor);}
   async readGitFile(project:string,connection:string,repository:string,commit:string,path:string){return this.#session.readGitFile(project,connection,repository,commit,path);}
   async readGitCommit(project:string,connection:string,repository:string,ref:string){return this.#session.readGitCommit(project,connection,repository,ref);}

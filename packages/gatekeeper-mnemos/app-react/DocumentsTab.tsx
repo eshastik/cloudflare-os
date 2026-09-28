@@ -7,7 +7,7 @@ import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { folderOf, MaterialCard, queryTerms, MaterialChatButtons, materialPrompt, type MaterialAction } from "./MaterialCard.tsx";
 import { isMarkdown, Markdown } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
-import { Button, Notice, StatusBadge } from "./ui.tsx";
+import { Button, Notice, StatusBadge, touchOnly } from "./ui.tsx";
 
 /** Время документа даёт только история; чтобы не грузить сервер, берём первую страницу истории для ограниченного числа строк. */
 const HISTORY_ROWS = 40;
@@ -245,7 +245,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
         </label>
 
         {data.projects.length > 1 && (
-          <div role="group" aria-label="Проект" className="mt-3 flex flex-wrap items-center gap-1.5">
+          <div role="group" aria-label="Проект" className="mt-3 flex items-center gap-1.5 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:pb-1 max-sm:[scrollbar-width:none] sm:flex-wrap max-sm:[&>*]:shrink-0">
             <ProjectChip active={!selected} onClick={() => setSelected("")} count={`${total}${anyTruncated ? "+" : ""}`}>Все проекты</ProjectChip>
             {shownProjects.map(p => <ProjectChip key={p.id} active={selected === p.id} onClick={() => setSelected(p.id)} count={countOf(p.id)}>{p.name}</ProjectChip>)}
             {hiddenProjects > 0 && <button type="button" onClick={() => setAllProjects(true)} className="h-8 rounded-full px-3 text-[13px] text-kumo-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-kumo-ring">Ещё {hiddenProjects}</button>}
@@ -354,7 +354,7 @@ function EmptyMaterials({ inProject, uploading, onUpload }: { inProject: boolean
       <FileArrowUp size={28} className="text-kumo-subtle" aria-hidden="true" />
       <div>
         <h2 className="m-0 text-[15px] font-semibold text-kumo-default">{inProject ? "В этом проекте пока нет материалов" : "Материалов пока нет"}</h2>
-        <p className="mt-1 mb-0 max-w-[460px] text-[14px] leading-5 text-kumo-subtle">Перетащите файлы в беседу — агент предложит, куда их положить. Или загрузите их здесь.</p>
+        <p className="mt-1 mb-0 max-w-[460px] text-[14px] leading-5 text-kumo-subtle">{touchOnly ? "Загрузите файлы здесь или приложите их в беседе — агент предложит, куда их положить." : "Перетащите файлы в беседу — агент предложит, куда их положить. Или загрузите их здесь."}</p>
       </div>
       <Button size="sm" disabled={uploading} onClick={onUpload}>{uploading ? "Загружаю…" : "Загрузить файлы"}</Button>
     </div>

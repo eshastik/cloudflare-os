@@ -42,6 +42,6 @@ it('рабочее место само открывает версию, выбр
   await act(async () => root.render(<DocumentStatus gadget={gadget as unknown as RpcStub<GadgetClient>} format="cloudflareos.document" snapshotSource={snapshotSource} />))
   await act(async () => { await vi.waitFor(() => expect(calls.some(c => c.startsWith('prepare'))).toBe(true), { timeout: 3000 }) })
   expect(calls).toContain('prepare ' + JSON.stringify([1, 'https://memory.example/v1/projects/project/nodes/doc', version]))
-  expect(container.textContent).toContain('Открытие не подтверждено')
+  expect(container.textContent).toContain('Документ не открылся')
   await act(async () => root.unmount()); container.remove(); gadget[Symbol.dispose]()
 })

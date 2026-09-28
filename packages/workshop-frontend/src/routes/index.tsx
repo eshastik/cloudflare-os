@@ -208,15 +208,17 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           </p>
         </header>
 
-        {/* Одно поле ввода: над ним — проекты беседы и переключатель работы с кодом. */}
+        {/* Одно поле ввода: проекты беседы и работа с кодом — в его нижней строке, рядом с «+». */}
         <div>
-          <ProjectChips
-            projects={projects}
-            onChange={setProjects}
-            loadChoices={loadProjectChoices}
-            trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={setCodeMode} /> : undefined}
-          />
           <ChatInput
+            settings={
+              <ProjectChips
+                projects={projects}
+                onChange={setProjects}
+                loadChoices={loadProjectChoices}
+                trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={setCodeMode} /> : undefined}
+              />
+            }
             createCapsuleGatekeeper={createCapsuleGatekeeper}
             getOverseer={getOverseer}
             onSend={handleSend}

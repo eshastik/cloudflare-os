@@ -88,9 +88,9 @@ export function VoiceInput({ api, disabled, onText, onBusyChange }: {
   const busy = phase !== "idle";
   return <div className="flex items-center gap-1.5">
     {busy && <span role="status" className="text-xs text-kumo-subtle">{phase === "recording" ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} / 2:00` : phase === "starting" ? "Микрофон…" : "Распознаю…"}</span>}
-    {phase === "idle" && <button type="button" aria-label="Записать голосовое сообщение" title="Голосовое сообщение" disabled={disabled} onClick={() => void start()} className="flex h-8 w-8 items-center justify-center rounded-lg text-kumo-subtle hover:bg-kumo-tint disabled:opacity-40"><Microphone size={19} /></button>}
-    {phase === "recording" && <button type="button" aria-label="Завершить запись" onClick={release} className="flex h-8 w-8 items-center justify-center rounded-lg bg-kumo-brand text-white"><Stop size={16} weight="fill" /></button>}
-    {busy && <button type="button" aria-label="Отменить голосовое сообщение" onClick={cancel} className="flex h-8 w-8 items-center justify-center rounded-lg text-kumo-subtle hover:bg-kumo-tint"><X size={17} /></button>}
+    {phase === "idle" && <button type="button" aria-label="Записать голосовое сообщение" title="Голосовое сообщение" disabled={disabled} onClick={() => void start()} className="flex h-8 w-8 touch:h-10 touch:w-10 items-center justify-center rounded-lg text-kumo-subtle hover:bg-kumo-tint disabled:opacity-40"><Microphone size={19} /></button>}
+    {phase === "recording" && <button type="button" aria-label="Завершить запись" onClick={release} className="flex h-8 w-8 touch:h-10 touch:w-10 items-center justify-center rounded-lg bg-kumo-brand text-white"><Stop size={16} weight="fill" /></button>}
+    {busy && <button type="button" aria-label="Отменить голосовое сообщение" onClick={cancel} className="flex h-8 w-8 touch:h-10 touch:w-10 items-center justify-center rounded-lg text-kumo-subtle hover:bg-kumo-tint"><X size={17} /></button>}
     {notice && <div role="status" className="absolute inset-x-3 bottom-full mb-2 rounded-xl border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-subtle shadow-sm">{notice}{canRetry && <button type="button" disabled={disabled} onClick={() => void recognizeSaved(++session.current)} className="ml-2 font-medium text-kumo-brand">Повторить распознавание</button>}<button type="button" aria-label="Закрыть подсказку голосового ввода" onClick={cancel} className="ml-2 inline-flex align-middle"><X size={14} /></button></div>}
   </div>;
 }

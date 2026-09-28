@@ -114,9 +114,9 @@ export default function FileSidebar({
   }
 
   return (
-    <div className="flex h-full w-[244px] flex-col border-r border-kumo-line bg-kumo-base">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 px-3 pt-3 pb-2">
-        <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
+    <div className="flex h-full w-[min(244px,42vw)] shrink-0 flex-col border-r border-kumo-line bg-kumo-base">
+      <div className="flex h-9 touch:h-12 shrink-0 items-center justify-between gap-2 px-3 pt-3 pb-2">
+        <span className="text-[12px] font-medium text-kumo-subtle">
           Файлы
         </span>
         <WorkshopIconButton
@@ -124,7 +124,7 @@ export default function FileSidebar({
           disabled={editLocked}
           aria-label="Новый файл"
           title="Новый файл"
-          className="!h-6 !w-6 text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"
+          className="!h-6 !w-6 touch:!h-10 touch:!w-10 text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"
         >
           <Plus size={14} weight="bold" />
         </WorkshopIconButton>
@@ -396,7 +396,7 @@ function FileRow({
               <WorkshopIconButton
                 aria-label={`Действия: ${filename}`}
                 onClick={(event) => event.stopPropagation()}
-                className="!h-5 !w-5 text-kumo-inactive opacity-0 hover:bg-kumo-tint hover:text-kumo-default focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+                className="!h-5 !w-5 text-kumo-inactive opacity-0 touch:opacity-100 hover:bg-kumo-tint hover:text-kumo-default focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
               >
                 <DotsThree size={14} weight="bold" />
               </WorkshopIconButton>

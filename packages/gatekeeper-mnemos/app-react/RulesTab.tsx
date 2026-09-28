@@ -28,7 +28,7 @@ function RuleRow({ title, note, children }: { title: string; note: string; child
       <div className="text-[15px] font-medium text-kumo-default">{title}</div>
       <div className="mt-0.5 text-[13px] leading-[18px] text-kumo-subtle">{note}</div>
     </div>
-    <div className="justify-self-start sm:justify-self-end">{children}</div>
+    <div className="max-sm:justify-self-stretch sm:justify-self-end">{children}</div>
   </div>;
 }
 
@@ -36,12 +36,13 @@ function RuleRow({ title, note, children }: { title: string; note: string; child
 function Segmented<V extends string>({ label, value, options, disabled, onChange }: {
   label: string; value: V; options: Choice<V>[]; disabled: boolean; onChange(value: V): void;
 }) {
-  return <div role="radiogroup" aria-label={label} className="inline-flex rounded-full bg-kumo-tint p-1">
+  // На телефоне варианты — столбцом во всю ширину: в строку они не помещались и уезжали за край карточки.
+  return <div role="radiogroup" aria-label={label} className="inline-flex max-w-full rounded-full bg-kumo-tint p-1 max-sm:flex max-sm:w-full max-sm:flex-col max-sm:self-stretch max-sm:rounded-[18px]">
     {options.map(option => {
       const active = option.value === value;
       return <button key={option.value} type="button" role="radio" aria-checked={active} disabled={disabled}
         onClick={() => { if (!active) onChange(option.value); }}
-        className={`h-8 whitespace-nowrap rounded-full border-0 px-3.5 text-[13px] font-medium transition-colors disabled:cursor-default ${active ? "bg-kumo-overlay text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]" : "bg-transparent text-kumo-subtle hover:text-kumo-default"}`}>
+        className={`h-8 shrink-0 whitespace-nowrap rounded-full border-0 px-3.5 max-sm:h-10 max-sm:rounded-[14px] max-sm:text-left text-[13px] font-medium transition-colors disabled:cursor-default ${active ? "bg-kumo-overlay text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]" : "bg-transparent text-kumo-subtle hover:text-kumo-default"}`}>
         {option.label}
       </button>;
     })}

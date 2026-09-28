@@ -1,12 +1,14 @@
 import { useState } from "react";
 import type { ShareRequest } from "../src/project-sharing.ts";
 import { useUi } from "./host.ts";
-import { personName, useLoad, type MemoryData } from "./data.ts";
+import { personName, projectSummary, useLoad, type MemoryData } from "./data.ts";
 import { headedUnits, useOrgUnits } from "./Departments.tsx";
 import { shareAudience } from "./MyWorkTab.tsx";
 import { plural } from "./names.ts";
 import PersonAvatar from "./PersonAvatar.tsx";
 import { Button, Chip, Notice, PageHeader } from "./ui.tsx";
+import { Card, CardRow, RowTitle, SectionHead } from "./admin-ui.tsx";
+import { CaretRight, Folder, UserPlus } from "@phosphor-icons/react";
 import { PrivateCodeApproval, privateCodeConsentNeeded } from "./ProjectSharing.tsx";
 import { REPOSITORY_FAILURES } from "../src/git-repositories.ts";
 
@@ -44,58 +46,53 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
   }
 
   const summary = mine.length > 0
-    ? [mine.length === 1 ? `Отдел «${mine[0].name}»` : `Отделы: ${mine.map(u => `«${u.name}»`).join(", ")}`, "вы руководитель",
-        `${people} ${plural(people, "сотрудник", "сотрудника", "сотрудников")}`, `${departmentProjects.length} ${plural(departmentProjects.length, "проект", "проекта", "проектов")}`].join(" · ")
-    : responsibleProjects.length > 0 ? `Вы отвечаете за ${responsibleProjects.length} ${plural(responsibleProjects.length, "проект", "проекта", "проектов")}` : "";
+    ? `Вы руководите ${mine.length === 1 ? `отделом «${mine[0].name}»` : `отделами ${mine.map(u => `«${u.name}»`).join(", ")}`}.`
+    : responsibleProjects.length > 0 ? `Вы отвечаете за ${responsibleProjects.length} ${plural(responsibleProjects.length, "проект", "проекта", "проектов")}.` : "";
 
   const pending = shares.value ?? [];
   return <div className="flex flex-col gap-7">
     <PageHeader title="Мой отдел" subtitle={summary || undefined}
-      actions={mine.length > 0 && onInvite ? <Button size="md" onClick={onInvite}>Пригласить в отдел</Button> : undefined} />
+      actions={mine.length > 0 && onInvite ? <Button size="md" icon={<UserPlus size={16} aria-hidden="true" />} onClick={onInvite}>Пригласить в отдел</Button> : undefined} />
     {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
     {privateCode && <PrivateCodeApproval share={privateCode} busy={!!busy} onConfirm={() => void decide(privateCode, true, true)} onCancel={() => setPrivateCode(null)} />}
 
-    <section aria-label="Ждёт вашего решения" className="flex flex-col gap-2.5">
-      <h2 className="m-0 text-[17px] font-semibold text-kumo-default">Ждёт вашего решения</h2>
+    {/* Пустой раздел решений не занимает место: он появляется, только когда есть что решать. */}
+    {(shares.error || pending.length > 0) && <section aria-label="Ждёт вашего решения">
+      <SectionHead title="Ждёт вашего решения" />
       {shares.error && <Notice tone="danger">{shares.error}</Notice>}
-      {!shares.loading && !shares.error && pending.length === 0 && <Notice>Запросов «Поделиться» на решение нет.</Notice>}
-      {pending.map(share => (
-        <div key={share.request_id} data-team-share="" className="flex flex-wrap items-center gap-3.5 rounded-[16px] border border-kumo-fill bg-kumo-overlay px-[18px] py-4">
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] leading-[22px] text-kumo-default">{`${share.requested_by_name || personName(share.requested_by)} хочет открыть проект «${share.project_name}» ${shareAudience(share)}`}</div>
-            <div className="text-[13px] text-kumo-subtle">{share.can_edit ? "с правом править" : "только чтение"}</div>
+      {pending.length > 0 && <Card>{pending.map(share => (
+        <div key={share.request_id} data-team-share="" className="flex flex-wrap items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-t-0">
+          <RowTitle title={`${share.requested_by_name || personName(share.requested_by)} хочет открыть проект «${share.project_name}» ${shareAudience(share)}`} note={share.can_edit ? "с правом править" : "только чтение"} />
+          <div className="flex gap-2 max-sm:w-full max-sm:[&>*]:flex-1">
+            <Button size="sm" disabled={!!busy} onClick={() => void decide(share, true)}>Разрешить</Button>
+            <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => void decide(share, false)}>Отклонить</Button>
           </div>
-          <Button disabled={!!busy} onClick={() => void decide(share, true)}>Разрешить</Button>
-          <Button variant="secondary" disabled={!!busy} onClick={() => void decide(share, false)}>Отклонить</Button>
-        </div>))}
-    </section>
+        </div>))}</Card>}
+    </section>}
 
-    <div className="grid gap-8 md:grid-cols-2">
-      {(unitsLoading || mine.length > 0 || unitsFailed) && <section aria-label="Сотрудники отдела">
-        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Сотрудники</h2>
-        {unitsLoading && <Notice>Загрузка отделов…</Notice>}
-        {unitsFailed && <Notice tone="danger">Отделы недоступны. Обновите страницу.</Notice>}
-        {!unitsLoading && !unitsFailed && people === 0 && <Notice>В ваших отделах пока никого нет.</Notice>}
-        {mine.map(unit => <div key={unit.org_unit_id} aria-label={`Отдел ${unit.name}`} role="group">
-          {mine.length > 1 && <h3 className="m-0 mt-3 mb-1 text-[13px] font-medium text-kumo-subtle">{unit.name}</h3>}
-          {unit.members.map(m => {
-            const name = m.display_name || personName(m.principal_id);
-            return <div key={m.principal_id} className="flex items-center gap-3 border-b border-kumo-fill py-[11px]">
-              <PersonAvatar name={name} id={m.principal_id} />
-              <span className="min-w-0 flex-1 truncate text-[15px] text-kumo-default">{name}</span>
-              {m.is_head && <Chip tone="brand">Руководитель</Chip>}
-            </div>;
-          })}
-        </div>)}
+    <div className="grid items-start gap-7 md:grid-cols-2">
+      {(unitsLoading || mine.length > 0 || unitsFailed) && <section aria-label="Сотрудники отдела" className="min-w-0">
+        <SectionHead title="Сотрудники" count={unitsLoading || unitsFailed ? undefined : people} />
+        {unitsLoading && <Notice>Загружаем отделы…</Notice>}
+        {unitsFailed && <Notice tone="danger">Отделы не загрузились. Обновите страницу.</Notice>}
+        {!unitsLoading && !unitsFailed && people === 0 && <Notice>В ваших отделах пока никого нет. Пригласите первого сотрудника.</Notice>}
+        {people > 0 && <Card>{mine.flatMap(unit => unit.members.map(m => {
+          const name = m.display_name || personName(m.principal_id);
+          const role = m.is_head ? "руководитель" : "сотрудник";
+          return <CardRow key={`${unit.org_unit_id}/${m.principal_id}`}>
+            <PersonAvatar name={name} id={m.principal_id} />
+            <RowTitle title={name} note={mine.length > 1 ? `${unit.name}, ${role}` : role} />
+          </CardRow>;
+        }))}</Card>}
       </section>}
 
-      {mine.length > 0 && <section aria-label="Проекты отдела">
-        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Проекты отдела</h2>
+      {mine.length > 0 && <section aria-label="Проекты отдела" className="min-w-0">
+        <SectionHead title="Проекты отдела" count={departmentProjects.length} />
         {departmentProjects.length === 0 ? <Notice>У отдела пока нет общих проектов.</Notice> : <ProjectRows projects={departmentProjects} onOpen={onOpenProject} />}
       </section>}
 
-      {responsibleProjects.length > 0 && <section aria-label="Вы отвечаете за проекты">
-        <h2 className="m-0 mb-2.5 text-[17px] font-semibold text-kumo-default">Вы отвечаете за проекты</h2>
+      {responsibleProjects.length > 0 && <section aria-label="Вы отвечаете за проекты" className="min-w-0">
+        <SectionHead title="Вы отвечаете за проекты" count={responsibleProjects.length} />
         <ProjectRows projects={responsibleProjects} onOpen={onOpenProject} />
       </section>}
     </div>
@@ -106,10 +103,12 @@ export default function TeamTab({ data, onOpenProject, onInvite }: { data: Memor
 }
 
 function ProjectRows({ projects, onOpen }: { projects: MemoryData["projects"]; onOpen(project: string): void }) {
-  return <div>{projects.map(project => (
+  return <Card>{projects.map(project => (
     <button key={project.id} type="button" aria-label={`Открыть проект «${project.name}»`} onClick={() => onOpen(project.id)}
-      className="flex w-full items-center gap-3 border-0 border-b border-solid border-kumo-fill bg-transparent px-0 py-[11px] text-left hover:text-kumo-brand">
-      <span className="min-w-0 flex-1 truncate text-[15px]">{project.name}</span>
-      {project.pendingShare && <Chip tone="warning">ждёт решения о доступе</Chip>}
-    </button>))}</div>;
+      className="flex w-full items-center gap-3 border-0 border-t border-solid border-kumo-fill bg-transparent px-4 py-3 text-left first:border-t-0 hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring">
+      <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kumo-tint text-kumo-subtle"><Folder size={18} /></span>
+      <RowTitle title={project.name} note={projectSummary(project) || undefined} />
+      {project.pendingShare && <Chip tone="warning">Ждёт решения</Chip>}
+      <CaretRight size={16} aria-hidden="true" className="shrink-0 text-kumo-subtle" />
+    </button>))}</Card>;
 }

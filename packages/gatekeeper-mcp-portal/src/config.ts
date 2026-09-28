@@ -67,7 +67,7 @@ export function readPortalConfig(env: Env): PortalConfig | null {
 
   return {
     endpoint: url.toString(),
-    name: env.MCP_PORTAL_NAME?.trim() || `MCP Server Portal (${url.host})`,
+    name: env.MCP_PORTAL_NAME?.trim() || `Портал MCP-серверов (${url.host})`,
     auth,
   };
 }
@@ -96,7 +96,7 @@ export function portalResource(config: PortalConfig): SupportedResource {
     urlPattern: `${new URL(config.endpoint).origin}/*`,
     title: config.name,
     description:
-      "Tools from the servers behind this portal. Writes need approval.",
+      "Инструменты серверов за этим порталом. Запись требует подтверждения.",
   };
 }
 

@@ -14,7 +14,7 @@ export default function ViewToggle({
     { value: 'grid' as const, Icon: GridFour, label: 'Плиткой' },
   ]
   return (
-    <div className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-kumo-line bg-kumo-base p-0.5">
+    <div className="max-sm:hidden inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-kumo-line bg-kumo-base p-0.5">
       {options.map(({ value, Icon, label }) => (
         <button
           key={value}

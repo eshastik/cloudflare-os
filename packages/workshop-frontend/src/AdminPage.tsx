@@ -505,6 +505,7 @@ export default function AdminPage() {
               <Button
                 variant="secondary"
                 size="sm"
+                className="touch:!h-10"
                 onClick={() => siteLogoInputRef.current?.click()}
                 loading={savingSiteLogo}
                 disabled={savingSiteLogo}

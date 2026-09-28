@@ -101,22 +101,22 @@ const OAUTH_SCOPES = ["read", "write"];
 
 const WORKSPACE_RESOURCE: SupportedResource = {
   urlPattern: "https://linear.app/:workspace",
-  title: "Linear Workspace",
+  title: "Рабочее пространство Linear",
   description:
-    "Read and manage every team and issue in a Linear workspace. This is the broadest option — " +
-    "connect a single team or issue instead to limit what a Gadget can access.",
+    "Чтение и ведение всех команд и задач в рабочем пространстве Linear. Это самый широкий доступ — " +
+    "чтобы ограничить гаджет, подключите одну команду или одну задачу.",
 };
 
 const TEAM_RESOURCE: SupportedResource = {
   urlPattern: "https://linear.app/:workspace/team/:teamKey{/:rest}*",
-  title: "Linear Team",
-  description: "Read and manage the issues, labels, states, and cycles of a single Linear team.",
+  title: "Команда Linear",
+  description: "Чтение и ведение задач, меток, статусов и циклов одной команды Linear.",
 };
 
 const ISSUE_RESOURCE: SupportedResource = {
   urlPattern: "https://linear.app/:workspace/issue/:issueId{/:rest}*",
-  title: "Linear Issue",
-  description: "Read and manage a single Linear issue and its comments.",
+  title: "Задача Linear",
+  description: "Чтение и ведение одной задачи Linear и комментариев к ней.",
 };
 
 const SUPPORTED_RESOURCES: SupportedResource[] = [WORKSPACE_RESOURCE, TEAM_RESOURCE, ISSUE_RESOURCE];
@@ -478,10 +478,10 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
       url: "https://linear.app",
       logo: { url: LINEAR_LOGO_URL },
       color: "#f4f5f8",
-      tagline: "Triage, create, and update issues",
+      tagline: "Разбор, создание и обновление задач",
       description:
-        "Connect your Linear account so Cloudflare OS can read and manage issues, projects, and " +
-        "comments across the teams you choose.",
+        "Подключите аккаунт Linear, чтобы платформа могла читать и вести задачи, проекты и " +
+        "комментарии в выбранных вами командах.",
     };
   }
 

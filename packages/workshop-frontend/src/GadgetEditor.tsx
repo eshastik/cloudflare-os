@@ -53,8 +53,9 @@ import DeleteConfirmationDialog from './components/DeleteConfirmationDialog'
 import WorkspaceOpenErrorPage from './components/WorkspaceOpenErrorPage'
 import { useWorkspaceOpen } from './useWorkspaceOpen'
 import { reportIssue } from './errorReporting'
-import GadgetExportMenu from './GadgetExportMenu'
-import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT } from './DocumentStatus'
+import GadgetExportMenu, { useGadgetExport } from './GadgetExportMenu'
+import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT, DOCUMENT_VERSIONS_EVENT } from './DocumentStatus'
+import { useNarrowScreen } from './useNarrowScreen'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 import { isGadgetRestartLog } from './gadgetRestartLog'
 
@@ -279,7 +280,7 @@ function PaneWorkpieceTabs({
             title={gadget.title}
             aria-current={active ? 'page' : undefined}
             // The open one gets room for its whole name; the others yield first.
-            className={`inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium tracking-[-0.15px] transition-colors duration-150 ${
+            className={`inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 touch:h-10 text-[13px] font-medium tracking-[-0.15px] transition-colors duration-150 ${
               active
                 ? 'max-w-[240px] bg-kumo-tint text-kumo-default'
                 : 'max-w-[150px] text-kumo-subtle hover:bg-kumo-tint/50 hover:text-kumo-default'
@@ -337,6 +338,8 @@ const DEFAULT_CHAT_WIDTH = 440
 const CARD_GAP = 12
 const GADGET_HEADER_H = 56
 const FULLSCREEN_HEADER_H = 64
+/** Строка переключателя «Беседа | Документ» на телефоне: кнопка 40 + поля 2 × 2 + отступы 2 × 6 + линия. */
+const NARROW_SWITCH_H = 57
 
 // Пилюли шапки гаджета по макету: главная — заливка акцентом, значки — круглые.
 const PILL_PRIMARY = 'inline-flex h-8 shrink-0 cursor-pointer items-center rounded-full bg-kumo-brand px-3.5 text-[13px] leading-4 font-medium text-white transition-colors duration-150 hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40'
@@ -495,6 +498,11 @@ export default function GadgetEditor() {
   const isUseOnly = metadata?.role === 'use'
 
   // ── layout ───────────────────────────────────────────────────────────────────
+  // На телефоне беседа и рабочая область не помещаются рядом: видна одна из них, переключатель — в шапке.
+  const narrow = useNarrowScreen()
+  const [narrowPane, setNarrowPane] = useState<'chat' | 'work'>('chat')
+  // Видна ли в узкой шапке документа кнопка «Поделиться»: тогда меню «…» её не повторяет.
+  const [documentShareShown, setDocumentShareShown] = useState(false)
   const [chatWidth, setChatWidth] = useState(getInitialChatWidth)
   const chatWidthRef = useRef(chatWidth)
   const [isResizing, setIsResizing] = useState(false)
@@ -790,7 +798,10 @@ export default function GadgetEditor() {
   const showFullEditor = layoutModeReady && (
     showingActivity || (hasAnyApps && (workspaceView === null ? !simpleMode : workspaceView.mode === 'app'))
   )
-  const showOutputRail = layoutModeReady && hasAnyApps && !showFullEditor
+  const showOutputRail = layoutModeReady && hasAnyApps && !showFullEditor && !narrow
+  // Открылся гаджет, документ или «Активность» — на телефоне показываем его во весь экран; закрылся — беседу.
+  useEffect(() => { setNarrowPane(showFullEditor ? 'work' : 'chat') }, [showFullEditor])
+  const narrowWork = narrow && showFullEditor && narrowPane === 'work'
   const paneShowsActivity = showingActivity || activityClosing
   useEffect(() => {
     if (!activityClosing) return
@@ -1274,8 +1285,19 @@ export default function GadgetEditor() {
   // ── shared height tokens ──────────────────────────────────────────────────────
   // Шапка беседы (64) и шапка карточки гаджета; карточка отстоит от краёв на CARD_GAP.
   const TOPBAR_H = 64
-  const RIGHT_CONTENT_H = `calc(100dvh - var(--shell-top, 0px) - ${2 * CARD_GAP}px - ${GADGET_HEADER_H}px)`
+  const RIGHT_CONTENT_H = narrow
+    ? `calc(100dvh - ${TOPBAR_H}px - ${NARROW_SWITCH_H}px - ${GADGET_HEADER_H}px)`
+    : `calc(100dvh - var(--shell-top, 0px) - ${2 * CARD_GAP}px - ${GADGET_HEADER_H}px)`
   const FULLSCREEN_CONTENT_H = `calc(100dvh - ${FULLSCREEN_HEADER_H}px)`
+
+  // Выгрузка для меню «…» шапки гаджета на телефоне (на компьютере — отдельная кнопка «Скачать»).
+  const exportActions = useGadgetExport({
+    gadget: selectedGadgetStub,
+    gadgetTitle: selectedGadgetSummary?.title ?? 'Гаджет',
+    chatId: previewChatId,
+    outputId: selectedGadgetSummary?.output?.id,
+    snapshotSource: nativeSnapshotSource,
+  })
 
   // ── error / loading states ────────────────────────────────────────────────────
   if (error?.kind === 'open') {
@@ -1348,6 +1370,32 @@ export default function GadgetEditor() {
 
   // ── always render the full two-pane edit layout; preview overlays on top ──────
   const selectedNativeFormat = nativeFormatOf(selectedGadgetSummary?.output?.id)
+  const workLabel = showingActivity ? 'Активность' : formatOf(selectedGadgetSummary?.output ?? allGadgets[0]?.output).noun
+  // Переключатель «Беседа | Документ» в шапке беседы на телефоне.
+  const narrowSwitch = narrow && (hasAnyApps || showingActivity) && (
+    <div role="tablist" aria-label="Что показать" className="flex w-full items-center rounded-xl bg-kumo-tint p-0.5">
+      {([['chat', 'Беседа'], ['work', workLabel]] as const).map(([pane, label]) => {
+        const active = (narrowWork ? 'work' : 'chat') === pane
+        return (
+          <button
+            key={pane}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => {
+              if (pane === 'chat') { setNarrowPane('chat'); return }
+              if (showFullEditor) setNarrowPane('work')
+              else setWorkspaceVisibility('open', selectedGadgetId ?? allGadgets[0]?.id)
+            }}
+            className={`h-10 min-w-0 flex-1 cursor-pointer truncate rounded-[10px] px-3 text-[14px] leading-5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring ${
+              active ? 'bg-kumo-overlay font-semibold text-kumo-default shadow-[0_1px_2px_rgba(24,32,28,0.12)]' : 'text-kumo-subtle'}`}
+          >
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  )
   // Встроенные редакторы (документ, таблица, презентация) сами показывают своё название внутри;
   // у прочих гаджетов шапка карточки называет рабочее место некрупным текстом.
   const headerTitle = selectedNativeFormat ? null : selectedGadgetSummary?.title ?? metadata.title
@@ -1364,23 +1412,23 @@ export default function GadgetEditor() {
     />
   )
   return (
-    <div className="flex h-full overflow-hidden bg-kumo-base relative">
+    <div className={`flex h-full overflow-hidden bg-kumo-base relative ${narrow ? 'flex-col' : ''}`}>
       {/* ── LEFT: беседа — шапка и лента ───────────────────────────────────────── */}
       <div
-        className={`flex flex-col flex-shrink-0 min-w-0 ${workspaceTransitionClass}`}
+        className={`flex flex-col min-w-0 ${narrow ? (narrowWork ? 'flex-shrink-0' : 'min-h-0 flex-1') : `flex-shrink-0 ${workspaceTransitionClass}`}`}
         style={{
-          width: showFullEditor
+          width: narrow ? '100%' : showFullEditor
             ? chatWidth
             : `calc(100% - ${outputRailWidth}px)`,
         }}
       >
         <header
-          className="relative flex items-center justify-between gap-3 border-b border-kumo-fill px-5 sm:px-7 flex-shrink-0"
-          style={{ height: TOPBAR_H }}
+          className="relative flex items-center justify-between gap-2 border-b border-kumo-fill pl-14 pr-2 md:gap-3 md:px-7 flex-shrink-0"
+          style={{ height: narrow ? 64 : TOPBAR_H }}
         >
           <TopBarNotice />
-          {/* The rail carries the logo and profile; on phones its menu button sits over our left edge. */}
-          <div className="flex min-w-0 items-center gap-3 pl-10 md:pl-0">
+          {/* На телефоне кнопка меню оболочки стоит в левом углу этой шапки (AppShell, bare). */}
+          <div className="flex min-w-0 items-center gap-3">
             {isEditingTitle ? (
               <div className="flex items-center gap-1">
                 <WorkshopInput
@@ -1418,7 +1466,7 @@ export default function GadgetEditor() {
                 </h1>
                 <WorkshopIconButton
                   onClick={() => setIsEditingTitle(true)}
-                  className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
+                  className="!hidden !h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100 md:!inline-flex"
                   title="Переименовать беседу"
                   aria-label="Переименовать беседу"
                 >
@@ -1428,7 +1476,7 @@ export default function GadgetEditor() {
             )}
 
             {metadata.owner && (
-              <span className="flex-shrink-0 text-[14px] leading-5 text-kumo-subtle">
+              <span className="hidden flex-shrink-0 text-[14px] leading-5 text-kumo-subtle md:inline">
                 автор: {metadata.owner.name}
               </span>
             )}
@@ -1436,7 +1484,7 @@ export default function GadgetEditor() {
 
           {/* Right: who is here (when no file is open), pending actions, one menu for the rest. */}
           <div className="flex items-center gap-1 flex-shrink-0">
-            {!showFullEditor && presence}
+            {!showFullEditor && !narrow && presence}
 
             <ActivityNotifications
               overseer={overseer.stub}
@@ -1453,13 +1501,16 @@ export default function GadgetEditor() {
             <DropdownMenu>
               <DropdownMenu.Trigger
                 render={
-                  <WorkshopIconButton title="Действия с беседой" aria-label="Действия с беседой">
+                  <WorkshopIconButton title="Действия с беседой" aria-label="Действия с беседой" className="touch:!h-10 touch:!w-10">
                     <DotsThree size={18} weight="bold" />
                   </WorkshopIconButton>
                 }
               />
               <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
                 <DropdownMenu.Item onClick={() => setShareModalOpen(true)} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
+                {narrow && (
+                  <DropdownMenu.Item onClick={() => setIsEditingTitle(true)} className={MENU_ITEM}>Переименовать</DropdownMenu.Item>
+                )}
                 {effectiveSelectedChatId !== null && (
                   <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
                 )}
@@ -1482,7 +1533,10 @@ export default function GadgetEditor() {
           </div>
         </header>
 
-        <div className="relative flex-1 min-h-0">
+        {narrowSwitch && (
+          <div className="flex-shrink-0 border-b border-kumo-fill px-3 py-1.5">{narrowSwitch}</div>
+        )}
+        <div className={`relative flex-1 min-h-0 ${narrowWork ? 'hidden' : ''}`}>
           {isAgentActive && (
             <div className="absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-kumo-fill">
               <div className="absolute inset-y-0 w-1/3 bg-kumo-brand animate-[thinking_1.5s_ease-in-out_infinite]" />
@@ -1544,7 +1598,7 @@ export default function GadgetEditor() {
 
       {/* ── Resize handle: невидимая полоса между беседой и карточкой гаджета ─────── */}
       <div
-        className={`group/resize flex-shrink-0 overflow-visible cursor-col-resize relative touch-none ${workspaceTransitionClass}`}
+        className={`group/resize flex-shrink-0 overflow-visible cursor-col-resize relative touch-none ${narrow ? 'hidden' : ''} ${workspaceTransitionClass}`}
         style={{ width: showFullEditor ? CARD_GAP : 0 }}
         onPointerDown={handleResizePointerDown}
         onPointerMove={handleResizePointerMove}
@@ -1558,12 +1612,16 @@ export default function GadgetEditor() {
       {/* ── RIGHT: карточка гаджета ──────────────────────────────────────────────── */}
       {/* Скрытая карточка обрезается и не ловит нажатий; открытая не обрезается, чтобы тень легла на фон. */}
       <div
-        className={`flex flex-shrink-0 min-w-0 ${showFullEditor ? '' : 'pointer-events-none overflow-hidden'} ${workspaceTransitionClass}`}
-        aria-hidden={showFullEditor ? undefined : true}
-        style={{
-          width: showFullEditor ? `calc(100% - ${chatWidth}px - ${CARD_GAP}px)` : 0,
-          opacity: showFullEditor ? 1 : 0,
-        }}
+        className={narrow
+          ? `flex min-w-0 ${narrowWork ? 'min-h-0 flex-1' : 'pointer-events-none overflow-hidden'}`
+          : `flex flex-shrink-0 min-w-0 ${showFullEditor ? '' : 'pointer-events-none overflow-hidden'} ${workspaceTransitionClass}`}
+        aria-hidden={(narrow ? narrowWork : showFullEditor) ? undefined : true}
+        style={narrow
+          ? { width: '100%', height: narrowWork ? undefined : 0 }
+          : {
+            width: showFullEditor ? `calc(100% - ${chatWidth}px - ${CARD_GAP}px)` : 0,
+            opacity: showFullEditor ? 1 : 0,
+          }}
       >
         <section
           ref={fullscreenOverlayRef}
@@ -1573,12 +1631,14 @@ export default function GadgetEditor() {
           aria-label={isGadgetFullscreen ? 'Гаджет на весь экран' : 'Открытый файл'}
           className={isGadgetFullscreen
             ? 'fixed inset-0 z-20 flex flex-col bg-kumo-base outline-none'
-            : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
+            : narrow
+              ? 'relative flex min-w-0 flex-1 flex-col overflow-hidden bg-kumo-overlay'
+              : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
           <header
             className={`flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
-              ? 'gap-3.5 border-b border-kumo-fill bg-kumo-overlay px-6'
-              : 'pl-5 pr-3'}`}
+              ? `gap-3.5 border-b border-kumo-fill bg-kumo-overlay ${narrow ? 'px-3' : 'px-6'}`
+              : narrow ? 'border-b border-kumo-fill pl-4 pr-2' : 'pl-5 pr-3'}`}
             style={{ height: isGadgetFullscreen ? FULLSCREEN_HEADER_H : GADGET_HEADER_H }}
           >
             {isGadgetFullscreen && (
@@ -1610,10 +1670,13 @@ export default function GadgetEditor() {
               )}
             </div>
 
-            {!paneShowsActivity && presence}
+            {!paneShowsActivity && !narrow && presence}
 
             {!paneShowsActivity && selectedGadgetStub && selectedNativeFormat && (
               <DocumentStatus
+                compact={narrow}
+                onShare={narrow ? () => window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT)) : undefined}
+                onShareShown={setDocumentShareShown}
                 key={`${selectedGadgetId}:${previewChatId ?? 'workspace'}`}
                 gadget={selectedGadgetStub}
                 format={selectedNativeFormat}
@@ -1626,7 +1689,7 @@ export default function GadgetEditor() {
               />
             )}
 
-            {(paneShowsActivity || showBuildTabs) && (
+            {(paneShowsActivity || (showBuildTabs && !narrow)) && (
               <div
                 role="tablist"
                 aria-label={paneShowsActivity ? 'Раздел активности' : 'Что показать'}
@@ -1653,7 +1716,7 @@ export default function GadgetEditor() {
               </div>
             )}
 
-            {!paneShowsActivity && (
+            {!paneShowsActivity && !narrow && (
               <GadgetExportMenu
                 gadget={selectedGadgetStub}
                 gadgetTitle={selectedGadgetSummary?.title ?? 'Гаджет'}
@@ -1664,8 +1727,8 @@ export default function GadgetEditor() {
               />
             )}
 
-            {!paneShowsActivity && (
-              <button type="button" className={PILL_PRIMARY} onClick={() => {
+            {!paneShowsActivity && !(narrow && selectedNativeFormat) && (
+              <button type="button" className={`${PILL_PRIMARY} ${narrow ? '!h-10 !px-4' : ''}`} onClick={() => {
                 // Документ, таблица, презентация: «Поделиться» открывает доступ к самому документу Mnemos.
                 if (selectedNativeFormat) window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))
                 else setShareModalOpen(true)
@@ -1674,7 +1737,41 @@ export default function GadgetEditor() {
               </button>
             )}
 
-            {!paneShowsActivity && !isGadgetFullscreen && (
+            {narrow && !isGadgetFullscreen && !paneShowsActivity && (
+              <DropdownMenu>
+                <DropdownMenu.Trigger
+                  render={
+                    <button type="button" className={`${ROUND_ICON} !h-10 !w-10`} aria-label="Ещё действия" title="Ещё действия">
+                      <DotsThree size={18} weight="bold" />
+                    </button>
+                  }
+                />
+                <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
+                  {selectedNativeFormat ? (
+                    <>
+                      {!documentShareShown && (
+                        <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
+                      )}
+                      <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_VERSIONS_EVENT))} className={MENU_ITEM}>Версии</DropdownMenu.Item>
+                    </>
+                  ) : rightTabs(selectedGadgetSummary?.output).map(tab => (
+                    <DropdownMenu.Item key={tab.value} onClick={() => handleTabSelect(tab.value)} className={MENU_ITEM}>
+                      {tab.label}{activeTab === tab.value ? ' ✓' : ''}
+                    </DropdownMenu.Item>
+                  ))}
+                  {exportActions.actions.map(action => (
+                    <DropdownMenu.Item key={action.key} disabled={!selectedGadgetStub || !!exportActions.exporting || activeTab !== 'app' || previewMode} onClick={action.run} className={MENU_ITEM}>
+                      {exportActions.exporting ? 'Готовлю файл…' : action.label}
+                    </DropdownMenu.Item>
+                  ))}
+                  <DropdownMenu.Item disabled={activeTab !== 'app' || previewMode} onClick={enterGadgetFullscreen} className={MENU_ITEM}>Во весь экран</DropdownMenu.Item>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item onClick={closeWorkspacePane} className={MENU_ITEM}>Закрыть {formatOf(selectedGadgetSummary?.output).noun.toLowerCase()}</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu>
+            )}
+
+            {!paneShowsActivity && !isGadgetFullscreen && !narrow && (
               <button
                 type="button"
                 className={ROUND_ICON}
@@ -1689,10 +1786,10 @@ export default function GadgetEditor() {
               </button>
             )}
 
-            {!isGadgetFullscreen && (
+            {!isGadgetFullscreen && (!narrow || paneShowsActivity) && (
               <button
                 type="button"
-                className={`${ROUND_ICON} text-kumo-subtle`}
+                className={`${ROUND_ICON} text-kumo-subtle ${narrow ? '!h-10 !w-10' : ''}`}
                 aria-label={paneShowsActivity ? 'Закрыть активность' : 'Закрыть панель гаджета'}
                 title="Закрыть"
                 onClick={closeWorkspacePane}

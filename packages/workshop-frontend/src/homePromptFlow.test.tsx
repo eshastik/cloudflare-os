@@ -35,10 +35,11 @@ vi.mock("./AuthContext", () => ({
 }));
 
 vi.mock("./ChatInterface", () => ({
-  ChatInput: ({ seedText, seedNonce, onSend }: { seedText?: string; seedNonce?: number;onSend:(message:string,model:string|null)=>Promise<void> }) => {
+  ChatInput: ({ seedText, seedNonce, onSend, settings }: { seedText?: string; seedNonce?: number;onSend:(message:string,model:string|null)=>Promise<void>; settings?: React.ReactNode }) => {
     testState.send=onSend;
     testState.seeds.push({ text: seedText, nonce: seedNonce });
-    return <textarea aria-label="Prompt" readOnly value={seedText ?? ""} />;
+    // Проекты и «Код» живут в нижней строке поля ввода (проп settings).
+    return <><textarea aria-label="Prompt" readOnly value={seedText ?? ""} />{settings}</>;
   },
 }));
 

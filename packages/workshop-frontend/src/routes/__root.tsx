@@ -189,8 +189,9 @@ function AuthenticatedShell({
   // Still checking onboarding status
   if (onboardingNeeded === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
+      <div role="status" className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-kumo-subtle">Загрузка…</p>
       </div>
     )
   }

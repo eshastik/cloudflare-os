@@ -34,7 +34,7 @@ test("«Агенты и расходы»: агенты по именам, без
     await app.until(() => card("b-external")?.textContent.includes("Доступ отозван"), "отзыв отражён");
     assert.deepEqual(app.calls.filter(([m]) => m === "revokeAgentConnection"), [["revokeAgentConnection", "b-external"]]);
 
-    app.button("Подключить Codex или Claude Code").click();
+    app.button("Подключить свой агент").click();
     await app.until(() => app.document.querySelector('textarea[aria-label="Команды подключения"]')?.value.includes("codex mcp add"), "команды внешнего клиента");
     const commands = () => app.document.querySelector('textarea[aria-label="Команды подключения"]').value;
     assert.match(commands(), /--oauth-client-id 'mnemos-cli'/);
@@ -49,7 +49,9 @@ test("«Агенты и расходы»: пустой список и отка�
   const app = await mountMemoryApp({ async listAgentConnections() { await new Promise(r => waiting.push(r)); return { connections: [], next_cursor: "" }; } }, { section: "agents" });
   try {
     await app.until(() => app.text().includes("Загрузка агентов"), "пока список читается, видно, что идёт загрузка");
-    assert.ok(app.text().includes("Бюджеты проектов") && app.text().includes("Расходы по проектам"), "остальная страница видна сразу");
+    // Список агентов ещё читается (release не вызван), а бюджеты и итог расходов уже на экране.
+    await app.until(() => app.text().includes("Бюджеты проектов") && app.text().includes("потрачено в организации"), "остальная страница видна до конца загрузки агентов");
+    assert.ok(app.text().includes("Загрузка агентов"));
     release();
     await app.until(() => app.text().includes("Агентов пока нет"), "пустой список");
   } finally { app.dispose(); }

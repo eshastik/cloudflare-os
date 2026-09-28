@@ -68,7 +68,7 @@ export default function WorkpiecePicker({
         }`}
       >
         {expanded && (
-          <span className="text-[11px] font-medium uppercase tracking-[0.06em]">Файлы</span>
+          <span className="text-[11px] font-medium">Файлы</span>
         )}
         {expanded ? <CaretRight size={14} /> : <CaretLeft size={14} />}
       </button>
@@ -172,7 +172,7 @@ export default function WorkpiecePicker({
               {expanded && (
                 <WorkshopIconButton
                   onClick={() => setEditing({ id: gadget.id, value: gadget.title })}
-                  className="!h-6 !w-6 flex-shrink-0 opacity-0 transition-opacity duration-150 ease-out group-hover/workpiece:opacity-100 focus-visible:opacity-100"
+                  className="!h-6 !w-6 flex-shrink-0 opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/workpiece:opacity-100 focus-visible:opacity-100"
                   title="Переименовать"
                   aria-label={`Переименовать ${gadget.title}`}
                 >

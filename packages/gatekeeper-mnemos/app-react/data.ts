@@ -28,6 +28,8 @@ export interface ProjectData {
   /** Документы личной версии: только здесь видно конфликт и документы, которых в общей версии ещё нет. */
   privateDocs: Map<string, { name: string; conflicted: boolean; contentType?: string }>;
   draftState: DraftState | null;
+  /** Файлы, черновики и состояние проекта уже прочитаны; до этого пустой список файлов ничего не значит. */
+  detailsLoaded?: boolean;
 }
 
 export interface CollaborationItem {
@@ -39,8 +41,11 @@ export interface CollaborationItem {
 export interface MemoryData {
   identity: WhoAmI | null;
   projects: ProjectData[];
+  /** true, пока не прочитаны файлы всех проектов; сам список проектов может прийти раньше. */
   projectsLoading: boolean;
   projectsError: string;
+  /** Этот проект прочитать раньше остальных: его сейчас открыл человек. */
+  prioritizeProject(project: string): void;
   reloadProjects(): Promise<void>;
   reviews: PublicationReview[];
   reviewsCursor: string;
@@ -201,12 +206,32 @@ export async function browseWholeProject(ui: { browseProject(project: string, cu
   return { nodes, truncated: true };
 }
 
-async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
+/** Обход с ограничением параллельности; first() называет элемент, который взять следующим вне очереди. */
+async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>, first: (rest: T[]) => number = () => 0): Promise<void> {
+  const rest = [...items];
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) await fn(items[next++]);
+    while (rest.length) {
+      const index = Math.max(0, first(rest));
+      await fn(rest.splice(index, 1)[0]);
+    }
   });
   await Promise.all(workers);
+}
+
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many;
+}
+
+const AUDIENCE: Record<string, string> = { private: "виден только автору", department: "виден отделу", organization: "виден всей организации" };
+
+/** Подпись проекта словами: кому виден и сколько файлов. Два проекта с одним именем так различаются. */
+export function projectSummary(project: ProjectData): string {
+  const files = project.nodes.filter(n => !n.is_dir).length;
+  const parts = [project.visibility ? AUDIENCE[project.visibility] : ""];
+  if (project.detailsLoaded !== false) parts.push(files ? `${files}${project.truncated ? "+" : ""} ${pluralRu(files, "файл", "файла", "файлов")}` : "файлов пока нет");
+  const line = parts.filter(Boolean).join(", ");
+  return line ? line[0].toUpperCase() + line.slice(1) : "";
 }
 
 /** Загрузка одного значения с честной ошибкой; перезапускается при смене зависимостей. */
@@ -255,6 +280,9 @@ export function useMemoryData(ui: Ui): MemoryData {
   const [absences, setAbsences] = useState<Map<string, AgentAbsence>>(new Map());
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+  // Проект, открытый человеком, читается первым: иначе его файлы ждали бы очереди из десятков проектов.
+  const priority = useRef("");
+  const prioritizeProject = useCallback((project: string) => { priority.current = project; }, []);
 
   const loadReviews = useCallback(async (cursor: string) => {
     setReviewsLoading(true); setReviewsError("");
@@ -319,7 +347,7 @@ export function useMemoryData(ui: Ui): MemoryData {
         const [person, page] = await Promise.all([ui.whoAmI(), ui.listProjects()]);
         if (!alive.current) return;
         setIdentity(person);
-        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null }));
+        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null, detailsLoaded: false }));
         setProjects(initial);
         readinessReady();
         await forEachLimited(initial, 4, async project => {
@@ -330,9 +358,10 @@ export function useMemoryData(ui: Ui): MemoryData {
           else patch.nodesError = true;
           if (privateDocs.status === "fulfilled") patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted, contentType: d.content_type }]));
           if (draft.status === "fulfilled") patch.draftState = draft.value;
+          patch.detailsLoaded = true;
           if (absence.status === "fulfilled") setAbsences(prev => new Map(prev).set(project.id, absence.value));
           setProjects(prev => prev.map(p => p.id === project.id ? { ...p, ...patch } : p));
-        });
+        }, rest => rest.findIndex(p => p.id === priority.current));
       } catch {
         readinessFailed();
         if (alive.current) setProjectsError("Не удалось загрузить проекты. Проверьте сессию и обновите страницу.");
@@ -343,7 +372,7 @@ export function useMemoryData(ui: Ui): MemoryData {
   }, [ui, loadReviews, loadConnections, loadTask, loadCollaborations, projectEpoch]);
 
   return {
-    identity, projects, projectsLoading, projectsError, reloadProjects: async () => { setProjectEpoch(n => n + 1); },
+    identity, projects, projectsLoading, projectsError, prioritizeProject, reloadProjects: async () => { setProjectEpoch(n => n + 1); },
     reviews, reviewsCursor, reviewsLoading, reviewsError,
     reloadReviews: () => loadReviews(""),
     loadMoreReviews: () => loadReviews(reviewsCursor),

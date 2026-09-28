@@ -31,7 +31,8 @@ const OFFICE_MIME: Record<NativeDocumentFormat, string> = {
   'cloudflareos.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 }
 
-export default function GadgetExportMenu({ gadget, gadgetTitle, chatId, disabled, canImport, outputId, snapshotSource }: Props) {
+/** Действия выгрузки гаджета (PDF и офисный формат) — для кнопки «Скачать» и для меню «…» на телефоне. */
+export function useGadgetExport({ gadget, gadgetTitle, chatId, canImport, outputId, snapshotSource }: Omit<Props, 'disabled'>) {
   const [exporting, setExporting] = useState<'pdf' | 'office' | null>(null)
   const toasts = useKumoToastManager()
   const { authenticatedApi } = useAuthenticatedApi()
@@ -98,6 +99,16 @@ export default function GadgetExportMenu({ gadget, gadgetTitle, chatId, disabled
     }
   }
 
+  const actions = [
+    ...(office ? [{ key: 'office', label: `Скачать ${OFFICE_LABEL[format!]}`, run: () => { void downloadOffice() } }] : []),
+    { key: 'pdf', label: office ? 'Скачать PDF' : 'Экспорт в PDF', run: () => { void downloadPdf() } },
+  ]
+  return { exporting, office, format, actions, downloadPdf, downloadOffice }
+}
+
+export default function GadgetExportMenu({ disabled, ...props }: Props) {
+  const { gadget } = props
+  const { exporting, office, format, downloadPdf, downloadOffice } = useGadgetExport(props)
   const progress = exporting && (
     <span className="pointer-events-none absolute bottom-0 left-1 right-1 h-0.5 overflow-hidden rounded-full bg-kumo-fill">
       <span className="absolute inset-y-0 w-1/3 bg-kumo-brand animate-[thinking_1.5s_ease-in-out_infinite]" />

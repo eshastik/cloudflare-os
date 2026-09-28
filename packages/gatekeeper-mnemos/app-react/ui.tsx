@@ -4,6 +4,9 @@ import { Tray } from "@phosphor-icons/react";
 // Общие детали интерфейса по макету 24.09.2026: пилюли-кнопки, белые карточки радиусом 16 с линией,
 // заголовок страницы 30 px, чипы и пустое состояние. Цвета — только токенами из styles.css.
 
+/** Экран только сенсорный (телефон): перетаскивания и наведения там нет. */
+export const touchOnly = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches;
+
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
@@ -37,17 +40,20 @@ export function Button({ variant = "primary", size = "md", shape, icon, classNam
   );
 }
 
-/** Заголовок страницы: 30 px, 600, трекинг −0.8; подзаголовок 15 px. На странице проекта — уровень h2. */
+/** Заголовок страницы: 30 px (на телефоне 26), 600, трекинг −0.8; подзаголовок 15 px. На странице проекта —
+ * уровень h2 меньшим кеглем: имя проекта бывает длинным. На узком экране действия встают под заголовок во всю
+ * ширину: рядом с кнопками заголовок сжимался в колонку и рвался по слову на строку. */
 export function PageHeader({ title, subtitle, actions, level = 1, children }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; level?: 1 | 2; children?: ReactNode }) {
   const Heading = level === 1 ? "h1" : "h2";
+  const size = level === 1 ? "text-[26px] leading-8 sm:text-[30px] sm:leading-[36px]" : "text-[22px] leading-7 sm:text-[26px] sm:leading-8";
   return (
-    <header className="mb-7 flex flex-wrap items-center gap-3">
+    <header className="mb-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="min-w-0 flex-1">
-        <Heading className="m-0 text-[30px] leading-[36px] font-semibold tracking-[-0.8px] text-kumo-default">{title}</Heading>
+        <Heading className={`m-0 font-semibold tracking-[-0.6px] break-words text-kumo-default ${size}`}>{title}</Heading>
         {subtitle && <p className="mt-1.5 mb-0 max-w-[680px] text-[15px] leading-[22px] text-kumo-subtle">{subtitle}</p>}
         {children}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2 max-sm:[&>*]:flex-1">{actions}</div>}
     </header>
   );
 }
@@ -124,10 +130,10 @@ export function DecisionCard({ icon, tone, title, note, badge, actions, onToggle
   );
 }
 
-/** Строка простого списка по макету: значок, название 15 px, справа приглушённая подпись, линия снизу. */
+/** Строка списка внутри карточки (Card): значок, название 15 px, справа приглушённая подпись, линия между строками. */
 export function ListRow({ icon, children, meta, className = "", ...rest }: { icon?: ReactNode; children: ReactNode; meta?: ReactNode; className?: string } & Omit<HTMLAttributes<HTMLDivElement>, "children" | "className">) {
   return (
-    <div className={`flex items-center gap-3 border-b border-kumo-fill px-1 py-3 text-[15px] text-kumo-default ${className}`} {...rest}>
+    <div className={`flex items-center gap-3 border-t border-kumo-fill px-4 py-3 text-[15px] text-kumo-default first:border-t-0 ${className}`} {...rest}>
       {icon && <span className="flex shrink-0 text-kumo-default" aria-hidden="true">{icon}</span>}
       <div className="min-w-0 flex-1">{children}</div>
       {meta}
@@ -140,14 +146,15 @@ export function RowList({ children }: { children: ReactNode }) {
 }
 
 export function Row({ children, className = "", ...rest }: { children: ReactNode; className?: string } & Record<string, unknown>) {
-  return <div className={`flex items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-t-0 ${className}`} {...rest}>{children}</div>;
+  // Строка переносится: на узком экране метка и кнопки уходят под текст, а не сжимают его в колонку.
+  return <div className={`flex flex-wrap items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-t-0 ${className}`} {...rest}>{children}</div>;
 }
 
 /** Основная строка и подпись строки списка. */
 export function RowText({ title, note, children }: { title: ReactNode; note?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="min-w-0 flex-1">
-      <div className="text-[15px] leading-5 text-kumo-default">{title}</div>
+    <div className="min-w-0 flex-1 basis-48">
+      <div className="text-[15px] leading-5 text-kumo-default [overflow-wrap:anywhere]">{title}</div>
       {note && <div className="mt-0.5 text-[13px] leading-[18px] text-kumo-subtle">{note}</div>}
       {children}
     </div>
@@ -184,8 +191,12 @@ export function EmptyTab({ description }: { description: string }) {
 export function Block({ title, count, actions, empty, children, id }: { title: string; count?: number; actions?: ReactNode; empty?: string; children?: ReactNode; id?: string }) {
   return (
     <section id={id} aria-label={title} className="mb-7">
-      <SectionTitle title={title} count={count} actions={actions} />
-      {empty !== undefined && count === 0 ? <Notice>{empty}</Notice> : children}
+      {/* Пустой блок: действие стоит рядом с пояснением, а не одиноко под длинным заголовком. */}
+      {empty !== undefined && count === 0
+        ? <><SectionTitle title={title} />{actions
+          ? <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[16px] border border-kumo-fill bg-kumo-overlay px-4 py-3"><div className="min-w-0 flex-1 basis-48"><Notice>{empty}</Notice></div>{actions}</div>
+          : <Notice>{empty}</Notice>}</>
+        : <><SectionTitle title={title} count={count || undefined} actions={actions} />{children}</>}
     </section>
   );
 }

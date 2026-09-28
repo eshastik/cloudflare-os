@@ -70,7 +70,7 @@ test('удаление из организации: подтверждение �
  assert.ok(view.el.querySelector('[aria-label="Подтверждение удаления: Иван"]'));
  await click(view.el,'Удалить');assert.deepEqual(calls,['remove:person']);
  assert.equal(view.el.querySelector('[aria-label="Открыть карточку: Иван"]'),null,'бывший не в общем списке');
- assert.match(view.el.querySelector('[aria-label="Бывшие сотрудники"]').textContent,/Иван/);assert.match(view.el.textContent,/Сотрудников: 1/);
+ assert.match(view.el.querySelector('[aria-label="Бывшие сотрудники"]').textContent,/Иван/);assert.match(view.el.textContent,/В организации 1 сотрудник\./);
  await click(view.el,'Вернуть: Иван');assert.deepEqual(calls,['remove:person','return:person']);
  assert.ok(view.el.querySelector('[aria-label="Открыть карточку: Иван"]'));assert.equal(view.el.querySelector('[aria-label="Бывшие сотрудники"]'),null);
  await view.close();

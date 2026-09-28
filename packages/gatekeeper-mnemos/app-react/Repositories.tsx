@@ -100,7 +100,7 @@ export function RepositoriesRow({ data }: { data: MemoryData }) {
 
 function summaryText(sources: number, inProjects: number, broken: number): string {
   if (!sources && !inProjects) return "Не подключено. Код из GitHub, GitLab и внутреннего хранилища Mnemos.";
-  return `Источников: ${sources} · репозиториев в проектах: ${inProjects}${broken ? ` · требуют внимания: ${broken}` : ""}`;
+  return `Источников: ${sources}, репозиториев в проектах: ${inProjects}${broken ? `, требуют внимания: ${broken}` : ""}`;
 }
 
 /** Личный ключ доступа: GitHub или GitLab, не установка приложения и не внутреннее хранилище. */
@@ -191,7 +191,7 @@ function Ledger({ counts, filter, onFilter }: { counts: { sources: number; linke
   const chip = (id: Filter, label: ReactNode, tone = "") => <button type="button" role="checkbox" aria-checked={filter === id} onClick={() => onFilter(filter === id ? "all" : id)}
     className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-kumo-ring ${filter === id ? "border-kumo-brand bg-kumo-tint text-kumo-brand" : `border-kumo-fill-hover bg-kumo-overlay hover:bg-kumo-tint ${tone || "text-kumo-default"}`}`}>{label}</button>;
   return <div role="group" aria-label="Счёт и отбор" data-ledger="" className="mt-4 flex flex-wrap items-center gap-1.5">
-    <span className="inline-flex h-8 items-center gap-1.5 px-1 text-[13px] text-kumo-subtle">Источников: <strong className="font-semibold text-kumo-default">{counts.sources}</strong><span aria-hidden="true">·</span></span>
+    <span className="inline-flex h-8 items-center gap-1.5 px-1 text-[13px] text-kumo-subtle">Источников: <strong className="font-semibold text-kumo-default">{counts.sources}</strong></span>
     {chip("linked", <>репозиториев в проектах: <strong className="font-semibold">{counts.linked}</strong></>)}
     {counts.attention > 0 && chip("attention", <><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-kumo-warning" />требуют внимания: <strong className="font-semibold">{counts.attention}</strong></>, "text-kumo-warning")}
   </div>;
@@ -228,7 +228,7 @@ function buildRows(overview: RepositoryOverview | null, app: GitAppRepository[],
 }
 
 function repoMeta(r: RepoRow): string {
-  return [r.sourceTitle, r.private === null ? "" : r.private ? "приватный" : "публичный", r.language, r.pushedAt ? `изменён ${relativeTime(r.pushedAt)}` : ""].filter(Boolean).join(" · ");
+  return [r.sourceTitle, r.private === null ? "" : r.private ? "приватный" : "публичный", r.language, r.pushedAt ? `изменён ${relativeTime(r.pushedAt)}` : ""].filter(Boolean).join(", ").replace(/^./, c => c.toLocaleUpperCase("ru-RU"));
 }
 
 /** Строка репозитория: имя и метаданные, записи в проектах и действия. */
@@ -243,7 +243,7 @@ function Repository({ row, data, overview, onChanged }: { row: RepoRow; data: Me
         {row.source === "internal" ? <HardDrives size={16} /> : row.private === false ? <GlobeSimple size={16} /> : <LockSimple size={16} />}
       </span>
       <span className="block min-w-[180px] flex-1">
-        <span className="block text-[15px] font-medium break-words text-kumo-default">{row.short}{row.account && <span className="font-normal text-kumo-subtle"> · {row.account}</span>}</span>
+        <span className="block text-[15px] font-medium break-words text-kumo-default">{row.account && <span className="font-normal text-kumo-subtle">{row.account}/</span>}{row.short}</span>
         <span className="block text-[13px] text-kumo-subtle">{repoMeta(row)}</span>
       </span>
       {row.entry && <span className="flex flex-wrap items-center gap-1.5">
@@ -292,8 +292,8 @@ function filesStatus(rec: RepositoryRecord, now = Date.now()): { text: string; t
   if (l.paused) return { text: `выключены — ${filesWord(l.file_count ?? 0)} остались в проекте и не обновляются`, tone: "ok" };
   const count = filesWord(l.file_count ?? 0);
   switch (l.state) {
-    case "ok": return { text: `синхронизировано ${l.last_synced_at ? relativeTime(l.last_synced_at, now) : "только что"} · ${count}`, tone: "ok" };
-    case "pending": case "syncing": return { text: (l.file_count ?? 0) > 0 ? `идёт синхронизация · уже ${count}` : l.last_synced_at ? "идёт синхронизация" : "идёт первая загрузка", tone: "busy" };
+    case "ok": return { text: `синхронизировано ${l.last_synced_at ? relativeTime(l.last_synced_at, now) : "только что"}, ${count}`, tone: "ok" };
+    case "pending": case "syncing": return { text: (l.file_count ?? 0) > 0 ? `идёт синхронизация, уже ${count}` : l.last_synced_at ? "идёт синхронизация" : "идёт первая загрузка", tone: "busy" };
     case "conflict": return { text: "конфликт: файл изменён и в Mnemos, и в GitHub — выберите версию в проекте", tone: "attention" };
     default: return { text: l.message || "обновление не прошло — нажмите «Обновить сейчас»", tone: "attention" };
   }
@@ -360,8 +360,8 @@ function ProjectRecord({ rec: initial, data, onChanged }: { rec: RepositoryRecor
   const revoked = !!rec.link?.access_revoked && !rec.link.remove_requested;
   const agentsText = !rec.agents ? "выключены — агенты не видят этот код"
     : rec.agents_access_revoked ? "доступ отозван в GitHub — агенты не работают. Выключите и включите их тому, кому GitHub открывает этот репозиторий"
-    : (waiting.value ?? 0) > 0 ? `включены · ${waiting.value} ${plural(waiting.value ?? 0, "ветка ждёт", "ветки ждут", "веток ждут")} «Принять»`
-    : "включены · агенты работают в своих ветках, в основную — после «Принять»";
+    : (waiting.value ?? 0) > 0 ? `включены: ${waiting.value} ${plural(waiting.value ?? 0, "ветка ждёт", "ветки ждут", "веток ждут")} «Принять»`
+    : "включены: агенты работают в своих ветках, в основную — после «Принять»";
 
   return <div data-record={rec.project_id} className="mx-4 mb-3.5 rounded-xl bg-kumo-base px-3.5 py-3 sm:mr-5 sm:ml-[60px]">
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -627,7 +627,7 @@ function Sources({ overview, accounts, keys, records, onChanged }: { overview: R
         <SourceIcon><HardDrives size={17} /></SourceIcon>
         <span className="block min-w-0 flex-1">
           <span className="block text-[15px] font-medium text-kumo-default">Внутреннее хранилище Mnemos</span>
-          <span className="block text-[13px] text-kumo-subtle">ресурс организации · {internalProjects} {plural(internalProjects, "проект", "проекта", "проектов")} · репозиторий закреплён за своим проектом</span>
+          <span className="block text-[13px] text-kumo-subtle">Это ресурс организации: {internalProjects} {plural(internalProjects, "проект", "проекта", "проектов")}, каждый репозиторий закреплён за своим проектом.</span>
         </span>
         {overview.internal.can_disable && overview.internal.revision && confirmRow("internal", "Хранилище выключится для всей организации: агенты кода и код проектов в нём перестанут работать.",
           () => ui.disableInternalCodeHosting(overview.internal.revision ?? 0), "Внутреннее хранилище кода отключено для всей организации.")}
@@ -636,7 +636,7 @@ function Sources({ overview, accounts, keys, records, onChanged }: { overview: R
         <SourceIcon><Key size={17} /></SourceIcon>
         <span className="block min-w-0 flex-1">
           <span className="block text-[15px] font-medium text-kumo-default">{k.name || (k.provider === "gitlab" ? "GitLab" : "GitHub")}</span>
-          <span className="block text-[13px] text-kumo-subtle">{k.provider === "gitlab" ? "GitLab" : "GitHub"} · ключ доступа{k.account_login ? ` · ${k.account_login}` : ""}</span>
+          <span className="block text-[13px] text-kumo-subtle">Ключ доступа {k.provider === "gitlab" ? "GitLab" : "GitHub"}{k.account_login ? `, аккаунт ${k.account_login}` : ""}</span>
         </span>
         {confirmRow(`key/${k.connection_id}`, "Отключить? Проекты с репозиториями этого ключа перестанут обновляться.", () => ui.disableGitConnection(k.connection_id, k.revision), `«${k.name || "Ключ доступа"}» отключён.`)}
       </div>)}

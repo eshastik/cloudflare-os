@@ -72,7 +72,7 @@ export default function Sidebar({
           onClick={onToggleCollapsed}
           aria-label={collapsed ? 'Развернуть панель' : 'Свернуть панель'}
           title={collapsed ? 'Развернуть панель' : 'Свернуть панель'}
-          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
+          className="flex h-7 w-7 touch:h-10 touch:w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-kumo-inactive transition-colors hover:bg-kumo-tint hover:text-kumo-default"
         >
           <SidebarSimple size={16} className={collapsed ? 'rotate-180' : ''} />
         </button>
@@ -87,14 +87,14 @@ export default function Sidebar({
           title="Поиск (⌘K)"
           className={[
             'flex cursor-pointer items-center rounded-[10px] border border-kumo-fill bg-kumo-overlay text-kumo-subtle transition-colors hover:border-kumo-fill-hover hover:text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-ring',
-            collapsed ? 'h-9 w-9 justify-center' : 'h-[38px] w-full gap-2.5 px-3 text-[14px]',
+            collapsed ? 'h-9 w-9 justify-center' : 'h-[38px] touch:h-10 w-full gap-2.5 px-3 text-[14px]',
           ].join(' ')}
         >
           <MagnifyingGlass size={16} className="shrink-0" />
           {!collapsed && (
             <>
               <span className="flex-1 text-left">Поиск</span>
-              <span className="text-[12px]">⌘K</span>
+              <span className="text-[12px] touch:hidden">⌘K</span>
             </>
           )}
         </button>

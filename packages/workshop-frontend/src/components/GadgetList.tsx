@@ -127,7 +127,7 @@ function AppRow({
         <DropdownMenu.Trigger
           render={
             <button
-              className="p-1.5 text-kumo-subtle hover:text-kumo-default rounded-md hover:bg-kumo-fill transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+              className="p-1.5 text-kumo-subtle hover:text-kumo-default rounded-md hover:bg-kumo-fill transition-colors sm:opacity-0 touch:opacity-100 sm:group-hover:opacity-100 focus:opacity-100"
             >
               <DotsThreeVertical size={16} />
             </button>

@@ -1,5 +1,10 @@
 import type { ExternalSnapshot } from "./mnemos-api.ts";
 
+/** Через сколько без новой проверки строка устаревает — как на сервере (obs.ExternalStaleAfter).
+ * Сохранение монитор проверяет раз в 30 минут, остальное — раз в 2. Перечень сверяется с серверным
+ * services/internal/obs/testdata/external_stale_after.txt в external-metrics.test.ts. */
+export const STALE_AFTER_MS: Readonly<Record<string, number>> = { readiness: 180_000, login: 180_000, read: 180_000, save: 2_700_000 };
+
 const record = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
 const timestamp = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
@@ -40,7 +45,7 @@ function validOperations(operations: unknown[], observedAt: string, unique: bool
       if (!timestamp(op.last_observed_at) || Date.parse(op.last_observed_at) > Date.parse(observedAt) || typeof op.last_success !== "boolean" || typeof op.last_outcome !== "string") return false;
       const success = op.last_outcome === (op.operation === "readiness" ? "ready" : "ok");
       if (op.last_success !== success || (!success && !["not_ready", "http_error", "invalid_response", "network_error", "timeout", "tls_error"].includes(op.last_outcome))) return false;
-      if (op.stale !== (Date.parse(observedAt) - Date.parse(op.last_observed_at) > 180000)) return false;
+      if (op.stale !== (Date.parse(observedAt) - Date.parse(op.last_observed_at) > STALE_AFTER_MS[op.operation]!)) return false;
     }
     if (op.source_status !== "ready" && (op.samples !== 0 || op.last_observed_at !== null)) return false;
   }

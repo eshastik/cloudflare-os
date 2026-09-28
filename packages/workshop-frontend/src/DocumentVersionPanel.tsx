@@ -41,12 +41,17 @@ function useDocked() {
   return docked
 }
 
+/** Панель поверх карточки документа: от 640 px — справа с тенью, уже — на всю карточку без скругления. */
+export const PANEL_CLASS = 'absolute inset-0 z-30 flex flex-col bg-kumo-overlay sm:inset-auto sm:top-0 sm:right-0 sm:max-h-full sm:w-[min(640px,100%)] sm:rounded-[20px] sm:shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]'
+export const PANEL_HEADER_CLASS = 'flex shrink-0 items-center gap-3 px-4 pt-4 pb-3 sm:px-7 sm:pt-[26px] sm:pb-5'
+/** Ряд действий: на телефоне кнопки столбцом во всю ширину, шире — в строку. */
+const ACTIONS_CLASS = 'flex flex-col items-stretch gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center'
 const rowText = 'text-[14px] leading-5 text-kumo-default'
 const subText = 'text-[13px] leading-[18px] text-kumo-subtle'
 /** Вторичная кнопка-пилюля макета: белая, линия, высота 38. */
-export const pillButton = 'inline-flex h-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] leading-5 text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:border-kumo-fill disabled:text-kumo-inactive disabled:hover:bg-kumo-overlay'
+export const pillButton = 'inline-flex h-10 sm:h-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-kumo-overlay px-4 text-[14px] leading-5 text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:border-kumo-fill disabled:text-kumo-inactive disabled:hover:bg-kumo-overlay'
 /** Главная кнопка-пилюля: заливка акцентом. */
-export const primaryButton = 'inline-flex h-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] leading-5 font-medium text-white transition-colors hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:bg-kumo-fill disabled:text-kumo-inactive'
+export const primaryButton = 'inline-flex h-10 sm:h-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] leading-5 font-medium text-white transition-colors hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:bg-kumo-fill disabled:text-kumo-inactive'
 
 function Section({ name, children }: { name?: string; children: ReactNode }) {
   return <section data-section={name} className="flex flex-col gap-2.5">{children}</section>
@@ -221,14 +226,15 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
   const busy = comparing || restoring || !!disabled
 
   // Высота панели — по содержимому, не выше карточки гаджета: короткая история не растягивается.
-  return <aside data-version-panel aria-label="Версии" className="absolute top-0 right-0 z-30 flex max-h-full w-[min(640px,100%)] flex-col rounded-[20px] bg-kumo-overlay shadow-[0_1px_2px_rgba(24,32,28,0.05),0_16px_40px_rgba(24,32,28,0.08)]">
-    <header className="flex shrink-0 items-center gap-3 px-7 pt-[26px] pb-5">
+  // На телефоне панель занимает всю карточку документа: вернуться к нему — кнопкой «Назад» слева сверху.
+  return <aside data-version-panel aria-label="Версии" className={PANEL_CLASS}>
+    <header className={PANEL_HEADER_CLASS}>
       <button type="button" aria-label="Назад к документу" title="Закрыть" onClick={onClose}
-        className="inline-flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><CaretLeft size={16} /></button>
-      <h2 className="m-0 min-w-0 flex-1 truncate text-[20px] leading-7 font-semibold tracking-[-0.3px] text-kumo-default">{title}</h2>
-      {!docked && onCollapseChat && <WorkshopIconButton aria-label="Свернуть беседу" title="Свернуть беседу" className="!h-8 !w-8" onClick={onCollapseChat}><SidebarSimple size={16} /></WorkshopIconButton>}
+        className="inline-flex h-10 w-10 sm:h-[34px] sm:w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-kumo-fill-hover bg-transparent text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><CaretLeft size={16} /></button>
+      <h2 className="m-0 min-w-0 flex-1 text-[18px] leading-6 [overflow-wrap:anywhere] sm:truncate sm:text-[20px] sm:leading-7 font-semibold tracking-[-0.3px] text-kumo-default">{title}</h2>
+      {!docked && onCollapseChat && <WorkshopIconButton aria-label="Свернуть беседу" title="Свернуть беседу" className="!h-8 !w-8 max-sm:!hidden" onClick={onCollapseChat}><SidebarSimple size={16} /></WorkshopIconButton>}
     </header>
-    <div className="flex min-h-0 flex-col gap-5 overflow-y-auto px-7 pb-[26px]">
+    <div className="flex min-h-0 flex-col gap-5 overflow-y-auto px-4 pb-[calc(16px+env(safe-area-inset-bottom))] sm:px-7 sm:pb-[26px]">
       {status.error && <p role="alert" className={`m-0 ${rowText} text-kumo-danger`}>{status.error}</p>}
       {status.preparing && <HistoryPreparingNotice progress={status.preparing} />}
       {status.notice && <p role="status" className={`m-0 ${rowText}`}>{status.notice}</p>}
@@ -273,7 +279,7 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
           })}
         </ol>
         {data && rows.length === 0 && <p className={`m-0 ${subText}`}>Версий пока нет: первая появится после сохранения.</p>}
-        {current && (previous || (restoreRow && canRestore)) && <div className="flex flex-wrap items-center gap-2 pt-1">
+        {current && (previous || (restoreRow && canRestore)) && <div className={ACTIONS_CLASS}>
           {previous && <button type="button" className={pillButton} disabled={busy} onClick={() => { void compare() }}>{comparing ? 'Сравниваю…' : `Сравнить ${previous.number} и ${current.number}`}</button>}
           {restoreRow && canRestore && <button type="button" className={pillButton} disabled={busy} onClick={() => { void restore(restoreRow) }}>{restoring ? 'Возвращаю…' : `Вернуть версию ${restoreRow.number}`}</button>}
         </div>}
@@ -298,7 +304,7 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
 
       {chatId === undefined && <NativeEditorUpdate gadget={gadget} disabled={disabled} snapshotSource={snapshotSource} format={format} onUpdated={() => window.location.reload()} />}
 
-      {primary && <div className="flex justify-end pt-1">
+      {primary && <div className="flex flex-col pt-1 sm:flex-row sm:justify-end">
         <button type="button" className={primaryButton} data-version-primary="" disabled={primary.disabled || status.busy || disabled} onClick={primary.run}>{primary.label}</button>
       </div>}
     </div>
@@ -338,7 +344,7 @@ export function VersionComparison({ diff, labels, onClose }: { diff: VersionDiff
         <p className="m-0 mt-0.5 text-[13px] leading-[18px] text-kumo-subtle">{diff.summary.charAt(0).toUpperCase() + diff.summary.slice(1)}</p>
       </div>
       <button type="button" aria-label="Скрыть сравнение" title="Скрыть сравнение" onClick={onClose}
-        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"><X size={14} /></button>
+        className="inline-flex h-10 w-10 sm:h-7 sm:w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default"><X size={14} /></button>
     </div>
     {nothing && <p className={`m-0 ${subText}`}>Содержимое версий совпадает.</p>}
     {diff.kind === 'document' && diff.title[0] !== diff.title[1] && <p className="m-0 text-[14px] leading-5">Название: <Pieces pieces={[{ text: diff.title[0], op: 'del' }, { text: ' ', op: 'same' }, { text: diff.title[1], op: 'add' }]} /></p>}
@@ -390,12 +396,12 @@ function SaveToProject({ disabled, status }: { gadget: RpcStub<GadgetClient>; fo
         Документ уже сохраняет другая ваша вкладка или устройство (с {new Date(elsewhere.since).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}). Когда оно закончится, версии появятся здесь сами.
       </p>
       : working ? <p role="status" className={`m-0 ${subText}`}>{status.saving ?? 'Сохраняю…'}</p>
-      : suggested && !open ? <div className="flex flex-wrap items-center gap-2">
+      : suggested && !open ? <div className={ACTIONS_CLASS}>
         <button type="button" className={primaryButton} disabled={disabled} onClick={() => { void save(suggested.projectId, suggested.accountId) }}>Сохранить в «{suggested.title}»</button>
         <button type="button" className={pillButton} disabled={disabled} onClick={() => setOpen(true)}>Другой проект…</button>
       </div>
-      : !open ? <div><button type="button" className={primaryButton} disabled={disabled} onClick={() => setOpen(true)}>Сохранить в проект…</button></div>
-      : <div role="list" aria-label="Проекты" className="flex flex-wrap gap-2">
+      : !open ? <div className={ACTIONS_CLASS}><button type="button" className={primaryButton} disabled={disabled} onClick={() => setOpen(true)}>Сохранить в проект…</button></div>
+      : <div role="list" aria-label="Проекты" className={ACTIONS_CLASS}>
         {scopes === null && !error && <p role="status" className={`m-0 ${subText}`}>Загрузка проектов…</p>}
         {scopes?.map(s => <button type="button" key={s.id} role="listitem" aria-pressed={s.id === (chosen || suggested?.projectId)} className={pillButton} disabled={disabled} onClick={() => { void save(s.id) }}>{s.name}</button>)}
         {scopes?.length === 0 && <p className={`m-0 ${subText}`}>Нет проектов, куда можно сохранить.</p>}
@@ -422,7 +428,7 @@ function BindingChooser({ status, onDone }: { status: DocumentStatusHandle; onDo
     status.listDocuments(scope).then(list => { if (!cancelled) setDocuments(list) }).catch(() => { if (!cancelled) setError('Документы проекта не прочитаны.') })
     return () => { cancelled = true }
   }, [scope])
-  const selectClass = 'block w-full border border-kumo-line rounded-lg p-2 bg-kumo-base'
+  const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[14px]'
   return <div className={`flex flex-col gap-2 ${rowText}`}>
     <h3 className="m-0 text-[15px] leading-5 font-semibold">Другой документ Mnemos</h3>
     <label>Проект<select aria-label="Проект документа" className={selectClass} value={scope} onChange={e => { setScope(e.target.value); setResource('') }}>
@@ -430,9 +436,9 @@ function BindingChooser({ status, onDone }: { status: DocumentStatusHandle; onDo
     <label>Документ<select aria-label="Документ Mnemos в редакторе" className={selectClass} value={resource} disabled={!scope} onChange={e => setResource(e.target.value)}>
       <option value="">Выберите документ</option>{documents.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
     {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
-    <div className="flex justify-end gap-2">
-      <WorkshopButton onClick={onDone}>Отмена</WorkshopButton>
-      <WorkshopButton tone="primary" className="!h-8" disabled={!scope || !resource} onClick={() => { void status.bindAtEditorRevision({ accountId: status.binding?.accountId ?? null, scope, resource }); onDone() }}>Привязать</WorkshopButton>
+    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={onDone}>Отмена</WorkshopButton>
+      <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-8 sm:w-auto" disabled={!scope || !resource} onClick={() => { void status.bindAtEditorRevision({ accountId: status.binding?.accountId ?? null, scope, resource }); onDone() }}>Привязать</WorkshopButton>
     </div>
   </div>
 }

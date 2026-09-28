@@ -30,7 +30,7 @@ type BlueprintItem = {
 // Chrome shared by the page's secondary actions. `w-full` + `justify-center` are what let a pair of
 // these sit in a 2-column grid and come out the same width whatever their labels say.
 const ACTION_BUTTON =
-  'press inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-kumo-line bg-kumo-base px-3.5 text-[13px] font-medium tracking-[-0.25px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:cursor-default disabled:opacity-50'
+  'press inline-flex h-9 touch:h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-kumo-line bg-kumo-base px-3.5 text-[13px] font-medium tracking-[-0.25px] text-kumo-default transition-colors hover:bg-kumo-tint disabled:cursor-default disabled:opacity-50'
 
 function formatRelativeTime(date: Date): string {
   const diff = Date.now() - date.getTime()
@@ -96,7 +96,7 @@ function BlueprintRow({
             render={
               <button
                 type="button"
-                className="rounded-md p-1.5 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                className="rounded-md p-1.5 text-kumo-subtle transition-colors hover:bg-kumo-fill hover:text-kumo-default focus:opacity-100 sm:opacity-0 touch:opacity-100 sm:group-hover:opacity-100"
               >
                 <DotsThreeVertical size={16} />
               </button>
