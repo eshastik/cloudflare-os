@@ -13,7 +13,21 @@ export type TelegramBotInfo = {
 };
 
 type Method = "getMe" | "setWebhook" | "deleteWebhook" | "sendMessage" | "sendMessageDraft" | "answerCallbackQuery" |
-  "createForumTopic" | "editForumTopic" | "getFile";
+  "createForumTopic" | "editForumTopic" | "deleteForumTopic" | "getFile" | "editMessageText" | "editMessageReplyMarkup";
+
+/** Кнопка под сообщением: надпись и данные нажатия (не длиннее 64 байт, их пришлёт Telegram). */
+export type InlineButton = { text: string; data: string };
+
+function keyboard(rows: InlineButton[][]): object {
+  for (let row of rows) {
+    for (let button of row) {
+      if (!button.text.trim() || new TextEncoder().encode(button.data).byteLength > 64 || !button.data) {
+        throw new Error("Invalid Telegram button.");
+      }
+    }
+  }
+  return { inline_keyboard: rows.map(row => row.map(button => ({ text: button.text, callback_data: button.data }))) };
+}
 
 /** Отказ Telegram или сбой связи. description — описание отказа от Telegram, если он ответил. */
 export class TelegramApiError extends Error {
@@ -26,6 +40,11 @@ export class TelegramApiError extends Error {
 /** Тред удалён пользователем (события об этом нет, узнаём по отказу отправки). */
 export function isThreadNotFound(error: unknown): boolean {
   return error instanceof TelegramApiError && /message thread not found|thread not found|TOPIC_DELETED|TOPIC_ID_INVALID/i.test(error.description ?? "");
+}
+
+/** Сообщение уже такое, каким его просят сделать (повтор правки). */
+export function isNotModified(error: unknown): boolean {
+  return error instanceof TelegramApiError && /message is not modified/i.test(error.description ?? "");
 }
 
 /** Telegram не разобрал HTML-разметку сообщения. */
@@ -132,7 +151,7 @@ export class TelegramBotApi {
   }
 
   /** Сообщение в личный чат, в тред (thread) или вне тредов; html — текст уже в разметке Telegram. */
-  async send(chat: number, text: string, options: { thread?: number; html?: boolean } = {}): Promise<number> {
+  async send(chat: number, text: string, options: { thread?: number; html?: boolean; buttons?: InlineButton[][] } = {}): Promise<number> {
     if (!Number.isSafeInteger(chat) || chat <= 0 || typeof text !== "string" || !text.trim() || text.length > MAX_MESSAGE ||
         (options.thread !== undefined && (!Number.isSafeInteger(options.thread) || options.thread <= 0))) {
       throw new Error("Invalid Telegram reply.");
@@ -141,6 +160,7 @@ export class TelegramBotApi {
       chat_id: chat, text, link_preview_options: { is_disabled: true },
       ...(options.thread !== undefined ? { message_thread_id: options.thread } : {}),
       ...(options.html ? { parse_mode: "HTML" } : {}),
+      ...(options.buttons ? { reply_markup: keyboard(options.buttons) } : {}),
     }) as { message_id?: unknown; chat?: { id?: unknown; type?: unknown } } | null;
     if (!result || !Number.isSafeInteger(result.message_id) || result.chat?.id !== chat || result.chat.type !== "private") {
       throw new Error("Telegram reply is unconfirmed.");
@@ -179,6 +199,30 @@ export class TelegramBotApi {
     await this.#call("editForumTopic", { chat_id: chat, message_thread_id: thread, name: title });
   }
 
+  /** Удалить тред вместе с сообщениями (беседу удалили на сайте). */
+  async deleteTopic(chat: number, thread: number): Promise<void> {
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(thread) || thread <= 0) throw new Error("Invalid Telegram topic.");
+    await this.#call("deleteForumTopic", { chat_id: chat, message_thread_id: thread });
+  }
+
+  /** Заменить текст сообщения бота; кнопки при этом снимаются (reply_markup не передаётся). */
+  async editText(chat: number, message: number, text: string, options: { html?: boolean } = {}): Promise<void> {
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(message) || message <= 0 ||
+        typeof text !== "string" || !text.trim() || text.length > MAX_MESSAGE) {
+      throw new Error("Invalid Telegram edit.");
+    }
+    await this.#call("editMessageText", {
+      chat_id: chat, message_id: message, text, link_preview_options: { is_disabled: true },
+      ...(options.html ? { parse_mode: "HTML" } : {}),
+    });
+  }
+
+  /** Снять кнопки с сообщения бота, не меняя текста. */
+  async removeButtons(chat: number, message: number): Promise<void> {
+    if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(message) || message <= 0) throw new Error("Invalid Telegram edit.");
+    await this.#call("editMessageReplyMarkup", { chat_id: chat, message_id: message, reply_markup: { inline_keyboard: [] } });
+  }
+
   /** Содержимое файла по file_id (голосовое сообщение), не больше limit байт. */
   async fileBytes(fileId: string, limit: number = MAX_VOICE_BYTES): Promise<Uint8Array> {
     if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(fileId)) throw new Error("Invalid Telegram file.");
@@ -196,9 +240,9 @@ export class TelegramBotApi {
     } catch { throw new TelegramApiError(null); }
   }
 
-  /** Убрать «часики» с нажатой кнопки. */
-  async answerCallback(id: string): Promise<void> {
+  /** Убрать «часики» с нажатой кнопки; text — короткая всплывающая подсказка. */
+  async answerCallback(id: string, text?: string): Promise<void> {
     if (typeof id !== "string" || !id || id.length > 128) throw new Error("Invalid Telegram callback.");
-    await this.#call("answerCallbackQuery", { callback_query_id: id });
+    await this.#call("answerCallbackQuery", { callback_query_id: id, ...(text ? { text: text.slice(0, 200) } : {}) });
   }
 }

@@ -18,7 +18,14 @@ export type TelegramInput =
       voice: TelegramVoice | null;
       topic: TelegramTopicEvent | null;
     }
-  | { kind: "callback"; update: number; id: string; sender: TelegramSender };
+  | {
+      kind: "callback"; update: number; id: string; sender: TelegramSender;
+      /** callback_data кнопки как есть: разбирает и проверяет вызывающий. */
+      data: string | null;
+      /** Сообщение с кнопкой и его тред; null — Telegram не прислал (сообщение слишком старое). */
+      message: number | null;
+      thread: number | null;
+    };
 
 export const MAX_UPDATE_BYTES = 65536;
 
@@ -78,7 +85,11 @@ export function parseTelegramUpdate(bytes: Uint8Array): TelegramInput | null | u
     // Кнопка из группы или из встроенного режима — не личный разговор с владельцем.
     if (!from || typeof query.id !== "string" || !query.id || query.id.length > 128 ||
         chat.type !== "private" || chat.id !== from.id) return null;
-    return { kind: "callback", update: id, id: query.id, sender: from };
+    let source = record(query.message);
+    let data = typeof query.data === "string" && query.data.length <= 64 ? query.data : null;
+    let message = positive(source.message_id) ? source.message_id : null;
+    let thread = positive(source.message_thread_id) ? source.message_thread_id : null;
+    return { kind: "callback", update: id, id: query.id, sender: from, data, message, thread };
   }
 
   let message = record(update.message);

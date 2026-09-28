@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { DotsThree, Star, ShareNetwork, Trash, Pencil, PaperPlaneTilt } from '@phosphor-icons/react'
+import { DotsThree, Star, ShareNetwork, Trash, Pencil, PaperPlaneTilt, Archive, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { DropdownMenu } from '@cloudflare/kumo'
 import { MENU_CONTENT, MENU_ITEM, MENU_ITEM_DANGER, MENU_POSITIONER_STYLE } from '../menuStyles'
 import { useState, useEffect, useRef } from 'react'
@@ -41,6 +41,7 @@ export default function SidebarGadgetRow({
   onRename,
   onShare,
   onDelete,
+  onToggleArchive,
   variant = 'sidebar',
   subtitle,
 }: {
@@ -52,6 +53,8 @@ export default function SidebarGadgetRow({
   onRename: (g: GadgetMetadataWithTimestamps, newTitle: string) => void
   onShare: (g: GadgetMetadataWithTimestamps) => void
   onDelete: (g: GadgetMetadataWithTimestamps) => void
+  // Архив — только у своих бесед: чужую беседу можно лишь убрать из списка.
+  onToggleArchive?: (g: GadgetMetadataWithTimestamps) => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(gadget.title || '')
@@ -157,6 +160,16 @@ export default function SidebarGadgetRow({
                 >
                   <ShareNetwork size={13} className="mr-2" /> Поделиться
                 </DropdownMenu.Item>
+                {onToggleArchive && !gadget.owner && (
+                  <DropdownMenu.Item
+                    onClick={() => onToggleArchive(gadget)}
+                    className={MENU_ITEM}
+                  >
+                    {gadget.archived
+                      ? <><ArrowCounterClockwise size={13} className="mr-2" /> Вернуть из архива</>
+                      : <><Archive size={13} className="mr-2" /> В архив</>}
+                  </DropdownMenu.Item>
+                )}
                 <DropdownMenu.Separator />
                 <DropdownMenu.Item
                   variant="danger"

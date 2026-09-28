@@ -40,11 +40,14 @@ type WorkspacesContextValue = {
   gadgetsFailed: boolean
   favorites: GadgetMetadataWithTimestamps[]
   recent: GadgetMetadataWithTimestamps[]
+  // Беседы в архиве: в боковой панели их нет, «Все беседы» показывает их отдельной группой.
+  archived: GadgetMetadataWithTimestamps[]
 
   onTogglePin: (g: GadgetMetadataWithTimestamps) => void
   onRename: (g: GadgetMetadataWithTimestamps, newTitle: string) => void
   onShare: (g: GadgetMetadataWithTimestamps) => void
   onDelete: (g: GadgetMetadataWithTimestamps) => void
+  onToggleArchive: (g: GadgetMetadataWithTimestamps) => void
 }
 
 const WorkspacesContext = createContext<WorkspacesContextValue | null>(null)
@@ -122,19 +125,22 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     [needle],
   )
 
-  const { favorites, recent } = useMemo(() => {
+  const { favorites, recent, archived } = useMemo(() => {
     const favs: GadgetMetadataWithTimestamps[] = []
     const rest: GadgetMetadataWithTimestamps[] = []
+    const old: GadgetMetadataWithTimestamps[] = []
     for (const g of gadgets) {
       if (!matchText(g.title)) continue
-      if (g.pinned) favs.push(g)
+      if (g.archived) old.push(g)
+      else if (g.pinned) favs.push(g)
       else rest.push(g)
     }
     const byActive = (a: GadgetMetadataWithTimestamps, b: GadgetMetadataWithTimestamps) =>
       b.lastActive.getTime() - a.lastActive.getTime()
     favs.sort(byActive)
     rest.sort(byActive)
-    return { favorites: favs, recent: rest }
+    old.sort(byActive)
+    return { favorites: favs, recent: rest, archived: old }
   }, [gadgets, matchText])
 
   // --- Workspace actions ---------------------------------------------------
@@ -163,6 +169,22 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
       console.error('Failed to rename:', err)
       setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, title: g.title } : x)))
       toasts.add({ title: 'Не удалось переименовать беседу. Попробуйте ещё раз.', variant: 'error' })
+    } finally {
+      overseer[Symbol.dispose]()
+    }
+  }, [authenticatedApi, toasts])
+
+  const onToggleArchive = useCallback(async (g: GadgetMetadataWithTimestamps) => {
+    const archived = !g.archived
+    setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, archived } : x)))
+    const overseer = authenticatedApi.openGadget(g.id)
+    try {
+      await overseer.setArchived(archived)
+      toasts.add({ title: archived ? 'Беседа в архиве' : 'Беседа возвращена из архива', variant: 'success' })
+    } catch (err) {
+      console.error('Failed to archive:', err)
+      setGadgets((prev) => prev.map((x) => (x.id === g.id ? { ...x, archived: g.archived } : x)))
+      toasts.add({ title: archived ? 'Не удалось убрать беседу в архив. Попробуйте ещё раз.' : 'Не удалось вернуть беседу из архива. Попробуйте ещё раз.', variant: 'error' })
     } finally {
       overseer[Symbol.dispose]()
     }
@@ -219,10 +241,12 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     gadgetsFailed: initialization?.api === authenticatedApi && initialization.state === 'error',
     favorites,
     recent,
+    archived,
     onTogglePin,
     onRename,
     onShare,
     onDelete: setDeleteTarget,
+    onToggleArchive,
   }
 
   return (
@@ -274,6 +298,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
     onRename,
     onShare,
     onDelete,
+    onToggleArchive,
   } = useWorkspacesContext()
 
   if (collapsed) {
@@ -305,6 +330,7 @@ export function SidebarWorkspacesLists({ collapsed = false }: { collapsed?: bool
       onRename={onRename}
       onShare={onShare}
       onDelete={onDelete}
+      onToggleArchive={onToggleArchive}
     />
   )
 

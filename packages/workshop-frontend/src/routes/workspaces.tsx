@@ -37,12 +37,13 @@ function WorkspacesPage() {
 
 function subtitle(gadget: GadgetMetadataWithTimestamps): string | undefined {
   if (gadget.owner) return `Поделился: ${gadget.owner.name}`
+  if (gadget.archived) return 'В архиве. Новое сообщение в её треде Telegram вернёт беседу.'
   if (gadget.pinned) return 'В избранном'
   return undefined
 }
 
 function ChatsList() {
-  const { search, setSearch, favorites, recent, gadgetsLoading, gadgetsFailed, onTogglePin, onRename, onShare, onDelete } = useWorkspacesContext()
+  const { search, setSearch, favorites, recent, archived, gadgetsLoading, gadgetsFailed, onTogglePin, onRename, onShare, onDelete, onToggleArchive } = useWorkspacesContext()
   const all = [...favorites, ...recent].toSorted((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
   const groups = groupByDate(all, g => g.lastActive)
 
@@ -67,7 +68,7 @@ function ChatsList() {
         </div>
       ) : gadgetsFailed ? (
         <p className="py-10 text-center text-[15px] text-kumo-danger">Не удалось загрузить беседы. Обновите страницу.</p>
-      ) : groups.length === 0 ? (
+      ) : groups.length === 0 && archived.length === 0 ? (
         <p className="py-10 text-center text-[15px] text-kumo-subtle">
           {search ? 'Ничего не найдено.' : 'Бесед пока нет. Начните новую — она появится здесь.'}
         </p>
@@ -85,11 +86,33 @@ function ChatsList() {
                 onRename={onRename}
                 onShare={onShare}
                 onDelete={onDelete}
+                onToggleArchive={onToggleArchive}
               />
             ))}
           </div>
         </section>
       ))}
+      {/* Архив — последней группой: беседы не пропадают, но и не мешают в списке. */}
+      {!gadgetsLoading && !gadgetsFailed && archived.length > 0 && (
+        <section aria-label="Архив" className="flex flex-col gap-2.5">
+          <h2 className={GROUP_LABEL}>Архив</h2>
+          <div className={GROUP_CARD}>
+            {archived.map(g => (
+              <SidebarGadgetRow
+                key={g.id}
+                gadget={g}
+                variant="list"
+                subtitle={subtitle(g)}
+                onTogglePin={onTogglePin}
+                onRename={onRename}
+                onShare={onShare}
+                onDelete={onDelete}
+                onToggleArchive={onToggleArchive}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

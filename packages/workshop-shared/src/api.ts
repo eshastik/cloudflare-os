@@ -30,6 +30,7 @@ import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription
 import type { UiFeatureFlags } from "./feature-flags.js";
 import type { AppearancePreference } from "./accent-theme.js";
 import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
+import type { TelegramChatLink } from "./telegram-bot.js";
 
 export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
@@ -1164,6 +1165,9 @@ export type GadgetMetadata = {
   // Внешний канал, из которого беседа начата (тред личного бота Telegram); нет — беседа сайта.
   channel?: "telegram";
 
+  // Беседа убрана в архив: в боковой панели не показывается, в «Все беседы» — отдельной группой.
+  archived?: boolean;
+
   // Various objects in the API specify a gadgetId, but make the property optional. When omitted,
   // the default gadget ID should be assumed. This is largely for backwards compatibility with
   // records that were stored before workspaces could have multiple gadgets.
@@ -1462,6 +1466,18 @@ export interface Overseer extends RpcTarget {
 
   // Pin or unpin this workspace in the user's list.
   setPinned(pinned: boolean): Promise<void>;
+
+  // Убрать беседу в архив или вернуть из архива (только владелец). Беседа в архиве не видна в
+  // боковой панели; её тред Telegram получает сообщение «Беседа в архиве».
+  setArchived(archived: boolean): Promise<void>;
+
+  // Беседа и тред личного бота Telegram владельца (ADR 0027, этап 3): можно ли продолжить беседу
+  // в Telegram и где она уже идёт.
+  getTelegramLink(chatId: number): Promise<TelegramChatLink>;
+
+  // «Продолжить в Telegram»: бот создаёт тред с названием беседы и кратким содержанием последних
+  // шагов; дальше сообщения идут в обе стороны. Если тред уже есть, новый не создаётся.
+  continueInTelegram(chatId: number): Promise<TelegramChatLink>;
 
   // Instruct the workspace to delete itself, removing it from the User's workspace list and
   // deleting all data. Further method calls will fail.

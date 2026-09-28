@@ -969,6 +969,16 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     this.storage.gadgets.put(record);
   }
 
+  async updateArchived(gadgetId: string, archived: boolean) {
+    let record = this.storage.gadgets.get(gadgetId);
+    if (!record) {
+      throw new Error("No such workspace belonging to user.");
+    }
+    if (archived) record.archived = true;
+    else delete record.archived;
+    this.storage.gadgets.put(record);
+  }
+
   async getGadget(id: string): Promise<GadgetMetadata | null> {
     return this.storage.gadgets.get(id) || null;
   }

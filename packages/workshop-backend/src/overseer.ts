@@ -59,7 +59,9 @@ import { AutoApprovalDrainer } from "./auto-approval";
 import { findSubmittedAction } from "./action-submission";
 import { collectSlashCommands, invokeSlashCommand } from "./slash-commands";
 import { createWorkshopLogger, obsContext, traced } from "./observability";
-import type { ChatGatewayRpcTarget, SubmitExternalMessageResult } from "@gadgets/workshop-shared/external-message-gateway";
+import type { ChatGatewayRpcTarget, DecideExternalActionResult, ExternalDecision, SubmitExternalMessageResult } from "@gadgets/workshop-shared/external-message-gateway";
+import type { TelegramChatLink } from "@gadgets/workshop-shared/telegram-bot";
+import type { SiteEvent, TelegramTurnRef } from "./telegram/personal-bot";
 import { ExternalProgressRelay } from "./external-progress";
 import {
   assertChatAttachmentSupportedByProvider,
@@ -577,13 +579,65 @@ type ExternalMessageResponseTargetRegistration = {
 };
 
 type ExternalResponseExtras = {
+  // Решение, которое принимается только на сайте (запрос подключения, ввод пароля).
   needsDecision?: true;
+  // Действия, ждущие решения: в канале их можно подтвердить или отклонить кнопкой.
+  decisions?: ExternalDecision[];
+  // Ход начат соавтором: его решения владелец в канале не принимает, видит строку с именем.
+  waitingFor?: string;
   documents?: string[];
   noReply?: true;
 };
 
+// Беседа (чат) этого объекта, связанная с тредом личного бота Telegram её владельца (ADR 0027,
+// этап 3). key — ключ треда у бота («бот:чат:тред»), owner — имя владельца (имя объекта бота).
+type TelegramLinkRecord = {
+  chatId: number;
+  key: string;
+  owner: string;
+  // Последняя реплика беседы, уже ушедшая в тред ответом: следующий ход без получателя берёт
+  // только то, что после неё.
+  through?: number;
+};
+
+// Кто принимает решение по действию: профиль для журнала, объект пользователя (от его имени
+// возобновляется ход) и владелец ли он беседы.
+type ActionDecider = {
+  profile(): Promise<AiChatAuthorInfo>;
+  user: DurableObjectStub<UserDurableObject>;
+  isOwner: boolean;
+};
+
+// Сколько последних реплик уходит кратким содержанием в новый тред при переносе беседы.
+const TELEGRAM_SUMMARY_MESSAGES = 6;
+const TELEGRAM_SUMMARY_CHARS = 600;
+
 // Отказ внешнего хода, когда проверка источников беседы не прошла (доступ отозван).
 export const EXTERNAL_ACCESS_CHANGED = "Доступ к материалам этой беседы изменился — откройте беседу на сайте.";
+
+// Действие, ждущее решения, — словами для карточки в канале: подробности карточки сайта или
+// первые строки описания (Markdown без разметки).
+// Кнопкой решается только действие с полной карточкой (подробности словами); описание уходит
+// целиком, не обрезается: если в сообщение Telegram не помещается, бот шлёт ссылку на сайт.
+export function externalDecision(action: ActionRecord & {type: "action"}): ExternalDecision | null {
+  let card = action.description.card;
+  if (!card?.details?.length || card.open) return null;
+  return {
+    action: action.id,
+    title: action.description.title,
+    details: card.details,
+    description: action.description.description,
+  };
+}
+
+// Решения чужого хода (соавтора) владелец бота в треде не принимает: вместо карточек — строка с
+// именем того, кто ждёт решения на сайте.
+export function extrasForTelegramOwner(extras: ExternalResponseExtras, initiator: AiChatAuthorInfo | undefined,
+    owner: string): ExternalResponseExtras {
+  if (!initiator || initiator.id === owner || (!extras.decisions?.length && !extras.needsDecision)) return extras;
+  let {decisions: _decisions, needsDecision: _needsDecision, ...rest} = extras;
+  return {...rest, waitingFor: initiator.name || "Соавтор"};
+}
 
 // Сколько доставка ответа ждёт названия беседы, которое модель придумывает параллельно ходу.
 const EXTERNAL_TITLE_WAIT_MS = 5_000;
@@ -618,6 +672,8 @@ type ExternalMessageSubmitInput = {
   streamProgress?: boolean;
   // Канал, из которого беседа начата: метка в списке бесед владельца.
   channel?: "telegram";
+  // Беседа сайта, перенесённая в канал: удалённая на сайте заново не создаётся.
+  existingOnly?: boolean;
 };
 
 type ExternalChatRecord = {
@@ -830,6 +886,9 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // registration fails, this keeps the owner-table write retryable.
       ownerRegistrationPending: false,
 
+      // Беседа убрана владельцем в архив; новое сообщение из треда Telegram возвращает её.
+      archived: false,
+
       codeVersion: 0,
       totalCost: 0,
 
@@ -969,6 +1028,10 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
 
       externalChats: collection<ExternalChatRecord>()({
         primaryKey: "externalChatKey",
+      }),
+
+      telegramLinks: collection<TelegramLinkRecord>()({
+        primaryKey: "chatId",
       }),
 
       chats: collection<AiChatMessage>()({
@@ -2640,6 +2703,215 @@ class OverseerImpl implements AgentHooks {
     this.storage.actions.put(record);
   }
 
+  // Решение человека по действию: общий путь кнопки на сайте (OverseerClientInterface) и кнопки
+  // в Telegram (OverseerDurableObject.decideExternalAction). В журнал resolvedBy идёт профиль
+  // решившего, как при решении на сайте. Одно решение по действию за раз: второе нажатие, пока
+  // первое применяется, отказывается, а не применяет действие дважды.
+  #decidingActions = new Set<number>();
+
+  async decideAction(id: number, decision: "approve" | "reject", who: ActionDecider): Promise<void> {
+    let action = this.storage.actions.get(id);
+    if (!action) {
+      throw new Error(`No such action: ${id}`);
+    }
+    if (decision === "approve") {
+      if (action.type === "bindHook") {
+        throw new Error("Hooks should be enabled/disabled, not approved/rejected.");
+      }
+      if (action.state !== "pending") {
+        throw new Error(`Action is not pending: ${id}`);
+      }
+      if (action.type === "observation") {
+        throw new Error("Observations can't have 'pending' state.");
+      }
+    } else {
+      if (action.state !== "pending") {
+        throw new Error(`Action is not pending: ${id}`);
+      }
+      if (action.type !== "action") {
+        throw new Error(`Can't reject an observation: ${id}`);
+      }
+      if (action.description.ownerApprovalRequired && !who.isOwner) throw new Error("Это действие может отклонить только владелец разговора.");
+    }
+    if (this.#decidingActions.has(id)) throw new Error("Решение по этому действию уже принимается.");
+    this.#decidingActions.add(id);
+    let record = action;
+    try {
+      if (decision === "approve") {
+        // Resolve the approver's identity before applying, so a failed profile fetch can't leave the
+        // action applied in the world but still "pending" in storage.
+        let profile = await who.profile();
+        await this.applyPendingAction(record, profile, false, who.isOwner);
+      } else {
+        let gatekeeper = this.getGatekeeperFacet(record.gatekeeperId);
+        // Resolve the rejecter's identity before notifying the gatekeeper, so a failed profile fetch
+        // can't leave the action rejected with the gatekeeper but still "pending" in storage.
+        let profile = await who.profile();
+        await gatekeeper.rejectAction(record.action);
+        record.state = "rejected";
+        record.appliedAt = new Date();
+        record.resolvedBy = profile;
+        this.storage.actions.put(record);
+        // Deny leaves the turn ended, like denyConnectionRequest. The rejected record also prevents a
+        // sibling approval from resuming this turn.
+      }
+    } finally {
+      this.#decidingActions.delete(id);
+    }
+
+    // Карточка этого действия в треде Telegram снимает кнопки (если решали не ею).
+    let chatId = record.caller.from === "agent" || "chatId" in record.caller ? (record.caller as {chatId?: number}).chatId : undefined;
+    if (chatId !== undefined) {
+      this.notifyTelegram(chatId, { type: "decided", action: id, state: decision === "approve" ? "approved" : "rejected" });
+    }
+    if (decision === "reject") return;
+
+    // If this was an awaited agent action, resume only after all awaited actions in the turn are
+    // approved. If applyPendingAction throws, the action stays pending and the turn stays suspended.
+    if (record.caller.from === "agent" && record.description.awaitDecision) {
+      await this.#maybeResumeAfterActionDecision(record.caller.chatId, who);
+    }
+
+    // Clearing this manual gate may unblock later auto-eligible pending actions on the same
+    // gatekeeper, so cascade a drain (in-order) once this one is applied.
+    this.ctx.waitUntil(this.drainAutoApprovals(record.gatekeeperId));
+  }
+
+  // Resume a turn suspended on awaitDecision once all awaited actions from that turn are approved.
+  // Scoping to the current turn prevents older rejected actions from blocking future resumes.
+  async #maybeResumeAfterActionDecision(chatId: number, who: ActionDecider): Promise<void> {
+    let awaited: (ActionRecord & {type: "action"})[] = [];
+    for (let msg of this.storage.chats.list(
+        {prefix: `${keyString(chatId)}.`, reverse: true})) {
+      // Stop at whatever started the current turn: a user/gadget message or a gadget callback.
+      // (agentNudge is mid-turn, so it isn't a boundary.)
+      if (msg.type === "agentCallback") break;
+      if (msg.type === "message" &&
+          (msg.author.type === "user" || msg.author.type === "gadget")) {
+        break;
+      }
+      if (msg.type === "action") {
+        let record = this.storage.actions.get(msg.actionId);
+        if (record && record.type === "action" &&
+            record.caller.from === "agent" && record.description.awaitDecision) {
+          awaited.push(record);
+        }
+      }
+    }
+    awaited.reverse();  // Present titles chronologically.
+
+    // Only resume when every awaited action in the turn has been decided and all were approved.
+    if (awaited.length === 0) return;                       // No awaited action in current turn.
+    if (awaited.some(r => r.state === "pending")) return;   // Still waiting on a decision.
+    if (awaited.some(r => r.state === "rejected")) return;  // Denial leaves the turn ended.
+
+    // Persist one note for replay; raw action cards are not surfaced to the LLM. Concurrent
+    // approvals could both pass the gate above and append duplicate notes (the DO input gate is
+    // open across these awaits), but that's cosmetic — resumeSuspendedAgent still starts one turn.
+    let titleList = awaited.map(r => `"${r.description.title}"`).join(", ");
+    let outcomes = awaited.filter(r => r.outcome).map(r => `"${r.description.title}": ${r.outcome!.summary}`);
+    let summary =
+        `The changes you submitted have been approved and applied: ${titleList}. ` +
+        `Reads now reflect them.` +
+        (outcomes.length ? ` Results: ${outcomes.join("; ")}.` : "");
+    let author = await who.profile();
+    this.addChatMessages(chatId, author, [{type: "message", message: summary}]);
+
+    await this.resumeSuspendedAgent(chatId, who.user);
+  }
+
+  // Restart a suspended agent turn after its outcome is recorded in chat history (accepted
+  // connection, or all awaited actions approved). Denials intentionally don't call this.
+  async resumeSuspendedAgent(chatId: number, user: DurableObjectStub<UserDurableObject>): Promise<void> {
+    await this.waitForChatMessagePreparation(chatId);
+    let meta = this.storage.chatMeta.get(chatId);
+    if (!meta) return;  // Chat deleted.
+    if (meta.activeAgent) return;  // Already running; it'll pick up the change on its next read.
+
+    // Recover the model this thread was using. getChatContext(null) does NOT resolve a model, so we
+    // find the id from the most recent agent-authored message (its author.id is the model id).
+    let modelId: string | null = null;
+    for (let msg of this.storage.chats.list({prefix: `${keyString(chatId)}.`, reverse: true})) {
+      if (msg.author.type === "agent") {
+        modelId = msg.author.id;
+        break;
+      }
+    }
+
+    let userMeta = await user.getChatContext(modelId);
+    if (!userMeta.aiModel) return;  // No model resolved; nothing to resume.
+
+    let preparation = this.waitForChatMessagePreparation(chatId);
+    if (preparation) {
+      await preparation;
+      return this.resumeSuspendedAgent(chatId, user);
+    }
+
+    // Re-read after the await: another concurrent accept may have started the agent in the
+    // meantime. Avoid starting a second agent loop for the same chat.
+    let fresh = this.storage.chatMeta.get(chatId);
+    if (!fresh || fresh.activeAgent) return;
+
+    fresh.activeAgent = userMeta.aiModel.profile;
+    fresh.lastActive = this.getChatTimestamp();
+    this.storage.chatMeta.put(fresh);
+
+    this.startAgent(chatId, userMeta.aiModel, userMeta.profile, user.id.toString());
+  }
+
+  // «Продолжить в Telegram»: одна попытка на беседу за раз, чтобы двойное нажатие не создало два
+  // треда.
+  #telegramLinking = new Map<number, Promise<TelegramChatLink>>();
+
+  continueInTelegram(chatId: number, owner: string): Promise<TelegramChatLink> {
+    let running = this.#telegramLinking.get(chatId);
+    if (running) return running;
+    let attempt = this.#continueInTelegram(chatId, owner).finally(() => this.#telegramLinking.delete(chatId));
+    this.#telegramLinking.set(chatId, attempt);
+    return attempt;
+  }
+
+  async #continueInTelegram(chatId: number, owner: string): Promise<TelegramChatLink> {
+    let link = this.storage.telegramLinks.get(chatId);
+    let previousKey = link && link.owner === owner ? link.key : null;
+    let workspace = this.ctx.id.toString();
+    let result = await this.telegramBot(owner).linkSiteChat(owner, {
+      previousKey, workspace,
+      title: displayWorkspaceTitle(this.storage.title.get()),
+      summary: this.#telegramSummary(chatId),
+      chatPath: `/workspace/${workspace}?chat=${chatId}`,
+    });
+    if (!result.key || result.state.status !== "linked" || !this.storage.chatMeta.get(chatId)) return result.state;
+    let key = result.key;
+    let [latest] = this.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true, limit: 1 });
+    this.ctx.storage.transactionSync(() => {
+      if (previousKey && previousKey !== key && this.storage.externalChats.get("telegram:" + previousKey)?.chatId === chatId) {
+        this.storage.externalChats.delete("telegram:" + previousKey);
+      }
+      this.storage.externalChats.put({ externalChatKey: "telegram:" + key, chatId });
+      // Всё, что было до переноса, уже ушло кратким содержанием: в тред идёт только новое.
+      this.storage.telegramLinks.put({ chatId, key, owner, ...(latest ? { through: latest.sequence } : {}) });
+    });
+    return result.state;
+  }
+
+  // Краткое содержание беседы для первого сообщения нового треда: последние реплики человека и
+  // агента, каждая — одной строкой.
+  #telegramSummary(chatId: number): string {
+    let picked: string[] = [];
+    for (let message of this.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true })) {
+      if (message.type !== "message" || (message.author.type !== "user" && message.author.type !== "agent")) continue;
+      let text = message.message.replace(/\s+/g, " ").trim();
+      // Служебная заметка о подтверждённых действиях пишется от имени человека, но не им.
+      if (!text || text.startsWith("The changes you submitted have been approved")) continue;
+      if (text.length > TELEGRAM_SUMMARY_CHARS) text = text.slice(0, TELEGRAM_SUMMARY_CHARS).trimEnd() + "…";
+      picked.push(`**${message.author.type === "user" ? "Вы" : "Агент"}:** ${text}`);
+      if (picked.length >= TELEGRAM_SUMMARY_MESSAGES) break;
+    }
+    let intro = "Беседа перенесена с сайта. Пишите сюда — ответит тот же агент, история у беседы общая.";
+    return picked.length ? `${intro}\n\n**Последние шаги**\n\n${picked.reverse().join("\n\n")}` : intro;
+  }
+
   // Apply all currently-eligible pending actions of the given gatekeeper, in ascending id order.
   // Stops at the first pending action that is NOT auto-eligible (i.e. a manual gate) or that throws
   // while applying -- it is never skipped ahead of. This preserves in-order application and the
@@ -3816,7 +4088,11 @@ class OverseerImpl implements AgentHooks {
 
   #deliverWaitingExternalMessageResponse(chatId: number): void {
     let response = this.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId);
-    if (response?.status !== "waiting") return;
+    // Ход без внешнего получателя (начат на сайте или продолжен после решения) в беседе, связанной
+    // с тредом Telegram, уходит в тред. У хода из Telegram получатель уже есть: второго ответа нет.
+    if (!response) { this.#mirrorTurnToTelegram(chatId); return; }
+    if (response.status !== "waiting") return;
+    this.#markTelegramThrough(chatId);
 
     // Chat storage is a single ordered table for all threads; each key starts with the chat ID.
     let messagesAfterPrompt = [...this.storage.chats.list({
@@ -3852,11 +4128,18 @@ class OverseerImpl implements AgentHooks {
   #externalResponseExtras(messages: AiChatMessage[]): ExternalResponseExtras {
     let extras: ExternalResponseExtras = {};
     let documents: string[] = [];
+    let decisions: ExternalDecision[] = [];
     for (let message of messages) {
       if (message.type === "action") {
         let action = this.storage.actions.get(message.actionId);
-        if (action?.type === "action" && action.state === "pending" && action.description.awaitDecision) {
+        if (action?.type !== "action" || action.state !== "pending") continue;
+        // Карточка-переход (ввод пароля, выбор файлов) и действие без карточки подробностей
+        // кнопкой в канале не решаются — только на сайте.
+        let decision = externalDecision(action);
+        if (!decision) {
           extras.needsDecision = true;
+        } else if (!decisions.some(d => d.action === action.id)) {
+          decisions.push(decision);
         }
       } else if (message.type === "connectionRequest" && message.state === "pending") {
         extras.needsDecision = true;
@@ -3867,7 +4150,98 @@ class OverseerImpl implements AgentHooks {
       }
     }
     if (documents.length) extras.documents = documents.slice(0, 10);
+    if (decisions.length) extras.decisions = decisions.slice(0, 10);
     return extras;
+  }
+
+  // ---- беседа ↔ тред Telegram (ADR 0027, этапы 3–4) ----
+
+  telegramBot(owner: string) {
+    return this.ctx.exports.TelegramPersonalBot.getByName("user:" + owner);
+  }
+
+  // Событие беседы для её треда: в фоне, сбой Telegram беседу на сайте не задерживает.
+  notifyTelegram(chatId: number, event: SiteEvent): void {
+    let link = this.storage.telegramLinks.get(chatId);
+    if (!link) return;
+    this.#sendTelegramEvent(link, event);
+  }
+
+  notifyTelegramAll(event: SiteEvent): void {
+    for (let link of Array.from(this.storage.telegramLinks.list())) this.#sendTelegramEvent(link, event);
+  }
+
+  #sendTelegramEvent(link: TelegramLinkRecord, event: SiteEvent): void {
+    this.ctx.waitUntil(this.telegramBot(link.owner).siteEvent(link.owner, link.key, event).catch(err => {
+      this.logger.warn("telegram site event failed", { event: "telegram.site.event.failed", operation: event.type, error: err });
+    }));
+  }
+
+  #markTelegramThrough(chatId: number): void {
+    let link = this.storage.telegramLinks.get(chatId);
+    if (!link) return;
+    let [latest] = this.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true, limit: 1 });
+    if (latest) this.storage.telegramLinks.put({ ...link, through: latest.sequence });
+  }
+
+  // Получатель ответа хода с сайта: та же точка входа, что у ходов из Telegram, с адресом треда.
+  #telegramTarget(link: TelegramLinkRecord, site: string): NativeRpcStub<ChatGatewayRpcTarget> | null {
+    let match = /^[0-9]+:([1-9][0-9]*):([1-9][0-9]*)$/.exec(link.key);
+    if (!match) return null;
+    let namespace = this.ctx.exports.TelegramPersonalBot;
+    let ref: TelegramTurnRef = {
+      route: namespace.idFromName("user:" + link.owner).toString(),
+      chat: Number(match[1]), thread: Number(match[2]), update: 0, site,
+    };
+    return this.ctx.exports.TelegramChatTarget({ props: ref }) as unknown as NativeRpcStub<ChatGatewayRpcTarget>;
+  }
+
+  // Итог хода без внешнего получателя → тред. Доставка та же, что у ходов из канала: запись
+  // «ready» повторяется, пока тред не подтвердит; ключ — последняя реплика хода, повтора нет.
+  #mirrorTurnToTelegram(chatId: number): void {
+    let link = this.storage.telegramLinks.get(chatId);
+    if (!link) return;
+    let turn: AiChatMessage[] = [];
+    let promptSequence = 0;
+    for (let message of this.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true })) {
+      if (message.sequence <= (link.through ?? -1)) break;
+      if (message.type === "message" && message.author.type === "user") { promptSequence = message.sequence; break; }
+      turn.push(message);
+    }
+    turn.reverse();
+    let last = turn.at(-1);
+    if (!last) return;
+    let extras = this.#externalResponseExtras(turn);
+    // Кто начал ход: карточки с кнопками — только владельцу бота за его собственные ходы. Решения по
+    // ходу соавтора принимаются на сайте, в тред идёт строка с его именем.
+    let initiator: AiChatAuthorInfo | undefined;
+    for (let message of this.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true })) {
+      if (message.type === "message" && message.author.type === "user") { initiator = message.author; break; }
+    }
+    extras = extrasForTelegramOwner(extras, initiator, link.owner);
+    let text = "";
+    for (let message of turn.toReversed()) {
+      if (((message.type === "error" && !canContinueAfterStepLimit(message)) ||
+          (message.type === "message" && message.author.type === "agent")) && message.message.trim()) {
+        text = message.message;
+        break;
+      }
+    }
+    if (!text && !extras.decisions?.length && !extras.needsDecision && !extras.waitingFor) return;
+    let idempotencyKey = `telegram-site:${chatId}:${last.sequence}`;
+    if (this.storage.gadgetResponseDeliveries.get(idempotencyKey)) return;
+    // Недоставленный прежний ответ держит место: этот ход останется на сайте, порядок не ломается.
+    if (this.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId)) return;
+    let target = this.#telegramTarget(link, `${this.ctx.id.toString()}:${chatId}:${last.sequence}`);
+    if (!target) return;
+    this.storage.telegramLinks.put({ ...link, through: last.sequence });
+    try {
+      this.deliverExternalMessageResponse({
+        idempotencyKey, chatId, promptSequence, createdAt: Date.now(), status: "waiting", chatGatewayRpcTarget: target,
+      }, text, text ? extras : { ...extras, noReply: true });
+    } catch (err) {
+      this.logger.warn("telegram mirror not queued", { event: "telegram.mirror.failed", chatId, error: err });
+    }
   }
 
   #startProgressRelay(chatId: number, target: NativeRpcStub<ChatGatewayRpcTarget>): void {
@@ -3922,6 +4296,8 @@ class OverseerImpl implements AgentHooks {
         text: record.responseText,
         ...(title ? {title} : {}),
         ...(extras.needsDecision ? {needsDecision: true} : {}),
+        ...(extras.decisions?.length ? {decisions: extras.decisions} : {}),
+        ...(extras.waitingFor ? {waitingFor: extras.waitingFor} : {}),
         ...(extras.documents?.length ? {documents: extras.documents} : {}),
         ...(extras.noReply ? {noReply: true} : {}),
       });
@@ -7069,8 +7445,12 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       };
     }
 
-    // Create the Gadget if it doesn't exist yet.
+    // Create the Gadget if it doesn't exist yet. Беседу сайта, перенесённую в канал, заново не
+    // создаём: её удалили на сайте.
     let ownerId = this.impl.ownerId;
+    if (!ownerId && input.existingOnly) {
+      return { accepted: false, message: "Эта беседа удалена на сайте. Чтобы начать новую, напишите сообщение вне этого треда." };
+    }
     if (!ownerId) {
       this.impl.ownerId = callerId;
       this.impl.ownerProfileId = callerProfile.id;
@@ -7128,6 +7508,14 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       return { accepted: false, message: EXTERNAL_ACCESS_CHANGED };
     }
 
+    // Беседа в архиве возвращается новым сообщением владельца из её треда.
+    if (ownerId === callerId && this.impl.storage.archived.get()) {
+      this.impl.storage.archived.put(false);
+      await caller.updateArchived(this.ctx.id.toString(), false).catch(err => {
+        this.impl.logger.warn("failed to unarchive workspace", { event: "workspace.unarchive.failed", error: err });
+      });
+    }
+
     // Find the external conversation's chat if it exists.
     let externalChat = this.#getExternalChat(input.externalChatKey);
     let modelId = null;
@@ -7165,6 +7553,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     };
     let chatId: number;
     if (externalChat) {
+      this.#linkTelegramChat(input, externalChat.chatId, ownerId === callerId);
       await this.impl.sendChatMessage(
         caller,
         userContext,
@@ -7185,9 +7574,75 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
         responseTargetRegistration,
         input.externalChatKey,
       );
+      this.#linkTelegramChat(input, chatId, ownerId === callerId);
     }
 
     return { accepted: true, chatPath: `/workspace/${this.ctx.id.toString()}?chat=${chatId}` };
+  }
+
+  // Беседа из треда Telegram связывается с тредом: сайт шлёт в него свои сообщения, название,
+  // архив, удаление и карточки решений. Только беседа владельца бота.
+  #linkTelegramChat(input: ExternalMessageSubmitInput, chatId: number, byOwner: boolean): void {
+    if (input.channel !== "telegram" || !byOwner || !input.externalChatKey.startsWith("telegram:")) return;
+    let key = input.externalChatKey.slice("telegram:".length);
+    let existing = this.impl.storage.telegramLinks.get(chatId);
+    if (existing?.key === key && existing.owner === input.callerEmail) return;
+    this.impl.storage.telegramLinks.put({ chatId, key, owner: input.callerEmail, ...(existing?.key === key && existing.through !== undefined ? { through: existing.through } : {}) });
+  }
+
+  // Решение по действию агента кнопкой в треде Telegram. Проверки: решает владелец беседы, тред
+  // связан с этой беседой, действие принадлежит её чату и ещё ждёт решения. Дальше — тот же путь,
+  // что у кнопки на сайте, с тем же журналом (resolvedBy — профиль владельца).
+  async decideExternalAction(callerEmail: string, externalChatKey: string, actionId: number,
+      decision: "approve" | "reject"): Promise<DecideExternalActionResult> {
+    if (!Number.isSafeInteger(actionId) || actionId < 0 || (decision !== "approve" && decision !== "reject")) return { status: "denied" };
+    let ownerId = this.impl.ownerId;
+    if (!ownerId || typeof callerEmail !== "string" || !callerEmail) return { status: "denied" };
+    let caller = this.impl.users.getByName(callerEmail);
+    if (caller.id.toString() !== ownerId) return { status: "denied" };
+    let externalChat = this.#getExternalChat(externalChatKey);
+    if (!externalChat) return { status: "denied" };
+    let stateOf = (): DecideExternalActionResult | null => {
+      let action = this.impl.storage.actions.get(actionId);
+      if (!action || action.type !== "action" || action.caller.from !== "agent" || action.caller.chatId !== externalChat.chatId) {
+        return { status: "stale", state: "missing" };
+      }
+      if (action.state !== "pending") return { status: "stale", state: action.state };
+      return null;
+    };
+    let stale = stateOf();
+    if (stale) return stale;
+    let callerProfile = await caller.whoamiIfExists();
+    if (!callerProfile) return { status: "denied" };
+    // Та же проверка источников, что перед ходом из канала (receiveExternalMessage) и при открытии
+    // беседы на сайте: после отзыва доступа действие не применяется и ход не возобновляется.
+    try {
+      await this.impl.ensureObserver(callerProfile.id, caller, "build");
+    } catch (err) {
+      this.impl.logger.warn("external action decision denied by source verification", {
+        event: "external.action.sources.denied", actionId, error: err,
+      });
+      return { status: "access_changed" };
+    }
+    stale = stateOf();
+    if (stale) return stale;
+    try {
+      await this.impl.decideAction(actionId, decision, {
+        profile: async () => callerProfile,
+        user: caller,
+        isOwner: true,
+      });
+    } catch (err) {
+      // Решили раньше (на сайте или вторым нажатием) — карточка устарела; иначе сбой применения.
+      let after = stateOf();
+      if (after) return after;
+      this.impl.logger.warn("external action decision failed", { event: "external.action.decision.failed", actionId, error: err });
+      throw new Error("Решение не применено.");
+    }
+    this.impl.logger.info("external action decided", {
+      event: "external.action.decided", actionId, chatId: externalChat.chatId, operation: decision,
+    });
+    return { status: decision === "approve" ? "approved" : "rejected" };
   }
 
   // Название беседы внешнего канала, заданное человеком в канале (переименовал тред Telegram).
@@ -7846,10 +8301,32 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   async setTitle(title: string): Promise<void> {
     this.impl.storage.title.put(title);
     await this.owner.updateTitle(this.impl.ctx.id.toString(), title);
+    this.impl.notifyTelegramAll({ type: "rename", title });
   }
 
   async setPinned(pinned: boolean): Promise<void> {
     await this.clientUser.updatePinned(this.impl.ctx.id.toString(), pinned);
+  }
+
+  async setArchived(archived: boolean): Promise<void> {
+    if (!this.isOwner) throw new Error("Убрать беседу в архив может только её владелец.");
+    await this.owner.updateArchived(this.impl.ctx.id.toString(), archived);
+    this.impl.storage.archived.put(archived);
+    // Закрыть тред Telegram нельзя: в него уходит сообщение, новое сообщение там вернёт беседу.
+    if (archived) this.impl.notifyTelegramAll({ type: "archived" });
+  }
+
+  async getTelegramLink(chatId: number): Promise<TelegramChatLink> {
+    if (!this.isOwner || !this.impl.storage.chatMeta.get(chatId)) return { status: "unavailable" };
+    let link = this.impl.storage.telegramLinks.get(chatId);
+    let owner = this.clientProfileId;
+    return this.impl.telegramBot(owner).siteLink(owner, link && link.owner === owner ? link.key : null);
+  }
+
+  async continueInTelegram(chatId: number): Promise<TelegramChatLink> {
+    if (!this.isOwner) throw new Error("Продолжить беседу в Telegram может только её владелец.");
+    this.impl.getChatMetaOrThrow(chatId);
+    return this.impl.continueInTelegram(chatId, this.clientProfileId);
   }
 
   async subscribeToWorkpieces(subscriber: RpcStub<WorkpiecesSubscriber>): Promise<RpcStub<{}>> {
@@ -8001,12 +8478,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       }
     }
 
+    // Треды Telegram удаляются вместе с беседой: запомнить их до удаления данных.
+    let telegramLinks = Array.from(this.impl.storage.telegramLinks.list());
     await this.impl.ctx.blockConcurrencyWhile(async () => {
       await this.owner.deleteGadget(this.impl.ctx.id.toString());
       await this.impl.ctx.storage.deleteAll();
       this.impl.scheduleRevocationRestart();
       this.impl.ownerId = undefined;
     });
+
+    for (let link of telegramLinks) {
+      this.impl.ctx.waitUntil(this.impl.telegramBot(link.owner).siteEvent(link.owner, link.key, { type: "deleted" }).catch(() => {}));
+    }
 
     this.impl.logger.info("deleted workspace", {
       event: "workspace.delete.completed", durationMs: Date.now() - startedAt,
@@ -8213,36 +8696,12 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return result;
   }
 
+  #decider(): ActionDecider {
+    return { profile: () => this.#getClientProfile(), user: this.clientUser, isOwner: this.isOwner };
+  }
+
   async approveAction(id: number): Promise<void> {
-    let action = this.impl.storage.actions.get(id);
-    if (!action) {
-      throw new Error(`No such action: ${id}`);
-    }
-
-    if (action.type === "bindHook") {
-      throw new Error("Hooks should be enabled/disabled, not approved/rejected.");
-    }
-    if (action.state !== "pending") {
-      throw new Error(`Action is not pending: ${id}`);
-    }
-    if (action.type === "observation") {
-      throw new Error("Observations can't have 'pending' state.");
-    }
-
-    // Resolve the approver's identity before applying, so a failed profile fetch can't leave the
-    // action applied in the world but still "pending" in storage.
-    let profile = await this.#getClientProfile();
-    await this.impl.applyPendingAction(action, profile, false, this.isOwner);
-
-    // If this was an awaited agent action, resume only after all awaited actions in the turn are
-    // approved. If applyPendingAction throws, the action stays pending and the turn stays suspended.
-    if (action.caller.from === "agent" && action.description.awaitDecision) {
-      await this.#maybeResumeAfterActionDecision(action.caller.chatId);
-    }
-
-    // Clearing this manual gate may unblock later auto-eligible pending actions on the same
-    // gatekeeper, so cascade a drain (in-order) once this one is applied.
-    this.impl.ctx.waitUntil(this.impl.drainAutoApprovals(action.gatekeeperId));
+    await this.impl.decideAction(id, "approve", this.#decider());
   }
 
   async listHooks(): Promise<BoundHookInfo[]> {
@@ -8322,79 +8781,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return this.impl.deleteHook(id);
   }
 
-  // Resume a turn suspended on awaitDecision once all awaited actions from that turn are approved.
-  // Scoping to the current turn prevents older rejected actions from blocking future resumes.
-  async #maybeResumeAfterActionDecision(chatId: number): Promise<void> {
-    let awaited: (ActionRecord & {type: "action"})[] = [];
-    for (let msg of this.impl.storage.chats.list(
-        {prefix: `${keyString(chatId)}.`, reverse: true})) {
-      // Stop at whatever started the current turn: a user/gadget message or a gadget callback.
-      // (agentNudge is mid-turn, so it isn't a boundary.)
-      if (msg.type === "agentCallback") break;
-      if (msg.type === "message" &&
-          (msg.author.type === "user" || msg.author.type === "gadget")) {
-        break;
-      }
-      if (msg.type === "action") {
-        let record = this.impl.storage.actions.get(msg.actionId);
-        if (record && record.type === "action" &&
-            record.caller.from === "agent" && record.description.awaitDecision) {
-          awaited.push(record);
-        }
-      }
-    }
-    awaited.reverse();  // Present titles chronologically.
-
-    // Only resume when every awaited action in the turn has been decided and all were approved.
-    if (awaited.length === 0) return;                       // No awaited action in current turn.
-    if (awaited.some(r => r.state === "pending")) return;   // Still waiting on a decision.
-    if (awaited.some(r => r.state === "rejected")) return;  // Denial leaves the turn ended.
-
-    // Persist one note for replay; raw action cards are not surfaced to the LLM. Concurrent
-    // approvals could both pass the gate above and append duplicate notes (the DO input gate is
-    // open across these awaits), but that's cosmetic — #resumeSuspendedAgent still starts one turn.
-    let titleList = awaited.map(r => `"${r.description.title}"`).join(", ");
-    let outcomes = awaited.filter(r => r.outcome).map(r => `"${r.description.title}": ${r.outcome!.summary}`);
-    let summary =
-        `The changes you submitted have been approved and applied: ${titleList}. ` +
-        `Reads now reflect them.` +
-        (outcomes.length ? ` Results: ${outcomes.join("; ")}.` : "");
-    let author = await this.#getClientProfile();
-    this.impl.addChatMessages(chatId, author, [{type: "message", message: summary}]);
-
-    await this.#resumeSuspendedAgent(chatId);
-  }
-
   async rejectAction(id: number): Promise<void> {
-    let action = this.impl.storage.actions.get(id);
-    if (!action) {
-      throw new Error(`No such action: ${id}`);
-    }
-
-    if (action.state !== "pending") {
-      throw new Error(`Action is not pending: ${id}`);
-    }
-
-    if (action.type !== "action") {
-      throw new Error(`Can't reject an observation: ${id}`);
-    }
-    if (action.description.ownerApprovalRequired && !this.isOwner) throw new Error("Это действие может отклонить только владелец разговора.");
-
-    let gatekeeper = this.impl.getGatekeeperFacet(action.gatekeeperId);
-
-    // Resolve the rejecter's identity before notifying the gatekeeper, so a failed profile fetch
-    // can't leave the action rejected with the gatekeeper but still "pending" in storage.
-    let profile = await this.#getClientProfile();
-
-    await gatekeeper.rejectAction(action.action);
-
-    action.state = "rejected";
-    action.appliedAt = new Date();
-    action.resolvedBy = profile;
-    this.impl.storage.actions.put(action);
-
-    // Deny leaves the turn ended, like denyConnectionRequest. The rejected record also prevents a
-    // sibling approval from resuming this turn.
+    await this.impl.decideAction(id, "reject", this.#decider());
   }
 
   // Enable auto-approval of actions carrying `actionKind` on the given gatekeeper. Stores the
@@ -8484,46 +8872,6 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     throw new Error(`No such connection request: ${requestId}`);
   }
 
-  // Restart a suspended agent turn after its outcome is recorded in chat history (accepted
-  // connection, or all awaited actions approved). Denials intentionally don't call this.
-  async #resumeSuspendedAgent(chatId: number): Promise<void> {
-    await this.impl.waitForChatMessagePreparation(chatId);
-    let meta = this.impl.storage.chatMeta.get(chatId);
-    if (!meta) return;  // Chat deleted.
-    if (meta.activeAgent) return;  // Already running; it'll pick up the change on its next read.
-
-    // Recover the model this thread was using. getChatContext(null) does NOT resolve a model, so we
-    // find the id from the most recent agent-authored message (its author.id is the model id).
-    let modelId: string | null = null;
-    for (let msg of this.impl.storage.chats.list({prefix: `${keyString(chatId)}.`, reverse: true})) {
-      if (msg.author.type === "agent") {
-        modelId = msg.author.id;
-        break;
-      }
-    }
-
-    let userMeta = await this.clientUser.getChatContext(modelId);
-    if (!userMeta.aiModel) return;  // No model resolved; nothing to resume.
-
-    let preparation = this.impl.waitForChatMessagePreparation(chatId);
-    if (preparation) {
-      await preparation;
-      return this.#resumeSuspendedAgent(chatId);
-    }
-
-    // Re-read after the await: another concurrent accept may have started the agent in the
-    // meantime. Avoid starting a second agent loop for the same chat.
-    let fresh = this.impl.storage.chatMeta.get(chatId);
-    if (!fresh || fresh.activeAgent) return;
-
-    fresh.activeAgent = userMeta.aiModel.profile;
-    fresh.lastActive = this.impl.getChatTimestamp();
-    this.impl.storage.chatMeta.put(fresh);
-
-    this.impl.startAgent(chatId, userMeta.aiModel, userMeta.profile,
-                         this.clientUser.id.toString());
-  }
-
   async acceptConnectionRequest(
       requestId: string, result: {gatekeeperId: number}): Promise<void> {
     let msg = this.#findConnectionRequest(requestId);
@@ -8540,7 +8888,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     msg.timestamp = this.impl.getChatTimestamp();
     this.impl.storage.chats.put(msg);  // fires the subscriber update() → re-delivers the card
 
-    await this.#resumeSuspendedAgent(msg.chatId);
+    await this.impl.resumeSuspendedAgent(msg.chatId, this.clientUser);
   }
 
   async denyConnectionRequest(requestId: string): Promise<void> {
@@ -8878,8 +9226,15 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
       formats?: MessageFormatRef[]): Promise<void> {
     let userMeta = await this.clientUser.getChatContext(chosenModelId);
-    return this.impl.sendChatMessage(
+    await this.impl.sendChatMessage(
         this.clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats);
+    // Сообщение человека с сайта в беседе, связанной с тредом, уходит в тред с пометкой «с сайта».
+    if (typeof message === "string" && message.trim() && this.impl.storage.telegramLinks.get(chatId)) {
+      let [latest] = this.impl.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true, limit: 1 });
+      let id = `${this.impl.ctx.id.toString()}:${chatId}:${latest?.sequence ?? Date.now()}`;
+      let author = await this.#getClientProfile().then(profile => profile.name, () => "");
+      this.impl.notifyTelegram(chatId, { type: "human", id, text: message, author });
+    }
   }
 
   async setChatTitle(chatId: number, title: string): Promise<void> {
@@ -8890,6 +9245,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     meta.lastActive = this.impl.getChatTimestamp();
     meta.title = title;
     this.impl.storage.chatMeta.put(meta);
+    this.impl.notifyTelegram(chatId, { type: "rename", title });
   }
 
   async setChatProjects(chatId: number, projects: ChatProject[]): Promise<void> {
@@ -9137,6 +9493,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }
     this.impl.storage.chatMeta.delete(chatId);
     this.impl.storage.chatContext.delete(chatId);
+    // Тред Telegram этой беседы удаляется вместе с ней.
+    this.impl.notifyTelegram(chatId, { type: "deleted" });
+    this.impl.storage.telegramLinks.delete(chatId);
     // Buffer the keys first: deleting invalidates the list cursor.
     let checkpoints = Array.from(
         this.impl.storage.chatCompactions.list({prefix: `${keyString(chatId)}.`}),
@@ -9653,6 +10012,9 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   // --- Denied methods (build-only) ---
 
   async setTitle(_title: string): Promise<void> { this.#deny(); }
+  async setArchived(_archived: boolean): Promise<void> { this.#deny(); }
+  async getTelegramLink(_chatId: number): Promise<TelegramChatLink> { return { status: "unavailable" }; }
+  async continueInTelegram(_chatId: number): Promise<TelegramChatLink> { this.#deny(); }
   async setPinned(_pinned: boolean): Promise<void> { this.#deny(); }
   async deleteSelf(): Promise<void> { this.#deny(); }
   async importTemplateIntoChat(_stream: ReadableStream<Uint8Array>, _chatId:number, _operationId:string): ReturnType<Overseer["importTemplateIntoChat"]> { this.#deny(); }

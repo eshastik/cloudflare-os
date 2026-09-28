@@ -7,12 +7,27 @@ export type GadgetResponse = {
   // не читают.
   /** Название беседы на сайте, если оно уже не служебное («Новая беседа»). */
   title?: string;
-  /** Ход остановился на действии, которое человек должен подтвердить в беседе на сайте. */
+  /** Ход ждёт решения, которое принимается только на сайте (запрос подключения, ввод пароля). */
   needsDecision?: boolean;
+  /** Действия хода, которые человек может подтвердить или отклонить кнопкой в канале. */
+  decisions?: ExternalDecision[];
+  /** Ход начат другим человеком (соавтором): его решения — только на сайте, в канал — строкой. */
+  waitingFor?: string;
   /** Названия документов и приложений, созданных агентом в этом ходе. */
   documents?: string[];
   /** Агент закончил ход без текста ответа: `text` — служебная замена. */
   noReply?: boolean;
+};
+
+/** Действие агента, ждущее решения человека: номер в журнале беседы и описание словами. Кнопкой
+ *  его можно решить, только если описание целиком видно в канале. */
+export type ExternalDecision = {
+  action: number;
+  title: string;
+  /** Одна-три короткие строки подробностей карточки без идентификаторов. */
+  details: string[];
+  /** Полное описание действия (Markdown), как его видит человек на сайте. Не обрезается. */
+  description: string;
 };
 
 /** Промежуточное состояние хода: что агент делает сейчас и текст ответа, набранный к этому моменту. */
@@ -58,6 +73,9 @@ export type SubmitExternalMessageInput = {
   chatGatewayRpcTarget: RpcStub<ChatGatewayRpcTarget>;
   // Слать ли промежуточные события хода в `chatGatewayRpcTarget.onGadgetProgress`.
   streamProgress?: boolean;
+  // Беседа сайта, перенесённая в канал: ход идёт в неё, а не в беседу канала по gadgetKey. Такая
+  // беседа должна уже существовать — удалённая на сайте заново не создаётся.
+  workspaceId?: string;
 };
 
 /** Submission result returned by the backend gateway. */
@@ -78,7 +96,26 @@ export type RenameExternalChatInput = {
   gadgetKey: string;
   chatKey: string;
   title: string;
+  workspaceId?: string;
 };
+
+/** Решение по действию агента, принятое в канале (кнопка в Telegram) от имени владельца беседы. */
+export type DecideExternalActionInput = {
+  callerEmail: string;
+  gadgetKey: string;
+  chatKey: string;
+  workspaceId?: string;
+  action: number;
+  decision: "approve" | "reject";
+};
+
+/** Итог решения: принято; уже решено раньше или действия нет (карточка устарела); отказ. */
+export type DecideExternalActionResult =
+  | { status: "approved" | "rejected" }
+  | { status: "stale"; state: "approved" | "rejected" | "missing" }
+  /** Доступ к материалам беседы изменился (проверка источников не прошла): действие не применено. */
+  | { status: "access_changed" }
+  | { status: "denied" };
 
 /** Service binding RPC interface used by chat gateway workers. */
 export interface ExternalMessageGateway {
@@ -87,4 +124,7 @@ export interface ExternalMessageGateway {
 
   /** Задать название беседы от имени её владельца. false — беседы нет или вызывающий не владелец. */
   renameExternalChat(input: RenameExternalChatInput): Promise<boolean>;
+
+  /** Подтвердить или отклонить действие агента в беседе канала от имени её владельца. */
+  decideExternalAction(input: DecideExternalActionInput): Promise<DecideExternalActionResult>;
 }

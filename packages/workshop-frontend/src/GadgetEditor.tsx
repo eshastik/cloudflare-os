@@ -4,6 +4,7 @@ import { reportShellStage } from "./shellReadiness"
 import { clampChatWidth, dragChatWidth, DEFAULT_CHAT_WIDTH, MIN_CHAT_WIDTH } from './chatWidth'
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useNavigate, useSearch } from '@tanstack/react-router'
+import { TelegramContinueItem } from './components/TelegramContinueItem'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import {
   DotsThree,
@@ -1514,6 +1515,9 @@ export default function GadgetEditor() {
                 )}
                 {effectiveSelectedChatId !== null && (
                   <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
+                )}
+                {effectiveSelectedChatId !== null && !metadata.owner && (
+                  <TelegramContinueItem overseer={overseer.stub} chatId={effectiveSelectedChatId} />
                 )}
                 <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
                 {selectedNativeFormat && (

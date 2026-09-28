@@ -13,12 +13,24 @@
 // беседы — (бот, чат, тред). Связь треда с беседой (как тред назван, переименован ли, не удалён ли)
 // хранится здесь, в объекте бота: это сведения о Telegram, беседе они не нужны, и при отключении
 // бота уходят вместе с ним. Саму беседу по ключу находит и ведёт внешний вход.
+//
+// Этап 3: беседа сайта переносится в тред («Продолжить в Telegram»); у такой связи есть номер
+// беседы сайта (workspace), и ходы из треда идут в неё. Сообщения человека с сайта, переименование,
+// архив и удаление беседы приходят сюда от беседы (siteEvent), ответы агента на ходы с сайта — через
+// ту же доставку, что и ответы на ходы из Telegram (ref.site).
+//
+// Этап 4: действие агента, ждущее решения, приходит в тред карточкой с кнопками. В callback_data —
+// тред и номер карточки; всё остальное (беседа, действие, сообщение) берётся из записи карточки
+// здесь, а решение принимает беседа после своей проверки (DecideExternalAction).
 
-import { threadsReady, type TelegramBotState, type TelegramDisconnectResult, type TelegramThreads } from "@gadgets/workshop-shared/telegram-bot";
-import type { GadgetProgress, GadgetResponse, RenameExternalChatInput, SubmitExternalMessageInput, SubmitExternalMessageResult } from "@gadgets/workshop-shared/external-message-gateway";
+import { threadsReady, type TelegramBotState, type TelegramChatLink, type TelegramDisconnectResult, type TelegramThreads } from "@gadgets/workshop-shared/telegram-bot";
+import type {
+  DecideExternalActionInput, DecideExternalActionResult, ExternalDecision, GadgetProgress, GadgetResponse,
+  RenameExternalChatInput, SubmitExternalMessageInput, SubmitExternalMessageResult,
+} from "@gadgets/workshop-shared/external-message-gateway";
 import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle } from "../workspace-title";
-import { isParseError, isThreadNotFound, TelegramBotApi, TELEGRAM_TOKEN } from "./bot-api";
-import { telegramChunks, type TelegramChunk } from "./format";
+import { isNotModified, isParseError, isThreadNotFound, TelegramBotApi, TELEGRAM_TOKEN, type InlineButton } from "./bot-api";
+import { markdownToTelegramHtml, telegramChunks, type TelegramChunk } from "./format";
 import { DraftLimiter, draftText } from "./progress";
 import { openSecret, sameSecret, sealSecret, secretsKeyConfigured, SecretsKeyMissingError, SECRETS_KEY_MISSING, type SealedSecret } from "./secret-box";
 import { parseTelegramUpdate, readBoundedBody, type TelegramInput } from "./updates";
@@ -34,6 +46,20 @@ export const VOICE_BUSY_REPLY = "Предыдущее голосовое соо�
 export const BUSY_REPLY = "Агент ещё отвечает на прошлое сообщение в этом треде. Дождитесь ответа и напишите снова.";
 export const FAILED_REPLY = "Не получилось передать сообщение агенту. Повторите через минуту.";
 export const NO_THREAD_REPLY = "Не получилось открыть тред для беседы. Проверьте, что в BotFather у бота включён режим тредов, и повторите.";
+export const ARCHIVED_NOTICE = "Беседа в архиве. Напишите сюда, чтобы вернуть её.";
+export const SITE_THREAD_TITLE = "Беседа с сайта";
+/** Подсказки на нажатие кнопки карточки (всплывают в Telegram). */
+export const CARD_APPROVED = "Подтверждено";
+export const CARD_REJECTED = "Отклонено";
+export const CARD_STALE = "Решение по этому действию уже принято.";
+export const CARD_UNKNOWN = "Эта карточка устарела.";
+export const CARD_BUSY = "Решение уже принимается.";
+export const CARD_FAILED = "Не получилось. Повторите через минуту или решите в беседе на сайте.";
+export const CARD_DENIED = "Это действие можно решить только в беседе на сайте.";
+export const CARD_ACCESS_CHANGED = "Доступ к материалам этой беседы изменился — откройте беседу на сайте.";
+/** Сколько карточка может «решаться»: если решение не вернулось (сбой объекта), она снова решаема. */
+export const CARD_DECIDING_MS = 2 * 60 * 1000;
+const KEPT_CARDS = 256;
 const SEEN_UPDATES = 64;
 const KEPT_REPLIES = 128;
 /** Как часто экран может перепроверять режим тредов через getMe. */
@@ -66,8 +92,9 @@ export interface PersonalBotStorage {
   list<T>(options: { prefix: string }): Iterable<[string, T]>;
 }
 
-/** Ход агента, начатый сообщением из треда: куда слать черновики и ответ. */
-export type TelegramTurnRef = { route: string; chat: number; thread: number; update: number };
+/** Ход агента: куда слать черновики и ответ. update — номер обновления Telegram, начавшего ход;
+ *  site — ход начат на сайте в связанной беседе (тогда update не используется). */
+export type TelegramTurnRef = { route: string; chat: number; thread: number; update: number; site?: string };
 
 /** Как тред получил название. client — клиент Telegram по тексту первого сообщения
  *  (is_name_implicit), bot — бот создал тред сам, user — название дал человек, null — неизвестно
@@ -85,14 +112,53 @@ export type ThreadLink = {
   unlinked: boolean;
   chatPath: string | null;
   createdAt: number;
+  /** Беседа сайта, перенесённая в этот тред; нет — беседа создана из треда (по ключу). */
+  workspace?: string | null;
 };
 
 type ReplyState = { sent: number; unthreaded: boolean };
+
+type CardState = "pending" | "deciding" | "approved" | "rejected" | "stale";
+
+/** Карточка решения в треде. Номер n — в callback_data кнопок; беседа и действие — только здесь. */
+export type CardRecord = {
+  n: number;
+  thread: number;
+  key: string;
+  workspace: string | null;
+  action: number;
+  /** Сообщение карточки; null — ещё не отправлена. */
+  message: number | null;
+  html: string;
+  state: CardState;
+  createdAt: number;
+  /** Когда нажали кнопку (state = deciding). */
+  decidingAt?: number;
+};
+
+/** Событие беседы сайта для её треда. */
+export type SiteEvent =
+  | { type: "human"; id: string; text: string; author?: string }
+  | { type: "rename"; title: string }
+  | { type: "archived" }
+  | { type: "deleted" }
+  | { type: "decided"; action: number; state: "approved" | "rejected" };
+
+/** Что беседа сайта передаёт при переносе в Telegram. */
+export type SiteChatInput = {
+  /** Ключ прежнего треда беседы, если он был. */
+  previousKey: string | null;
+  workspace: string;
+  title: string;
+  summary: string;
+  chatPath: string;
+};
 
 /** Внешний вход агента беседы (ExternalMessageGateway) от имени владельца бота. */
 export interface TelegramAgentGateway {
   submit(input: Omit<SubmitExternalMessageInput, "chatGatewayRpcTarget">, ref: TelegramTurnRef): Promise<SubmitExternalMessageResult>;
   rename(input: RenameExternalChatInput): Promise<boolean>;
+  decide(input: DecideExternalActionInput): Promise<DecideExternalActionResult>;
 }
 
 /** Распознавание не настроено на установке: голос не поддерживается. */
@@ -130,6 +196,38 @@ const RECORD = "bot";
 const THREAD_PREFIX = "thread:";
 const REPLY_PREFIX = "reply:";
 const REPLIES = "replies";
+const CARD_PREFIX = "card:";
+const CARD_FOR_PREFIX = "cardfor:";
+const CARDS = "cards";
+const CARD_SEQ = "cardseq";
+const CARD_DATA = /^d:([1-9][0-9]{0,9}):([1-9][0-9]{0,9}):([ar])$/;
+
+function escapeHtml(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/** Текст карточки решения: вопрос, название, подробности и полное описание действия. null —
+ *  карточка целиком не помещается в сообщение Telegram: тогда решение только на сайте, кнопки под
+ *  обрезанным описанием не ставятся никогда. */
+export function cardHtml(decision: ExternalDecision): string | null {
+  let title = escapeHtml(decision.title.replace(/\s+/g, " ").trim() || "Действие агента");
+  let details = (decision.details ?? []).map(line => escapeHtml(line.replace(/\s+/g, " ").trim())).filter(Boolean);
+  let description = typeof decision.description === "string" && decision.description.trim() ? markdownToTelegramHtml(decision.description.trim()) : "";
+  let html = [`<b>Нужно ваше решение</b>`, `<b>${title}</b>`, ...details].join("\n") + (description ? "\n\n" + description : "");
+  return html.length <= 4096 ? html : null;
+}
+
+type Lead = { html: string; plain: string } | null;
+
+function titleLead(title: string | null): Lead {
+  return title ? { html: `<b>«${escapeHtml(title)}»</b>\n\n`, plain: `«${title}»\n\n` } : null;
+}
+
+function siteLead(author: string | undefined): Lead {
+  let name = typeof author === "string" ? author.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+  let label = name ? `С сайта, ${name}:` : "С сайта:";
+  return { html: `<i>${escapeHtml(label)}</i>\n`, plain: label + "\n" };
+}
 
 function hex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2, "0")).join("");
@@ -279,10 +377,10 @@ export class PersonalTelegramBot {
     // Запись удаляется до сетевых вызовов: даже если Telegram не ответит, вебхук сюда уже не пройдёт.
     // Связи тредов уходят вместе с ботом; беседы на сайте остаются.
     this.deps.storage.delete(RECORD);
-    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX]) {
+    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX]) {
       for (let [key] of [...this.deps.storage.list({ prefix })]) this.deps.storage.delete(key);
     }
-    this.deps.storage.delete(REPLIES);
+    for (let key of [REPLIES, CARDS, CARD_SEQ]) this.deps.storage.delete(key);
     return { webhookRemoved: await this.#teardown(record) };
   }
 
@@ -330,9 +428,11 @@ export class PersonalTelegramBot {
     let owner = current.telegramOwner;
     if (input.kind === "callback") {
       this.deps.storage.put(RECORD, current);
-      if (owner && input.sender.id === owner.id) {
-        this.deps.waitUntil(this.#api(current).then(api => api.answerCallback(input.id)).catch(() => {}));
-      }
+      // Нажатие не владельца бота не отвечается и ничего не делает.
+      if (!owner || input.sender.id !== owner.id) return reply(200);
+      // Карточка занимается сразу, до ожиданий: второе нажатие застанет её занятой.
+      let claim = this.#claimCard(current, input);
+      this.deps.waitUntil(this.#settleCard(current, input, claim).catch(() => {}));
       return reply(200);
     }
 
@@ -378,7 +478,7 @@ export class PersonalTelegramBot {
 
   #newLink(record: BotRecord, thread: number, naming: ThreadNaming, title: string | null): ThreadLink {
     return {
-      thread, key: `${record.bot.id}:${record.telegramOwner!.id}:${thread}`, naming, title,
+      thread, key: this.#key(record, thread), naming, title,
       renamed: false, unlinked: false, chatPath: null, createdAt: this.deps.now(),
     };
   }
@@ -393,7 +493,10 @@ export class PersonalTelegramBot {
     // Название, которое человек дал треду, становится названием беседы (если беседа уже есть).
     if (userNamed && link.chatPath) {
       let owner = record.owner;
-      this.deps.waitUntil(this.deps.gateway.rename({ callerEmail: owner, gadgetKey: link.key, chatKey: link.key, title: topic.name }).catch(() => false));
+      this.deps.waitUntil(this.deps.gateway.rename({
+        callerEmail: owner, gadgetKey: link.key, chatKey: link.key, title: topic.name,
+        ...(link.workspace ? { workspaceId: link.workspace } : {}),
+      }).catch(() => false));
     }
   }
 
@@ -457,6 +560,7 @@ export class PersonalTelegramBot {
         gadgetTitle: link.naming === "user" && link.title ? link.title : DEFAULT_WORKSPACE_TITLE,
         prompt,
         streamProgress: true,
+        ...(link.workspace ? { workspaceId: link.workspace } : {}),
       }, ref);
     } catch (error) {
       // Подробности сбоя наружу не уходят: только то, что человеку можно сделать.
@@ -500,33 +604,43 @@ export class PersonalTelegramBot {
     catch { /* черновик необязателен: итог придёт сообщением */ }
   }
 
-  /** Итог хода → сообщения в тред. Повторный вызов (доставка «хотя бы один раз») продолжает с
-   *  первого неотправленного куска. Сбой Telegram бросается: внешний вход повторит доставку. */
+  /** Итог хода → сообщения в тред: текст, затем карточки решений. Повторный вызов (доставка «хотя
+   *  бы один раз») продолжает с первого неотправленного куска. Сбой Telegram бросается: внешний вход
+   *  повторит доставку. Ход с сайта (ref.site) идёт только в живой тред, связанный с беседой. */
   async deliver(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> {
     let record = this.#turnRecord(ref);
     if (!record) return;
-    let stateKey = REPLY_PREFIX + ref.update;
+    let site = ref.site !== undefined;
+    let existing = this.#link(ref.thread);
+    if (site && (!existing || existing.key !== this.#key(record, ref.thread) || existing.unlinked)) return;
+    let stateKey = REPLY_PREFIX + (site ? "site:" + ref.site : ref.update);
     let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
-    let link = this.#link(ref.thread) ?? this.#newLink(record, ref.thread, null, null);
+    let link = existing ?? this.#newLink(record, ref.thread, null, null);
     if (response.title && link.naming !== "user" && !isDefaultWorkspaceTitle(response.title)) link.title = response.title;
 
-    let chunks = telegramChunks(this.#composeReply(response, link));
+    let items = this.#replyItems(response, link);
     let api = await this.#api(record);
-    for (let index = state.sent; index < chunks.length; index++) {
+    for (let index = state.sent; index < items.length; index++) {
+      let item = items[index];
+      let send = (thread: number | undefined, lead: Lead) => item.kind === "chunk"
+        ? this.#sendChunk(api, ref.chat, item.chunk, thread, lead)
+        : this.#sendCard(api, record, link, item.decision, thread, lead);
       let threaded = !link.unlinked;
       try {
-        await this.#sendChunk(api, ref.chat, chunks[index], threaded ? link.thread : undefined, !threaded && !state.unthreaded ? link.title : null);
+        await send(threaded ? link.thread : undefined, !threaded && !state.unthreaded ? titleLead(link.title) : null);
       } catch (error) {
         if (!threaded || !isThreadNotFound(error)) { this.#putLink(link); this.deps.storage.put(stateKey, state); throw error; }
-        // Тред удалён в Telegram: связь снимается, беседа остаётся; повтор без треда с названием.
+        // Тред удалён в Telegram: связь снимается, беседа остаётся. Ответ на ход из Telegram уходит
+        // без треда с названием; ответ на ход с сайта остаётся на сайте.
         link.unlinked = true;
-        await this.#sendChunk(api, ref.chat, chunks[index], undefined, state.unthreaded ? null : link.title);
+        if (site) { this.#putLink(link); this.deps.storage.put(stateKey, { ...state, sent: items.length }); return; }
+        await send(undefined, state.unthreaded ? null : titleLead(link.title));
       }
       if (link.unlinked) state.unthreaded = true;
       state.sent = index + 1;
       this.deps.storage.put(stateKey, state);
     }
-    this.#rememberReply(ref.update);
+    this.#rememberReply(stateKey);
 
     // Название треда — по названию беседы, если тред назвал не человек.
     if (!link.unlinked && !link.renamed && (link.naming === "client" || link.naming === "bot") &&
@@ -541,18 +655,30 @@ export class PersonalTelegramBot {
     this.#putLink(link);
   }
 
-  #composeReply(response: GadgetResponse, link: ThreadLink): string {
-    let text = response.noReply ? "Агент закончил ход без ответа." : response.text;
+  #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision })[] {
+    let decisions = (response.decisions ?? []).filter(decision => Number.isSafeInteger(decision.action) && decision.action >= 0);
+    // Карточка, которая целиком не помещается в сообщение, решается только на сайте.
+    let fits = decisions.filter(decision => cardHtml(decision) !== null);
+    let needsSite = response.needsDecision || fits.length < decisions.length;
+    decisions = fits;
+    let text = response.noReply ? (decisions.length ? "" : "Агент закончил ход без ответа.") : response.text;
     let url = this.#siteUrl(link.chatPath);
     let open = (label: string) => url ? `[${label}](${url})` : label;
     if (response.documents?.length) {
       let names = response.documents.map(name => `«${name.replace(/[[\]()]/g, "")}»`).join(", ");
       text += `\n\nВ беседе созданы: ${names}. ${url ? open("Открыть на сайте") + "." : "Они доступны в беседе на сайте."}`;
     }
-    if (response.needsDecision) {
-      text += `\n\nНужно подтверждение — ${open("откройте беседу на сайте")}.`;
+    // Решения, которые кнопкой не принять (запрос подключения, ввод пароля), — только на сайте.
+    if (needsSite) {
+      text += `\n\nНужно ваше решение — ${open("откройте беседу на сайте")}.`;
     }
-    return text;
+    if (typeof response.waitingFor === "string" && response.waitingFor.trim()) {
+      text += `\n\n${response.waitingFor.replace(/[[\]()*_`~]/g, "").trim()} ждёт решения — ${open("на сайте")}.`;
+    }
+    return [
+      ...(text.trim() ? telegramChunks(text).map(chunk => ({ kind: "chunk" as const, chunk })) : []),
+      ...decisions.map(decision => ({ kind: "card" as const, decision })),
+    ];
   }
 
   #siteUrl(chatPath: string | null): string | null {
@@ -563,24 +689,256 @@ export class PersonalTelegramBot {
     } catch { return null; }
   }
 
-  async #sendChunk(api: TelegramBotApi, chat: number, chunk: TelegramChunk, thread: number | undefined, titleLine: string | null): Promise<void> {
+  async #sendChunk(api: TelegramBotApi, chat: number, chunk: TelegramChunk, thread: number | undefined, lead: Lead): Promise<void> {
     let options = thread !== undefined ? { thread } : {};
-    let plainTitle = titleLine ? `«${titleLine}»\n\n` : "";
     if (chunk.html !== null) {
-      let htmlTitle = titleLine ? `<b>«${titleLine.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}»</b>\n\n` : "";
-      if ((htmlTitle + chunk.html).length <= 4096) {
-        try { await api.send(chat, htmlTitle + chunk.html, { ...options, html: true }); return; }
+      let html = (lead?.html ?? "") + chunk.html;
+      if (html.length <= 4096) {
+        try { await api.send(chat, html, { ...options, html: true }); return; }
         catch (error) { if (!isParseError(error)) throw error; }
       }
     }
     // Разметку Telegram не разобрал (или её нет): тот же кусок простым текстом.
-    await api.send(chat, (plainTitle + chunk.plain).slice(0, 4096), options);
+    await api.send(chat, ((lead?.plain ?? "") + chunk.plain).slice(0, 4096), options);
   }
 
-  #rememberReply(update: number): void {
-    let replies = [...(this.deps.storage.get<number[]>(REPLIES) ?? []).filter(id => id !== update), update];
-    for (let old of replies.splice(0, Math.max(0, replies.length - KEPT_REPLIES))) this.deps.storage.delete(REPLY_PREFIX + old);
+  #rememberReply(stateKey: string): void {
+    let replies = [...(this.deps.storage.get<(number | string)[]>(REPLIES) ?? []).map(String).filter(key => key !== stateKey), stateKey];
+    for (let old of replies.splice(0, Math.max(0, replies.length - KEPT_REPLIES))) {
+      this.deps.storage.delete(old.startsWith(REPLY_PREFIX) ? old : REPLY_PREFIX + old);
+    }
     this.deps.storage.put(REPLIES, replies);
+  }
+
+  // ---- карточки решений (этап 4) ----
+
+  #key(record: BotRecord, thread: number): string {
+    return `${record.bot.id}:${record.telegramOwner!.id}:${thread}`;
+  }
+
+  /** Карточка действия в треде. Одно действие — одна карточка: повтор доставки второй не шлёт. */
+  async #sendCard(api: TelegramBotApi, record: BotRecord, link: ThreadLink, decision: ExternalDecision, thread: number | undefined, lead: Lead): Promise<void> {
+    let indexKey = CARD_FOR_PREFIX + link.key + ":" + decision.action;
+    let n = this.deps.storage.get<number>(indexKey);
+    let card = n !== undefined ? this.deps.storage.get<CardRecord>(CARD_PREFIX + n) : undefined;
+    if (card && (card.message !== null || card.state !== "pending")) return;
+    let html = cardHtml(decision);
+    if (html === null) return;
+    if (!card) {
+      n = (this.deps.storage.get<number>(CARD_SEQ) ?? 0) + 1;
+      this.deps.storage.put(CARD_SEQ, n);
+      card = {
+        n, thread: link.thread, key: link.key, workspace: link.workspace ?? null, action: decision.action,
+        message: null, html, state: "pending", createdAt: this.deps.now(),
+      };
+      this.deps.storage.put(CARD_PREFIX + n, card);
+      this.deps.storage.put(indexKey, n);
+      this.#rememberCard(n);
+    }
+    let buttons: InlineButton[][] = [[
+      { text: "Подтвердить", data: `d:${card.thread}:${card.n}:a` },
+      { text: "Отклонить", data: `d:${card.thread}:${card.n}:r` },
+    ]];
+    let message = await api.send(record.telegramOwner!.id, (lead?.html ?? "") + card.html, { ...(thread !== undefined ? { thread } : {}), html: true, buttons });
+    let current = this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n) ?? card;
+    current.message = message;
+    this.deps.storage.put(CARD_PREFIX + card.n, current);
+  }
+
+  #rememberCard(n: number): void {
+    let cards = [...(this.deps.storage.get<number[]>(CARDS) ?? []), n];
+    for (let old of cards.splice(0, Math.max(0, cards.length - KEPT_CARDS))) {
+      let record = this.deps.storage.get<CardRecord>(CARD_PREFIX + old);
+      if (record && this.deps.storage.get<number>(CARD_FOR_PREFIX + record.key + ":" + record.action) === old) {
+        this.deps.storage.delete(CARD_FOR_PREFIX + record.key + ":" + record.action);
+      }
+      this.deps.storage.delete(CARD_PREFIX + old);
+    }
+    this.deps.storage.put(CARDS, cards);
+  }
+
+  /** Проверка нажатия без ожиданий. Из callback_data берутся только тред и номер карточки, и оба
+   *  сверяются с записью: карточка этого бота и владельца, то же сообщение, ещё не решена. */
+  #claimCard(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>):
+      { card: CardRecord; decision: "approve" | "reject" } | { answer: string } {
+    let match = CARD_DATA.exec(input.data ?? "");
+    if (!match) return { answer: CARD_UNKNOWN };
+    let thread = Number(match[1]);
+    let card = this.deps.storage.get<CardRecord>(CARD_PREFIX + Number(match[2]));
+    if (!card || card.thread !== thread || card.message === null || input.message !== card.message ||
+        !card.key.startsWith(`${record.bot.id}:${record.telegramOwner!.id}:`)) {
+      return { answer: CARD_UNKNOWN };
+    }
+    let stuck = card.state === "deciding" && this.deps.now() - (card.decidingAt ?? 0) >= CARD_DECIDING_MS;
+    if (card.state === "deciding" && !stuck) return { answer: CARD_BUSY };
+    if (card.state !== "pending" && !stuck) return { answer: CARD_STALE };
+    card.state = "deciding";
+    card.decidingAt = this.deps.now();
+    this.deps.storage.put(CARD_PREFIX + card.n, card);
+    return { card, decision: match[3] === "a" ? "approve" : "reject" };
+  }
+
+  /** Решение по карточке: беседа проверяет и применяет его, затем кнопки снимаются. */
+  async #settleCard(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>,
+      claim: { card: CardRecord; decision: "approve" | "reject" } | { answer: string }): Promise<void> {
+    let api = await this.#api(record);
+    if ("answer" in claim) { await api.answerCallback(input.id, claim.answer); return; }
+    let { card, decision } = claim;
+    let result: DecideExternalActionResult | null;
+    try {
+      result = await this.deps.gateway.decide({
+        callerEmail: record.owner, gadgetKey: card.key, chatKey: card.key, action: card.action, decision,
+        ...(card.workspace ? { workspaceId: card.workspace } : {}),
+      });
+    } catch { result = null; }
+    let current = this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n) ?? card;
+    if (!result) {
+      current.state = "pending";
+      this.deps.storage.put(CARD_PREFIX + card.n, current);
+      await api.answerCallback(input.id, CARD_FAILED);
+      return;
+    }
+    let answer: string, line: string;
+    if (result.status === "approved") { current.state = "approved"; answer = CARD_APPROVED; line = "Подтверждено"; }
+    else if (result.status === "rejected") { current.state = "rejected"; answer = CARD_REJECTED; line = "Отклонено"; }
+    else if (result.status === "stale") {
+      current.state = "stale"; answer = CARD_STALE;
+      line = result.state === "approved" ? "Уже подтверждено" : result.state === "rejected" ? "Уже отклонено" : "Действие больше не ждёт решения";
+    } else if (result.status === "access_changed") {
+      current.state = "stale"; answer = CARD_ACCESS_CHANGED; line = CARD_ACCESS_CHANGED;
+    } else { current.state = "stale"; answer = CARD_DENIED; line = "Решение — в беседе на сайте"; }
+    this.deps.storage.put(CARD_PREFIX + card.n, current);
+    await api.answerCallback(input.id, answer).catch(() => {});
+    await this.#closeCard(api, record, current, line);
+  }
+
+  /** Снять кнопки и дописать итог к тексту карточки. */
+  async #closeCard(api: TelegramBotApi, record: BotRecord, card: CardRecord, line: string): Promise<void> {
+    if (card.message === null) return;
+    let chat = record.telegramOwner!.id;
+    try { await api.editText(chat, card.message, `${card.html}\n\n<b>${escapeHtml(line)}</b>`, { html: true }); }
+    catch (error) {
+      if (isNotModified(error)) return;
+      await api.removeButtons(chat, card.message).catch(() => {});
+    }
+  }
+
+  // ---- беседа сайта ↔ тред (этап 3) ----
+
+  #linkByKey(record: BotRecord, key: string): ThreadLink | null {
+    let prefix = `${record.bot.id}:${record.telegramOwner!.id}:`;
+    if (typeof key !== "string" || !key.startsWith(prefix)) return null;
+    let thread = Number(key.slice(prefix.length));
+    if (!Number.isSafeInteger(thread) || thread <= 0) return null;
+    let link = this.#link(thread);
+    return link && link.key === key ? link : null;
+  }
+
+  #connected(owner: string): BotRecord | null {
+    let record = this.#mine(owner);
+    return record?.telegramOwner && record.connectedAt !== null ? record : null;
+  }
+
+  #linkState(record: BotRecord, link: ThreadLink | null): TelegramChatLink {
+    let bot = record.bot.username;
+    return link && !link.unlinked ? { status: "linked", bot, url: `https://t.me/${bot}` } : { status: "available", bot };
+  }
+
+  /** Можно ли перенести беседу владельца в Telegram и идёт ли она уже в треде (key — её тред). */
+  siteLink(owner: string, key: string | null): TelegramChatLink {
+    let record = this.#connected(owner);
+    if (!record) return { status: "unavailable" };
+    return this.#linkState(record, key ? this.#linkByKey(record, key) : null);
+  }
+
+  /** «Продолжить в Telegram»: живой тред остаётся, иначе бот создаёт новый с названием беседы и
+   *  первым сообщением — кратким содержанием. Возвращает ключ треда для беседы. */
+  async linkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> {
+    let record = this.#connected(owner);
+    if (!record) return { state: { status: "unavailable" }, key: null };
+    let previous = input.previousKey ? this.#linkByKey(record, input.previousKey) : null;
+    if (previous && !previous.unlinked) return { state: this.#linkState(record, previous), key: previous.key };
+
+    let title = (typeof input.title === "string" ? input.title.replace(/[\r\n]+/g, " ").trim() : "").slice(0, 128) || SITE_THREAD_TITLE;
+    let api = await this.#api(record);
+    let chat = record.telegramOwner!.id;
+    let thread = await api.createTopic(chat, title);
+    let current = this.#connected(owner);
+    if (!current || current.bot.id !== record.bot.id) return { state: { status: "unavailable" }, key: null };
+    let link = this.#newLink(current, thread, "bot", title);
+    link.renamed = !isDefaultWorkspaceTitle(title);
+    link.workspace = /^[0-9a-f]{64}$/.test(input.workspace) ? input.workspace : null;
+    link.chatPath = typeof input.chatPath === "string" && input.chatPath.startsWith("/workspace/") ? input.chatPath : null;
+    this.#putLink(link);
+    let summary = typeof input.summary === "string" ? input.summary.slice(0, 12000) : "";
+    for (let chunk of telegramChunks(summary)) {
+      // Тред уже создан: без краткого содержания он всё равно рабочий.
+      try { await this.#sendChunk(api, chat, chunk, thread, null); } catch { break; }
+    }
+    return { state: this.#linkState(current, link), key: link.key };
+  }
+
+  /** Событие беседы сайта для её треда. Чужой или устаревший ключ ничего не делает. */
+  async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
+    let record = this.#connected(owner);
+    if (!record) return;
+    let link = this.#linkByKey(record, key);
+    if (!link) return;
+    let api = await this.#api(record);
+    let chat = record.telegramOwner!.id;
+    let gone = (error: unknown) => {
+      if (!isThreadNotFound(error)) throw error;
+      let current = this.#link(link.thread);
+      if (current) { current.unlinked = true; this.#putLink(current); }
+    };
+    switch (event.type) {
+      case "human": {
+        if (link.unlinked || typeof event.text !== "string" || !event.text.trim()) return;
+        let stateKey = REPLY_PREFIX + "human:" + event.id;
+        let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
+        let chunks = telegramChunks(event.text.slice(0, 16000));
+        for (let index = state.sent; index < chunks.length; index++) {
+          try { await this.#sendChunk(api, chat, chunks[index], link.thread, index === 0 ? siteLead(event.author) : null); }
+          catch (error) { this.deps.storage.put(stateKey, state); gone(error); return; }
+          state.sent = index + 1;
+          this.deps.storage.put(stateKey, state);
+        }
+        this.#rememberReply(stateKey);
+        return;
+      }
+      case "rename": {
+        let title = typeof event.title === "string" ? event.title.replace(/[\r\n]+/g, " ").trim().slice(0, 128) : "";
+        // Название, которое тред получил от человека (или неизвестно как), не трогаем.
+        if (link.unlinked || !title || title === link.title || (link.naming !== "client" && link.naming !== "bot")) return;
+        try { await api.renameTopic(chat, link.thread, title); } catch (error) { gone(error); return; }
+        let current = this.#link(link.thread) ?? link;
+        current.title = title;
+        current.renamed = true;
+        this.#putLink(current);
+        return;
+      }
+      case "archived": {
+        if (link.unlinked) return;
+        try { await api.send(chat, ARCHIVED_NOTICE, { thread: link.thread }); } catch (error) { gone(error); }
+        return;
+      }
+      case "deleted": {
+        this.deps.storage.delete(THREAD_PREFIX + link.thread);
+        if (link.unlinked) return;
+        try { await api.deleteTopic(chat, link.thread); } catch (error) { if (!isThreadNotFound(error)) throw error; }
+        return;
+      }
+      case "decided": {
+        let n = this.deps.storage.get<number>(CARD_FOR_PREFIX + link.key + ":" + event.action);
+        let card = n !== undefined ? this.deps.storage.get<CardRecord>(CARD_PREFIX + n) : undefined;
+        // Карточка, решённая в Telegram, закрыта своим нажатием; зависшую «решается» закрывает сайт.
+        if (!card || (card.state !== "pending" && card.state !== "deciding")) return;
+        card.state = event.state === "approved" ? "approved" : "rejected";
+        this.deps.storage.put(CARD_PREFIX + card.n, card);
+        await this.#closeCard(api, record, card, event.state === "approved" ? "Подтверждено на сайте" : "Отклонено на сайте");
+        return;
+      }
+    }
   }
 }
 

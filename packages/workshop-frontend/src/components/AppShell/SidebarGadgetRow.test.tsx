@@ -28,3 +28,27 @@ it("беседа из Telegram помечена и в боковой панел�
   expect(links[3].textContent).not.toContain("Telegram");
  }finally{await React.act(async()=>root.unmount());el.remove();}
 });
+
+it("архив: у своей беседы — «В архив» / «Вернуть из архива», у чужой пункта нет",async()=>{
+ const own:GadgetMetadataWithTimestamps={id:"w1",title:"Смета",created:at,lastActive:at};
+ const archived:GadgetMetadataWithTimestamps={...own,id:"w2",archived:true};
+ const shared:GadgetMetadataWithTimestamps={...own,id:"w3",owner:{type:"user",id:"bob",name:"Боб"}};
+ const toggled:string[]=[];
+ const items=async(gadget:GadgetMetadataWithTimestamps)=>{
+  const route=createRootRoute({component:()=><SidebarGadgetRow gadget={gadget} onTogglePin={noop} onRename={noop} onShare={noop} onDelete={noop} onToggleArchive={g=>toggled.push(g.id)}/>});
+  const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route.addChildren([createRoute({getParentRoute:()=>route,path:"/workspace/$id"})])});
+  const el=document.createElement("div");document.body.append(el);const root=createRoot(el);
+  await React.act(async()=>root.render(<RouterProvider router={router}/>));
+  await React.act(async()=>{(el.querySelector('button[aria-label="Действия с беседой"]') as HTMLButtonElement).click();});
+  const found=[...document.querySelectorAll('[role="menuitem"]')] as HTMLElement[];
+  const texts=found.map(node=>node.textContent?.trim());
+  const archive=found.find(node=>/архив/.test(node.textContent??""));
+  if(archive)await React.act(async()=>archive.click());
+  await React.act(async()=>root.unmount());el.remove();document.body.replaceChildren();
+  return texts;
+ };
+ expect(await items(own)).toContain("В архив");
+ expect(await items(archived)).toContain("Вернуть из архива");
+ expect((await items(shared)).some(text=>/архив/.test(text??""))).toBe(false);
+ expect(toggled).toEqual(["w1","w2"]);
+});

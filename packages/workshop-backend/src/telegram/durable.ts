@@ -1,12 +1,12 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { validateRpc } from "capnweb-validate";
-import type { TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
+import type { TelegramBotState, TelegramChatLink, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import type { ChatGatewayRpcTarget, GadgetProgress, GadgetResponse } from "@gadgets/workshop-shared/external-message-gateway";
 import type { RpcStub } from "cloudflare:workers";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "../chat-voice";
 import { spendingEntry, type ModelSpend } from "../spend-ledger.js";
 import { createWorkshopLogger } from "../observability";
-import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, type PersonalBotDeps, type TelegramTurnRef } from "./personal-bot";
+import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, type PersonalBotDeps, type SiteChatInput, type SiteEvent, type TelegramTurnRef } from "./personal-bot";
 import { DraftLimiter } from "./progress";
 
 const logger = createWorkshopLogger("workshop.telegram");
@@ -46,6 +46,7 @@ export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: Draft
         return gateway.submitExternalMessage({ ...input, chatGatewayRpcTarget: target });
       },
       rename: input => exports.ExternalMessageGateway({ props: { source: TELEGRAM_SOURCE } }).renameExternalChat(input),
+      decide: input => exports.ExternalMessageGateway({ props: { source: TELEGRAM_SOURCE } }).decideExternalAction(input),
     },
     transcribe: async (owner, bytes, mimeType) => {
       if (!chatVoiceAvailable(env)) throw new VoiceUnavailableError();
@@ -69,8 +70,9 @@ async function recordVoiceSpend(user: { recordOwnSpending(entries: ReturnType<ty
 }
 
 /** Объект личного бота одного пользователя оболочки; имя — «user:<имя пользователя>». Методы RPC
- *  зовёт только AuthenticatedApi от имени вошедшего человека и точка входа ответа хода
- *  (TelegramChatTarget); по HTTP открыт один вебхук. */
+ *  зовут только AuthenticatedApi от имени вошедшего человека, точка входа ответа хода
+ *  (TelegramChatTarget) и беседа владельца (siteLink, linkSiteChat, siteEvent — объект выбирается
+ *  по имени владельца беседы); по HTTP открыт один вебхук. */
 export class TelegramPersonalBot extends DurableObject<Env> {
   #tail: Promise<unknown> = Promise.resolve();
   #drafts = new DraftLimiter();
@@ -120,6 +122,35 @@ export class TelegramPersonalBot extends DurableObject<Env> {
         logger.warn("telegram reply not delivered", { event: "telegram.reply.failed", error });
         // Внешний вход повторит доставку позже; подробности наружу не нужны.
         throw new Error("Telegram reply is not delivered yet.");
+      }
+    });
+  }
+
+  /** Можно ли продолжить беседу в Telegram и идёт ли она уже в треде. */
+  async siteLink(owner: string, key: string | null): Promise<TelegramChatLink> {
+    try { return this.#core().siteLink(owner, key); }
+    catch { return { status: "unavailable" }; }
+  }
+
+  /** «Продолжить в Telegram» для беседы сайта. */
+  async linkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> {
+    return this.#serialize(async () => {
+      try { return await this.#core().linkSiteChat(owner, input); }
+      catch (error) {
+        logger.warn("telegram thread for site chat not created", { event: "telegram.site.link.failed", error });
+        throw new Error("Не получилось создать тред в Telegram. Повторите через минуту.");
+      }
+    });
+  }
+
+  /** Событие беседы сайта (сообщение человека, название, архив, удаление, решение). По очереди с
+   *  ответами: сообщение человека уходит раньше ответа агента на него. */
+  async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
+    return this.#serialize(async () => {
+      try { await this.#core().siteEvent(owner, key, event); }
+      catch (error) {
+        logger.warn("telegram site event not delivered", { event: "telegram.site.event.failed", operation: event.type, error });
+        throw new Error("Telegram site event is not delivered.");
       }
     });
   }

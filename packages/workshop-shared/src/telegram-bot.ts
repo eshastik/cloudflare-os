@@ -43,3 +43,12 @@ export type TelegramDisconnectResult = { webhookRemoved: boolean };
 
 /** Код подключения, который бот ждёт в «/start КОД». */
 export const TELEGRAM_PAIRING_CODE = /^[a-z0-9]{12}$/;
+
+/** Беседа сайта и тред Telegram её владельца (ADR 0027, этап 3). */
+export type TelegramChatLink =
+  /** Бот не подключён или беседа не ваша: переносить некуда. */
+  | { status: "unavailable" }
+  /** Беседу можно продолжить в Telegram: бот создаст для неё тред. */
+  | { status: "available"; bot: string }
+  /** Беседа уже идёт в треде; url — чат с ботом (ссылок на тред личного чата Telegram не даёт). */
+  | { status: "linked"; bot: string; url: string };
