@@ -65,7 +65,8 @@ describe("подключение аккаунта через воркер", () =
     const owner = await newUser();
     const flow = await reconnectFlow(owner);
     const confirmed = (await callbackOf(owner.id).confirmBrowser({ connect: flow.cookieValue }))!;
-    await runInDurableObject(owner.stub, instance => instance.settleConnectFlow(5, undefined));
+    // Фоновое восстановление токена поток переподключения не закрывает; его закрывает возврат браузера.
+    expect(await runInDurableObject(owner.stub, instance => instance.settleConnectFlow(5, undefined))).toBe(false);
     const back = await exports.default.fetch(new Request(ORIGIN + confirmed.returnPath, { headers: { Cookie: flow.cookie }, redirect: "manual" }));
     expect(back.status).toBe(303);
     const location = back.headers.get("Location")!;

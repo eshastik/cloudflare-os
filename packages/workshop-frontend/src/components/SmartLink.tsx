@@ -11,6 +11,9 @@ export function internalPath(href: string | undefined): string | null {
   let url: URL
   try { url = new URL(href, window.location.origin) } catch { return null }
   if (url.origin !== window.location.origin || (url.protocol !== 'http:' && url.protocol !== 'https:')) return null
+  // Путь «//host» (и «/\host», «/.//host» — парсер приводит их к нему) маршрутизатор и браузер
+  // читают как адрес другого сайта.
+  if (url.pathname.startsWith('//')) return null
   return url.pathname + url.search + url.hash
 }
 

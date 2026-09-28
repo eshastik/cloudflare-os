@@ -176,6 +176,7 @@ const GITHUB_FAILURES: Record<string, string> = {
   none: "GitHub не показал ни одной установки приложения Mnemos, доступной вам. Если установку в организацию должен одобрить её администратор, дождитесь одобрения и нажмите «Подключить GitHub» ещё раз.",
   requested: "Запрос на установку приложения Mnemos отправлен администратору организации в GitHub. Когда он одобрит, нажмите «Подключить GitHub».",
   unconfigured: "GitHub-приложение не настроено до конца. Обратитесь к администратору сервера.",
+  browser: "Подключение вернулось не в тот браузер, где его начали. Нажмите «Подключить GitHub» и завершите вход в этом окне.",
 };
 
 export function githubReturnNotice(r: GitHubReturn): { tone: "success" | "danger"; text: string } {
@@ -226,7 +227,13 @@ export function GitHubAccounts({ accounts, reload, changed }: { accounts: { valu
   async function connect() {
     if (busy) return;
     setBusy("connect"); setNotice(null);
-    try { const { url } = await ui.startGitHubConnect(); await open(url, "GitHub"); }
+    // Билет одноразовый: оболочка меняет его на адрес GitHub запросом со своей страницы, и сервер
+    // ставит этому браузеру cookie. Повторить можно только новым нажатием.
+    try {
+      const { ticket } = await ui.startGitHubConnect();
+      if (await host.startGitHubConnect(ticket)) { setPending(""); setNotice({ tone: "success", text: "Переходим в GitHub…" }); }
+      else setNotice({ tone: "danger", text: "Не удалось перейти на GitHub. Нажмите «Подключить GitHub» ещё раз." });
+    }
     catch { setNotice({ tone: "danger", text: "Не получилось начать подключение. Обновите страницу и повторите." }); }
     finally { setBusy(""); }
   }

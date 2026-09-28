@@ -28,6 +28,7 @@ it('адрес этого же сайта — внутренний путь; ч�
   expect(internalPath('https://github.com/org/repo')).toBeNull()
   expect(internalPath('mailto:anna@example.ru')).toBeNull()
   expect(internalPath('//evil.example/x')).toBeNull()
+  for (const path of ['//evil.example/x', '/\\evil.example/x', '/.//evil.example/x']) expect(internalPath(origin + path), path).toBeNull()
   expect(internalPath(`${origin.replace('http:', 'https:').replace('https://', 'https://sub.')}/x`)).toBeNull()
 })
 

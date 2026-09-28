@@ -17,6 +17,8 @@ const SOURCES = {
   async listTelegram() { return { connections: [], unavailable: 0 }; },
 };
 
+const TICKET = "T" + "k".repeat(42);
+
 test("«Подключения»: одна страница строками, состояние словами, без адресов и служебных строк; код — строкой «Репозитории»", async () => {
   const app = await mountMemoryApp(SOURCES, { section: "connections" });
   try {
@@ -73,7 +75,7 @@ test("«Репозитории»: свои аккаунты GitHub — подк�
       { installation_id: "11", id: "101", name: "alice/site", default_branch: "main", private: true },
       { installation_id: "12", id: "202", name: "acme/web", default_branch: "main", private: true },
     ] }; },
-    async startGitHubConnect() { calls.push(["startGitHubConnect"]); return { url: "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=s1" }; },
+    async startGitHubConnect() { calls.push(["startGitHubConnect"]); return { ticket: TICKET }; },
     async disconnectGitHubAccount(id) { calls.push(["disconnectGitHubAccount", id]); return { disconnected: true }; },
   }, { section: "connections", githubReturn: { result: "connected", reason: "" } });
   try {
@@ -98,17 +100,19 @@ test("«Репозитории»: свои аккаунты GitHub — подк�
       await app.until(() => inBlock(name)[index] && !inBlock(name)[index].disabled, `кнопка «${name}» доступна`);
       inBlock(name)[index].click();
     };
+    // Подключение: билет от сервера уходит хосту, страница оболочки сама меняет его на адрес GitHub.
     await press("Подключить ещё аккаунт GitHub");
-    await app.until(() => app.calls.some(([m]) => m === "openGitHubAppPage"), "GitHub открыт хостом");
-    assert.deepEqual(app.calls.find(([m]) => m === "openGitHubAppPage"), ["openGitHubAppPage", "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=s1"]);
+    await app.until(() => app.calls.some(([m]) => m === "startGitHubConnect"), "подключение начато хостом");
+    assert.deepEqual(app.calls.filter(([m]) => m === "startGitHubConnect"), [["startGitHubConnect", TICKET]]);
+    assert.equal(app.calls.some(([m]) => m === "openGitHubAppPage"), false, "адреса GitHub у фрейма нет");
     await press("Изменить доступ", 1);
-    await app.until(() => app.calls.filter(([m]) => m === "openGitHubAppPage").length === 2, "настройки установки");
-    assert.equal(app.calls.filter(([m]) => m === "openGitHubAppPage")[1][1], "https://github.com/organizations/acme/settings/installations/12");
+    await app.until(() => app.calls.filter(([m]) => m === "openGitHubAppPage").length === 1, "настройки установки");
+    assert.equal(app.calls.filter(([m]) => m === "openGitHubAppPage")[0][1], "https://github.com/organizations/acme/settings/installations/12");
     // «Обновить доступ» — вход в GitHub заново: набор репозиториев человека берётся его ключом.
     assert.equal(inBlock("Обновить доступ").length, 2, "у каждого аккаунта");
     await press("Обновить доступ", 1);
     await app.until(() => calls.filter(([m]) => m === "startGitHubConnect").length === 2, "обновление доступа — новый вход");
-    await app.until(() => app.calls.filter(([m]) => m === "openGitHubAppPage").length === 3, "вход открыт");
+    await app.until(() => app.calls.filter(([m]) => m === "startGitHubConnect").length === 2, "вход открыт");
 
     await press("Отключить", 1);
     await press("Да, отключить");
@@ -135,6 +139,22 @@ test("«Репозитории»: без секрета клиента кноп�
   } finally { app.dispose(); }
 });
 
+test("«Репозитории»: оболочка не смогла начать подключение — просим нажать ещё раз", async () => {
+  const app = await mountMemoryApp({ ...SOURCES,
+    async listGitHubAccounts() { return { available: true, connectable: true, accounts: [] }; },
+    async startGitHubConnect() { return { ticket: TICKET }; },
+  }, { section: "connections", view: "repositories", githubStarted: false });
+  try {
+    const page = () => app.document.querySelector("#root");
+    const button = () => [...page().querySelectorAll("button")].find(b => b.textContent === "Подключить GitHub");
+    await app.until(() => button() && !button().disabled, "кнопка подключения");
+    button().click();
+    await app.until(() => page().textContent.includes("Не удалось перейти на GitHub. Нажмите «Подключить GitHub» ещё раз."), "отказ словами");
+    assert.deepEqual(app.calls.filter(([m]) => m === "startGitHubConnect"), [["startGitHubConnect", TICKET]]);
+    assert.equal([...page().querySelectorAll("button")].some(b => b.textContent === "Открыть GitHub"), false, "одноразовый билет не повторяется");
+  } finally { app.dispose(); }
+});
+
 test("«Подключения»: отказ чтения показан честно", async () => {
   const app = await mountMemoryApp({ ...SOURCES, async listImapAccounts() { throw new Error("forbidden"); } }, { section: "connections" });
   try {
@@ -143,7 +163,8 @@ test("«Подключения»: отказ чтения показан чес�
 });
 
 test("«Репозитории»: итоги возврата с GitHub для установки без кнопки и запроса в организацию", async () => {
-  for (const [reason, words] of [["installed", "Приложение Mnemos установлено в GitHub"], ["requested", "отправлен администратору организации"], ["none", "дождитесь одобрения"]]) {
+  for (const [reason, words] of [["installed", "Приложение Mnemos установлено в GitHub"], ["requested", "отправлен администратору организации"], ["none", "дождитесь одобрения"],
+    ["browser", "Подключение вернулось не в тот браузер, где его начали. Нажмите «Подключить GitHub» и завершите вход в этом окне."]]) {
     const app = await mountMemoryApp(SOURCES, { section: "connections", githubReturn: { result: "failed", reason } });
     try {
       const page = () => app.document.querySelector("#root");

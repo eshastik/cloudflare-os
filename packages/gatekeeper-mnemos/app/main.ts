@@ -347,6 +347,9 @@ export interface Host extends RpcTarget {
   ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string>;
   /** Уводит страницу на вход, установку или настройки приложения GitHub; false — адрес не из перечня. */
   openGitHubAppPage(url: string): Promise<boolean>;
+  /** «Подключить GitHub»: страница оболочки меняет одноразовый билет на адрес GitHub и уходит туда;
+   *  false — сервер отказал или адрес не из перечня. */
+  startGitHubConnect(ticket: string): Promise<boolean>;
   /** Открывает ссылку из текста: адрес оболочки — на той же странице, внешний сайт — новой вкладкой.
    *  Фрейму окна и переходы не даны. false — адрес не принят. */
   openLink(url: string): Promise<boolean>;

@@ -58,13 +58,18 @@ export function finishScriptHash(): Promise<string> {
 
 /** Завершение входа или подключения: до записи учётных данных (finish) оболочка подтверждает,
  * что его завершает браузер, который его начал; пересланная ссылка не кладёт чужую личность в
- * чужой поток. После подтверждения браузер при любом исходе возвращается в оболочку. */
+ * чужой поток. Без обратного вызова оболочки подтвердить браузер некому — отказ.
+ * После сбоя входа браузер всё равно возвращается в оболочку, она покажет причину. Подключение —
+ * нет: возврат браузера с признаком оболочка считает успешным завершением переподключения
+ * (workshop-backend/src/auth/connect-return.ts), поэтому при сбое остаётся страница ошибки. */
 export async function completeWithShellBrowser(callback: Fetcher<GatekeeperConnectCallback> | undefined,
     proof: ShellBrowserProof, finish: () => Promise<void>): Promise<{ returnPath?: string }> {
-  if (!callback) { await finish(); return {}; }
+  if (!callback) throw new Error("No CloudflareOS callback to confirm the browser");
   const gate = await confirmShellBrowser(callback, proof);
   if (!gate) throw new Error("Browser not confirmed by CloudflareOS");
-  try { await finish(); } catch { /* причину покажет оболочка */ }
+  try { await finish(); } catch (error) {
+    if (!gate.returnPath.startsWith("/api/login/")) throw error;
+  }
   return { returnPath: gate.returnPath };
 }
 

@@ -77,3 +77,8 @@ test('calendar write requires returned consent; legacy refresh stays read-only a
  f.state.scope='User.Read Mail.Read Calendars.Read';f.records.get('account').grant.expiresAt=0;await a.token();assert.equal(a.canCreateCalendar(),false);
  f.state.scope=undefined;await f.finish(a,await f.begin(a));assert.equal(a.canCreateCalendar(),false);
 });
+test('state is checked without side effects before the shell confirms the browser',async()=>{
+ const f=fixture(),account=f.create(),link=await f.begin(account),state=link.searchParams.get('state').split(':')[1];
+ assert.equal(account.accepts('f'.repeat(64)),false);assert.equal(account.accepts(state),true);assert.equal(account.accepts(state),true);
+ await f.finish(account,link);assert.equal(account.accepts(state),false);
+});

@@ -89,6 +89,7 @@ test("учётные данные записываются только посл
   const proof = { connect: "x" };
   const shell = (answer: { returnPath: string } | null) => ({ calls: [] as unknown[], async confirmBrowser(p: unknown) { this.calls.push(p); return answer; } });
   const returnPath = `/api/connect/finish?handle=${"1".repeat(64)}.${"2".repeat(32)}.${"H".repeat(43)}`;
+  const loginPath = `/api/login/finish?handle=${"H".repeat(43)}`;
   // Пересланная ссылка: браузер не тот — ничего не записывается.
   let finished = 0;
   const refused = shell(null);
@@ -98,9 +99,11 @@ test("учётные данные записываются только посл
   // Тот браузер: запись и возврат в оболочку.
   assert.deepEqual(await completeWithShellBrowser(shell({ returnPath }) as never, proof, async () => { finished++; }), { returnPath });
   assert.equal(finished, 1);
-  // Сбой после подтверждения — браузер всё равно возвращается в оболочку, она покажет причину.
-  assert.deepEqual(await completeWithShellBrowser(shell({ returnPath }) as never, proof, async () => { throw new Error("IAM"); }), { returnPath });
-  // Без обратного вызова оболочки (старое подключение) — как прежде.
-  assert.deepEqual(await completeWithShellBrowser(undefined, proof, async () => { finished++; }), {});
-  await assert.rejects(completeWithShellBrowser(undefined, proof, async () => { throw new Error("IAM"); }));
+  // Сбой входа после подтверждения — браузер всё равно возвращается в оболочку, она покажет причину.
+  assert.deepEqual(await completeWithShellBrowser(shell({ returnPath: loginPath }) as never, proof, async () => { throw new Error("IAM"); }), { returnPath: loginPath });
+  // Сбой подключения — в оболочку не возвращаемся: возврат с признаком она считает успехом.
+  await assert.rejects(completeWithShellBrowser(shell({ returnPath }) as never, proof, async () => { throw new Error("IAM"); }), /IAM/);
+  // Без обратного вызова оболочки подтвердить браузер некому: отказ, учётные данные не пишутся.
+  await assert.rejects(completeWithShellBrowser(undefined, proof, async () => { finished++; }));
+  assert.equal(finished, 1);
 });

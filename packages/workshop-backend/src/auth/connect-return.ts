@@ -90,11 +90,14 @@ export class ConnectFlows {
     return handle;
   }
 
-  /** Результат гейткипера для подтверждённого потока этого аккаунта. false — такого потока нет. */
+  /** Новый аккаунт от гейткипера (callback.complete) для подтверждённого потока первого подключения.
+   * false — такого потока нет. Переподключение и расширение доступа сюда не приходят: их поток
+   * завершает только возврат браузера с признаком (issueCode). Иначе фоновое восстановление токена
+   * (credentialsRestored) закрыло бы подтверждённый, но сорвавшийся поток как успешный. */
   async settle(accountId: number, result: Flow["result"]): Promise<boolean> {
     for (const [key, flow] of [...this.kv.list<Flow>({ prefix: PREFIX })]) {
-      if (flow.accountId !== accountId || !flow.handleHash || flow.settled || flow.deadline <= this.now()) continue;
-      this.kv.put(key, { ...flow, settled: true, ...(flow.kind === "connect" ? { result } : {}) });
+      if (flow.kind !== "connect" || flow.accountId !== accountId || !flow.handleHash || flow.settled || flow.deadline <= this.now()) continue;
+      this.kv.put(key, { ...flow, settled: true, result });
       return true;
     }
     return false;
@@ -109,7 +112,9 @@ export class ConnectFlows {
       : Promise<{ returnTo: string; code?: string; error?: ConnectFailure } | null> {
     const flow = this.#read(flowId);
     if (!flow?.handleHash || flow.secretHash !== await sha256(secret) || flow.handleHash !== await sha256(handle)) return null;
-    if (!flow.settled) { this.kv.delete(PREFIX + flowId); return { returnTo: flow.returnTo, error: "failed" }; }
+    // Признак гейткипер отдаёт браузеру только после успешного завершения. Для первого подключения
+    // нужен ещё и новый аккаунт из callback.complete.
+    if (flow.kind === "connect" && !flow.settled) { this.kv.delete(PREFIX + flowId); return { returnTo: flow.returnTo, error: "failed" }; }
     const code = randomCode();
     this.kv.put(PREFIX + flowId, { ...flow, codeHash: await sha256(code), codeDeadline: Math.min(this.now() + CONNECT_CODE_TTL_MS, flow.deadline) });
     return { returnTo: flow.returnTo, code };

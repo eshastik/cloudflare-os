@@ -47,6 +47,7 @@ interface TestHost extends RpcTarget {
   openSection(section:string): Promise<void>;
   openLink(url: string): Promise<boolean>;
   openGitHubAppPage(url: string): Promise<boolean>;
+  startGitHubConnect(ticket: string): Promise<boolean>;
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
   openPrompt(prompt: string): Promise<void>;
@@ -101,6 +102,48 @@ describe("SandboxedGatekeeperApp navigation", () => {
     expect(router.state.location.search).not.toHaveProperty("document");
   });
 
+  it("«Подключить GitHub»: билет из фрейма меняется на адрес GitHub запросом со страницы оболочки", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const ticket = "T" + "k".repeat(42);
+    const authorize = "https://github.com/login/oauth/authorize?client_id=Iv1.abc&prompt=select_account&state=" + "s".repeat(32);
+    let answer: Response = Response.json({ url: authorize });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => answer.clone());
+    vi.stubGlobal("fetch", fetchMock);
+    const leave = vi.spyOn(gitHubNavigation, "assign").mockImplementation(() => {});
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute();
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId", component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    // Билет в адресе страницы (пересланная ссылка) оболочка не использует.
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: [`/gatekeepers/mnemos?section=connections&ticket=${ticket}`] }), routeTree: rootRoute.addChildren([appRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const { port1, port2 } = new MessageChannel();
+    host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "handshake" }, origin: "null", source: iframe.contentWindow, ports: [port2] }));
+    await host.getSelectedSection();
+    const starts = () => fetchMock.mock.calls.filter(([input]) => String(input).includes("/v1/git/app/start"));
+    expect(starts()).toEqual([]);
+
+    // Билет не по шаблону — до сети не доходит.
+    for (const bad of ["", ticket.slice(1), ticket.slice(1) + "/", 42 as unknown as string]) expect(await host.startGitHubConnect(bad), String(bad)).toBe(false);
+    expect(starts()).toEqual([]);
+    // Сервер отказал или вернул адрес не из перечня GitHub — страница остаётся.
+    for (const response of [new Response("no", { status: 403 }), Response.json({ url: "https://evil.example/" }), Response.json({ ticket })]) {
+      answer = response;
+      expect(await host.startGitHubConnect(ticket)).toBe(false);
+    }
+    expect(leave).not.toHaveBeenCalled();
+
+    answer = Response.json({ url: authorize });
+    expect(await host.startGitHubConnect(ticket)).toBe(true);
+    expect(leave).toHaveBeenCalledWith(authorize);
+    const [input, init] = starts().at(-1)!;
+    expect(input).toBe("/v1/git/app/start");
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json" } });
+    expect(JSON.parse(String(init!.body))).toEqual({ ticket });
+  });
+
   it("ссылки из фрейма: адрес оболочки — на той же странице, внешний сайт — новой вкладкой; GitHub — уход этой же страницы", async () => {
     vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
@@ -121,7 +164,8 @@ describe("SandboxedGatekeeperApp navigation", () => {
     expect(await host.openLink("https://example.com/page")).toBe(true);
     expect(open).toHaveBeenCalledWith("https://example.com/page", "_blank", "noopener,noreferrer");
     expect(await host.openLink("mailto:anna@example.ru")).toBe(true);
-    for (const bad of ["javascript:alert(1)", "data:text/html,x", `${window.location.origin}/api/login/start?vendor=mnemos&return_to=/`, 42 as unknown as string]) {
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", `${window.location.origin}/api/login/start?vendor=mnemos&return_to=/`,
+        `${window.location.origin}//evil.example/x`, `${window.location.origin}/\\evil.example/x`, `${window.location.origin}/.//evil.example/x`, 42 as unknown as string]) {
       expect(await host.openLink(bad), String(bad)).toBe(false);
     }
     expect(open).toHaveBeenCalledTimes(2);

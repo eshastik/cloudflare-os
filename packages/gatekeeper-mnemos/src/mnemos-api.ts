@@ -1060,12 +1060,14 @@ export class MnemosAPI {
   }
   /** Репозитории, к которым установлено GitHub App; available=false — приложение на сервере не настроено. */
   listGitAppRepositories(signal?:AbortSignal):Promise<GitAppRepositoryPage>{return this.#request("/v1/git/app/repositories","GET",signal);}
-  /** «Подключить GitHub»: адрес страницы установки приложения на GitHub с одноразовым state. */
-  async startGitHubConnect(signal?:AbortSignal):Promise<{url:string}>{
+  /** «Подключить GitHub»: одноразовый билет. Страница оболочки меняет его на адрес GitHub запросом
+   * POST /v1/git/app/start со своего адреса; сервер при этом ставит браузеру cookie, без которой
+   * возврат с GitHub не примется. Так пересланная ссылка на GitHub не подключит чужой аккаунт. */
+  async startGitHubConnect(signal?:AbortSignal):Promise<{ticket:string}>{
     const value=await this.#request<unknown>("/v1/git/app/connect","POST",signal,{});
-    const url=value&&typeof value==="object"&&"url" in value?value.url:undefined;
-    if(typeof url!=="string"||!url.startsWith("https://")||url.length>2048)throw new MnemosAPIError(502);
-    return {url};
+    const ticket=value&&typeof value==="object"&&"ticket" in value?value.ticket:undefined;
+    if(typeof ticket!=="string"||!/^[A-Za-z0-9_-]{43}$/.test(ticket))throw new MnemosAPIError(502);
+    return {ticket};
   }
   /** Аккаунты GitHub, которые человек подключил: у каждого свои репозитории. */
   async listGitHubAccounts(signal?:AbortSignal):Promise<GitHubAccountPage>{return checkedGitHubAccounts(await this.#request<unknown>("/v1/git/app/accounts","GET",signal));}

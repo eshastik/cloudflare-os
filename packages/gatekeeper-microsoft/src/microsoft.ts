@@ -66,9 +66,11 @@ export class UserAccount extends DurableObject<Env> {
  async reconnect(){if(!this.ctx.storage.kv.get('callback'))throw Error('Account unavailable.');return base(this.env)+'/'+this.ctx.id+'/'+this.#account.start();}
  async finish(code:string,state:string,proof:ShellBrowserProof):Promise<string>{
   const callback=this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>('callback');if(!callback)throw Error('Account unavailable.');
+  let completion=this.ctx.storage.kv.get<{state:string;generation:string;restoring:boolean}>('completion');
+  // Сначала state: поддельный state с верной cookie не должен расходовать подтверждение браузера.
+  if(completion?.state!==state&&!this.#account.accepts(state))throw Error('Authorization link expired.');
   // До записи учётных данных оболочка подтверждает, что вход завершает браузер, начавший подключение.
   const gate=await confirmShellBrowser(callback,proof);if(!gate)throw Error('Browser not confirmed.');
-  let completion=this.ctx.storage.kv.get<{state:string;generation:string;restoring:boolean}>('completion');
   if(!completion||completion.state!==state){
    await this.#account.finish(code,state);
    completion={state,generation:this.#account.generation(),restoring:!!this.ctx.storage.kv.get('connected')};

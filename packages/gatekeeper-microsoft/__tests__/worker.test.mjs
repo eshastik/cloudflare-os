@@ -10,6 +10,7 @@ export class Store extends DurableObject {
  async complete(user){this.ctx.storage.kv.put('user',user);let count=this.ctx.storage.kv.get('count')||0;this.ctx.storage.kv.put('count',count+1);if(!count)throw Error('lost completion ACK')}
  async restored(){this.ctx.storage.kv.put('restored',true)}
  async expired(){this.ctx.storage.kv.put('expired',true)}
+ async confirm(){this.ctx.storage.kv.put('confirms',(this.ctx.storage.kv.get('confirms')||0)+1)}
  async run(path){
   const user=this.ctx.storage.kv.get('user');
   if(path==='/describe')return user.describe();
@@ -25,7 +26,7 @@ export class Store extends DurableObject {
   if(path==='/read'){const result=await this.ctx.storage.kv.get('source').readSelection({limit:2});return {messages:JSON.parse(result.messages_json),provider:result.provider}}
   if(path==='/revoke'){await user.revoke();return {revoked:true}}
   if(path==='/reconnect')return user.reconnect();
-  return {count:this.ctx.storage.kv.get('count'),restored:this.ctx.storage.kv.get('restored')||false,expired:this.ctx.storage.kv.get('expired')||false};
+  return {count:this.ctx.storage.kv.get('count'),confirms:this.ctx.storage.kv.get('confirms')||0,restored:this.ctx.storage.kv.get('restored')||false,expired:this.ctx.storage.kv.get('expired')||false};
  }
 }
 export class Callback extends WorkerEntrypoint {
@@ -33,6 +34,7 @@ export class Callback extends WorkerEntrypoint {
  async complete(user){await this.#store().complete(user)}
  async credentialsRestored(){await this.#store().restored()}
  async credentialsExpired(){await this.#store().expired()}
+ async confirmBrowser(){await this.#store().confirm();return {returnPath:'/api/connect/finish?handle=fixture'}}
 }
 export default {async fetch(request,env,ctx){try{
  const path=new URL(request.url).pathname;
@@ -81,8 +83,11 @@ test('real Worker OAuth completion retries, persisted account/source survives re
  };
  try{
   const start=await (await call('/connect')).json();const callback=await authorize(start.url);
+  // Поддельный state отклоняется до подтверждения браузера: подтверждение не расходуется.
+  const forged=new URL(callback);forged.searchParams.set('state',forged.searchParams.get('state').split(':')[0]+':'+'f'.repeat(64));
+  assert.equal((await mf.dispatchFetch(forged)).status,400);assert.equal((await (await call('/counts')).json()).confirms,0);assert.equal(exchanges,0);
   assert.equal((await mf.dispatchFetch(callback)).status,400);assert.equal(exchanges,1);
-  assert.equal((await mf.dispatchFetch(callback)).status,200);assert.equal(exchanges,1,'Completion retry must not exchange code again');
+  assert.equal((await mf.dispatchFetch(callback,{redirect:'manual'})).status,303);assert.equal(exchanges,1,'Completion retry must not exchange code again');
   assert.equal((await (await call('/describe')).json()).uniqueName,'123');
   assert.deepEqual(await (await call('/folders')).json(),{folders:[{id:'inbox-id',name:'Inbox',hasChildren:false}],truncated:false});
   {const selected=await call('/select');assert.equal(selected.status,200,await selected.text());}
@@ -98,7 +103,7 @@ test('real Worker OAuth completion retries, persisted account/source survives re
   assert.equal((await call('/revoke')).status,200);assert.equal((await call('/read')).status,409);assert.equal(downloads,2);assert.equal((await call('/folders')).status,409);assert.equal((await call('/calendars')).status,409);assert.equal((await call('/calendar-read')).status,409);
   sendScope=true;
   identity='999';let again=await (await call('/reconnect')).json();assert.equal((await mf.dispatchFetch(await authorize(again.url))).status,400);
-  identity='123';again=await (await call('/reconnect')).json();assert.equal((await mf.dispatchFetch(await authorize(again.url))).status,200);
+  identity='123';again=await (await call('/reconnect')).json();assert.equal((await mf.dispatchFetch(await authorize(again.url),{redirect:'manual'})).status,303);
   assert.equal((await call('/read')).status,409,'Old source cannot revive after reconnect');
   assert.equal((await call('/calendar-read')).status,409);assert.equal((await call('/calendar-select')).status,200);assert.equal((await call('/calendar-read')).status,200);
   {const selected=await call('/select');assert.equal(selected.status,200,await selected.text());}assert.equal((await call('/read')).status,200);

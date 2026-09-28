@@ -67,3 +67,8 @@ test('only a definitive refresh refusal is classified as expired credentials',as
   await assert.rejects(account.token(),error=>(error instanceof YandexCredentialRejected)===definitive&&!error.message.includes('private provider details'));
  }
 });
+test('state is checked without side effects before the shell confirms the browser',async()=>{
+ const f=fixture(),account=f.create(),url=await f.begin(account),state=url.searchParams.get('state').split(':')[1];
+ assert.equal(account.accepts('f'.repeat(64)),false);assert.equal(account.accepts(state),true);assert.equal(account.accepts(state),true);
+ await f.finish(account,url);assert.equal(account.accepts(state),false);
+});

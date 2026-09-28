@@ -277,6 +277,34 @@ class GatekeeperAppHostImpl extends RpcTarget {
     return true
   }
 
+  /** «Подключить GitHub» по нажатию человека во фрейме: билет от сервера Mnemos меняется на адрес
+   * GitHub запросом со страницы оболочки. Сервер при этом ставит этому браузеру cookie, без которой
+   * возврат с GitHub не примется, поэтому звать его должна страница верхнего уровня, а не фрейм.
+   * Билет приходит только из фрейма, не из адреса страницы: пересланная ссылка не начнёт подключение.
+   * false — сервер отказал или вернул адрес не из перечня GitHub. */
+  async startGitHubConnect(ticket: string): Promise<boolean> {
+    const signal = this.#uploadLifetime.signal
+    signal.throwIfAborted()
+    if (typeof ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(ticket)) return false
+    let url: unknown
+    try {
+      const response = await fetch('/v1/git/app/start', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }),
+      })
+      if (!response.ok) return false
+      const body: unknown = await response.json()
+      url = body && typeof body === 'object' && 'url' in body ? body.url : undefined
+    } catch {
+      signal.throwIfAborted()
+      return false
+    }
+    signal.throwIfAborted()
+    if (!isGitHubAppPage(url)) return false
+    gitHubNavigation.assign(url)
+    return true
+  }
+
   /** Ссылка из текста фрейма (фрейму окна и переходы не даны): адрес оболочки открывается на той же
    * странице, внешний сайт и почта — новой вкладкой. Служебные адреса оболочки (/api, /gatekeeper —
    * вход и подключения) фрейму не открыть. false — адрес не принят. */
@@ -286,7 +314,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
     let parsed: URL
     try { parsed = new URL(url) } catch { return false }
     if (parsed.origin === window.location.origin && (parsed.protocol === 'https:' || parsed.protocol === 'http:')) {
-      if (/^\/(api|gatekeeper)(\/|$)/.test(parsed.pathname)) return false
+      // Путь «//host» (сюда же «/\host» и «/.//host») маршрутизатор увёл бы на чужой сайт.
+      if (parsed.pathname.startsWith('//') || /^\/(api|gatekeeper)(\/|$)/.test(parsed.pathname)) return false
       this.openPath(parsed.pathname + parsed.search + parsed.hash)
       return true
     }

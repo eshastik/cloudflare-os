@@ -209,6 +209,18 @@ describe("подключение аккаунта на той же страни�
     }
   });
 
+  it("фоновое восстановление токена не закрывает подтверждённый поток переподключения", async () => {
+    for (const kind of ["reconnect", "resources"] as const) {
+      const s = stand();
+      const { cookie } = await start(s, "alice:s1", { kind, accountId: 7, resourceUrlPatterns: kind === "resources" ? ["gmail://*"] : undefined });
+      // Гейткипер подтвердил браузер, но вход у провайдера сорвался: браузер получил страницу ошибки.
+      expect(await confirmConnectBrowser(cookie.split("=")[1], ALICE, 7, s.port), kind).not.toBeNull();
+      // Тем временем гейткипер обновил токен в фоне и сообщил credentialsRestored.
+      expect(await s.flows(ALICE).settle(7, undefined), kind).toBe(false);
+      expect(s.kvs.get(ALICE)!.values().some(flow => (flow as { settled?: boolean }).settled), kind).toBe(false);
+    }
+  });
+
   it("старт: без ключа сеанса, с чужой страницы, не POST, чужой returnTo — отказ без cookie", async () => {
     const s = stand();
     for (const [token, body, origin] of [

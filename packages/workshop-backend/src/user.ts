@@ -2311,9 +2311,8 @@ export class GatekeeperConnectCallbackImpl
   async credentialsRestored(expiresAt?: Date): Promise<void> {
     let userStub = this.#getUserStub();
     await userStub.markCredentialsRestored(this.ctx.props.accountId, expiresAt);
-    // Завершение переподключения или расширения доступа из браузера; без потока это фоновое
-    // восстановление учётных данных гейткипером.
-    await userStub.settleConnectFlow(this.ctx.props.accountId, undefined);
+    // Поток переподключения здесь не закрывается: этот же вызов приходит и при фоновом обновлении
+    // токена. Поток завершает возврат браузера с признаком (auth/connect-return.ts, issueCode).
   }
 }
 

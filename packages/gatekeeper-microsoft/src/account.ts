@@ -23,9 +23,11 @@ export class MicrosoftAccount {
   this.#current(next);return url;
  }
  #current(flow:Flow){const state=this.#state();if(flow.epoch!==state.epoch||state.flow?.nonce!==flow.nonce)throw Error('Microsoft account changed.');}
+ /** Проверка state без побочных эффектов: вызывается до подтверждения браузера оболочкой. */
+ accepts(nonceValue:string){const state=this.#state(),flow=state.flow;return !!flow&&flow.stage==='oauth'&&flow.nonce===nonceValue&&flow.expiresAt>Date.now()&&flow.epoch===state.epoch;}
  async finish(code:string,nonceValue:string){
   const state=this.#state(),flow=state.flow;
-  if(!flow||flow.stage!=='oauth'||flow.nonce!==nonceValue||flow.expiresAt<=Date.now()||flow.epoch!==state.epoch)throw Error('Authorization link expired.');
+  if(!flow||!this.accepts(nonceValue))throw Error('Authorization link expired.');
   this.#put({...state,flow:{...flow,stage:'consumed'}});
   return this.#serial(async()=>{
    this.#current(flow);

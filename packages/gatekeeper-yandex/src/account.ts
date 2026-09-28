@@ -20,9 +20,11 @@ export class YandexAccount {
   this.#current(next);return url;
  }
  #current(flow:Flow){if(flow.epoch!==this.#epoch()||this.#storage.get<Flow>('flow')?.nonce!==flow.nonce)throw Error('Yandex account changed.');}
+ /** Проверка state без побочных эффектов: вызывается до подтверждения браузера оболочкой. */
+ accepts(state:string){const flow=this.#storage.get<Flow>('flow');return !!flow&&flow.stage==='oauth'&&flow.nonce===state&&flow.expiresAt>Date.now()&&flow.epoch===this.#epoch();}
  async finish(code:string,state:string){
   const flow=this.#storage.get<Flow>('flow');
-  if(!flow||flow.stage!=='oauth'||flow.nonce!==state||flow.expiresAt<=Date.now()||flow.epoch!==this.#epoch())throw Error('Authorization link expired.');
+  if(!flow||!this.accepts(state))throw Error('Authorization link expired.');
   this.#storage.put('flow',{...flow,stage:'consumed'});
   return this.#serial(async()=>{
    this.#current(flow);
