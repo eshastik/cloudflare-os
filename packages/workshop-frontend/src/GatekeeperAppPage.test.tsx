@@ -64,7 +64,8 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
     await React.act(async () => root.render(page(0, 'connections')))
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.querySelector('select')).toBeNull()
-    expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory', 7)
+    // Адрес без подключения: подключение выбирает сервер.
+    expect(api.getGatekeeperApp).toHaveBeenLastCalledWith('memory', undefined)
     expect(container.textContent).toContain('Не удалось открыть «Память»')
     expect(container.textContent).not.toContain('Other service account')
     await click('Переподключить Peer account')
@@ -121,7 +122,7 @@ it('shows the mail panel only for an account receiving mail and the summary only
   } finally { await React.act(async () => root.unmount()); container.remove() }
 })
 
-it('offers a Kumo account choice for several accounts, disposes a late frame after switching, and opens the remaining account after removal', async () => {
+it('offers a Kumo account choice for several accounts, disposes a late frame after switching, and opens the default account after removal', async () => {
   let subscriber: ConnectedAccountsSubscriber
   const subscriptionDisposed = vi.fn<() => void>()
   api.subscribeConnectedAccounts.mockImplementation(async (s: ConnectedAccountsSubscriber) => {
@@ -131,28 +132,58 @@ it('offers a Kumo account choice for several accounts, disposes a late frame aft
     return { [Symbol.dispose]: subscriptionDisposed }
   })
   let resolveFirst!: (value: object) => void
-  const first = { html: 'first' }, second = { html: 'second' }, third = { html: 'third' }
-  api.getGatekeeperApp.mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve })).mockResolvedValueOnce(second).mockResolvedValueOnce(third)
+  const first = { html: 'first', accountId: 2 }, second = { html: 'second', accountId: 2 }, third = { html: 'third', accountId: 11 }, fourth = { html: 'fourth', accountId: 2 }
+  api.getGatekeeperApp.mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve })).mockResolvedValueOnce(second).mockResolvedValueOnce(third).mockResolvedValueOnce(fourth)
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
   try {
     await React.act(async () => root.render(page()))
-    expect(api.getGatekeeperApp).not.toHaveBeenCalled()
+    // Подписку не ждём: сервер открывает подключение по умолчанию, выбор организаций появляется рядом.
+    expect(api.getGatekeeperApp.mock.calls).toEqual([['memory', undefined]])
     expect(container.querySelector('select')).toBeNull()
     expect(container.textContent).toContain('Организация')
     await chooseAccount('Org 2')
     await chooseAccount('Org 11')
     await React.act(async () => resolveFirst(first))
     expect(dispose).toHaveBeenCalledWith(first)
-    expect(api.getGatekeeperApp.mock.calls).toEqual([['memory', 2], ['memory', 11]])
+    expect(dispose).toHaveBeenCalledWith(second)
+    expect(api.getGatekeeperApp.mock.calls).toEqual([['memory', undefined], ['memory', 2], ['memory', 11]])
     expect(container.textContent).toContain('Opened application')
     await React.act(async () => subscriber.remove(11))
-    expect(dispose).toHaveBeenCalledWith(second)
-    expect(api.getGatekeeperApp.mock.calls[2]).toEqual(['memory', 2])
+    expect(dispose).toHaveBeenCalledWith(third)
+    expect(api.getGatekeeperApp.mock.calls[3]).toEqual(['memory', undefined])
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.textContent).toContain('Opened application')
   } finally { await React.act(async () => root.unmount()); container.remove() }
   expect(subscriptionDisposed).toHaveBeenCalledOnce()
+})
+
+it('адрес без подключения открывает приложение, не дожидаясь подписки, и сразу показывает индикатор раздела', async () => {
+  api.subscribeConnectedAccounts.mockImplementation(() => new Promise(() => {}))
+  let resolveFrame!: (value: object) => void
+  api.getGatekeeperApp.mockImplementation(() => new Promise(resolve => { resolveFrame = resolve }))
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container)
+  try {
+    await React.act(async () => root.render(<GatekeeperAppPage appId="memory" section="projects" loadingTitle="Проекты" />))
+    expect(api.getGatekeeperApp).toHaveBeenCalledWith('memory', undefined)
+    const loading = container.querySelector('[data-testid="gatekeeper-section-loading"]')
+    expect(loading?.getAttribute('role')).toBe('status')
+    expect(loading?.textContent).toContain('Проекты')
+    expect(container.textContent).not.toContain('Загрузка…')
+    await React.act(async () => resolveFrame({ html: 'application', accountId: 4 }))
+    expect(container.textContent).toContain('Opened application')
+  } finally { await React.act(async () => root.unmount()); container.remove() }
+})
+
+it('адрес с подключением ждёт подписку под тем же индикатором раздела', async () => {
+  api.subscribeConnectedAccounts.mockImplementation(() => new Promise(() => {}))
+  api.getGatekeeperApp.mockResolvedValue({ html: 'application' })
+  const container = document.createElement('div'); document.body.append(container); const root = createRoot(container)
+  try {
+    await React.act(async () => root.render(<GatekeeperAppPage appId="memory" accountId={8} onAccountChange={() => {}} loadingTitle="Люди" />))
+    expect(api.getGatekeeperApp).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="gatekeeper-section-loading"]')?.textContent).toContain('Люди')
+  } finally { await React.act(async () => root.unmount()); container.remove() }
 })
 
 it('прямая ссылка выбирает точное подключение, а селектор сообщает новое значение маршруту',async()=>{

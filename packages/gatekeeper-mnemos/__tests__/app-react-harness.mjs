@@ -136,6 +136,8 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async takeGitHubReturn() { const value = options.githubReturn ?? null; options.githubReturn = null; return value; }
   }
   let frame, uploadReceiver = null; const ports = [];
+  // Сообщения оболочке о рукопожатии и о первых данных (индикатор загрузки раздела).
+  const shellSignals = [];
   const html = await readFile(new URL("../src/generated/app.txt", import.meta.url), "utf8");
   let dom, document;
   const locationChanged = () => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: { type: "gatekeeper-location" }, source: dom.window }));
@@ -159,7 +161,9 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
       window.postMessage = (message, origin, transferred) => {
         if(message.type === "mnemos-intake-close") { calls.push(["closeIntake"]); return; }
         if(message.type === "mnemos-drag-enter") { calls.push(["dragEnter"]); return; }
+        if(message.type === "gatekeeper-content-ready") { assert.equal(origin, "*"); shellSignals.push({ type: message.type, rootText: window.document.querySelector("#root")?.textContent ?? "" }); return; }
         assert.equal(message.type, "handshake"); assert.equal(origin, "*");
+        shellSignals.push({ type: "handshake", contentReady: message.contentReady });
         frame = newMessagePortRpcSession(transferred[0], new Host());
       };
     },
@@ -205,5 +209,5 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
   await until(() => options.presentationMode === "panel" ? document.querySelector('[aria-label="Приём данных"]') : document.querySelector("#root h1"), "заголовок раздела");
   /** Оболочка присылает новое состояние загрузки. */
   async function pushUpload(view) { assert.ok(uploadReceiver, "фрейм не подписался на загрузку"); await uploadReceiver.setUploadState(view); }
-  return { pushUpload, get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, go, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
+  return { shellSignals, pushUpload, get dom(){return dom;}, get document(){return document;}, calls, text, tabs, tab, button, buttons, until, open, go, type, dispose, setTheme: mode => frame.setThemeMode(mode) };
 }

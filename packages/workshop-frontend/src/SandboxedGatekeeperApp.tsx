@@ -15,6 +15,7 @@ import { useNavigate, useRouterState } from '@tanstack/react-router'
 import type { GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import { createRateLimitedCapability } from './rateLimitedCapability'
 import { useTheme } from './ThemeContext'
+import GatekeeperSectionLoading from './GatekeeperSectionLoading'
 import type { ResolvedThemeMode } from './theme'
 import { forwardTrustedFrameError } from './errorReporting'
 import { uploadGatekeeperText } from './gatekeeperAppUpload'
@@ -82,6 +83,9 @@ function touchOnlyScreen(): boolean {
   if (typeof matchMedia !== 'function') return false
   return matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches
 }
+
+// Сколько индикатор загрузки ждёт сообщения о готовности данных от приложения, пообещавшего его.
+export const CONTENT_READY_MAX_MS = 20_000
 
 // Near the max int, so the full-viewport iframe sits above all Workshop chrome.
 const overlayZIndex = 2147483000
@@ -657,8 +661,10 @@ class GatekeeperAppHostImpl extends RpcTarget {
 // Hosts a gatekeeper's full-page management SPA in a sandboxed, network-isolated iframe. The app
 // talks to the gatekeeper only through the `ui` capability carried over the MessagePort RPC session.
 // The iframe fills its parent container.
-export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, accountId, embeddedIntake = false, onClosePanel, onIntakeDropReady }: {
+export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, accountId, embeddedIntake = false, onClosePanel, onIntakeDropReady, loadingTitle }: {
   accountId?: number
+  /** Название раздела для индикатора загрузки. */
+  loadingTitle?: string
   frame: GatekeeperUiFrame,
   gatekeeperVendorId: string,
   embeddedIntake?: boolean,
@@ -687,7 +693,9 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   },[])
   useEffect(()=>()=>{if(dragTimer.current!==null)clearTimeout(dragTimer.current)},[])
   const dropAllowedRef=useRef(false)
-  // Фрейм считается загруженным, когда приложение прислало рукопожатие: до этого видна заглушка загрузки.
+  // Индикатор загрузки раздела снимается, когда приложение показало первые данные: оно сообщает об этом
+  // сообщением gatekeeper-content-ready, если пообещало его в рукопожатии. Приложение без такого обещания
+  // считается готовым по рукопожатию. Молчащее приложение не держит индикатор дольше CONTENT_READY_MAX_MS.
   const [frameReady,setFrameReady]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   const overlayRef = useRef<OverlayState>(null)
@@ -767,8 +775,9 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
     invalidatedRef.current = false
     setFrameReady(false)
     let closeRecording: (() => void) | undefined
+    let readyTimer: ReturnType<typeof setTimeout> | undefined
 
-    const connect = (port: MessagePort) => {
+    const connect = (port: MessagePort, announcesContent: boolean) => {
       if (connectedRef.current) {
         closeRecording?.()
         // A second handshake (e.g. iframe reloaded) invalidates the session.
@@ -830,7 +839,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       hostRef.current = host
       sessionRef.current = newMessagePortRpcSession(port, host)
       connectedRef.current = true
-      setFrameReady(true)
+      if (announcesContent) readyTimer = setTimeout(() => setFrameReady(true), CONTENT_READY_MAX_MS)
+      else setFrameReady(true)
     }
 
     const handleMessage = (event: MessageEvent) => {
@@ -860,13 +870,18 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       if (forwardTrustedFrameError(
         event, frameWindow, { surface: 'gatekeeper-app', gatekeeperVendorId },
       )) return
+      if (event.data?.type === 'gatekeeper-content-ready') {
+        if (connectedRef.current) { clearTimeout(readyTimer); setFrameReady(true) }
+        return
+      }
       if (event.data?.type === 'handshake' && event.ports?.[0]) {
-        connect(event.ports[0])
+        connect(event.ports[0], event.data.contentReady === true)
       }
     }
 
     window.addEventListener('message', handleMessage)
     return () => {
+      clearTimeout(readyTimer)
       closeRecording?.()
       window.removeEventListener('message', handleMessage)
       sessionRef.current?.[Symbol.dispose]?.()
@@ -943,10 +958,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border border-dashed border-kumo-brand bg-kumo-base/85 text-center">
       <div><p className="m-0 text-[15px] font-semibold text-kumo-strong">Отпустите, чтобы загрузить</p><p className="mb-0 mt-1 text-[12px] text-kumo-subtle">Файлы и папки попадут в приёмную{new URLSearchParams(window.location.search).get('project')?' проекта':''}.</p></div>
     </div>}
-    {!frameReady&&<div role="status" data-testid="gatekeeper-frame-loading" className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-kumo-base text-[14px] text-kumo-subtle">
-      <span aria-hidden="true" className="h-6 w-6 animate-spin rounded-full border-2 border-kumo-brand border-t-transparent motion-reduce:animate-none" />
-      Загружаем приложение…
-    </div>}
+    {!frameReady&&<GatekeeperSectionLoading overlay title={loadingTitle} />}
     <div className="min-h-0 flex-1"><iframe
       ref={iframeRef}
       srcDoc={frame.iframeHtml}

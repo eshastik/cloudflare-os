@@ -31,6 +31,7 @@ function GatekeeperApp() {
   const navigate=Route.useNavigate()
   const selectAccount=useCallback((account:number|null)=>{void navigate({search:previous=>({...previous,account:account??undefined,project:undefined})})},[navigate])
   const app = useGatekeeperApps().find((a) => a.id === appId && (account===undefined||a.accountId===account))
-  useDocumentTitle(app?.sections?.find(s => s.id === section)?.title ?? app?.title ?? 'Приложение')
-  return <GatekeeperAppPage appId={appId} section={section} project={project} accountId={account} tool={tool} onAccountChange={selectAccount} />
+  const sectionTitle = app?.sections?.find(s => s.id === section)?.title
+  useDocumentTitle(sectionTitle ?? app?.title ?? 'Приложение')
+  return <GatekeeperAppPage appId={appId} section={section} project={project} accountId={account} tool={tool} onAccountChange={selectAccount} loadingTitle={sectionTitle ?? app?.title} />
 }

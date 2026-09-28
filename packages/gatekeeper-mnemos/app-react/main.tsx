@@ -24,7 +24,8 @@ function main() {
   const { port1, port2 } = new MessageChannel();
   const frame = new Frame();
   const host = newMessagePortRpcSession<Host>(port1, frame);
-  window.parent.postMessage({ type: "handshake" }, "*", [port2]);
+  // contentReady: оболочка держит индикатор загрузки раздела до сообщения о первых данных (readiness.ts).
+  window.parent.postMessage({ type: "handshake", contentReady: true }, "*", [port2]);
   host.subscribeTheme(frame).then(applyThemeMode).catch(() => {});
   host.subscribeAccent(frame).then(applyAccentColor).catch(() => {});
 

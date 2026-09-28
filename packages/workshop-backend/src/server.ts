@@ -9,7 +9,7 @@ import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import { RpcStub, RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import type { JWTPayload } from "jose";
-import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, GatekeeperAppInfo, GatekeeperAppFrame, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import type { UiFeatureFlags } from "@gadgets/workshop-shared/feature-flags";
 import { getServerConfig } from "./deployment-config.js";
 import { isPasswordAuthEnabled, getAuthGatekeeperAllowlist } from "./auth/config.js";
@@ -40,6 +40,8 @@ import { verifyCfAccessJwt } from "./access.js";
 import { resolveUiFeatureFlags } from "./feature-flags";
 import { serveSiteLogo, SITE_LOGO_PATH } from "./site-logo.js";
 import { createWorkshopLogger } from "./observability";
+import { timeRpcMethods, type SlowRpcLog } from "./rpc-timing";
+import { frameForBrowser, knownFrameHashes } from "./gatekeeper-app-frame";
 
 const logger = createWorkshopLogger("workshop.server");
 
@@ -644,6 +646,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
           title: account.description.providesUi!.title,
           icon: account.description.providesUi!.icon,
           sections: account.description.providesUi!.sections,
+          ...(account.description.providesUi!.countsPending === true ? { countsPending: true } : {}),
         }));
   }
 
@@ -676,14 +679,14 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return this.user.prepareMailConnection(sourceAccountId,targetAccountId,query,project,request);
   }
 
-  async getGatekeeperApp(id: string, accountId?: number): Promise<GatekeeperUiFrame | null> {
-    // Self-sufficient: listProvidedAccounts provisions auto-provisioned accounts first (idempotent),
-    // so a direct URL load of /gatekeepers/$id works without racing the Header's listGatekeeperApps.
-    let accounts = await this.user.listProvidedAccounts();
-    let app = accounts.find(account => account.vendorId === id && account.description.providesUi && (accountId === undefined || account.accountId === accountId));
-    if (!app) return null;
+  async getGatekeeperApp(id: string, accountId?: number, knownHtmlSha256?: string[]): Promise<GatekeeperAppFrame | null> {
+    const known = knownFrameHashes(knownHtmlSha256);
+    // Self-sufficient: a missing auto-provisioned account is created first (idempotent), so a direct
+    // URL load of /gatekeepers/$id works without racing the Header's listGatekeeperApps.
     // isAdmin is supplied fresh per open so admin-gated features reflect the user's current status.
-    return this.user.startAccountAppUi(app.accountId, { isAdmin: this.#isAdmin() });
+    const opened = await this.user.openUiApp(id, accountId, { isAdmin: this.#isAdmin() });
+    if (!opened) return null;
+    return frameForBrowser(opened.frame, opened.accountId, known);
   }
 
   // --- Deployment admin ---
@@ -909,6 +912,11 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
     return buildBlueprintArchiveStream(metadata, r2Object.body, r2Object.size);
   }
 }
+
+const logSlowRpc: SlowRpcLog = (method, ms, outcome) =>
+    logger.info(`rpc ${method} ${ms} ms`, { event: "rpc.slow", operation: method, durationMs: ms, outcome });
+timeRpcMethods(PublicApiImpl, "public", logSlowRpc);
+timeRpcMethods(AuthenticatedApiImpl, "api", logSlowRpc);
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {

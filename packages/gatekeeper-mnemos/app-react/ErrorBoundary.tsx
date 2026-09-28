@@ -1,13 +1,14 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { WarningCircle } from "@phosphor-icons/react";
 import { Button } from "./ui.tsx";
+import { announceContentReady } from "./readiness.ts";
 
 /** Ошибка отрисовки не должна оставлять белый экран: человек видит, что раздел не открылся и что делать.
  * Текст ошибки для администратора свёрнут: на основном экране технических строк нет. */
 export default class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error, info: ErrorInfo) { console.error("Раздел Mnemos не отрисован", error, info.componentStack); }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("Раздел Mnemos не отрисован", error, info.componentStack); announceContentReady(); }
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;

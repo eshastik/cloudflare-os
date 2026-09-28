@@ -173,7 +173,8 @@ export type AccountDescription = {
 
   // If set, this account has a full-page management UI (see GatekeeperUser.startAppUi). The Workshop
   // surfaces it as a nav entry / page using this title.
-  providesUi?: { title: string; icon?: AvatarImage; sections?: GatekeeperUiSection[] };
+  // countsPending: счётчики разделов ещё считаются; оболочка перечитает описание один раз чуть позже.
+  providesUi?: { title: string; icon?: AvatarImage; sections?: GatekeeperUiSection[]; countsPending?: boolean };
 }
 
 // Describes metadata about a specific instance of a resource. Returned by Gatekeeper.describe().

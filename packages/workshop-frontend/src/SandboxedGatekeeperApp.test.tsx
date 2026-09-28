@@ -14,7 +14,7 @@ import { newMessagePortRpcSession, RpcStub, RpcTarget } from "capnweb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document";
-import SandboxedGatekeeperApp, { gitHubNavigation } from "./SandboxedGatekeeperApp";
+import SandboxedGatekeeperApp, { CONTENT_READY_MAX_MS, gitHubNavigation } from "./SandboxedGatekeeperApp";
 import UploadDock from "./UploadDock";
 import { uploadCenter } from "./uploadCenter";
 import { prepareForLogout } from "./authNavigation";
@@ -387,17 +387,53 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"mnemos-drag-enter"},origin:"null",source:iframe.contentWindow})));
     expect(container.querySelector('[data-testid="intake-drop-layer"]')).toBeNull();
   });
-  it("до рукопожатия фрейма видна заглушка загрузки", async () => {
+  it("приложение без обещания готовности снимает индикатор загрузки по рукопожатию", async () => {
+    const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi())} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" loadingTitle="Проекты"/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    const loading=()=>container!.querySelector('[data-testid="gatekeeper-section-loading"]');
+    expect(loading()?.textContent).toContain("Проекты");
+    expect(loading()?.getAttribute("role")).toBe("status");
+    const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]})));
+    expect(loading()).toBeNull();
+  });
+  it("индикатор загрузки держится после рукопожатия до сообщения о первых данных, и только от своего фрейма", async () => {
     const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi())} as unknown as GatekeeperUiFrame;
     const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>});
     const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
     container=document.createElement("div");document.body.append(container);root=createRoot(container);
     await act(async()=>root!.render(<RouterProvider router={router}/>));
-    const loading=()=>container!.querySelector('[data-testid="gatekeeper-frame-loading"]');
-    expect(loading()?.textContent).toContain("Загружаем приложение");
+    const loading=()=>container!.querySelector('[data-testid="gatekeeper-section-loading"]');
+    const source=container.querySelector("iframe")!.contentWindow;
     const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);
-    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake"},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]})));
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake",contentReady:true},origin:"null",source,ports:[port2]})));
+    expect(loading()).not.toBeNull();
+    // Чужое окно и чужой источник не снимают индикатор.
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"gatekeeper-content-ready"},origin:"null",source:window})));
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"gatekeeper-content-ready"},origin:"https://evil.example",source})));
+    expect(loading()).not.toBeNull();
+    await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"gatekeeper-content-ready"},origin:"null",source})));
     expect(loading()).toBeNull();
+  });
+  it("молчащее приложение не держит индикатор дольше предела", async () => {
+    const frame={iframeHtml:"<!doctype html><title>Mnemos</title>",ui:new RpcStub(new EmptyUi())} as unknown as GatekeeperUiFrame;
+    const route=createRootRoute({component:()=> <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos"/>});
+    const router=createRouter({history:createMemoryHistory({initialEntries:["/"]}),routeTree:route});
+    container=document.createElement("div");document.body.append(container);root=createRoot(container);
+    await act(async()=>root!.render(<RouterProvider router={router}/>));
+    vi.useFakeTimers({toFake:["setTimeout","clearTimeout"]});
+    try {
+      const loading=()=>container!.querySelector('[data-testid="gatekeeper-section-loading"]');
+      const {port1,port2}=new MessageChannel();host=newMessagePortRpcSession<TestHost>(port1);
+      await act(async()=>window.dispatchEvent(new MessageEvent("message",{data:{type:"handshake",contentReady:true},origin:"null",source:container!.querySelector("iframe")!.contentWindow,ports:[port2]})));
+      await act(async()=>{vi.advanceTimersByTime(CONTENT_READY_MAX_MS-1)});
+      expect(loading()).not.toBeNull();
+      await act(async()=>{vi.advanceTimersByTime(1)});
+      expect(loading()).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
   it("перетаскивание уходит в ту организацию, где его начали, даже если фрейм сменился", async () => {
     const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>("node:crypto");

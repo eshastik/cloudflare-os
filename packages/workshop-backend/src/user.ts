@@ -11,6 +11,7 @@ import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import { shouldAutoProvisionAccount, ambientGatekeeperMode } from "./provisioning-policy.js";
+import { findUiAccount } from "./ui-account.js";
 import { CloudflareGatekeeperUser } from "@gadgets/workshop-shared/cloudflare-gatekeeper";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { createTypedStorage, collection } from "@gadgets/typed-storage";
@@ -1590,6 +1591,21 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     // SingletonAccountStub view (see its definition for why the cast is needed).
     if (!record?.description.singleton) return null;
     return (record.account as unknown as SingletonAccountStub).getSingletonGatekeeperClass();
+  }
+
+  /** Страница приложения шлюза: подключение выбирается как в listProvidedAccounts, но без опроса
+   * всех шлюзов, если нужное уже заведено (ui-account.ts). */
+  async openUiApp(vendorId: string, accountId: number | undefined, context: AppUiContext)
+      : Promise<{ accountId: number; frame: GatekeeperUiFrame } | null> {
+    const config = await readAdminConfig(this.env);
+    const found = await findUiAccount({
+      records: () => this.#connectedAccountRecords(),
+      dormant: record => ambientGatekeeperMode(config, record.vendorId) === "disabled",
+      ensure: () => this.#ensureAutoProvisionedAccounts(),
+      vendorId, accountId,
+    });
+    if (found === null) return null;
+    return { accountId: found, frame: await this.startAccountAppUi(found, context) };
   }
 
   // Open the full-page management UI for an account that declares one. `context.isAdmin` is supplied

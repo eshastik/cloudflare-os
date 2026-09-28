@@ -100,3 +100,32 @@ test("прямые разделы Mnemos: материалы, согласова
     await until(() => app.document.documentElement.getAttribute("data-mode") === "dark", "тёмная тема через setThemeMode");
   } finally { app.dispose(); }
 });
+
+test("оболочка снимает индикатор загрузки по сообщению после первой отрисовки с данными, один раз", async () => {
+  let releaseProjects;
+  const gate = new Promise(resolve => { releaseProjects = resolve; });
+  const app = await mountMemoryApp({
+    async listProjects() { await gate; return { projects: [{ id: "one", name: "Общий проект", slug: "shared" }] }; },
+  }, { section: "projects" });
+  try {
+    await until(() => app.shellSignals.length > 0, "рукопожатие");
+    assert.deepEqual(app.shellSignals, [{ type: "handshake", contentReady: true }]);
+    // Пока проекты не пришли, сообщения о готовности нет.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(app.shellSignals.length, 1);
+    releaseProjects();
+    await until(() => app.shellSignals.length === 2, "сообщение о первых данных");
+    assert.equal(app.shellSignals[1].type, "gatekeeper-content-ready");
+    assert.match(app.shellSignals[1].rootText, /Общий проект/);
+    app.go("my-work");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(app.shellSignals.length, 2);
+  } finally { app.dispose(); }
+});
+
+test("ошибка загрузки проектов тоже снимает индикатор оболочки", async () => {
+  const app = await mountMemoryApp({ async listProjects() { throw new Error("нет доступа"); } }, { section: "projects" });
+  try {
+    await until(() => app.shellSignals.some(signal => signal.type === "gatekeeper-content-ready"), "сообщение после ошибки");
+  } finally { app.dispose(); }
+});

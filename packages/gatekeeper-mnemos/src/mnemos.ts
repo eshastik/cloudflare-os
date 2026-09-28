@@ -9,6 +9,7 @@ import {AccountAlarms} from './account-alarms.ts';
 import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceTasks} from './workspace-tasks.ts';
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
+import { menuInboxCount, sourceErrorsFor } from "./account-description.ts";
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import {WebDAVAccounts,webdavServers,WEBDAV_RESOURCE,type WebDAVSetup} from './webdav-accounts.ts';
 import {signDriveOrigin,driveSourceBinding} from "./drive-origin-proof.ts";
@@ -107,17 +108,16 @@ const CHAT_PROJECTS_WITH_CODE_CHECK=20;
 
 export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: string }> implements GatekeeperUser {
   #account() { return this.ctx.exports.UserAccount.get(this.ctx.exports.UserAccount.idFromString(this.ctx.props.userObjectId)); }
+  /** Описание зовётся при каждом открытии меню оболочки, поэтому собирается одним заходом в аккаунт
+   * (accountDescriptionState). Счётчик «Входящих» берётся готовым и описание не держит. */
   async describe(): Promise<AccountDescription> {
-    const identity = await this.#account().connectionIdentity();
+    const state = await this.#account().accountDescriptionState();
+    const identity = state.identity;
     return { displayName: identity.tenant_name || identity.subject.user_id,
       uniqueName: identity.connectionName, avatar: AVATAR,
-      sourceErrors: await this.#account().sourceErrors(),
-      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" }, providesUi: { title: "Mnemos", icon: AVATAR, sections: await this.#sections(identity) } };
-  }
-  /** Разделы меню со счётчиком «Входящих» (в нём и согласования); медленный или недоступный счётчик просто не показывается. */
-  async #sections(identity: Parameters<typeof managementSections>[0]) {
-    const counts = await this.#account().inboxCounts(identity.subject.user_id).catch(() => undefined);
-    return managementSections(identity, counts?.inbox);
+      sourceErrors: state.sourceErrors,
+      receivesWorkspaceActivity: true, singleton: { tsType: "MnemosLibrary" },
+      providesUi: { title: "Mnemos", icon: AVATAR, sections: managementSections(identity, state.inbox), ...(state.countsPending ? { countsPending: true } : {}) } };
   }
   /** Агентский синглтон MNEMOS (ADR 0024 §1); данные он берёт через этот же аккаунт. */
   async getSingletonGatekeeperClass(): Promise<DurableObjectClass<Gatekeeper<any>>> {
@@ -552,22 +552,36 @@ export class UserAccount extends DurableObject<Env> {
   #imap(){return new ImapAccounts(this.#connectionStorage(),imapServers(this.env.MNEMOS_IMAP_SERVERS),()=>this.#account().calendarEpoch(),undefined,(server,credential,validate)=>new SmtpClient(server,credential,connectSmtp,validate));}
   /** Diagnostics are derived from this account's selected sources, without credentials. */
   async sourceErrors(): Promise<Array<'mail'|'calendar'|'drive'>> {
-    const errors: Array<'mail'|'calendar'|'drive'> = [];
-    const checks = [
-      ['mail', () => this.listImapAccounts()],
-      ['calendar', () => this.listCalDAVAccounts()],
-      ['drive', () => this.listWebDAVAccounts()],
-    ] as const;
-    for (const [kind,read] of checks) {
-      try { if ((await read()).accounts.some(a => !a.enabled || !!a.last_error_at)) errors.push(kind); }
-      catch { errors.push(kind); }
-    }
+    const session = this.#account().session();
+    try { return await this.#sourceErrorsFor(session, (await session.whoAmI()).subject); }
+    finally { session.dispose(); }
+  }
+  /** Источники под уже проверенной личностью (account-description.ts). */
+  async #sourceErrorsFor(session: MnemosAccountSession, subject: { tenant_id: string; user_id: string; agent_principal_id?: string }) {
+    const epoch = this.#account().calendarEpoch();
+    return sourceErrorsFor({
+      owner: epoch && !subject.agent_principal_id ? { tenant: subject.tenant_id, owner: subject.user_id, epoch } : null,
+      local: [['mail', owner => this.#imap().list(owner)], ['calendar', owner => this.#caldav().list(owner)], ['drive', owner => this.#webdav().list(owner)]],
+      remote: [['mail', () => session.listMailConnections("")], ['calendar', () => session.listCalendarConnections("")]],
+      epochChanged: () => this.#account().calendarEpoch() !== epoch,
+    });
+  }
+  /** Всё для описания аккаунта в меню оболочки: одна проверка личности, источники и счётчик «Входящих». */
+  async accountDescriptionState() {
     const session = this.#account().session();
     try {
-      try { if ((await session.listMailConnections("")).connections.some(c => !c.enabled || !!c.last_error_at) && !errors.includes('mail')) errors.push('mail'); } catch { if (!errors.includes('mail')) errors.push('mail'); }
-      try { if ((await session.listCalendarConnections("")).connections.some(c => !c.enabled || !!c.last_error_at) && !errors.includes('calendar')) errors.push('calendar'); } catch { if (!errors.includes('calendar')) errors.push('calendar'); }
+      const identity = await session.whoAmI();
+      const connectionName = organizationAccountName(this.env.MNEMOS_API_ORIGIN, this.#origins().apiOrigin, identity.subject.tenant_id, identity.subject.user_id);
+      const sourceErrors = await this.#sourceErrorsFor(session, identity.subject);
+      const counts = this.#menuInboxCount(identity.subject.user_id);
+      return { identity: { ...identity, connectionName }, sourceErrors, inbox: counts.inbox, countsPending: counts.pending };
     } finally { session.dispose(); }
-    return errors;
+  }
+  #menuCountsRefresh: { current?: Promise<void> } = {};
+  /** Счётчик «Входящих» для меню: готовое значение сразу, пересчёт в фоне (account-description.ts). */
+  #menuInboxCount(userId: string) {
+    return menuInboxCount({ storage: this.ctx.storage.kv, userId, now: Date.now(), count: () => this.inboxCounts(userId),
+      refresh: this.#menuCountsRefresh, keepAlive: work => this.ctx.waitUntil(work) });
   }
   async listImapAccounts(){return this.#withCalendarOwner(async owner=>this.#imap().list(owner));}
   async connectImapAccount(input:ImapSetup){return this.#withCalendarOwner(owner=>this.#imap().connect(owner,input));}

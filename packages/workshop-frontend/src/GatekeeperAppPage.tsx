@@ -3,13 +3,16 @@ import { startAccountConnect } from './auth/accountConnect'
 import MailConnectionPanel from "./MailConnectionPanel"
 import DriveImportPanel from "./DriveImportPanel"
 import CalendarConnectionPanel from "./CalendarConnectionPanel"
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Dialog, Select } from '@cloudflare/kumo'
 import { X } from '@phosphor-icons/react'
 import { WorkshopIconButton } from './components/WorkshopControls'
-import type { GatekeeperUiFrame, SupportedResource } from '@gadgets/workshop-shared/gatekeeper'
+import type { SupportedResource } from '@gadgets/workshop-shared/gatekeeper'
+import type { GatekeeperAppFrame } from '@gadgets/workshop-shared/api'
 import { useAuthenticatedApi } from './AuthContext'
 import SandboxedGatekeeperApp from './SandboxedGatekeeperApp'
+import GatekeeperSectionLoading from './GatekeeperSectionLoading'
+import { loadGatekeeperFrame } from './gatekeeperFrameCache'
 import { reportIssue } from './errorReporting'
 
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
@@ -21,7 +24,8 @@ type UiAccount = { name: string; resources: SupportedResource[] }
 // Renders a gatekeeper's full-page management app (a sandboxed SPA the gatekeeper serves).
 // Fetches the app frame (iframe HTML + `ui` capability) from the backend and hosts it.
 // Раздел и проект фрейм читает из адреса сам; их смена не пересоздаёт фрейм.
-export default function GatekeeperAppPage({ appId, accountId, tool, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady }: { appId: string; section?: string; project?: string; accountId?:number; tool?:'connections'|'summary'; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
+// loadingTitle — название раздела из меню: его показывает индикатор загрузки.
+export default function GatekeeperAppPage({ appId, accountId, tool, onAccountChange, embeddedIntake = false, onClosePanel, onIntakeDropReady, loadingTitle }: { appId: string; section?: string; project?: string; accountId?:number; tool?:'connections'|'summary'; onAccountChange?:(account:number|null)=>void; embeddedIntake?: boolean; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void; loadingTitle?: string }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, UiAccount>>(new Map())
   const [ready, setReady] = useState(false)
@@ -29,6 +33,8 @@ export default function GatekeeperAppPage({ appId, accountId, tool, onAccountCha
   const initialAccount = () => { if (embeddedIntake) return null; const value = new URLSearchParams(window.location.search).get("account"); return value !== null && /^\d+$/.test(value) ? Number(value) : null }
   const [selected, setSelected] = useState<number | null>(initialAccount)
   const requested=onAccountChange ? accountId??null : selected
+  // Подключение, которое открыл сервер, когда адрес его не называл.
+  const [opened, setOpened] = useState<{appId:string;accountId:number}|null>(null)
   const [notice, setNotice] = useState('')
   useEffect(() => {
     let cancelled = false
@@ -54,40 +60,42 @@ export default function GatekeeperAppPage({ appId, accountId, tool, onAccountCha
     return () => { cancelled = true; subscription?.[Symbol.dispose]() }
   }, [authenticatedApi, appId])
 
-  if (!ready || readyFor?.api!==authenticatedApi || readyFor.appId!==appId) return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">Загрузка…</div>
+  const subscribed = ready && readyFor?.api===authenticatedApi && readyFor.appId===appId
+  // Адрес без подключения: сервер сам выбирает подключение по вендору, подписку не ждём — она нужна
+  // только для выбора среди нескольких организаций и для панелей почты и календаря. Принудительно
+  // заведённые подключения в подписке не видны вовсе.
+  if (requested !== null && !subscribed) return <GatekeeperSectionLoading title={loadingTitle} />
   const ids = [...accounts.keys()]
-  // Один аккаунт открывается сразу. Ни одного в подписке — тоже сразу: принудительно заведённые
-  // аккаунты в ней не показываются, и аккаунт по вендору выбирает сервер.
-  const current = requested ?? (ids.length===1 ? ids[0] : null)
-  const open = ids.length===0 || current!==null
+  const current = requested ?? (opened?.appId === appId ? opened.accountId : null) ?? (ids.length===1 ? ids[0] : null)
   return <>
-    {ids.length > 1 && <div className="px-4 pt-3">
+    {subscribed && ids.length > 1 && <div className="px-4 pt-3">
       <Select label="Организация" placeholder="Выберите подключение" value={current === null ? null : String(current)} onValueChange={value => {const id=value?Number(value):null;if(onAccountChange)onAccountChange(id);else setSelected(id)}}>
         {ids.map(id => <Select.Option key={id} value={String(id)}>{accounts.get(id)!.name}</Select.Option>)}
       </Select>
     </div>}
     {notice && <p role="alert">{notice}</p>}
-    {open && <GatekeeperAppContent key={`${current ?? 'default'}:${tool ?? ''}`} appId={appId} requestedTool={tool} accountId={current ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />}
+    <GatekeeperAppContent key={`${requested ?? 'default'}:${tool ?? ''}`} appId={appId} requestedTool={tool} accountId={requested ?? undefined} resources={current === null ? [] : accounts.get(current)?.resources ?? []} accountsReady={subscribed} loadingTitle={loadingTitle} onOpened={id => setOpened({appId, accountId: id})} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} />
   </>
 }
 
-function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, requestedTool, onClosePanel, onIntakeDropReady }: { appId: string; accountId?: number; resources: SupportedResource[]; embeddedIntake: boolean; requestedTool?: 'connections' | 'summary'; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
+function GatekeeperAppContent({ appId, accountId, resources, accountsReady, loadingTitle, onOpened, embeddedIntake, requestedTool, onClosePanel, onIntakeDropReady }: { appId: string; accountId?: number; resources: SupportedResource[]; accountsReady: boolean; loadingTitle?: string; onOpened: (accountId: number) => void; embeddedIntake: boolean; requestedTool?: 'connections' | 'summary'; onClosePanel?:()=>void; onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // Wrap the frame in an object: it holds a `ui` RPC stub, and we never want useState's setter to
   // treat a stored value as an updater function.
-  const [state, setState] = useState<{ frame: GatekeeperUiFrame } | null>(null)
+  const [state, setState] = useState<{ frame: GatekeeperAppFrame } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [tool, setTool] = useState<'mail' | 'calendar' | 'drive' | 'summary' | null>(null)
   const [toolOpened, setToolOpened] = useState(false)
+  const openedRef = useRef(onOpened)
+  openedRef.current = onOpened
 
   useEffect(() => {
     let cancelled = false
-    let acquired: GatekeeperUiFrame | null = null
+    let acquired: GatekeeperAppFrame | null = null
     setState(null)
     setError(null)
-    authenticatedApi
-      .getGatekeeperApp(appId, accountId)
+    loadGatekeeperFrame(authenticatedApi, appId, accountId)
       .then((frame) => {
         if (!frame) {
           if (!cancelled) setError('Это приложение недоступно в этой установке.')
@@ -99,6 +107,7 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, req
         }
         acquired = frame
         setState({ frame })
+        if (typeof frame.accountId === 'number') openedRef.current(frame.accountId)
       })
       .catch((err) => {
         console.error('Failed to load gatekeeper app:', err)
@@ -117,7 +126,7 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, req
     return <GatekeeperAppRecovery key={appId} appId={appId} error={error} retry={() => setAttempt(n => n + 1)} />
   }
   if (!state) {
-    return <div className="px-4 py-16 text-center text-sm text-kumo-subtle">Загрузка…</div>
+    return <GatekeeperSectionLoading title={loadingTitle} />
   }
 
   // Панели показываются по возможностям, которые заявили описание аккаунта и фрейм, а не по имени вендора.
@@ -125,7 +134,8 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, req
   const calendar = receives(resources, 'calendar') || !!state.frame.calendarDraftCreator
   const drive = receives(resources, 'drive')
   // Settings links here with ?tool=…; the dialog opens once the frame has declared what it offers.
-  if (tool === null && requestedTool && !toolOpened) {
+  // Панели почты и файлов зависят от подписки на подключения; решение ждёт её.
+  if (tool === null && requestedTool && !toolOpened && (requestedTool === 'summary' || accountsReady)) {
     const initial = requestedTool === 'summary' ? (state.frame.organizationMetrics ? 'summary' : null) : mail ? 'mail' : calendar ? 'calendar' : drive ? 'drive' : null
     setToolOpened(true)
     if (initial) setTool(initial)
@@ -157,7 +167,7 @@ function GatekeeperAppContent({ appId, accountId, resources, embeddedIntake, req
           </div>
         </Dialog>
       </Dialog.Root>
-      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp accountId={accountId} frame={state.frame} gatekeeperVendorId={appId} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} /></div>
+      <div style={{ flex: 1, minHeight: 0 }}><SandboxedGatekeeperApp accountId={accountId ?? state.frame.accountId} frame={state.frame} loadingTitle={loadingTitle} gatekeeperVendorId={appId} embeddedIntake={embeddedIntake} onClosePanel={onClosePanel} onIntakeDropReady={onIntakeDropReady} /></div>
     </div>
   )
 }

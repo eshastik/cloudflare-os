@@ -602,8 +602,10 @@ export interface AuthenticatedApi extends RpcTarget {
   // Get the app frame (self-contained iframe HTML + the gatekeeper's `ui` capability) for the given
   // gatekeeper id, or null if there is no such UI-providing gatekeeper. The Workshop hosts the HTML
   // in a sandboxed iframe and exposes `ui` to it over a MessagePort RPC session.
-  /** Open the app from the selected connected account; omitted accountId keeps the default account. */
-  getGatekeeperApp(id: string, accountId?: number): Promise<GatekeeperUiFrame | null>;
+  /** Open the app from the selected connected account; omitted accountId keeps the default account.
+   * knownHtmlSha256 — хеши сборок фрейма, которые браузер уже хранит (не больше
+   * MAX_KNOWN_FRAME_HASHES): при совпадении сборка не передаётся повторно, iframeHtml приходит пустым. */
+  getGatekeeperApp(id: string, accountId?: number, knownHtmlSha256?: string[]): Promise<GatekeeperAppFrame | null>;
 
   /** Проекты из подключённой памяти человека для набора проектов беседы. */
   listChatProjects(): Promise<ChatProjectChoice[]>;
@@ -679,6 +681,21 @@ export type GatekeeperAppInfo = {
   icon?: AvatarImage;
   /** Разделы, доступные через интерфейс подключённого аккаунта. */
   sections?: import("./gatekeeper").GatekeeperUiSection[];
+  /** Счётчики разделов ещё не посчитаны: меню стоит перечитать один раз позже. */
+  countsPending?: boolean;
+};
+
+/** Сколько хешей сохранённых сборок фрейма браузер присылает в getGatekeeperApp. */
+export const MAX_KNOWN_FRAME_HASHES = 4;
+
+/** Фрейм приложения для страницы оболочки. */
+export type GatekeeperAppFrame = GatekeeperUiFrame & {
+  /** Подключение, которое открыл сервер (он выбирает его сам, если браузер не указал). */
+  accountId: number;
+  /** SHA-256 сборки фрейма, 64 шестнадцатеричных знака. Браузер сверяет с ним сборку перед вставкой. */
+  iframeHtmlSha256: string;
+  /** true — сборка с этим хешем уже есть у браузера, iframeHtml пустой. */
+  iframeHtmlOmitted?: boolean;
 };
 
 // ---------------------------------------------------------------------------

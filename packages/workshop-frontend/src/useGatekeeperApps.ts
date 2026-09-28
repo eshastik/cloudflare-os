@@ -9,6 +9,11 @@ import { useOptionalAuthenticatedApi } from './AuthContext'
 // firing their own. Keyed weakly by the stub, so it's dropped when the authenticated session ends.
 const appsRequestByApi = new WeakMap<object, Promise<GatekeeperAppInfo[]>>()
 
+// Счётчики разделов («Входящие») считаются на сервере в фоне, чтобы не держать меню. Если меню пришло
+// без них (countsPending), его перечитываем один раз за сессию через COUNTS_RETRY_MS.
+export const COUNTS_RETRY_MS = 4_000
+const countsRetried = new WeakSet<object>()
+
 // Mounted useGatekeeperApps() hooks register here so an explicit refresh can prompt them to refetch.
 const refreshListeners = new Set<() => void>()
 
@@ -50,6 +55,11 @@ export function useGatekeeperApps(): GatekeeperAppInfo[] {
       appsRequestByApi.set(api, request)
       // Don't cache a failure permanently — drop it so a later mount can retry.
       request.catch(() => appsRequestByApi.delete(api))
+      request.then(list => {
+        if (!list.some(app => app.countsPending) || countsRetried.has(api)) return
+        countsRetried.add(api)
+        setTimeout(() => { if (appsRequestByApi.get(api) === request) refreshGatekeeperApps(api) }, COUNTS_RETRY_MS)
+      }, () => {})
     }
     let cancelled = false
     request

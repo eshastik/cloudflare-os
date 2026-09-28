@@ -17,6 +17,7 @@ import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import UploadDock from '../UploadDock'
+import GatekeeperSectionLoading from '../GatekeeperSectionLoading'
 import ConnectReturnNotice from '../auth/ConnectReturnNotice'
 
 export const Route = createRootRoute({
@@ -72,8 +73,13 @@ function RootComponent() {
     }
   }
 
+  // Страница приложения шлюза с первого мгновения показывает свой индикатор загрузки раздела, чтобы
+  // вход, проверка настройки и загрузка фрейма выглядели одной загрузкой (GatekeeperSectionLoading).
+  const appPage = pathname.startsWith('/gatekeepers/')
+
   // Loading state
   if (isLoading && !standalone) {
+    if (appPage && !connectionLost) return <div className="h-screen"><GatekeeperSectionLoading /></div>
     return (
       <div className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         {connectionLost && <ConnectionLostBanner />}
@@ -137,6 +143,7 @@ function RootComponent() {
           <Toasty>
             <AuthenticatedShell
               authenticatedApi={authenticatedApi}
+              appPage={appPage}
               connectionLost={connectionLost}
               isWorkspaceEditor={isWorkspaceEditor}
             />
@@ -154,10 +161,12 @@ function RootComponent() {
  */
 function AuthenticatedShell({
   authenticatedApi,
+  appPage,
   connectionLost,
   isWorkspaceEditor,
 }: {
   authenticatedApi: RpcStub<AuthenticatedApi>
+  appPage: boolean
   connectionLost: boolean
   isWorkspaceEditor: boolean
 }) {
@@ -188,6 +197,7 @@ function AuthenticatedShell({
 
   // Still checking onboarding status
   if (onboardingNeeded === null) {
+    if (appPage) return <div className="h-screen"><GatekeeperSectionLoading /></div>
     return (
       <div role="status" className="min-h-screen flex items-center justify-center flex-col gap-4 bg-kumo-base">
         <div className="w-8 h-8 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />

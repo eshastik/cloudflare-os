@@ -28,7 +28,7 @@ test("confirmed budget stop cannot be submitted again and can be archived throug
    window.ResizeObserver=class{observe(){}unobserve(){}disconnect(){}};
    window.matchMedia=()=>({matches:false,media:"",addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}});
    window.MessageChannel=class extends MessageChannel{constructor(){super();ports.push(this.port1,this.port2);}};
-   window.postMessage=(message,origin,transferred)=>{assert.equal(message.type,"handshake");peer=newMessagePortRpcSession(transferred[0],new Host());};
+   window.postMessage=(message,origin,transferred)=>{if(message.type==="gatekeeper-content-ready")return;assert.equal(message.type,"handshake");peer=newMessagePortRpcSession(transferred[0],new Host());};
   }
  });
  // Прежние разделы живут в контейнере #legacy под вкладкой «Ещё»; кнопки ищутся только там.
