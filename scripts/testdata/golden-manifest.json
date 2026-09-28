@@ -736,6 +736,18 @@
             "TelegramBot"
           ],
           "tag": "v2"
+        },
+        {
+          "new_sqlite_classes": [
+            "TelegramPoller"
+          ],
+          "tag": "v3"
+        },
+        {
+          "new_sqlite_classes": [
+            "MnemosLibrary"
+          ],
+          "tag": "v4"
         }
       ],
       "modules": [
@@ -1329,6 +1341,13 @@
             "PendingLogin"
           ],
           "tag": "v2"
+        },
+        {
+          "new_sqlite_classes": [
+            "TelegramPersonalBot",
+            "TelegramBotClaim"
+          ],
+          "tag": "v3"
         }
       ],
       "modules": [
