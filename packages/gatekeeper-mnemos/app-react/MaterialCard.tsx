@@ -37,7 +37,7 @@ export function Highlight({ text, terms }: { text: string; terms?: string[] }) {
   if (!terms?.length) return <>{text}</>;
   const escaped = terms.map(t => t.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&"));
   const pattern = new RegExp("(" + escaped.join("|") + ")", "gi");
-  return <>{text.split(pattern).map((piece, i) => i % 2 ? <mark key={i} className="rounded-[4px] bg-[rgba(29,106,80,.14)] px-[1px] text-inherit">{piece}</mark> : piece)}</>;
+  return <>{text.split(pattern).map((piece, i) => i % 2 ? <mark key={i} className="rounded-[4px] bg-kumo-brand/15 px-[1px] text-inherit">{piece}</mark> : piece)}</>;
 }
 
 /** Папка документа для подписи: путь без имени файла и без ведущей косой черты. */

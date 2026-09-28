@@ -85,6 +85,10 @@
       "types": "./src/accent-theme.ts",
       "import": "./src/accent-theme.ts"
     },
+    "./accent-audit": {
+      "types": "./src/accent-audit.ts",
+      "import": "./src/accent-audit.ts"
+    },
     "./blueprint-template": {
       "types": "./src/blueprint-template.ts",
       "import": "./src/blueprint-template.ts"

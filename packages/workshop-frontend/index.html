@@ -10,13 +10,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Mnemos</title>
     <!-- Признак загрузки до запуска приложения: пока скачивается основной код, страница не пустая.
-         React заменит содержимое #root при первом рендере. Цвета — токены kumo-base/brand. -->
+         React заменит содержимое #root при первом рендере. Цвета нейтральные: личный акцент
+         становится известен только после запуска скрипта, а зелёный Mnemos мелькал бы у всех. -->
     <style>
-      .boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#f4f6f3;color:#66706a;font:14px/20px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-      .boot i{width:32px;height:32px;border:2px solid #1d6a50;border-top-color:transparent;border-radius:50%;animation:boot 0.8s linear infinite}
+      .boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#f5f5f4;color:#6b6b6b;font:14px/20px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+      .boot i{width:32px;height:32px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:boot 0.8s linear infinite}
       @keyframes boot{to{transform:rotate(360deg)}}
       @media (prefers-reduced-motion:reduce){.boot i{animation-duration:2.4s}}
-      @media (prefers-color-scheme:dark){.boot{background:#0b100d;color:#9aa39e}.boot i{border-color:#8cd4b2;border-top-color:transparent}}
+      @media (prefers-color-scheme:dark){.boot{background:#0e0e0f;color:#9d9d9f}}
     </style>
   </head>
   <body>

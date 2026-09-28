@@ -8,6 +8,8 @@ import { Sparkle } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
 import { GadgetClient, ConsoleLogEvent } from '@gadgets/workshop-shared/api'
 import { queueNativeSnapshots, requestNativeSnapshot, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
+import { gadgetAccentVariables, isAccentHex } from '@gadgets/workshop-shared/accent-theme'
+import { useOptionalAccentColor } from './ThemeContext'
 
 // We want to inject Cap'n Web into the Gadget. Luckily it has no dependencies, so we can just take
 // the whole module and embed it. We can import the module using ?raw to get a string of the
@@ -109,6 +111,16 @@ window.addEventListener('click', (event) => {
   anchor.setAttribute('rel', Array.from(rel).join(' '));
 }, true);
 
+// Акцент оболочки: редакторы берут его из переменных --host-accent*. Принимаются только эти имена
+// и только HEX, чтобы сообщение не могло подставить в страницу гаджета произвольный CSS.
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent || event.data?.type !== 'host-accent') return;
+  const vars = event.data.vars || {};
+  for (const name of ['--host-accent', '--host-accent-hover', '--host-accent-text', '--host-accent-tint']) {
+    if (typeof vars[name] === 'string' && /^#[0-9a-f]{6}$/i.test(vars[name])) document.documentElement.style.setProperty(name, vars[name]);
+  }
+});
+
 // Capture unhandled exceptions and promise rejections.
 window.addEventListener('error', (event) => {
   window.parent.postMessage({
@@ -137,9 +149,16 @@ export function gadgetInternalPath(value: unknown): string | null {
   return url.pathname + url.search + url.hash
 }
 
-const createSandboxedHtml = (jsCode: string, readinessId?: string): string => {
+/** Переменные акцента для корня фрейма: первый кадр редактора уже в цвете пользователя. */
+export function hostAccentStyle(accent: string | null): string {
+  if (!accent || !isAccentHex(accent)) return ''
+  return Object.entries(gadgetAccentVariables(accent)).map(([name, value]) => `${name}:${value}`).join(';')
+}
+
+const createSandboxedHtml = (jsCode: string, readinessId?: string, accent: string | null = null): string => {
+  const style = hostAccentStyle(accent)
   return `<!DOCTYPE html>
-<html>
+<html${style ? ` style="${style}"` : ''}>
 <head>
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'none'; script-src data: 'unsafe-inline'; style-src data: 'unsafe-inline'; img-src data:; media-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none';">
 </head>
@@ -181,6 +200,15 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const [isInvalidated, setIsInvalidated] = useState(false)
   const [iframeGeneration, setIframeGeneration] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const accent = useOptionalAccentColor()
+  const accentRef = useRef(accent)
+  accentRef.current = accent
+  // Смена акцента доходит до открытого редактора без перезагрузки фрейма.
+  const sendAccent = () => {
+    const color = accentRef.current
+    if (color && isAccentHex(color)) iframeRef.current?.contentWindow?.postMessage({ type: 'host-accent', vars: gadgetAccentVariables(color) }, '*')
+  }
+  useEffect(sendAccent, [accent])
   const activityVisibleRef = useRef(isVisible)
   activityVisibleRef.current = isVisible
   useEffect(() => {
@@ -365,7 +393,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           const supportsReadiness = /type:\s*["']native-ui-readiness["']/.test(bundle.jsCode)
           resolveSupport(supportsReadiness)
           if (!supportsReadiness) attempt?.finish("abandoned")
-          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId)
+          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId, accentRef.current)
           setSandboxedHtml(html)
         } else {
           resolveSupport(true)
@@ -415,6 +443,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
 
       if (event.data === 'handshake' && event.ports && event.ports[0]) {
         const port = event.ports[0]
+        // Фрейм мог перезагрузиться со старой разметкой: акцент отправляется заново.
+        sendAccent()
         let gadgetStub: any = null
         resetConnection(new Error('Gadget iframe reloaded.'))
         const generation = connectionGenerationRef.current

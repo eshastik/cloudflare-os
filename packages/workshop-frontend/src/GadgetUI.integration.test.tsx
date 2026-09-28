@@ -27,6 +27,10 @@ vi.mock('@cloudflare/kumo', () => ({
 const router = vi.hoisted(() => ({ push: vi.fn<(path: string) => void>() }))
 vi.mock('@tanstack/react-router', () => ({ useRouter: () => ({ history: { push: router.push } }) }))
 
+// Акцент оболочки: по умолчанию его нет (как вне ThemeProvider), тест акцента задаёт свой.
+const theme = vi.hoisted(() => ({ accent: null as string | null }))
+vi.mock('./ThemeContext', () => ({ useOptionalAccentColor: () => theme.accent }))
+
 import GadgetUI from './GadgetUI'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
@@ -208,6 +212,24 @@ describe('GadgetUI RPC recovery', () => {
       await act(async()=>root.render(<GadgetUI gadget={gadget.stub} height="100px" reloadTrigger={1} isVisible={false} readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
       await vi.waitFor(()=>expect(samples.map(s=>s.outcome)).toEqual(['pending','ready','pending','abandoned']))
     } finally { raf.mockRestore() }
+  })
+
+  it('редактор получает акцент оболочки в первой разметке и при смене цвета без перезагрузки фрейма', async () => {
+    theme.accent = '#ae4b14'
+    try {
+      const gadget = fakeGadget('accent', 'document.body.textContent = "accent"')
+      await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
+      await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+      const frame = container.querySelector('iframe')!
+      expect(frame.srcdoc).toContain('<html style="--host-accent:#ae4b14;')
+      const post = vi.spyOn(frame.contentWindow!, 'postMessage')
+      theme.accent = '#176b9a'
+      await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
+      expect(container.querySelector('iframe')).toBe(frame)
+      expect(post).toHaveBeenCalledWith({ type: 'host-accent', vars: expect.objectContaining({ '--host-accent': '#176b9a' }) }, '*')
+      // Фрейм принимает только имена --host-accent* и только HEX.
+      expect(decodeURIComponent(frame.srcdoc)).toContain("/^#[0-9a-f]{6}$/i.test(vars[name])")
+    } finally { theme.accent = null }
   })
 
   it('ссылка гаджета на адрес оболочки открывается на той же странице, только по нажатию и не на служебные адреса', async () => {

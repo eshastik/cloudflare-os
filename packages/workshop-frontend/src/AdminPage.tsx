@@ -553,7 +553,9 @@ export default function AdminPage() {
                       : 'border-kumo-line text-kumo-subtle hover:bg-kumo-tint'
                   }`}
                 >
+                  {/* Образец цвета — данные выбора, а не акцент интерфейса. */}
                   <span
+                    data-color-sample=""
                     className="w-4 h-4 rounded-full border border-kumo-line"
                     style={{ background: swatch }}
                   />
@@ -567,6 +569,7 @@ export default function AdminPage() {
             <label className="flex items-center gap-2 text-sm text-kumo-default cursor-pointer">
               <input
                 type="color"
+                data-color-sample=""
                 value={accentDraft || DEFAULT_ACCENT_COLOR}
                 onChange={(e) => setAccentDraft(e.target.value)}
                 className="w-9 h-9 rounded-md border border-kumo-line bg-transparent cursor-pointer p-0.5"

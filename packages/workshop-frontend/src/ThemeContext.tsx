@@ -155,6 +155,11 @@ export function useTheme() {
   return context
 }
 
+/** Действующий цвет акцента или null вне ThemeProvider (встроенные экраны в тестах). */
+export function useOptionalAccentColor(): string | null {
+  return useContext(ThemeContext)?.accentColor ?? null
+}
+
 /** Сверяет оформление с аккаунтом после входа. Вне ThemeProvider ничего не делает. */
 export function useAccountAppearance(account: AppearanceAccount, userId: string | null | undefined): void {
   const attach = useContext(ThemeContext)?.attachAccount

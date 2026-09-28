@@ -18,7 +18,7 @@ export default function AppearanceSettings({open,onOpenChange}: {open:boolean;on
       </section>
       <section className="mt-5" aria-label="Цвет акцента"><h3 className="m-0 mb-2 text-[15px] font-semibold text-kumo-default">Цвет акцента</h3>
         <div className="grid grid-cols-2 gap-2">{ACCENT_PALETTE.map(option=><button key={option.id} type="button" aria-pressed={accentColor.toLowerCase()===option.color} onClick={()=>setAccentChoice(option.id)} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-kumo-fill px-3 py-2 text-left text-[14px] text-kumo-default hover:bg-kumo-tint aria-pressed:border-kumo-brand aria-pressed:bg-kumo-tint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-kumo-ring">
-          <span className="h-5 w-5 shrink-0 rounded-full border border-black/10" style={{backgroundColor:option.color}} aria-hidden="true" />{option.name}
+          <span data-color-sample="" className="h-5 w-5 shrink-0 rounded-full border border-black/10" style={{backgroundColor:option.color}} aria-hidden="true" />{option.name}
         </button>)}</div>
       </section>
       {!accentSaved && <p role="status" className="mt-3 mb-0 text-[14px] text-kumo-subtle">Оформление применено, но в аккаунт не сохранилось. Выберите его снова, когда связь восстановится.</p>}

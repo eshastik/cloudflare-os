@@ -49,7 +49,7 @@ function readInvite(request: Request): { code: string; profile?: string } | unde
 // получает исходная вкладка. Подключение из настроек открывается без opener и, как прежде,
 // переходит на страницу Mnemos в оболочке.
 export const FINISH_SCRIPT = `if(window.opener){window.close()}else{location.replace("/gatekeepers/mnemos")}`;
-const FINISH_PAGE = `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Вход выполнен</title><p style="font-family:system-ui,sans-serif;color:#18201C;text-align:center;margin-top:40px">Вход выполнен. <a href="/gatekeepers/mnemos" style="color:#1D6A50">Перейти в Mnemos</a></p><script>${FINISH_SCRIPT}</script></html>`;
+const FINISH_PAGE = `<!doctype html><html lang="ru"><meta charset="utf-8"><title>Вход выполнен</title><p style="font-family:system-ui,sans-serif;color:#18201C;text-align:center;margin-top:40px">Вход выполнен. <a href="/gatekeepers/mnemos" style="color:inherit">Перейти в Mnemos</a></p><script>${FINISH_SCRIPT}</script></html>`;
 let finishHash: Promise<string> | undefined;
 export function finishScriptHash(): Promise<string> {
   return finishHash ??= crypto.subtle.digest("SHA-256", new TextEncoder().encode(FINISH_SCRIPT))
