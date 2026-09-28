@@ -4,7 +4,8 @@ import { Switch, Textarea, Input, Button, Tabs, useKumoToastManager } from '@clo
 import { Hexagon, ShieldWarning, UserPlus } from '@phosphor-icons/react'
 import { useAuthenticatedApi } from './AuthContext'
 import { AdminApi, AdminFormat, AdminResourceVendor, AmbientGatekeeperMode, MAX_INSTANCE_INSTRUCTIONS_LENGTH, MAX_ANNOUNCEMENT_LENGTH, MAX_SITE_NAME_LENGTH, DEFAULT_SITE_NAME, BannerColor, BANNER_COLORS, DEFAULT_BANNER_COLOR } from '@gadgets/workshop-shared/api'
-import { applyAccentColor, DEFAULT_ACCENT_COLOR } from './theme'
+import { DEFAULT_ACCENT_COLOR } from './theme'
+import { useTheme } from './ThemeContext'
 import { cacheBustSiteLogoUrl, prepareSiteLogo } from './siteLogoUtils'
 import SiteLogo from './components/SiteLogo'
 import { useDocumentTitle } from './useDocumentTitle'
@@ -143,12 +144,13 @@ export default function AdminPage() {
     }
   }, [isAdmin, authenticatedApi])
 
-  // Live-preview the draft accent color across the whole app while the admin page is open. On leave
-  // (or before each change) revert to the last-saved value so an unsaved preview doesn't stick.
+  // Предпросмотр только несохранённого черновика. Пока черновик не тронут, действует личный цвет
+  // пользователя; при уходе со страницы провайдер темы возвращает его сам.
+  const { previewAccentColor, setDeploymentAccentColor } = useTheme()
   useEffect(() => {
-    applyAccentColor(accentDraft)
-    return () => { applyAccentColor(savedAccent) }
-  }, [accentDraft, savedAccent])
+    previewAccentColor(accentDraft !== savedAccent ? (accentDraft || DEFAULT_ACCENT_COLOR) : null)
+  }, [accentDraft, savedAccent, previewAccentColor])
+  useEffect(() => () => previewAccentColor(null), [previewAccentColor])
 
   // Re-fetch just the gatekeeper/resource state (used to revert an optimistic toggle on error).
   // Leaves the General-tab drafts untouched.
@@ -270,6 +272,7 @@ export default function AdminPage() {
     try {
       await admin.api.setAccentColor(accentDraft)
       setSavedAccent(accentDraft)
+      setDeploymentAccentColor(accentDraft)
       toasts.add({ title: 'Цвет сохранён', variant: 'success' })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось сохранить цвет'

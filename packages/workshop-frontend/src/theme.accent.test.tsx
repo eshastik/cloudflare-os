@@ -49,3 +49,11 @@ it("Личный выбор применяется сразу, пережива�
  await React.act(async()=>buttons[1].click());expect(document.documentElement.getAttribute("data-mode")).toBe("dark");expect(document.documentElement.style.getPropertyValue("--color-kumo-brand")).toBe("#ac3443");
  await React.act(async()=>buttons[2].click());expect(document.documentElement.style.getPropertyValue("--color-kumo-brand")).toBe("#21664f");expect(readAccentChoice()).toBe("mnemos");
 });
+it("После перезагрузки выбор из браузера сразу применяется к корню документа, в тёмной теме тоже",async()=>{
+ window.localStorage.setItem("mnemos:accent-choice","plum");window.localStorage.setItem("gadgets:theme-mode","dark");
+ root=createRoot(container);await React.act(async()=>root!.render(<ThemeProvider deploymentAccentColor="#ff0000"><span/></ThemeProvider>));
+ const style=document.documentElement.style,s=accentShades("#705575");
+ expect(document.documentElement.getAttribute("data-mode")).toBe("dark");
+ expect(style.getPropertyValue("--color-kumo-brand")).toBe(s.brand);
+ expect(style.getPropertyValue("--text-color-kumo-link")).toBe(`light-dark(${s.lightText}, ${s.darkText})`);
+});

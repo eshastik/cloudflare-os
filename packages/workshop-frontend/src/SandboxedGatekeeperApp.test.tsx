@@ -19,9 +19,16 @@ import UploadDock from "./UploadDock";
 import { uploadCenter } from "./uploadCenter";
 import { prepareForLogout } from "./authNavigation";
 
-vi.mock("./ThemeContext", () => ({
-  useTheme: () => ({ resolvedThemeMode: "light" }),
-}));
+// Цвет акцента меняет тест: фрейм должен получить новый цвет без перезагрузки.
+const theme = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return { accentColor: "#21664f", listeners, set(color: string) { this.accentColor = color; for (const l of listeners) l(); } };
+});
+vi.mock("./ThemeContext", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (l: () => void) => { theme.listeners.add(l); return () => { theme.listeners.delete(l); }; };
+  return { useTheme: () => ({ resolvedThemeMode: "light", accentColor: useSyncExternalStore(subscribe, () => theme.accentColor) }) };
+});
 
 vi.mock("./errorReporting", () => ({
   forwardTrustedFrameError: () => false,
@@ -51,6 +58,7 @@ interface TestHost extends RpcTarget {
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
   openPrompt(prompt: string): Promise<void>;
+  subscribeAccent(receiver: RpcTarget): Promise<string>;
   uploadText(scope: string, text: string): Promise<string>;
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
   downloadText(scope: string, resource: string, version: string, side: number): Promise<string>;
@@ -100,6 +108,27 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await vi.waitFor(() => expect(posted).toHaveBeenCalledWith({ type: "gatekeeper-location" }, "*"));
     await act(async () => { await host!.openSection("documents"); await vi.waitFor(() => expect(router.state.location.search).toMatchObject({ section: "documents" })); });
     expect(router.state.location.search).not.toHaveProperty("document");
+  });
+
+  it("цвет акцента: фрейм получает текущий при подписке и новый сразу после выбора", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    theme.set("#ac3443");
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute();
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId", component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: ["/gatekeepers/mnemos"] }), routeTree: rootRoute.addChildren([appRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const { port1, port2 } = new MessageChannel();
+    host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "handshake" }, origin: "null", source: iframe.contentWindow, ports: [port2] }));
+    const received: string[] = [];
+    class Receiver extends RpcTarget { setAccentColor(color: string) { received.push(color); } }
+    expect(await host.subscribeAccent(new Receiver())).toBe("#ac3443");
+    await act(async () => theme.set("#176b9a"));
+    await vi.waitFor(() => expect(received).toEqual(["#176b9a"]));
+    theme.set("#21664f");
   });
 
   it("«Подключить GitHub»: билет из фрейма меняется на адрес GitHub запросом со страницы оболочки", async () => {
