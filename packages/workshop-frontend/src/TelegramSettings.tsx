@@ -5,6 +5,7 @@ import { threadsReady, type TelegramBotState, type TelegramThreads } from '@gadg
 import { useAuthenticatedApi } from './AuthContext'
 import { useDocumentTitle } from './useDocumentTitle'
 import { copyToClipboard } from './clipboard'
+import { QrCode } from './components/QrCode'
 import { GROUP_CARD, PAGE_TITLE, PRIMARY_PILL, SECONDARY_PILL } from './components/AppShell/pageStyles'
 
 // «Telegram» в личных настройках (ADR 0027 Mnemos, этап 1): свой бот у каждого человека.
@@ -258,19 +259,33 @@ function PairingStep({ state, onChange }: { state: Extract<TelegramBotState, { s
           <div><button type="button" className={PRIMARY_PILL} disabled={!!busy} onClick={() => { void act('renew') }}>{busy === 'renew' ? 'Получаем код…' : 'Получить новый код'}</button></div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          <p className="m-0 text-[14px] leading-5 text-kumo-default">Отправьте боту эту команду из своего Telegram. Бот запомнит ваш аккаунт и будет отвечать только ему.</p>
-          <div className="flex items-stretch overflow-hidden rounded-xl border border-kumo-fill-hover bg-kumo-base">
-            <code aria-label="Команда для бота" className="flex min-w-0 flex-1 items-center px-4 py-3 font-mono text-[17px] leading-6 tracking-[0.02em] text-kumo-strong break-all select-all sm:text-[19px]">{command}</code>
-            <button type="button" onClick={() => { void copy() }} aria-label="Скопировать команду"
-              className="grid w-12 shrink-0 cursor-pointer place-items-center border-l border-kumo-fill-hover text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring">
-              {copied ? <Check size={18} className="text-kumo-brand" /> : <Copy size={18} />}
-            </button>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <p className="m-0 text-[14px] leading-5 text-kumo-default">Откройте бота и нажмите «Запустить» — Telegram сам отправит код. Бот запомнит ваш аккаунт и будет отвечать только ему.</p>
+              <div><a href={link} target="_blank" rel="noopener noreferrer" className={PRIMARY_PILL}>
+                <TelegramLogo size={18} weight="fill" className="mr-1.5" aria-hidden="true" />Открыть бота в Telegram
+              </a></div>
+              <span role="status" className="text-[13px] leading-5 text-kumo-subtle">{copied ? 'Команда скопирована.' : `Код действует до ${timeOf(state.expiresAt)}. Ждём сообщение от Telegram…`}</span>
+            </div>
+            {/* На телефоне сканировать нечем: QR нужен, чтобы с компьютера открыть бота на телефоне. */}
+            <figure className="m-0 flex shrink-0 flex-col items-center gap-1.5 touch:hidden">
+              <QrCode value={link} label="QR-код: открыть бота в Telegram на телефоне" className="h-[148px] w-[148px] border border-kumo-fill-hover" />
+              <figcaption className="text-[12px] leading-4 text-kumo-subtle">Или отсканируйте телефоном</figcaption>
+            </figure>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <a href={link} target="_blank" rel="noopener noreferrer" className={PRIMARY_PILL}>Открыть бота в Telegram</a>
-            <span role="status" className="text-[13px] text-kumo-subtle">{copied ? 'Команда скопирована.' : `Код действует до ${timeOf(state.expiresAt)}. Ждём сообщение от Telegram…`}</span>
-          </div>
+          <details className="group rounded-xl border border-kumo-fill-hover">
+            <summary className="flex min-h-10 cursor-pointer list-none items-center px-4 text-[13px] text-kumo-subtle hover:text-kumo-default [&::-webkit-details-marker]:hidden">
+              Не открывается? Отправьте команду вручную
+            </summary>
+            <div className="flex items-stretch overflow-hidden border-t border-kumo-fill-hover bg-kumo-base">
+              <code aria-label="Команда для бота" className="flex min-w-0 flex-1 items-center px-4 py-3 font-mono text-[16px] leading-6 tracking-[0.02em] text-kumo-strong break-all select-all">{command}</code>
+              <button type="button" onClick={() => { void copy() }} aria-label="Скопировать команду"
+                className="grid w-12 shrink-0 cursor-pointer place-items-center border-l border-kumo-fill-hover text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-default focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-ring">
+                {copied ? <Check size={18} className="text-kumo-brand" /> : <Copy size={18} />}
+              </button>
+            </div>
+          </details>
         </div>
       )}
       {error && <p role="alert" className="m-0 text-[13px] text-kumo-danger">{error}</p>}
