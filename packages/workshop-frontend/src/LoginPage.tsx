@@ -111,7 +111,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
         </h1>
         <p className="m-0 mb-2 text-center text-[15px] text-kumo-subtle">
           {invited
-            ? 'Нажмите «Принять приглашение»: откроется окно Mnemos, где вы получите код на почту или зададите пароль.'
+            ? 'Нажмите «Принять приглашение»: откроется страница Mnemos, где вы получите код на почту или зададите пароль.'
             : 'Память вашей компании и агент, который с ней работает.'}
         </p>
 
@@ -120,7 +120,7 @@ export default function LoginPage({ rpcStub, onLoginSuccess }: LoginPageProps) {
             {!passwordAuthEnabled && error && (
               <Banner variant="error" title={error} className="mb-4" />
             )}
-            <OAuthButtons rpcStub={rpcStub} vendors={authVendors} onSuccess={onLoginSuccess}
+            <OAuthButtons vendors={authVendors}
               primary={mnemos ? { vendorId: MNEMOS_VENDOR_ID, label: invited ? 'Принять приглашение' : 'Войти' } : undefined} />
           </div>
         )}

@@ -2,6 +2,7 @@ import { prepareForLogout } from './authNavigation'
 import { useState, useEffect, useRef } from 'react'
 import { RpcStub } from 'capnweb'
 import { PublicApi, AuthenticatedApi } from '@gadgets/workshop-shared/api'
+import { completeLoginReturn, hasLoginCode } from './auth/loginReturn'
 
 const CF_ACCESS_MODE = import.meta.env.VITE_CF_ACCESS_MODE === 'true'
 
@@ -28,8 +29,16 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
   authenticatedApiRef.current = authState.authenticatedApi
 
   useEffect(() => {
+    let cancelled = false
     if (CF_ACCESS_MODE) {
       authenticateWithCfAccess()
+    } else if (hasLoginCode()) {
+      // Возврат от гейткипера с одноразовым кодом: меняем его на ключ сеанса.
+      completeLoginReturn(publicApi).then(token => {
+        if (cancelled) return
+        if (token) authenticateWithToken(token)
+        else setAuthState(prev => ({ ...prev, isLoading: false }))
+      })
     } else {
       const storedToken = localStorage.getItem('authToken')
       if (storedToken) {
@@ -39,6 +48,7 @@ export function useAuth(publicApi: RpcStub<PublicApi>) {
       }
     }
     return () => {
+      cancelled = true
       // The authenticateWithXxx functions also dispose the old stub via their setAuthState
       // updater, so this may double-dispose on reconnect. That's fine — dispose is idempotent.
       authenticatedApiRef.current?.[Symbol.dispose]()

@@ -22,6 +22,8 @@ export default defineConfig(({ mode }) => {
         '/api/client-errors': `http://${backendHost}`,
         '/blueprint-screenshot': `http://${backendHost}`,
         '/api/site-logo': `http://${backendHost}`,
+        // Вход через гейткипер: уход на /api/login/start и возврат через /api/login/finish.
+        '/api/login': `http://${backendHost}`,
       },
     },
     build: {

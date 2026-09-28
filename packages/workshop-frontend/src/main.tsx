@@ -14,6 +14,7 @@ import './styles.css'
 import FrontendErrorBoundary from './FrontendErrorBoundary'
 import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
 import { applySiteFavicon, cacheBustSiteLogoUrl } from './siteLogoUtils'
+import { captureLoginReturn } from './auth/loginReturn'
 
 // ---------------------------------------------------------------------------
 // Dev auto-login: if VITE_DEV_AUTO_LOGIN=true, automatically create/login
@@ -121,6 +122,8 @@ installWorkshopErrorReporting()
 let currentStub = startConnection();
 currentStub.onRpcBroken(handleBroken);
 
+// Код входа забирается из адреса до запуска маршрутизатора, чтобы он не попал в его историю.
+captureLoginReturn()
 const router = createRouter()
 applyStoredThemeMode()
 

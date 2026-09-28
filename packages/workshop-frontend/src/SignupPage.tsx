@@ -208,7 +208,7 @@ export default function SignupPage({ rpcStub }: SignupPageProps) {
                 <div className="h-px flex-1 bg-kumo-line" />
               </div>
             )}
-            <OAuthButtons rpcStub={rpcStub} vendors={authVendors} />
+            <OAuthButtons vendors={authVendors} />
           </div>
         )}
 

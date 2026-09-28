@@ -1,103 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
-import { RpcStub } from 'capnweb'
-import { PublicApi, AuthVendorInfo } from '@gadgets/workshop-shared/api'
+import { useEffect, useState } from 'react'
+import { AuthVendorInfo } from '@gadgets/workshop-shared/api'
 import { Button, Banner } from '@cloudflare/kumo'
+import { loginReturnError, startGatekeeperLogin } from '../../auth/loginReturn'
 
 interface OAuthButtonsProps {
-  rpcStub: RpcStub<PublicApi>
   vendors: AuthVendorInfo[]
-  onSuccess?: () => void
   /** Основной способ входа: одна крупная кнопка вместо «Войти через …». */
   primary?: { vendorId: string; label: string }
 }
 
-/** Сколько ждать результата после закрытия окна входа: окно Mnemos закрывается само сразу после
- * выдачи сеанса, и ответ по RPC может прийти на мгновение позже. */
-export const POPUP_CLOSE_GRACE_MS = 3000
-
-// Renders a sign-in button per auth-capable gatekeeper vendor. Clicking opens the gatekeeper's
-// OAuth popup (which self-closes) and waits for the result over RPC; on success the session token is
-// stored and the app re-authenticates.
-export default function OAuthButtons({ rpcStub, vendors, onSuccess, primary }: OAuthButtonsProps) {
-  const [error, setError] = useState<string | null>(null)
+// Кнопка входа на каждый гейткипер, умеющий вход. Нажатие уводит эту же страницу к гейткиперу;
+// после входа он возвращает её сюда с одноразовым кодом (auth/loginReturn.ts). Всплывающих окон
+// нет: на телефоне их не бывает, а фоновая вкладка теряет соединение.
+export default function OAuthButtons({ vendors, primary }: OAuthButtonsProps) {
+  const [error] = useState<string | null>(() => loginReturnError())
   const [pending, setPending] = useState<string | null>(null)
 
-  // Track the pop-up-poll interval, the in-flight login RPC, and mounted state so we can stop a
-  // sign-in attempt that's still running if the component unmounts (e.g. the user navigates away
-  // mid-login): clear the poller, dispose the RPC (Cap'n Web treats this as a best-effort cancel and
-  // frees the client-side pending call), and avoid updating state on an unmounted component.
-  const pollRef = useRef<number | null>(null)
-  const loginRpcRef = useRef<Disposable | null>(null)
-  const mountedRef = useRef(true)
+  // «Назад» из гейткипера в Safari показывает страницу из кэша вместе с «Переходим ко входу…»:
+  // кнопку надо оживить.
   useEffect(() => {
-    // Re-assert on (re)mount: under StrictMode the effect runs mount→cleanup→mount, and the cleanup
-    // below sets this false. Without resetting here it would stay false for the component's whole
-    // life, causing a successful login result to be silently dropped by the `!mountedRef.current`
-    // guards below.
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      if (pollRef.current !== null) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-      if (loginRpcRef.current) {
-        try { loginRpcRef.current[Symbol.dispose]() } catch { /* already settled/disposed */ }
-        loginRpcRef.current = null
-      }
-    }
+    const restore = (event: PageTransitionEvent) => { if (event.persisted) setPending(null) }
+    window.addEventListener('pageshow', restore)
+    return () => window.removeEventListener('pageshow', restore)
   }, [])
 
   if (vendors.length === 0) return null
 
-  const start = async (vendorId: string) => {
-    setError(null)
+  const start = (vendorId: string) => {
     setPending(vendorId)
-    try {
-      const { url, attempt } = await rpcStub.startGatekeeperLogin(vendorId)
-      // `attempt` is the capability to receive the session token; track it so we can dispose it
-      // (cancelling the wait server-side) if the component unmounts mid-login.
-      loginRpcRef.current = attempt as unknown as Disposable
-      // NB: don't pass "noopener" — window.open() returns null with it, so we couldn't tell a real
-      // pop-up block from a successful open (nor watch for the user closing it).
-      const popup = window.open(url, 'gatekeeper-login', 'popup,width=520,height=680')
-      if (!popup) {
-        try { (attempt as unknown as Disposable)[Symbol.dispose]() } catch { /* already disposed */ }
-        loginRpcRef.current = null
-        throw new Error('Браузер заблокировал окно входа. Разрешите всплывающие окна и повторите попытку.')
-      }
-      // Resolve when the gatekeeper finishes, or reject if the user closes the pop-up first.
-      const token = await new Promise<string>((resolve, reject) => {
-        let settled = false
-        const finish = (fn: () => void) => {
-          if (settled) return
-          settled = true
-          if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null }
-          // Dispose the attempt stub: cancels the in-flight wait() (e.g. pop-up closed), no-op if it
-          // already settled.
-          try { (attempt as unknown as Disposable)[Symbol.dispose]() } catch { /* already settled */ }
-          loginRpcRef.current = null
-          fn()
-        }
-        let closedAt: number | null = null
-        pollRef.current = window.setInterval(() => {
-          if (!popup.closed) return
-          closedAt ??= Date.now()
-          if (Date.now() - closedAt >= POPUP_CLOSE_GRACE_MS) finish(() => reject(new Error('Вход отменён.')))
-        }, 500)
-        attempt.wait()
-          .then(t => finish(() => resolve(t)))
-          .catch(e => finish(() => reject(e instanceof Error ? e : new Error('Не удалось войти'))))
-      })
-      if (!mountedRef.current) return  // user navigated away mid-flow; drop the result
-      localStorage.setItem('authToken', token)
-      if (onSuccess) onSuccess()
-      else window.location.reload()
-    } catch (err) {
-      if (!mountedRef.current) return
-      setError(err instanceof Error ? err.message : 'Не удалось войти')
-      setPending(null)
-    }
+    startGatekeeperLogin(vendorId)
   }
 
   return (
@@ -111,7 +42,7 @@ export default function OAuthButtons({ rpcStub, vendors, onSuccess, primary }: O
           disabled={pending !== null}
           className="flex h-[50px] w-full cursor-pointer items-center justify-center gap-2 rounded-[14px] border-0 bg-kumo-brand text-[15px] font-semibold text-white transition-colors hover:bg-kumo-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {pending === vendor.vendorId ? 'Завершите вход в открывшемся окне…' : primary.label}
+          {pending === vendor.vendorId ? 'Переходим ко входу…' : primary.label}
         </button>
       ) : (
         <Button

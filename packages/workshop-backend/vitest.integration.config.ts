@@ -5,6 +5,8 @@ import { defineConfig } from "vitest/config";
 const EXPECTED_OPEN_ERROR_CODES = new Set([
   "WORKSPACE_NOT_FOUND",
   "WORKSPACE_ACCESS_DENIED",
+  // Отказ обмена кода входа (повтор, чужой браузер, чужая страница).
+  "LOGIN_CODE_REJECTED",
 ]);
 
 export default defineConfig({

@@ -859,9 +859,17 @@ export type ResourceConfiguratorFrame = GatekeeperUiFrame;
 // method). `resourceUrlPatterns`, if given, limits the connection to the authorization needed for
 // those grantable resource types; if omitted, authorization for all the vendor's resource types
 // is requested.
+//
+// `returnPath`, if given, is a path on the shell's own origin (it starts with a single "/"). When
+// the flow completes, the gatekeeper sends the browser there (HTTP 303, same tab) instead of
+// closing its window: on phones there are no pop-ups, so the flow runs in the tab the user started
+// it from. Gatekeepers must accept only such paths, never a full URL. On success the gatekeeper
+// appends `?handle=<returnHandle>` from `callback.complete()`; if the flow fails after the
+// gatekeeper verified its own browser binding, it sends the browser to `returnPath?error=failed`.
 export type GatekeeperConnectOptions = {
   scopes?: "auth" | "full";
   resourceUrlPatterns?: string[];
+  returnPath?: string;
 };
 
 export interface GatekeeperVendor extends WorkerEntrypoint {
@@ -943,7 +951,12 @@ export interface GatekeeperConnectCallback extends WorkerEntrypoint {
   // the Workshop to proactively show the account as expired in the UI without waiting for an
   // operation to fail. If not provided, the system relies on the gatekeeper calling
   // `credentialsExpired()` when a refresh or authorization failure is detected.
-  complete(user: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void>;
+  //
+  // The Workshop may return `returnHandle`: a one-time token the gatekeeper must append to the
+  // shell's `returnPath` as `?handle=<returnHandle>` when it sends the browser back. It proves to
+  // the Workshop which browser actually finished the flow. Gatekeepers ignore it without a
+  // `returnPath`.
+  complete(user: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void | { returnHandle?: string }>;
 
   // Note: If the authorization flow fails, the error can be displayed directly to the user, and
   // the callback can be discarded.

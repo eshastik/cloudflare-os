@@ -1,18 +1,14 @@
 // Sign-in via authentication gatekeepers.
 //
 // Unlike the normal connect-account flow (which runs for an already-logged-in user), login happens
-// before we know who the user is. The PublicApi starts a gatekeeper connect flow (in "auth" scope
-// mode) with a `LoginConnectCallbackImpl` as the callback and a `PendingLogin` DO to bridge the
-// result back to the waiting browser:
+// before we know who the user is. Вход идёт переходами в одной вкладке (см. login-return.ts):
 //
-//   1. PublicApi.startGatekeeperLogin(vendorId) creates a PendingLogin DO (keyed by a random DO id),
-//      hands the gatekeeper a LoginConnectCallbackImpl, and returns {url, attempt}, where `attempt`
-//      is an RpcStub wrapping the DO (so the client awaits via a capability, never a guessable id).
-//   2. The browser opens `url` (the gatekeeper's self-closing OAuth popup) and calls
-//      `attempt.wait()`, which blocks on the PendingLogin DO.
-//   3. When the gatekeeper finishes, it calls LoginConnectCallbackImpl.complete(user). We read the
+//   1. GET /api/login/start заводит PendingLogin DO, отдаёт гейткиперу LoginConnectCallbackImpl и
+//      путь возврата /api/login/finish и уводит браузер к гейткиперу.
+//   2. When the gatekeeper finishes, it calls LoginConnectCallbackImpl.complete(user). We read the
 //      verified email, resolve/create the email-keyed user DO, mint a session, and deliver the token
-//      to the PendingLogin DO, which resolves the awaiting RPC.
+//      to the PendingLogin DO.
+//   3. /api/login/finish выдаёт одноразовый код, приложение меняет его на ключ сеанса по RPC.
 //
 // Sign-in only requests minimal scopes and the gatekeeper grant is transient (it self-destructs
 // shortly after we read the email) — so login does NOT create a persistent connected account.
@@ -25,56 +21,32 @@ import { createWorkshopLogger } from "../observability";
 import { gatekeeperLoginPolicy } from "./login-policy.js";
 import { readAdminConfig } from "../admin-config.js";
 import { shellLoginTarget } from "./login-aliases.js";
+import { PendingLoginState, type LoginFailure } from "./login-return.js";
 import type { UserDurableObject } from "../user.js";
 
 const logger = createWorkshopLogger("workshop.auth");
 
-type PendingResult = { token: string } | { error: string };
-
-// Bridges a login result from the (separate) OAuth-callback invocation back to the waiting browser.
-//
-// This DO holds no durable storage: a login normally completes within seconds, and the in-flight
-// awaitResult() request keeps the DO alive so the in-memory waiter is reachable when deliver()/fail()
-// fire. If the attempt is abandoned, the client disposes the awaiting RPC (the `attempt` stub) and
-// the DO is simply evicted — no alarm or cleanup needed.
+// Один вход через гейткипер: хеш секрета браузера, путь возврата, ключ сеанса до обмена и хеш
+// одноразового кода. По будильнику на сроке входа всё стирается.
 export class PendingLogin extends DurableObject<Cloudflare.Env> {
-  // Awaiters from in-flight awaitResult() calls, resolved/rejected when the result arrives.
-  #waiters: { resolve: (token: string) => void; reject: (err: Error) => void }[] = [];
-  // Stash for the rare case deliver()/fail() arrives before awaitResult() registers a waiter.
-  #result?: PendingResult;
+  #state = new PendingLoginState(this.ctx.storage.kv, () => Date.now());
 
-  // Block until the login completes (or fails).
-  async awaitResult(): Promise<string> {
-    if (this.#result) {
-      const result = this.#result;
-      this.#result = undefined;  // one-time use
-      if ("token" in result) return result.token;
-      throw new Error(result.error);
-    }
-    return await new Promise<string>((resolve, reject) => {
-      this.#waiters.push({ resolve, reject });
-    });
+  async begin(secretHash: string, returnTo: string): Promise<number> {
+    const deadline = await this.#state.begin(secretHash, returnTo);
+    await this.ctx.storage.setAlarm(deadline);
+    return deadline;
   }
-
-  // Called by LoginConnectCallbackImpl on success: resolve the awaiter (or stash the token if none
-  // is waiting yet).
-  async deliver(token: string): Promise<void> {
-    if (this.#waiters.length > 0) {
-      for (const w of this.#waiters) w.resolve(token);
-      this.#waiters = [];
-    } else {
-      this.#result = { token };
-    }
+  async deliver(token: string): Promise<string> { return this.#state.deliver(token); }
+  async fail(reason: LoginFailure): Promise<string> { return this.#state.fail(reason); }
+  async abandon(handle: string): Promise<void> { await this.#state.abandon(handle); }
+  async abandonBrowser(secret: string): Promise<string | null> { return this.#state.abandonBrowser(secret); }
+  async issueCode(secret: string, handle: string) {
+    const result = await this.#state.issueCode(secret, handle);
+    if (result?.codeDeadline) await this.ctx.storage.setAlarm(result.codeDeadline);
+    return result;
   }
-
-  async fail(reason: string): Promise<void> {
-    if (this.#waiters.length > 0) {
-      for (const w of this.#waiters) w.reject(new Error(reason));
-      this.#waiters = [];
-    } else {
-      this.#result = { error: reason };
-    }
-  }
+  async redeem(secret: string, code: string): Promise<string | null> { return this.#state.redeem(secret, code); }
+  async alarm(): Promise<void> { this.ctx.storage.kv.delete("login"); }
 }
 
 type LoginCallbackProps = { pendingId: string; vendorId: string };
@@ -94,7 +66,7 @@ export async function signInViaGatekeeper(
   // Привязанная учётная запись обязана уже существовать: вместо неё пустую не заводим.
   const secret = await userStub.loginOrCreateViaGatekeeper(email, policy.allowCreate && !target.aliased);
   if (secret === null) return null;
-  // For Cloudflare, signing in also links the account for AI Gateway billing: startGatekeeperLogin
+  // For Cloudflare, signing in also links the account for AI Gateway billing: the login start
   // requested full (non-transient) scopes, so persist the grant as a connected account before
   // handing back the session. Other providers use minimal, transient sign-in grants (no persist).
   // Mnemos тоже: вход в оболочку через него сразу даёт подключённый Mnemos без второго входа.
@@ -112,12 +84,16 @@ export class LoginConnectCallbackImpl
     return this.ctx.exports.PendingLogin.get(id);
   }
 
-  async complete(account: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void> {
+  // Возвращает признак результата «<id входа>.<секрет>»: гейткипер отдаёт его браузеру, прошедшему
+  // вход, в адресе возврата. Код входа выдаётся только браузеру с этим признаком и cookie входа
+  // (auth/login-return.ts).
+  async complete(account: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<{ returnHandle: string }> {
     const loginLogger = logger.with({
       operation: "gatekeeper.login",
       vendorId: this.ctx.props.vendorId,
     });
     const pending = this.#pending();
+    const handle = (secret: string) => ({ returnHandle: `${this.ctx.props.pendingId}.${secret}` });
     // `account` is a call parameter, so Cap'n Web disposes it automatically when this method
     // returns — no explicit disposal needed. We read the verified email to resolve/create the user.
     // The email's local-part seeds the initial display name, like the Cloudflare Access flow.
@@ -127,8 +103,7 @@ export class LoginConnectCallbackImpl
         loginLogger.info("gatekeeper login finished", {
           event: "gatekeeper.login.finished", outcome: "no_email",
         });
-        await pending.fail("This account has no verified email, so it can't be used to sign in.");
-        return;
+        return handle(await pending.fail("no_email"));
       }
       const signupsEnabled = (await readAdminConfig(this.env)).signupsEnabled;
       const token = await signInViaGatekeeper(this.ctx.exports.UserDurableObject, this.env, email,
@@ -138,13 +113,13 @@ export class LoginConnectCallbackImpl
         loginLogger.info("gatekeeper login finished", {
           event: "gatekeeper.login.finished", outcome: "signups_disabled",
         });
-        await pending.fail("New sign-ups are currently disabled on this deployment.");
-        return;
+        return handle(await pending.fail("signups_disabled"));
       }
-      await pending.deliver(token);
+      const result = handle(await pending.deliver(token));
       loginLogger.info("gatekeeper login finished", {
         event: "gatekeeper.login.finished", outcome: "ok",
       });
+      return result;
     } catch (err) {
       loginLogger.error("gatekeeper login failed", {
         event: "gatekeeper.login.failed", error: err,
@@ -152,7 +127,7 @@ export class LoginConnectCallbackImpl
       loginLogger.info("gatekeeper login finished", {
         event: "gatekeeper.login.finished", outcome: "error",
       });
-      await pending.fail("Sign-in failed. Please try again.");
+      return handle(await pending.fail("failed"));
     }
   }
 

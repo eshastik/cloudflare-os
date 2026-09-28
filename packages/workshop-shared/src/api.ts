@@ -34,29 +34,18 @@ export const SERVICE_SALT = new Uint8Array([
   0xd9, 0x4e, 0x54, 0x1d, 0x29, 0xc1, 0x03, 0x74, 0x73, 0x7e, 0xb3, 0xe3, 0x34, 0x6d, 0x8f, 0x21
 ]);
 
-// A pending gatekeeper sign-in attempt, returned by `PublicApi.startGatekeeperLogin()`. Holding this
-// stub is the capability to receive the resulting session token; dispose it to abandon the attempt.
-export interface LoginAttempt extends RpcTarget {
-  // Resolves with a session token (to store and pass to `authenticate()`, same format as `login()`)
-  // once the gatekeeper popup completes, or rejects if the attempt fails or is abandoned. Safe to
-  // call immediately after `startGatekeeperLogin()`.
-  wait(): Promise<string>;
-}
-
 // Public API exposed to the internet.
 export interface PublicApi extends RpcTarget {
   // Returns deployment-level configuration the client needs at boot (auth mode, available sign-in
   // vendors, whether the Cloudflare limits flow is enabled). Contains no secrets.
   getServerConfig(): Promise<ServerConfig>;
 
-  // Begin a sign-in via an authentication gatekeeper (e.g. "google", "github", "cloudflare").
-  // Returns a `url` the client opens in a new tab (the gatekeeper's OAuth popup, which self-closes)
-  // and an `attempt` stub whose `wait()` resolves once the popup completes. The vendor must be
-  // auth-capable and allowlisted (see ServerConfig.authVendors); throws otherwise.
-  //
-  // Dispose `attempt` to abandon the sign-in (e.g. the user closed the popup); this cancels the wait
-  // server-side.
-  startGatekeeperLogin(vendorId: string): Promise<{ url: string; attempt: RpcStub<LoginAttempt> }>;
+  // Sign-in via an authentication gatekeeper (e.g. "mnemos", "google") happens in the same tab:
+  // the client navigates to `/api/login/start?vendor=<id>&return_to=<path>`, the gatekeeper brings
+  // the browser back to `<path>#login=<code>`, and the client exchanges that one-time code here for a
+  // session token (same format as `login()`). The code works once, for 90 seconds, and only in the
+  // browser that started the sign-in (it is bound to an HttpOnly cookie). Throws otherwise.
+  completeGatekeeperLogin(code: string): Promise<string>;
 
   // Authenticates the user using an auth token (typically stored in localStorage).
   authenticate(token: string): Promise<AuthenticatedApi>;
@@ -295,6 +284,7 @@ export const getOpenGadgetErrorCode = openGadgetErrors.getCode;
 export const AUTH_ERROR_CODES = {
   invalidSessionToken: "INVALID_SESSION_TOKEN",
   notAuthenticatedWithAccess: "NOT_AUTHENTICATED_WITH_ACCESS",
+  loginCodeRejected: "LOGIN_CODE_REJECTED",
 } as const;
 
 /** An expected authentication failure code. */
@@ -305,6 +295,7 @@ export type AuthErrorCode = typeof AUTH_ERROR_CODES[keyof typeof AUTH_ERROR_CODE
 export const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
   [AUTH_ERROR_CODES.invalidSessionToken]: "invalid session token",
   [AUTH_ERROR_CODES.notAuthenticatedWithAccess]: "Not authenticated with Access.",
+  [AUTH_ERROR_CODES.loginCodeRejected]: "Ссылка входа устарела или открыта в другом браузере. Войдите ещё раз.",
 };
 
 const authErrors = codedErrorFamily(AUTH_ERROR_MESSAGES);

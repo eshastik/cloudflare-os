@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BrowserLoginBinding, FINISH_SCRIPT, finishScriptHash, handleBrowserLogin } from "./browser-login.ts";
+import { BrowserLoginBinding, FINISH_SCRIPT, finishScriptHash, handleBrowserLogin, parseReturnPath } from "./browser-login.ts";
 import type { AccountStorage } from "./account-session.ts";
 
 function storage(): AccountStorage {
@@ -56,4 +56,36 @@ test("HTTP callback requires the browser cookie and rejects ambiguous inputs bef
   assert.ok(done.headers.get("Content-Security-Policy")!.startsWith(`default-src 'none'; script-src '${hash}';`));
   assert.ok(done.headers.get("Set-Cookie")!.includes("Max-Age=0"));
   assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
+});
+
+test("вход оболочки на той же странице: браузер возвращается на путь оболочки с признаком результата, окно не закрывается", async () => {
+  const callback = "https://os.example/gatekeeper/mnemos/oauth", id = "a".repeat(64), browser = "c".repeat(64);
+  const cookie = `__Host-mnemos-login=${id}.${browser}`;
+  const handle = `${"e".repeat(64)}.${"H".repeat(43)}`;
+  const port = (result: { returnPath?: string; returnHandle?: string; failed?: boolean }) => () => ({
+    async startBrowserLogin() { return { url: "https://provider.example/auth", browserNonce: browser }; },
+    async completeBrowserLogin() { return result; },
+  });
+  const run = (result: Parameters<typeof port>[0]) => handleBrowserLogin(new Request(`${callback}?state=s&code=c`, { headers: { Cookie: cookie } }), callback, port(result));
+  const done = await run({ returnPath: "/api/login/finish", returnHandle: handle });
+  assert.equal(done.status, 303);
+  assert.equal(done.headers.get("Location"), `https://os.example/api/login/finish?handle=${handle}`);
+  assert.ok(done.headers.getSetCookie().some(value => value.startsWith("__Host-mnemos-login=;")), "cookie входа Mnemos стирается");
+  assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
+  assert.equal(await done.text(), "");
+  // Вход у Mnemos сорвался после проверки браузера — оболочка узнаёт об этом и показывает причину.
+  const failed = await run({ returnPath: "/api/login/finish", failed: true });
+  assert.equal(failed.status, 303);
+  assert.equal(failed.headers.get("Location"), "https://os.example/api/login/finish?error=failed");
+  // Признак результата неправильного вида в адрес не попадает: это сбой.
+  const odd = await run({ returnPath: "/api/login/finish", returnHandle: "a&b=c" });
+  assert.equal(odd.headers.get("Location"), "https://os.example/api/login/finish?error=failed");
+  // Путь возврата — только путь этого же сайта; всё остальное даёт прежнюю страницу завершения.
+  for (const bad of ["https://evil.example/x", "//evil.example/x", "/\\evil.example", "api/login/finish", "/.//evil.example", "/a/../b", "/a//b"]) {
+    assert.equal(parseReturnPath(bad), undefined, bad);
+    const page = await run({ returnPath: bad, returnHandle: handle });
+    assert.equal(page.status, 200, bad);
+    assert.equal(page.headers.get("Location"), null, bad);
+  }
+  assert.equal(parseReturnPath("/api/login/finish"), "/api/login/finish");
 });

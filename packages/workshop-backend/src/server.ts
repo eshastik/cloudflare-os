@@ -9,7 +9,7 @@ import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import { RpcStub, RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import type { JWTPayload } from "jose";
-import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, LoginAttempt, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
+import { PublicApi, AuthenticatedApi, Overseer, GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, AiGatewayInfo, AiModelProvider, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, ObserverConfigCallback, BlueprintLibrarySummary, BlueprintPublicInfo, BlueprintUserSummary, BlueprintBindingAssignment, AgentSpawnerConfig, WorkpieceId, BLUEPRINT_SCREENSHOT_PATH_PREFIX, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ServerConfig, CloudflareUsageInfo, CloudflareAccountOption, GatekeeperAppInfo, AdminApi, GatekeeperVendorInfo, OutputFormatOffer, ListOutputsResult, createOpenGadgetError, getOpenGadgetErrorCode, OPEN_GADGET_ERROR_CODES, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
 import type { UiFeatureFlags } from "@gadgets/workshop-shared/feature-flags";
 import { getServerConfig } from "./deployment-config.js";
 import { isPasswordAuthEnabled, getAuthGatekeeperAllowlist } from "./auth/config.js";
@@ -28,6 +28,7 @@ import { AdminSettings, AdminApiImpl } from "./admin-settings.js";
 import { BlueprintKvRecord, buildBlueprintArchiveStream, sanitizeBlueprintOutput, listFeaturedBlueprintsFromKv, parseBlueprintArchive, randomBlueprintId, readBlueprintContent, readBlueprintKvRecord } from "./blueprint-archive.js";
 import { GatekeeperConnectCallbackImpl, normalizeUsername, UserDurableObject } from "./user";
 import { gatekeeperLoginPolicy } from "./auth/login-policy.js";
+import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PATH, redeemLoginCode, loginRejected, type LoginPort } from "./auth/login-return.js";
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
@@ -721,19 +722,34 @@ async function serveBlueprintScreenshot(env: Env, blueprintId: string): Promise<
   });
 }
 
-// Returned by startGatekeeperLogin(). Wraps the PendingLogin DO so the client awaits the login
-// result through a capability (this stub) rather than a guessable id — no login id is ever exposed
-// to the client. Disposing the stub (e.g. when the pop-up closes or the component unmounts) cancels
-// the in-flight wait and lets the DO be evicted.
-@validateRpc()
-class LoginAttemptImpl extends RpcTarget implements LoginAttempt {
-  constructor(private pending: DurableObjectStub<PendingLogin>) {
-    super();
-  }
-
-  async wait(): Promise<string> {
-    return await this.pending.awaitResult();
-  }
+// Вход через гейткипер на той же странице (auth/login-return.ts): ожидающие входы — PendingLogin DO,
+// запуск входа у гейткипера — с проверкой разрешённого списка.
+function loginPort(ctx: ExecutionContext, env: Env): LoginPort {
+  const logins = ctx.exports.PendingLogin;
+  return {
+    create() {
+      const id = logins.newUniqueId();
+      return { id: id.toString(), stub: logins.get(id) };
+    },
+    get(id) {
+      try { return logins.get(logins.idFromString(id)); } catch { return null; }
+    },
+    async connect(vendorId, pendingId, returnPath) {
+      if (!getAuthGatekeeperAllowlist(env).includes(vendorId)) {
+        throw new Error(`Sign-in via "${vendorId}" is not enabled on this deployment.`);
+      }
+      const vendor = getAuthVendorBinding(env, vendorId);
+      if (!vendor) throw new Error(`No such auth gatekeeper: ${vendorId}`);
+      const desc = await vendor.describe();
+      if (!desc.providesAuth) throw new Error(`"${vendorId}" does not provide authentication.`);
+      const callback = ctx.exports.LoginConnectCallbackImpl({ props: { pendingId, vendorId } });
+      // For most providers, sign-in needs only minimal scopes to verify the user's email (the grant
+      // is transient); Cloudflare and Mnemos request the full scope set up front (auth/login-policy.ts).
+      const { scopes } = gatekeeperLoginPolicy(vendorId, false);
+      const { url } = await vendor.connectAccount(callback, { scopes, returnPath });
+      return url;
+    },
+  };
 }
 
 @validateRpc()
@@ -742,7 +758,8 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
 
   constructor(private ctx: ExecutionContext, private env: Env,
       private abortSession: (reason: Error) => void,
-      private accessPayload?: JWTPayload) {
+      private accessPayload?: JWTPayload,
+      private loginRequest: { cookie: string | null; sameSite: boolean } = { cookie: null, sameSite: false }) {
     super();
     this.users = this.ctx.exports.UserDurableObject;
   }
@@ -751,30 +768,11 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
     return getServerConfig(this.env);
   }
 
-  async startGatekeeperLogin(vendorId: string): Promise<{ url: string; attempt: RpcStub<LoginAttempt> }> {
-    if (!getAuthGatekeeperAllowlist(this.env).includes(vendorId)) {
-      throw new Error(`Sign-in via "${vendorId}" is not enabled on this deployment.`);
-    }
-    const vendor = getAuthVendorBinding(this.env, vendorId);
-    if (!vendor) throw new Error(`No such auth gatekeeper: ${vendorId}`);
-    const desc = await vendor.describe();
-    if (!desc.providesAuth) throw new Error(`"${vendorId}" does not provide authentication.`);
-
-    // The PendingLogin DO is the rendezvous between this request and the (separate) OAuth-callback
-    // invocation. The client never sees its id — we hand back an `attempt` stub instead.
-    const pendingId = this.ctx.exports.PendingLogin.newUniqueId();
-    const pending = this.ctx.exports.PendingLogin.get(pendingId);
-    const callback = this.ctx.exports.LoginConnectCallbackImpl(
-        { props: { pendingId: pendingId.toString(), vendorId } });
-    // For most providers, sign-in needs only minimal scopes to verify the user's email (the grant is
-    // transient); capability scopes are requested later via an explicit connectAccount. Cloudflare is
-    // the exception (and Mnemos, see auth/login-policy.ts): signing in with Cloudflare also links AI Gateway billing, so it requests the
-    // full (persistent) scope set up front and LoginConnectCallbackImpl persists the connection.
-    const { scopes } = gatekeeperLoginPolicy(vendorId, false);
-    const { url } = await vendor.connectAccount(callback, { scopes });
-    // @ts-expect-error Cap'n Web RPC stubs and native RPC targets are compatible but the type
-    //     system doesn't know this.
-    return { url, attempt: new LoginAttemptImpl(pending) };
+  async completeGatekeeperLogin(code: string): Promise<string> {
+    // Обмен кода — только из вкладки этого же сайта: cookie входа приходит с запросом, открывшим
+    // соединение, а чужая страница её не получит и по Origin отсекается.
+    if (!this.loginRequest.sameSite) throw loginRejected();
+    return redeemLoginCode(this.loginRequest.cookie, code, loginPort(this.ctx, this.env));
   }
 
   async authenticate(token: string): Promise<AuthenticatedApi> {
@@ -907,10 +905,9 @@ export default {
       return serveBlueprintScreenshot(env, blueprintId);
     }
 
-    // Sign-in via authentication gatekeepers happens entirely within each gatekeeper Worker (the
-    // OAuth redirect lands on `/gatekeeper/<name>/oauth`); the result is bridged back to the waiting
-    // browser via the `attempt` stub from PublicApi.startGatekeeperLogin(). So the backend no longer
-    // hosts /auth/* callbacks.
+    // Вход через гейткипер на той же странице: уход к гейткиперу и возврат с одноразовым кодом.
+    if (url.pathname === LOGIN_START_PATH) return handleLoginStart(req, loginPort(ctx, env));
+    if (url.pathname === LOGIN_FINISH_PATH) return handleLoginFinish(req, loginPort(ctx, env));
 
     if (url.pathname === SERVICE_ROUTE) {
       return handleServiceRoute(req, {
@@ -976,8 +973,14 @@ export default {
         resp?.webSocket?.close();
       };
 
+      let origin = req.headers.get("Origin");
+      let sameSite = false;
+      // Сверяется имя хоста без порта: cookie к порту не привязаны, а в разработке страница с Vite
+      // (порт 3000) открывает соединение прямо к бэкенду (порт 8787).
+      try { sameSite = !!origin && new URL(origin).hostname === url.hostname; } catch { /* not a URL */ }
       resp = await newWorkersRpcResponse(req,
-          new PublicApiImpl(ctx, env, abortSession, accessPayload));
+          new PublicApiImpl(ctx, env, abortSession, accessPayload,
+              { cookie: req.headers.get("Cookie"), sameSite }));
 
       if (aborted) {
         // Oops, we missed the abortSession() call while awaiting, apply now.
