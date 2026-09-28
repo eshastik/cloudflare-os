@@ -1,3 +1,4 @@
+import { confirmShellBrowser, shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { DurableObject, RpcStub, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import {
@@ -237,15 +238,6 @@ const CONNECT_FORM_HTML = (params: { actionUrl: string; error?: string }) => `<!
 </body>
 </html>`;
 
-const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Connected</title></head>
-<body style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center;">
-  <script>window.close();</script>
-  <h2 style="color: #03a9f4;">Connected!</h2>
-  <p>Home Assistant has been linked to Cloudflare OS. You may close this tab.</p>
-</body>
-</html>`;
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -327,7 +319,7 @@ export default {
           );
         }
 
-        const result = await stub.completeConnection(nonce, normalizedUrl, tokenInput);
+        const result = await stub.completeConnection(nonce, normalizedUrl, tokenInput, shellBrowserProof(req));
         if (result.kind === "invalid_nonce") {
           return new Response(INVALID_LINK_HTML, {
             headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -339,9 +331,7 @@ export default {
             { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 400 },
           );
         }
-        return new Response(SELF_CLOSING_HTML, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
+        return shellReturnResponse(result.returnPath);
       }
     }
 
@@ -398,7 +388,7 @@ interface StoredNonce {
 }
 
 type CompleteConnectionResult =
-  | { kind: "ok" }
+  | { kind: "ok"; returnPath: string }
   | { kind: "invalid_nonce" }
   | { kind: "error"; message: string };
 
@@ -434,6 +424,7 @@ export class UserAccount extends DurableObject<Env> {
     nonce: string,
     baseUrl: string,
     token: string,
+    proof: ShellBrowserProof = {},
   ): Promise<CompleteConnectionResult> {
     const stored = this.ctx.storage.kv.get<StoredNonce>("nonce");
     if (!stored || Date.now() >= stored.expiresAt || !constantTimeEqual(stored.value, nonce)) {
@@ -454,6 +445,11 @@ export class UserAccount extends DurableObject<Env> {
 
     // Consume the nonce now that we've validated.
     this.ctx.storage.kv.delete("nonce");
+
+    // До записи учётных данных оболочка подтверждает, что форму отправил браузер, начавший
+    // подключение: пересланная ссылка не подключит чужой Home Assistant (@gadgets/workshop-shared/shell-browser).
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) return { kind: "invalid_nonce" };
 
     this.ctx.storage.kv.put<StoredCredentials>("credentials", { baseUrl, token });
     this.ctx.storage.kv.put("expiredNotified", false);
@@ -484,7 +480,7 @@ export class UserAccount extends DurableObject<Env> {
     }
 
     await this.ctx.storage.deleteAlarm();
-    return { kind: "ok" };
+    return { kind: "ok", returnPath: gate.returnPath };
   }
 
   getCredentials(): HomeAssistantCredentials {

@@ -6,6 +6,7 @@
 //
 // The endpoint is whatever a user typed, so annotations never earn auto-approval here and a Gadget
 // bound to it is owner-only. See `sharing-policy.ts` and the README.
+import { shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { RpcStub, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { validateRpc, skipRpcValidation } from "capnweb-validate";
 import { createLogger } from "@gadgets/backend-utils/logger";
@@ -53,7 +54,6 @@ import { fetchOptions } from "@gadgets/mcp-shared/fetch";
 import {
   htmlResponse,
   INVALID_LINK_HTML,
-  SELF_CLOSING_HTML,
 } from "@gadgets/mcp-shared/html";
 import { handleMcpHttpRequest } from "@gadgets/mcp-shared/http";
 import {
@@ -105,7 +105,7 @@ export default {
 
         // A reconnect already knows its endpoint. Ignore a stale or malicious replacement URL.
         if (await account.hasEndpoint()) {
-          return continueConnect(account, initiationNonce, null, env, path);
+          return continueConnect(account, initiationNonce, null, env, path, shellBrowserProof(request));
         }
         if (request.method === "GET") {
           if (!(await account.isAwaitingSelection(initiationNonce))) {
@@ -115,7 +115,7 @@ export default {
         }
         const form = await request.formData();
         return continueConnect(
-          account, initiationNonce, String(form.get("url") ?? ""), env, path);
+          account, initiationNonce, String(form.get("url") ?? ""), env, path, shellBrowserProof(request));
       },
     });
   },
@@ -129,6 +129,7 @@ async function continueConnect(
   endpointUrl: string | null,
   env: Env,
   formPath: string,
+  proof: ShellBrowserProof,
 ): Promise<Response> {
   let target: ConnectedServer | null = null;
 
@@ -150,7 +151,7 @@ async function continueConnect(
 
   let outcome: ConnectOutcome;
   try {
-    outcome = await account.beginConnect(initiationNonce, target);
+    outcome = await account.beginConnect(initiationNonce, target, proof);
   } catch (err) {
     logger.warn("connect failed", { event: "connect.failed", error: err });
     return htmlResponse(connectFormHtml(
@@ -159,7 +160,7 @@ async function continueConnect(
 
   if (outcome.kind === "invalid") return htmlResponse(INVALID_LINK_HTML, 400);
   if (outcome.kind === "redirect") return Response.redirect(outcome.url, 302);
-  return htmlResponse(SELF_CLOSING_HTML);
+  return shellReturnResponse(outcome.returnPath);
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@
 //  6. Simulation — reads overlay pending actions so a Gadget sees its own writes immediately.
 //  7. Observer verification — all bindings track independently restricted spaces and content.
 
+import { confirmShellBrowser, shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { DurableObject, RpcStub, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import {
@@ -168,9 +169,6 @@ const SUPPORTED_RESOURCES = [SITE_RESOURCE, SPACE_RESOURCE, PAGE_RESOURCE];
 const htmlResponse = (body: string): Response =>
   new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 
-const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html lang="en"><body><script>window.close();</script>
-<p>Authorization complete. You may close this tab and return to Cloudflare OS.</p></body></html>`;
 
 const page = (title: string, color: string, message: string): string => `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>${title}</title></head>
@@ -225,8 +223,10 @@ export default {
       if (colonIdx < 0) return new Response("Error: malformed state",
         { headers: { "content-type": "text/plain; charset=utf-8" } });
       const stub = ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(state.slice(0, colonIdx)));
-      if (!await stub.acceptAuthCode(code, state.slice(colonIdx + 1))) return htmlResponse(INVALID_LINK_HTML);
-      return htmlResponse(SELF_CLOSING_HTML);
+      const oauthNonce = state.slice(colonIdx + 1);
+      const returnPath = await stub.acceptAuthCode(code, oauthNonce, shellBrowserProof(req));
+      if (!returnPath) return htmlResponse(INVALID_LINK_HTML);
+      return shellReturnResponse(returnPath);
     }
     return new Response("Not Found", { status: 404 });
   },
@@ -303,13 +303,18 @@ export class UserAccount extends DurableObject<Env> {
     return { oauthNonce };
   }
 
-  async acceptAuthCode(code: string, oauthNonce: string): Promise<boolean> {
+  async acceptAuthCode(code: string, oauthNonce: string, proof: ShellBrowserProof = {}): Promise<string | false> {
     const stored = this.ctx.storage.kv.get<StoredNonce>("nonce");
     if (!stored || stored.stage !== "oauth" || Date.now() >= stored.expiresAt ||
         !constantTimeEqual(stored.value, oauthNonce)) {
       return false;
     }
     this.ctx.storage.kv.delete("nonce");
+
+    // До записи учётных данных оболочка подтверждает, что поток завершает браузер, который его
+    // начал: пересланная ссылка не подключит чужой аккаунт (@gadgets/workshop-shared/shell-browser).
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) return false;
 
     if (!this.env.CLIENT_ID || !this.env.CLIENT_SECRET) {
       throw new Error("The Confluence Gatekeeper is not configured.");
@@ -334,7 +339,7 @@ export class UserAccount extends DurableObject<Env> {
         throw err;
       }
     }
-    return true;
+    return gate.returnPath;
   }
 
   #storeGrant(grant: StoredGrant) {

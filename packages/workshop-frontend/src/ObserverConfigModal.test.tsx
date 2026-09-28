@@ -36,6 +36,10 @@ vi.mock('@cloudflare/kumo', () => {
   }
 })
 
+const accountConnect = vi.hoisted(() => ({ start: vi.fn<(request: unknown, restore?: unknown) => Promise<'navigating'>>(async () => 'navigating') }))
+// Подключение уводит эту же страницу к сервису; выбор в окне сохраняется (auth/accountConnect.ts).
+vi.mock('./auth/accountConnect', () => ({ startAccountConnect: accountConnect.start, restoreAfterConnect: () => null }))
+
 vi.mock('./components/WorkshopControls', () => ({
   WorkshopButton: ({ children, ...props }: ComponentProps<'button'>) => (
     <button type="button" {...props}>{children}</button>
@@ -167,12 +171,10 @@ describe('ObserverConfigModal account selection', () => {
   })
 
   it('requests the resource scope when connecting a new account', async () => {
-    const connectAccount = vi.fn<
-      (vendorId: string, resourceUrlPatterns?: string[]) => Promise<{ url: string }>
-    >().mockResolvedValue({ url: 'https://accounts.google.test/oauth' })
-    vi.spyOn(window, 'open').mockImplementation(() => null)
+    accountConnect.start.mockClear()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const rendered = await render([], {
-      api: fakeApi([], { connectAccount }),
+      api: fakeApi([], {}),
     })
 
     const connect = [...rendered.querySelectorAll('button')]
@@ -180,21 +182,17 @@ describe('ObserverConfigModal account selection', () => {
     expect(connect).toBeDefined()
     await act(async () => connect!.click())
 
-    expect(connectAccount).toHaveBeenCalledWith('google', [DOC_RESOURCE.urlPattern])
-    expect(window.open).toHaveBeenCalledWith(
-      'https://accounts.google.test/oauth', '_blank', 'noopener,noreferrer',
-    )
+    expect(accountConnect.start).toHaveBeenCalledWith(
+      { kind: 'connect', vendorId: 'google', resourceUrlPatterns: [DOC_RESOURCE.urlPattern] }, undefined)
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('expands an existing account grant before allowing verification', async () => {
-    const ensureAccountResources = vi.fn<
-      (accountId: number, resourceUrlPatterns: string[]) => Promise<{ url?: string }>
-    >()
-      .mockResolvedValue({ url: 'https://accounts.google.test/oauth' })
-    vi.spyOn(window, 'open').mockImplementation(() => null)
+    accountConnect.start.mockClear()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const underScoped = account(1, 'dan@cloudflare.com', [GMAIL_RESOURCE_PATTERN])
     const rendered = await render([underScoped], {
-      api: fakeApi([underScoped], { ensureAccountResources }),
+      api: fakeApi([underScoped], {}),
     })
 
     const verify = [...rendered.querySelectorAll('button')]
@@ -207,10 +205,9 @@ describe('ObserverConfigModal account selection', () => {
 
     await act(async () => grant!.click())
 
-    expect(ensureAccountResources).toHaveBeenCalledWith(1, [DOC_RESOURCE.urlPattern])
-    expect(window.open).toHaveBeenCalledWith(
-      'https://accounts.google.test/oauth', '_blank', 'noopener,noreferrer',
-    )
+    expect(accountConnect.start).toHaveBeenCalledWith(
+      { kind: 'resources', accountId: 1, resourceUrlPatterns: [DOC_RESOURCE.urlPattern] }, undefined)
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('allows verification when the account already has the required grant', async () => {

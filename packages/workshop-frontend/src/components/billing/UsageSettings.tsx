@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { startAccountConnect } from '../../auth/accountConnect'
 import { CloudflareUsageInfo, CloudflareAccountOption } from '@gadgets/workshop-shared/api'
 import { Button, useKumoToastManager } from '@cloudflare/kumo'
 import { Lightning, CloudCheck, Warning } from '@phosphor-icons/react'
@@ -56,10 +57,9 @@ export default function UsageSettings() {
   const connect = async () => {
     setBusy(true)
     try {
-      // Connecting (or signing in with) Cloudflare is handled by the Cloudflare gatekeeper. Open its
-      // OAuth popup; the connected-accounts subscription + focus refresh pick up the result.
-      const { url } = await authenticatedApi.connectAccount('cloudflare')
-      window.open(url, '_blank', 'noopener,noreferrer')
+      // Connecting (or signing in with) Cloudflare is handled by the Cloudflare gatekeeper. The page
+      // goes there and comes back; the connected-accounts subscription picks up the result.
+      await startAccountConnect({ kind: 'connect', vendorId: 'cloudflare' })
     } catch {
       toasts.add({ title: 'Не удалось начать подключение Cloudflare', variant: 'error' })
     } finally {
@@ -183,7 +183,7 @@ export default function UsageSettings() {
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={() => window.open(buildAddCreditsUrl(usage.accountId), '_blank')}
+                    onClick={() => window.open(buildAddCreditsUrl(usage.accountId), '_blank', 'noopener,noreferrer')}
                   >
                     <Lightning size={14} weight="bold" className="mr-1" />
                     Пополнить баланс

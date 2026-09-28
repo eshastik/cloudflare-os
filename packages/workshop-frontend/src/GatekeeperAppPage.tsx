@@ -1,4 +1,5 @@
 import OrganizationSummaryPanel from "./OrganizationSummaryPanel"
+import { startAccountConnect } from './auth/accountConnect'
 import MailConnectionPanel from "./MailConnectionPanel"
 import DriveImportPanel from "./DriveImportPanel"
 import CalendarConnectionPanel from "./CalendarConnectionPanel"
@@ -163,7 +164,6 @@ function GatekeeperAppRecovery({ appId, retry }: { appId: string, error: string,
   const { authenticatedApi } = useAuthenticatedApi()
   const [accounts, setAccounts] = useState<Map<number, string>>(new Map())
   const [busy, setBusy] = useState(false)
-  const [loginUrl, setLoginUrl] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
@@ -187,10 +187,9 @@ function GatekeeperAppRecovery({ appId, retry }: { appId: string, error: string,
   }, [authenticatedApi, appId])
 
   async function reconnect(id: number) {
-    setBusy(true); setLoginUrl(null); setNotice('')
+    setBusy(true); setNotice('')
     try {
-      const { url } = await authenticatedApi.reconnectAccount(id)
-      setLoginUrl(url)
+      await startAccountConnect({ kind: 'reconnect', accountId: id })
     } catch {
       setNotice('Не удалось начать вход. Попробуйте ещё раз.')
     } finally { setBusy(false) }
@@ -202,7 +201,6 @@ function GatekeeperAppRecovery({ appId, retry }: { appId: string, error: string,
     {[...accounts].map(([id, name]) => <div key={id}>
       <Button variant="primary" type="button" disabled={busy} onClick={() => void reconnect(id)}>Переподключить {name}</Button>
     </div>)}
-    {loginUrl && <p><a className="font-medium underline text-kumo-default" href={loginUrl} rel="noopener noreferrer">Продолжить вход</a></p>}
     {notice && <p role="status">{notice}</p>}
     <Button variant="secondary" type="button" disabled={busy} onClick={retry}>Открыть приложение ещё раз</Button>
   </div>

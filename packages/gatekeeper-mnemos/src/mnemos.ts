@@ -63,9 +63,8 @@ import { LoginFlow, type LoginConfig } from "./login-flow.ts";
 import type { ExtraActionSession } from "./agent-actions-extra.ts";
 import { agentActionError, checkedAgentAction, checkedAgentRead, executeAgentAction, prepareAgentAction, readForAgent, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction } from "./agent-actions.ts";
 
-import { BrowserLoginBinding, handleBrowserLogin, parseReturnPath } from "./browser-login.ts";
-/** Путь оболочки для возврата браузера после входа; ставится при запуске входа, снимается при завершении. */
-const RETURN_PATH = "workshopReturnPath";
+import { BrowserLoginBinding, completeWithShellBrowser, handleBrowserLogin } from "./browser-login.ts";
+import type { ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 
 import type { NativeDocumentSource, ObservationAuthorizer, AccountDescription, AppUiContext, GatekeeperUser, GatekeeperConnectCallback, GatekeeperConnectOptions, GatekeeperUserVerifier, GatekeeperVendor as Vendor, SupportedResource, ResourceConfiguratorFrame, Gatekeeper, VendorDescription } from "@gadgets/workshop-shared/gatekeeper";
 
@@ -93,7 +92,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Vendor {
     if (options?.resourceUrlPatterns?.some(pattern=>![CALDAV_RESOURCE.urlPattern,IMAP_RESOURCE.urlPattern,WEBDAV_RESOURCE.urlPattern].includes(pattern))) throw new Error("Mnemos agent resources are not configured");
     const base = callbackUrl(this.env);
     const id = this.ctx.exports.UserAccount.newUniqueId();
-    const nonce = await this.ctx.exports.UserAccount.get(id).setCallback(callback, parseReturnPath(options?.returnPath));
+    const nonce = await this.ctx.exports.UserAccount.get(id).setCallback(callback);
     return { url: `${base}/start/${id}/${nonce}` };
   }
   // Agent resource implementations are not registered until their rights and observations exist.
@@ -826,12 +825,9 @@ export class UserAccount extends DurableObject<Env> {
     } catch { return undefined; }
     finally { if (timer) clearTimeout(timer); count.catch(() => {}).finally(() => session.dispose()); }
   }
-  async setCallback(callback: Fetcher<GatekeeperConnectCallback>, returnPath?: string): Promise<string> {
+  async setCallback(callback: Fetcher<GatekeeperConnectCallback>): Promise<string> {
     if (this.ctx.storage.kv.get("workshopCallback")) throw new Error("Connection already initialized");
     this.ctx.storage.kv.put("workshopCallback", callback);
-    // Куда вернуть браузер после входа (вход на той же странице); используется один раз.
-    const path = parseReturnPath(returnPath);
-    if (path) this.ctx.storage.kv.put(RETURN_PATH, path);
     return this.prepareBrowserLogin();
   }
   async prepareReconnect(): Promise<string> {
@@ -864,33 +860,22 @@ export class UserAccount extends DurableObject<Env> {
     if (this.env.MNEMOS_LOGIN_PROFILES) link.searchParams.set("organization", this.#profiles().current());
     return link.href;
   }
-  async completeBrowserLogin(nonce: string, state: string, code: string): Promise<{ returnPath?: string; returnHandle?: string; failed?: boolean }> {
+  async completeBrowserLogin(nonce: string, state: string, code: string, proof: ShellBrowserProof): Promise<{ returnPath?: string }> {
     this.#browser().complete(nonce);
-    const returnPath = this.ctx.storage.kv.get<string>(RETURN_PATH);
-    this.ctx.storage.kv.delete(RETURN_PATH);
-    // Браузер проверен: при сбое дальше вход на той же странице возвращается в оболочку с причиной,
-    // а не остаётся на голой странице отказа.
-    try {
-      const returnHandle = await this.#finishBrowserLogin(state, code);
-      return returnPath ? { returnPath, ...(returnHandle ? { returnHandle } : {}) } : {};
-    } catch (error) {
-      if (returnPath) return { returnPath, failed: true };
-      throw error;
-    }
+    // До записи учётных данных оболочка подтверждает, что вход завершает браузер, который его начал:
+    // пересланная ссылка входа или подключения не кладёт чужую личность в чужой поток.
+    return completeWithShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("workshopCallback"),
+        proof, () => this.#finishBrowserLogin(state, code));
   }
-  async #finishBrowserLogin(state: string, code: string): Promise<string | undefined> {
+  async #finishBrowserLogin(state: string, code: string): Promise<void> {
     const epoch = this.ctx.storage.kv.get<string>("loginRevocationEpoch");
     const expiresAt = await this.completeLogin(state, code);
     if (this.ctx.storage.kv.get<string>("loginRevocationEpoch") !== epoch) throw new Error("Mnemos login cancelled");
     const callback = this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("workshopCallback");
-    let returnHandle: string | undefined;
     if (callback) {
       try {
         if (this.ctx.storage.kv.get("workshopConnected")) await callback.credentialsRestored(new Date(expiresAt));
-        else {
-          const result = await callback.complete(this.ctx.exports.GatekeeperUserImpl({ props: { userObjectId: this.ctx.id.toString() } }), new Date(expiresAt));
-          if (result && typeof result.returnHandle === "string") returnHandle = result.returnHandle;
-        }
+        else await callback.complete(this.ctx.exports.GatekeeperUserImpl({ props: { userObjectId: this.ctx.id.toString() } }), new Date(expiresAt));
         if (this.ctx.storage.kv.get<string>("loginRevocationEpoch") !== epoch) throw new Error("Mnemos login cancelled");
         this.ctx.storage.kv.put("workshopConnected", true);
       } catch {
@@ -899,7 +884,6 @@ export class UserAccount extends DurableObject<Env> {
       }
     }
     await this.#alarms().clear('login');
-    return returnHandle;
   }
   async authenticatedEmail(): Promise<string | null> { return this.ctx.storage.kv.get<string>(AUTHENTICATED_EMAIL) ?? null; }
   #disconnectAccount(){
@@ -918,7 +902,6 @@ export class UserAccount extends DurableObject<Env> {
         this.#disconnectAccount();
       }
       this.#browser().cancel();
-      this.ctx.storage.kv.delete(RETURN_PATH);
       LoginFlow.cancelStored(this.ctx.storage.kv);
       await deadlines.clear('login');
     }

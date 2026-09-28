@@ -14,7 +14,7 @@ import { newMessagePortRpcSession, RpcStub, RpcTarget } from "capnweb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document";
-import SandboxedGatekeeperApp from "./SandboxedGatekeeperApp";
+import SandboxedGatekeeperApp, { gitHubNavigation } from "./SandboxedGatekeeperApp";
 import UploadDock from "./UploadDock";
 import { uploadCenter } from "./uploadCenter";
 import { prepareForLogout } from "./authNavigation";
@@ -45,6 +45,8 @@ interface TestHost extends RpcTarget {
   getSelectedSection(): Promise<string>;
   getPresentationMode(): Promise<string>;
   openSection(section:string): Promise<void>;
+  openLink(url: string): Promise<boolean>;
+  openGitHubAppPage(url: string): Promise<boolean>;
   openWorkspace(workspaceId: string, gadgetId?: number): Promise<void>;
   resolveWorkspaceTitles(ids: string[]): Promise<(string | null)[]>;
   openPrompt(prompt: string): Promise<void>;
@@ -97,6 +99,43 @@ describe("SandboxedGatekeeperApp navigation", () => {
     await vi.waitFor(() => expect(posted).toHaveBeenCalledWith({ type: "gatekeeper-location" }, "*"));
     await act(async () => { await host!.openSection("documents"); await vi.waitFor(() => expect(router.state.location.search).toMatchObject({ section: "documents" })); });
     expect(router.state.location.search).not.toHaveProperty("document");
+  });
+
+  it("ссылки из фрейма: адрес оболочки — на той же странице, внешний сайт — новой вкладкой; GitHub — уход этой же страницы", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const frame = { iframeHtml: "<!doctype html><title>Mnemos</title>", ui: new RpcStub(new EmptyUi()) } as unknown as GatekeeperUiFrame;
+    const rootRoute = createRootRoute();
+    const appRoute = createRoute({ getParentRoute: () => rootRoute, path: "/gatekeepers/$appId", component: () => <SandboxedGatekeeperApp frame={frame} gatekeeperVendorId="mnemos" /> });
+    const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workspace/$id" });
+    const router = createRouter({ history: createMemoryHistory({ initialEntries: ["/gatekeepers/mnemos?section=projects"] }), routeTree: rootRoute.addChildren([appRoute, workspaceRoute]) });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root!.render(<RouterProvider router={router} />));
+    const iframe = container.querySelector("iframe")!;
+    const { port1, port2 } = new MessageChannel();
+    host = newMessagePortRpcSession<TestHost>(port1);
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "handshake" }, origin: "null", source: iframe.contentWindow, ports: [port2] }));
+    await host.getSelectedSection();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const leave = vi.spyOn(gitHubNavigation, "assign").mockImplementation(() => {});
+
+    expect(await host.openLink("https://example.com/page")).toBe(true);
+    expect(open).toHaveBeenCalledWith("https://example.com/page", "_blank", "noopener,noreferrer");
+    expect(await host.openLink("mailto:anna@example.ru")).toBe(true);
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", `${window.location.origin}/api/login/start?vendor=mnemos&return_to=/`, 42 as unknown as string]) {
+      expect(await host.openLink(bad), String(bad)).toBe(false);
+    }
+    expect(open).toHaveBeenCalledTimes(2);
+
+    expect(await host.openGitHubAppPage("https://github.com/apps/mnemos-app/installations/new")).toBe(true);
+    expect(leave).toHaveBeenCalledWith("https://github.com/apps/mnemos-app/installations/new");
+    expect(await host.openGitHubAppPage("https://evil.example/")).toBe(false);
+    expect(open).toHaveBeenCalledTimes(2);
+
+    // Последним: переход уводит со страницы приложения, и фрейм закрывается.
+    await act(async () => { expect(await host!.openLink(`${window.location.origin}/workspace/abc?chat=1`)).toBe(true); });
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/workspace/abc"));
+    expect(router.state.location.search).toEqual({ chat: 1 });
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it("routes validated targets and bounded prompts from the iframe host", async () => {

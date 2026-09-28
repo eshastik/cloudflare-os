@@ -2,6 +2,7 @@ import { startWorkspaceUIReadiness } from "./uiReadiness"
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness"
 import { reportEmbeddedWorkspaceActivity } from "./workspaceActivity"
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from '@tanstack/react-router'
 import { Text, Loader, Banner } from '@cloudflare/kumo'
 import { Sparkle } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
@@ -93,6 +94,16 @@ window.addEventListener('click', (event) => {
     return;
   }
 
+  // A link to the Workshop itself (a document, project, chat) opens in the same page: the parent
+  // navigates on the user's click. Only other sites get a new tab.
+  let url;
+  try { url = new URL(anchor.getAttribute('href'), shellOrigin); } catch { url = null; }
+  if (url && url.origin === shellOrigin) {
+    event.preventDefault();
+    window.parent.postMessage({ type: 'open-internal', path: url.pathname + url.search + url.hash }, '*');
+    return;
+  }
+
   const rel = new Set((anchor.getAttribute('rel') || '').split(/\s+/).filter(Boolean));
   rel.add('noopener');
   anchor.setAttribute('rel', Array.from(rel).join(' '));
@@ -117,6 +128,15 @@ window.addEventListener('unhandledrejection', (event) => {
 
 `);
 
+/** Путь оболочки из сообщения гаджета; null — не путь этого сайта или служебный адрес. */
+export function gadgetInternalPath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('/') || value.startsWith('//')) return null
+  let url: URL
+  try { url = new URL(value, window.location.origin) } catch { return null }
+  if (url.origin !== window.location.origin || /^\/(api|gatekeeper)(\/|$)/.test(url.pathname)) return null
+  return url.pathname + url.search + url.hash
+}
+
 const createSandboxedHtml = (jsCode: string, readinessId?: string): string => {
   return `<!DOCTYPE html>
 <html>
@@ -124,7 +144,7 @@ const createSandboxedHtml = (jsCode: string, readinessId?: string): string => {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'none'; script-src data: 'unsafe-inline'; style-src data: 'unsafe-inline'; img-src data:; media-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none';">
 </head>
 <body>
-    <script type="module" src="data:text/javascript;charset=utf-8,${INJECTED_CODE_PREFIX}${encodeURIComponent(`const nativeUIReadinessAttempt = ${JSON.stringify(readinessId ?? null)};\n` + jsCode)}"></script>
+    <script type="module" src="data:text/javascript;charset=utf-8,${INJECTED_CODE_PREFIX}${encodeURIComponent(`const nativeUIReadinessAttempt = ${JSON.stringify(readinessId ?? null)};\nconst shellOrigin = ${JSON.stringify(window.location.origin)};\n` + jsCode)}"></script>
 </body>
 </html>`.trim()
 }
@@ -197,6 +217,10 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const rpcSessionRef = useRef<any>(null)
   // Keep latest callbacks in refs so the message-handler effect never tears down the RPC session.
   const onIframeEscapeRef = useRef(onIframeEscape)
+  // Переход на свой адрес по ссылке из гаджета; вне маршрутизатора — обычный переход в этой вкладке.
+  const router = useRouter({ warn: false }) as { history: { push(path: string): void } } | undefined
+  const openInternalRef = useRef((path: string) => { if (router) router.history.push(path); else window.location.assign(path) })
+  openInternalRef.current = (path: string) => { if (router) router.history.push(path); else window.location.assign(path) }
   const onConsoleLogRef = useRef(onConsoleLog)
   onIframeEscapeRef.current = onIframeEscape
   onConsoleLogRef.current = onConsoleLog
@@ -447,6 +471,11 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
         reportEmbeddedWorkspaceActivity(event, iframeRef.current, activityVisibleRef.current)
       } else if (event.data?.type === 'escape') {
         onIframeEscapeRef.current?.()
+      } else if (event.data?.type === 'open-internal') {
+        // Своя ссылка гаджета: на той же странице, только по нажатию человека (активация из фрейма
+        // переходит к родителю) и не на служебные адреса входа и подключений.
+        const path = gadgetInternalPath(event.data.path)
+        if (path && navigator.userActivation?.isActive !== false) openInternalRef.current(path)
       }
     }
 

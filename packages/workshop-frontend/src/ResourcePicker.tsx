@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type MutableRefObject } from 'react'
+import { startAccountConnect, type RestoreState } from './auth/accountConnect'
 import { Tooltip, useKumoToastManager } from '@cloudflare/kumo'
 import { Plus, CaretRight, Warning } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget } from 'capnweb'
@@ -60,6 +61,8 @@ export interface ResourcePickerProps {
   activeIndex?: number
   onItems?: (items: SelectableItem[]) => void
   activateRef?: MutableRefObject<((index: number) => void) | null>
+  // Состояние вызывающего, которое переживёт уход страницы к гейткиперу при подключении аккаунта.
+  connectRestore?: RestoreState
 }
 
 type AccountEntry = {
@@ -86,7 +89,7 @@ function missingResourceGrants(account: AccountDescription, resource: SupportedR
 
 export default function ResourcePicker({
   authenticatedApi, searchText, onSelectAccount, onRefine, onReadyChange, compact,
-  maxHeight: maxHeightOverride, style, activeIndex, onItems, activateRef,
+  maxHeight: maxHeightOverride, style, activeIndex, onItems, activateRef, connectRestore,
 }: ResourcePickerProps) {
   const toasts = useKumoToastManager()
 
@@ -415,15 +418,15 @@ export default function ResourcePicker({
 
   // --- Connect new account handler ---
 
+  // Подключение идёт на той же странице (auth/accountConnect.ts); вызывающий может сохранить своё
+  // состояние (например, текст сообщения), оно вернётся после возврата.
   const handleConnectNew = async (vendorId: string, resourceUrlPatterns?: string[]) => {
     setConnectingVendor(vendorId)
     try {
-      const result = await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
+      await startAccountConnect({ kind: 'connect', vendorId, resourceUrlPatterns }, connectRestore)
     } catch (error) {
       console.error('Failed to initiate connection:', error)
       toasts.add({ title: 'Не удалось начать подключение', variant: 'error' })
-    } finally {
       setConnectingVendor(null)
     }
   }
@@ -434,34 +437,27 @@ export default function ResourcePicker({
     if (resourceUrlPatterns.length === 0) return
     setGrantingAccount(accountId)
     try {
-      const result = await authenticatedApi.ensureAccountResources(accountId, resourceUrlPatterns)
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer')
-        toasts.add({ title: 'Выдайте дополнительный доступ в новой вкладке.', variant: 'success' })
-      }
+      await startAccountConnect({ kind: 'resources', accountId, resourceUrlPatterns }, connectRestore)
     } catch (error) {
       console.error('Failed to request additional access:', error)
       toasts.add({ title: 'Не удалось запросить дополнительный доступ', variant: 'error' })
     } finally {
       setGrantingAccount(current => current === accountId ? null : current)
     }
-  }, [authenticatedApi, toasts])
+  }, [connectRestore, toasts])
 
   // --- Reconnect expired account handler ---
 
   const handleReconnect = useCallback(async (accountId: number) => {
     setReconnectingAccount(accountId)
     try {
-      const result = await authenticatedApi.reconnectAccount(accountId)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
-      // The subscription will fire add() with credentialsValid: true when reconnect completes.
-      // The reconnectingAccount state is cleared at that point.
+      await startAccountConnect({ kind: 'reconnect', accountId }, connectRestore)
     } catch (error) {
       console.error('Failed to initiate reconnection:', error)
       toasts.add({ title: 'Не удалось начать повторный вход', variant: 'error' })
       setReconnectingAccount(null)
     }
-  }, [authenticatedApi])
+  }, [connectRestore, toasts])
 
   // --- Render ---
 

@@ -1,3 +1,4 @@
+import { confirmShellBrowser, shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { WorkerEntrypoint, DurableObject, RpcTarget, RpcStub } from "cloudflare:workers";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import {
@@ -183,13 +184,6 @@ const SLACK_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(SLACK_LOGO_SVG)}
 
 // ── HTML shown in the OAuth popup ───────────────────────────────────
 
-const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <body>
-    <script type="text/javascript">window.close();</script>
-    <p>Authorization complete. You may close this tab and return to Cloudflare OS.
-  </body>
-</html>`;
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -263,12 +257,12 @@ export default {
       if (!code) return new Response("Error: no 'code' provided");
 
       let stub = ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(doId));
-      if (!await stub.acceptAuthCode(code, oauthNonce)) {
+      const returnPath = await stub.acceptAuthCode(code, oauthNonce, shellBrowserProof(req));
+      if (!returnPath) {
         return new Response(INVALID_LINK_HTML,
             { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
-      return new Response(SELF_CLOSING_HTML,
-          { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return shellReturnResponse(returnPath);
     } else {
       return new Response("Not Found", { status: 404 });
     }
@@ -381,7 +375,7 @@ export class UserAccount extends DurableObject<Env> {
     return { oauthNonce, scopes };
   }
 
-  async acceptAuthCode(code: string, oauthNonce: string): Promise<boolean> {
+  async acceptAuthCode(code: string, oauthNonce: string, proof: ShellBrowserProof = {}): Promise<string | false> {
     let stored = this.ctx.storage.kv.get<StoredNonce>("nonce");
     if (!stored || stored.stage !== "oauth" ||
         Date.now() >= stored.expiresAt || !constantTimeEqual(stored.value, oauthNonce)) {
@@ -389,6 +383,11 @@ export class UserAccount extends DurableObject<Env> {
     }
     // Consume OAuth state before the network exchange to prevent callback replay.
     this.ctx.storage.kv.delete("nonce");
+
+    // До записи учётных данных оболочка подтверждает, что поток завершает браузер, который его
+    // начал: пересланная ссылка не подключит чужой аккаунт (@gadgets/workshop-shared/shell-browser).
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) return false;
 
     let completion = await this.#updateCredentials(async () => {
       if (!this.env.CLIENT_ID || !this.env.CLIENT_SECRET) {
@@ -436,7 +435,7 @@ export class UserAccount extends DurableObject<Env> {
         throw err;
       }
     }
-    return true;
+    return gate.returnPath;
   }
 
   async getUserId(): Promise<string> {

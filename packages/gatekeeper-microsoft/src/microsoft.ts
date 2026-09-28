@@ -1,3 +1,4 @@
+import {confirmShellBrowser,shellBrowserProof,shellReturnResponse,type ShellBrowserProof} from '@gadgets/workshop-shared/shell-browser';
 import {createApprovedOutlookCalendar} from './calendar-create.ts';
 import {sendApprovedOutlook} from './mail-send.ts';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
@@ -37,8 +38,8 @@ export default {
    if(url.searchParams.getAll('state').length!==1||url.searchParams.getAll('code').length!==1||url.searchParams.has('error'))return response('Authorization was not completed.',400);
    const state=/^([a-f0-9]{64}):([a-f0-9]{64})$/.exec(url.searchParams.get('state')!);
    if(!state)return response('Invalid authorization state.',400);
-   await ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(state[1])).finish(url.searchParams.get('code')!,state[2]);
-   return response('Outlook подключён. Закройте эту вкладку и вернитесь в CloudflareOS.');
+   const returnPath=await ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(state[1])).finish(url.searchParams.get('code')!,state[2],shellBrowserProof(request));
+   return shellReturnResponse(returnPath);
   }catch{return response('Подключение не подтверждено. Вернитесь в CloudflareOS и повторите вход.',400);}
  }
 };
@@ -63,8 +64,10 @@ export class UserAccount extends DurableObject<Env> {
  }
  async begin(initial:string){return this.#account.begin(initial,this.ctx.id.toString());}
  async reconnect(){if(!this.ctx.storage.kv.get('callback'))throw Error('Account unavailable.');return base(this.env)+'/'+this.ctx.id+'/'+this.#account.start();}
- async finish(code:string,state:string){
+ async finish(code:string,state:string,proof:ShellBrowserProof):Promise<string>{
   const callback=this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>('callback');if(!callback)throw Error('Account unavailable.');
+  // До записи учётных данных оболочка подтверждает, что вход завершает браузер, начавший подключение.
+  const gate=await confirmShellBrowser(callback,proof);if(!gate)throw Error('Browser not confirmed.');
   let completion=this.ctx.storage.kv.get<{state:string;generation:string;restoring:boolean}>('completion');
   if(!completion||completion.state!==state){
    await this.#account.finish(code,state);
@@ -76,6 +79,7 @@ export class UserAccount extends DurableObject<Env> {
   else await callback.complete(this.ctx.exports.MicrosoftUser({props:{account:this.ctx.id.toString()}}));
   try{this.#account.validate(completion.generation);}catch{await callback.credentialsExpired();throw Error('Account disconnected.');}
   this.ctx.storage.kv.put('connected',true);this.ctx.storage.kv.delete('expiryNotificationPending');await this.ctx.storage.deleteAlarm();
+  return gate.returnPath;
  }
  async describe(){const identity=this.#account.describe();return {uniqueName:identity.id,displayName:identity.displayName,avatar:AVATAR,grantedResourceUrlPatterns:[RESOURCE.urlPattern,CALENDAR_RESOURCE.urlPattern,...(this.#account.canSend()?[SEND_RESOURCE.urlPattern]:[]),...(this.#account.canCreateCalendar()?[CALENDAR_WRITE_RESOURCE.urlPattern]:[])]};}
  async validateCalendarWrite(generation:string){this.#account.validate(generation);if(!this.#account.canCreateCalendar())throw Error('Reconnect Outlook and grant Calendars.ReadWrite before creating meetings.');}

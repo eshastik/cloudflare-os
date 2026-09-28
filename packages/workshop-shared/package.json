@@ -88,6 +88,10 @@
     "./reasoning": {
       "types": "./src/reasoning.ts",
       "import": "./src/reasoning.ts"
+    },
+    "./shell-browser": {
+      "types": "./src/shell-browser.ts",
+      "import": "./src/shell-browser.ts"
     }
   },
   "scripts": {

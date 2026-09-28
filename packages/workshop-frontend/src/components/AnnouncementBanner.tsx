@@ -1,4 +1,5 @@
 import { useState, useEffect, type CSSProperties } from 'react'
+import SmartLink from './SmartLink'
 import { X } from '@phosphor-icons/react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -22,15 +23,13 @@ const COLOR_STYLES: Record<BannerColor, CSSProperties> = {
 const INLINE_MARKDOWN_COMPONENTS: Components = {
   p: ({ children }) => <>{children}</>,
   a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+    <SmartLink
+      href={href ?? ''}
       className="underline hover:opacity-80"
       style={{ color: 'inherit' }}
     >
       {children}
-    </a>
+    </SmartLink>
   ),
 }
 

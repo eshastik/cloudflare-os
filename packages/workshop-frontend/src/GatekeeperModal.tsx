@@ -1,4 +1,5 @@
 import { logRpcFailure } from './rpcErrors'
+import { startAccountConnect } from './auth/accountConnect'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, useKumoToastManager, type PortalContainer } from '@cloudflare/kumo'
 import {
@@ -60,7 +61,21 @@ export interface GatekeeperModalProps {
   initialVendorId?: string
   initialResourceUrl?: string
   initialResourceUrlPattern?: string
+  // Подключение аккаунта уводит страницу к гейткиперу. Под ключом restoreKey окно сохраняет свой
+  // выбор (и restoreParent — состояние вызывающего), а после возврата вызывающий открывает его с
+  // restoredState (auth/accountConnect.ts).
+  restoreKey?: string
+  restoreParent?: unknown
+  restoredState?: GatekeeperModalState | null
 }
+
+/** Выбор в окне, переживающий уход страницы при подключении аккаунта. */
+export type GatekeeperModalState = {
+  selectedConnectionId: string | null
+  selectedAccountId: number | null
+  searchText: string
+}
+export type GatekeeperModalRestore<P = undefined> = { parent: P; modal: GatekeeperModalState }
 
 type ConnectionTypeId =
   | 'ai-model'
@@ -177,11 +192,13 @@ function disposeConfiguratorFrame(frame: ResourceConfiguratorFrame | null) {
 export default function GatekeeperModal({
   open, onClose, getOverseer, onCreated, spawnerEnvCandidates,
   initialVendorId, initialResourceUrl, initialResourceUrlPattern,
+  restoreKey, restoreParent, restoredState,
 }: GatekeeperModalProps) {
   const { authenticatedApi } = useAuthenticatedApi()
   const toasts = useKumoToastManager()
 
   const [selectedConnectionId, setSelectedConnectionId] = useState<ConnectionTypeId | null>(null)
+  const restoredRef = useRef(restoredState ?? null)
   const [searchText, setSearchText] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [creating, setCreating] = useState(false)
@@ -368,6 +385,14 @@ export default function GatekeeperModal({
     setSpawnerModelId(null)
     setSpawnerEnv(
       (spawnerEnvCandidatesRef.current ?? []).map(entry => ({ ...entry, enabled: true })))
+    // Возврат после подключения аккаунта: окно открывается с тем же выбором, что был до ухода.
+    const restored = restoredRef.current
+    restoredRef.current = null
+    if (restored) {
+      setSelectedConnectionId(restored.selectedConnectionId as ConnectionTypeId | null)
+      setSelectedAccountId(restored.selectedAccountId)
+      setSearchText(restored.searchText)
+    }
 
     authenticatedApi.listModels().then(models => {
       if (cancelled) return
@@ -591,17 +616,20 @@ export default function GatekeeperModal({
     else setSelectedAccountId(null)
   }
 
+  // Подключение идёт на той же странице (auth/accountConnect.ts); выбор в окне переживает уход.
+  const connectRestore = () => restoreKey ? { key: restoreKey, state: {
+    parent: restoreParent,
+    modal: { selectedConnectionId, selectedAccountId, searchText } satisfies GatekeeperModalState,
+  } } : undefined
+
   const handleConnectAccount = async (vendorId: string, resourceUrlPatterns?: string[]) => {
     setConnectingVendor(vendorId)
     try {
-      const result = await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Завершите подключение аккаунта в новой вкладке.', variant: 'success' })
+      await startAccountConnect({ kind: 'connect', vendorId, resourceUrlPatterns }, connectRestore())
     } catch (error) {
       console.error('Failed to initiate connection:', error)
       reportIssue('gatekeeper.connect-start', error, { gatekeeperVendorId: vendorId })
       toasts.add({ title: 'Не удалось начать подключение', variant: 'error' })
-    } finally {
       setConnectingVendor(null)
     }
   }
@@ -615,11 +643,7 @@ export default function GatekeeperModal({
     if (missing.length === 0) return
     setGrantingAccountId(accountId)
     try {
-      const result = await authenticatedApi.ensureAccountResources(accountId, missing)
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer')
-        toasts.add({ title: 'Выдайте дополнительный доступ в новой вкладке.', variant: 'success' })
-      }
+      await startAccountConnect({ kind: 'resources', accountId, resourceUrlPatterns: missing }, connectRestore())
       // The new grant arrives via subscribeConnectedAccounts(); the account's flag then clears and
       // the configurator loads automatically.
     } catch (error) {
@@ -636,9 +660,7 @@ export default function GatekeeperModal({
   const handleReconnectAccount = async (accountId: number) => {
     setReconnectingAccountId(accountId)
     try {
-      const result = await authenticatedApi.reconnectAccount(accountId)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Завершите повторное подключение в новой вкладке.', variant: 'success' })
+      await startAccountConnect({ kind: 'reconnect', accountId }, connectRestore())
     } catch (error) {
       console.error('Failed to initiate reconnect:', error)
       reportIssue('gatekeeper.reconnect-start', error, {

@@ -5,19 +5,19 @@
 // некуда. Поэтому вход идёт переходами в одной вкладке:
 //
 //   1. GET /api/login/start?vendor=…&return_to=/путь — заводит ожидающий вход, ставит браузеру
-//      HttpOnly-cookie «<id входа>.<секрет>» и уводит к гейткиперу. Гейткиперу передаётся путь
-//      /api/login/finish, куда вернуть браузер.
-//   2. Гейткипер завершает вход, оболочка через обратный вызов кладёт ключ сеанса в ожидающий вход
-//      и отдаёт гейткиперу одноразовый признак результата «<id входа>.<секрет>». Гейткипер
-//      возвращает браузер, прошедший вход, на /api/login/finish?handle=<признак>.
+//      HttpOnly-cookie «<id входа>.<секрет>» и уводит к гейткиперу.
+//   2. Гейткипер в браузере, вернувшемся от провайдера, ДО записи личности передаёт оболочке cookie
+//      этого браузера (callback.confirmBrowser). Нет cookie этого входа — отказ, личность не
+//      записывается. Иначе оболочка отдаёт путь /api/login/finish?handle=<одноразовый признак>,
+//      гейткипер завершает вход (ключ сеанса ложится в ожидающий вход) и возвращает туда браузер.
 //   3. GET /api/login/finish выдаёт одноразовый код (срок 90 с), только если у браузера есть И
 //      признак результата, И cookie этого же входа, и возвращает его на return_to#login=<код>.
 //      Ключ сеанса в адрес не попадает никогда.
 //
-// Зачем признак результата. Злоумышленник может начать вход у себя (получить cookie) и переслать
-// адрес гейткипера жертве: у жертвы с открытым сеансом Mnemos вход пройдёт тихо, и её личность
-// окажется во входе злоумышленника. Признак приходит только в браузер жертвы, а cookie есть только
-// у злоумышленника. Браузер с признаком, но без cookie этого входа, гасит вход — забирать нечего.
+// Зачем подтверждение браузера. Злоумышленник может начать вход у себя (получить cookie) и переслать
+// адрес гейткипера жертве: у жертвы с открытым сеансом Mnemos вход пройдёт тихо. В браузере жертвы
+// cookie злоумышленника нет — гейткипер получает отказ и личность жертвы никуда не кладёт. Признак
+// результата вдобавок гасит вход, если вернулся не в тот браузер (например, другая вкладка).
 //   4. Приложение меняет код на ключ по RPC completeGatekeeperLogin(code). Обмен требует ту же
 //      cookie: код, унесённый в другой браузер, не срабатывает.
 //
@@ -58,14 +58,14 @@ interface Stored {
 }
 const KEY = "login";
 
-async function sha256(value: string): Promise<string> {
+export async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function randomHex(): string {
+export function randomHex(): string {
   return [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function randomCode(): string {
+export function randomCode(): string {
   return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
       .replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
@@ -88,27 +88,27 @@ export class PendingLoginState {
     this.kv.put(KEY, { secretHash, returnTo, deadline } satisfies Stored);
     return deadline;
   }
-  /** Результат гейткипера; возвращает секрет признака результата для адреса возврата. */
-  async deliver(token: string): Promise<string> { return this.#settle({ token, error: undefined }); }
-  async fail(reason: LoginFailure): Promise<string> { return this.#settle({ token: undefined, error: reason }); }
-  async #settle(result: Pick<Stored, "token" | "error">): Promise<string> {
+  /** Гейткипер в браузере, завершающем вход, до записи личности: верна ли cookie этого входа.
+   * Возвращает секрет признака результата для адреса возврата. Один раз. */
+  async confirm(secret: string): Promise<string | null> {
     const stored = this.#read();
-    if (!stored || stored.handleHash) throw new Error("Login is not pending");
+    if (!stored || stored.handleHash || stored.secretHash !== await sha256(secret)) return null;
     const handle = randomCode();
-    this.kv.put(KEY, { ...stored, ...result, handleHash: await sha256(handle) });
+    this.kv.put(KEY, { ...stored, handleHash: await sha256(handle) });
     return handle;
+  }
+  /** Результат гейткипера; принимается только после подтверждения браузера. */
+  async deliver(token: string): Promise<void> { this.#settle({ token, error: undefined }); }
+  async fail(reason: LoginFailure): Promise<void> { this.#settle({ token: undefined, error: reason }); }
+  #settle(result: Pick<Stored, "token" | "error">): void {
+    const stored = this.#read();
+    if (!stored?.handleHash || stored.token || stored.error) throw new Error("Login is not confirmed");
+    this.kv.put(KEY, { ...stored, ...result });
   }
   /** Браузер вернулся с признаком результата, но без cookie этого входа: вход гасится. */
   async abandon(handle: string): Promise<void> {
     const stored = this.#read();
     if (stored?.handleHash && stored.handleHash === await sha256(handle)) this.#wipe();
-  }
-  /** Гейткипер вернул браузер со сбоем, без результата: вход гасится, возврат — на исходный адрес. */
-  async abandonBrowser(secret: string): Promise<string | null> {
-    const stored = this.#read();
-    if (!stored || stored.secretHash !== await sha256(secret)) return null;
-    this.#wipe();
-    return stored.returnTo;
   }
   /** Браузер вернулся от гейткипера: выдать одноразовый код (прежний код при этом гаснет).
    * Нужны оба: секрет из cookie браузера, начавшего вход, и признак результата из адреса. */
@@ -136,13 +136,13 @@ export class PendingLoginState {
   }
 }
 
-export type PendingLoginPort = Pick<PendingLoginState, "begin" | "issueCode" | "redeem" | "abandon" | "abandonBrowser">;
+export type PendingLoginPort = Pick<PendingLoginState, "begin" | "confirm" | "issueCode" | "redeem" | "abandon">;
 
 export interface LoginPort {
   create(): { id: string; stub: PendingLoginPort };
   get(id: string): PendingLoginPort | null;
   /** Запускает вход у гейткипера; бросает, если гейткипер не разрешён для входа. */
-  connect(vendorId: string, pendingId: string, returnPath: string): Promise<string>;
+  connect(vendorId: string, pendingId: string): Promise<string>;
 }
 
 /** Только путь этого же сайта. Разрешён лишь набор символов пути; в пути запрещены пустые сегменты
@@ -183,7 +183,7 @@ export async function handleLoginStart(request: Request, port: LoginPort): Promi
   const secret = randomHex();
   await stub.begin(await sha256(secret), returnTo);
   let destination: string;
-  try { destination = await port.connect(vendorId, id, LOGIN_FINISH_PATH); }
+  try { destination = await port.connect(vendorId, id); }
   catch { return plain(403, "Вход через этот сервис на установке не включён."); }
   return new Response(null, { status: 302, headers: { ...HEADERS, Location: destination,
     "Set-Cookie": cookie(`${id}.${secret}`, LOGIN_ATTEMPT_TTL_MS / 1000) } });
@@ -198,12 +198,7 @@ export async function handleLoginFinish(request: Request, port: LoginPort): Prom
   const url = new URL(request.url);
   const binding = readCookie(request.headers.get("Cookie"));
   const rawHandle = url.searchParams.get("handle");
-  if (rawHandle === null) {
-    // Гейткипер вернул браузер без результата (вход у него сорвался): гасим вход этого браузера.
-    const stub = binding && port.get(binding.pendingId);
-    const returnTo = stub ? await stub.abandonBrowser(binding!.secret).catch(() => null) : null;
-    return back(`${returnTo ?? "/"}#login-error=failed`);
-  }
+  if (rawHandle === null) return back("/#login-error=failed");
   const handle = HANDLE.exec(rawHandle);
   const target = handle && port.get(handle[1]);
   if (!handle || !target) return back("/#login-error=expired");
@@ -223,6 +218,16 @@ export async function handleLoginFinish(request: Request, port: LoginPort): Prom
   // Cookie нужна ещё только для обмена кода: её срок сокращается до срока кода.
   return back(`${result.returnTo}#login=${result.code}`,
       cookie(`${binding!.pendingId}.${binding!.secret}`, Math.ceil(LOGIN_CODE_TTL_MS / 1000)));
+}
+
+/** Для callback.confirmBrowser: верна ли cookie браузера для этого входа. */
+export async function confirmLoginBrowser(proof: string | undefined, pendingId: string, port: LoginPort)
+    : Promise<{ returnPath: string } | null> {
+  // Вход берётся из обратного вызова, а не из cookie: секрет из cookie другого входа к нему не подойдёт.
+  const binding = readCookie(proof === undefined ? null : `${LOGIN_COOKIE}=${proof}`);
+  const stub = binding ? port.get(pendingId) : null;
+  const handle = stub ? await stub.confirm(binding!.secret).catch(() => null) : null;
+  return handle ? { returnPath: `${LOGIN_FINISH_PATH}?handle=${pendingId}.${handle}` } : null;
 }
 
 /** RPC-обмен кода на ключ сеанса; cookie берётся из запроса, открывшего соединение. */

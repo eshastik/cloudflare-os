@@ -25,6 +25,8 @@ import { installationChatModel, installationQuickModel, type OpenRouterInstallCo
 import { MNEMOS_VENDOR_ID } from "./auth/login-policy.js";
 import { collectMnemosPeople, mnemosAccountOwner, type MnemosPeople, type MnemosPeopleUi } from "./mnemos-people.js";
 import { MAX_PRINCIPAL_LOOKUP, principalsForUsers } from "./user-directory.js";
+import { ConnectFlows, confirmConnectBrowser, type Flow, type FlowRequest, type ConnectPort } from "./auth/connect-return.js";
+import type { ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 
 /** Сколько держать список людей Mnemos для подсказок «Поделиться». */
 const MNEMOS_PEOPLE_TTL_MS = 60_000;
@@ -1325,31 +1327,81 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return (await Promise.all(promises)).filter(value => value !== null);
   }
 
-  async connectAccount(vendorId: string, resourceUrlPatterns?: string[]): Promise<{url: string}> {
-    let vendor = this.vendors.get(vendorId);
-    if (!vendor) {
-      throw new Error("No such service: " + vendorId);
+  // Подключение аккаунта на той же странице с привязкой к браузеру (auth/connect-return.ts). Поток
+  // заводится после того, как гейткипер выдал адрес; новый аккаунт записывается только при обмене
+  // кода (redeemConnectFlow), переподключение и расширение доступа — только из того же браузера.
+  #connectFlows() { return new ConnectFlows(this.ctx.storage.kv, () => Date.now()); }
+
+  // Отказ (нет сервиса, нет аккаунта) возвращается как error, а не исключением: исключение из
+  // Durable Object платформа пишет в журнал как необработанное, а здесь это штатный исход.
+  async startConnectFlow(request: FlowRequest, secretHash: string): Promise<{ flowId?: string; url?: string; error?: string }> {
+    try {
+      return await this.#startConnectFlow(request, secretHash);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Could not start the connection." };
     }
-    if ((await readAdminConfig(this.env)).disabledGatekeepers.includes(vendorId.toLowerCase())) {
-      throw new Error(`The "${vendorId}" gatekeeper is disabled on this deployment.`);
+  }
+
+  async #startConnectFlow(request: FlowRequest, secretHash: string): Promise<{ flowId?: string; url?: string }> {
+    let url: string | undefined, accountId: number, vendorId: string | undefined;
+    if (request.kind === "connect") {
+      vendorId = request.vendorId!;
+      let vendor = this.vendors.get(vendorId);
+      if (!vendor) {
+        throw new Error("No such service: " + vendorId);
+      }
+      if ((await readAdminConfig(this.env)).disabledGatekeepers.includes(vendorId.toLowerCase())) {
+        throw new Error(`The "${vendorId}" gatekeeper is disabled on this deployment.`);
+      }
+      accountId = this.storage.nextAccountId.get();
+      this.storage.nextAccountId.put(accountId + 1);
+      let callback = this.ctx.exports.GatekeeperConnectCallbackImpl({props: {
+        userId: this.ctx.id.toString(), accountId, vendorId,
+      }});
+      ({url} = await vendor.connectAccount(callback, {resourceUrlPatterns: request.resourceUrlPatterns}));
+    } else {
+      accountId = request.accountId!;
+      let record = this.storage.connectedAccounts.get(accountId);
+      if (!record) throw new Error("No such account.");
+      vendorId = record.vendorId;
+      ({url} = request.kind === "reconnect"
+        ? await record.account.reconnect()
+        : await record.account.ensureResources(request.resourceUrlPatterns ?? []));
     }
-
-    let accountId = this.storage.nextAccountId.get();
-    this.storage.nextAccountId.put(accountId + 1);
-
-    let props = {
-      userId: this.ctx.id.toString(),
-      accountId,
-      vendorId,
-    };
-
-    let callback = this.ctx.exports.GatekeeperConnectCallbackImpl({props});
-
-    let {url} = await vendor.connectAccount(callback, {resourceUrlPatterns});
+    if (!url) return {};
+    let flowId = await this.#connectFlows().begin({...request, accountId}, secretHash);
     logger.info("account connect started", {
       event: "account.connect.started", vendorId, accountId,
     });
-    return {url};
+    return {flowId, url};
+  }
+
+  async confirmConnectFlow(flowId: string, secret: string, accountId: number): Promise<string | null> {
+    return this.#connectFlows().confirm(flowId, secret, accountId);
+  }
+  async settleConnectFlow(accountId: number, result: Flow["result"]): Promise<boolean> {
+    return this.#connectFlows().settle(accountId, result);
+  }
+  async issueConnectCode(flowId: string, secret: string, handle: string) {
+    return this.#connectFlows().issueCode(flowId, secret, handle);
+  }
+  async abandonConnectFlow(flowId: string, handle: string): Promise<void> {
+    await this.#connectFlows().abandon(flowId, handle);
+  }
+  async redeemConnectFlow(flowId: string, secret: string, code: string)
+      : Promise<{ kind: Flow["kind"]; vendorId?: string; accountId: number } | null> {
+    let flow = await this.#connectFlows().redeem(flowId, secret, code);
+    if (!flow) return null;
+    if (flow.kind === "connect") {
+      let result = flow.result as { account: Fetcher<GatekeeperUser>; description: AccountDescription; expiresAt?: Date } | undefined;
+      if (!result) return null;
+      await this.putConnectedAccount({
+        id: flow.accountId, account: result.account, description: result.description,
+        vendorId: flow.vendorId!, credentialExpiresAt: result.expiresAt,
+      });
+      logger.info("account connected", { event: "account.connect.completed", vendorId: flow.vendorId, accountId: flow.accountId });
+    }
+    return { kind: flow.kind, vendorId: flow.vendorId, accountId: flow.accountId };
   }
 
   // Iterate every connected-account record, skipping any that fails to load. A record can fail to
@@ -1554,12 +1606,6 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return frame;
   }
 
-  async ensureAccountResources(accountId: number, resourceUrlPatterns: string[]): Promise<{url?: string}> {
-    let record = this.storage.connectedAccounts.get(accountId);
-    if (!record) throw new Error("No such account.");
-    return record.account.ensureResources(resourceUrlPatterns);
-  }
-
   async subscribeConnectedAccounts(
       subscriber: RpcStub<ConnectedAccountsSubscriber>, filter?: ConnectedAccountsFilter)
       : Promise<RpcStub<{}>> {
@@ -1722,12 +1768,6 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
         vendorId: account.vendorId, accountId, autoProvisioned: false,
       });
     }
-  }
-
-  async reconnectAccount(accountId: number): Promise<{url: string}> {
-    let record = this.storage.connectedAccounts.get(accountId);
-    if (!record) throw new Error("No such account.");
-    return record.account.reconnect();
   }
 
   async startResourceConfigurator(
@@ -2244,16 +2284,23 @@ export class GatekeeperConnectCallbackImpl
     return this.ctx.exports.UserDurableObject.get(userId);
   }
 
+  // Гейткипер зовёт это в браузере, завершающем подключение, ДО записи учётных данных: cookie
+  // потока подключения должна быть у этого браузера (auth/connect-return.ts).
+  async confirmBrowser(proof: ShellBrowserProof): Promise<{ returnPath: string } | null> {
+    return confirmConnectBrowser(typeof proof?.connect === "string" ? proof.connect : undefined,
+        this.ctx.props.userId, this.ctx.props.accountId, userConnectPort(this.ctx.exports.UserDurableObject));
+  }
+
+  // Новый аккаунт не записывается сразу: он ждёт в подтверждённом потоке, пока тот же пользователь
+  // в том же браузере не обменяет код. Нет подтверждённого потока — аккаунт отзывается.
   async complete(account: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void> {
     let userStub = this.#getUserStub();
-
-    await userStub.putConnectedAccount({
-      id: this.ctx.props.accountId,
-      account,
-      description: await account.describe(),
-      vendorId: this.ctx.props.vendorId,
-      credentialExpiresAt: expiresAt,
-    });
+    let description = await account.describe();
+    let settled = await userStub.settleConnectFlow(this.ctx.props.accountId, { account, description, expiresAt });
+    if (!settled) {
+      await account.revoke().catch(() => {});
+      throw new Error("The connection was not confirmed in the browser that started it.");
+    }
   }
 
   async credentialsExpired(): Promise<void> {
@@ -2264,7 +2311,28 @@ export class GatekeeperConnectCallbackImpl
   async credentialsRestored(expiresAt?: Date): Promise<void> {
     let userStub = this.#getUserStub();
     await userStub.markCredentialsRestored(this.ctx.props.accountId, expiresAt);
+    // Завершение переподключения или расширения доступа из браузера; без потока это фоновое
+    // восстановление учётных данных гейткипером.
+    await userStub.settleConnectFlow(this.ctx.props.accountId, undefined);
   }
+}
+
+/** Порт потоков подключения поверх Durable Object пользователя (auth/connect-return.ts). */
+export function userConnectPort(users: DurableObjectNamespace<UserDurableObject>,
+    authenticate: ConnectPort["authenticate"] = async () => { throw new Error("unreachable"); }): ConnectPort {
+  return {
+    authenticate,
+    user(userId) {
+      let stub = users.get(users.idFromString(userId));
+      return {
+        start: (request, secretHash) => stub.startConnectFlow(request, secretHash),
+        confirm: (flowId, secret, accountId) => stub.confirmConnectFlow(flowId, secret, accountId),
+        issueCode: (flowId, secret, handle) => stub.issueConnectCode(flowId, secret, handle),
+        abandon: (flowId, handle) => stub.abandonConnectFlow(flowId, handle),
+        redeem: (flowId, secret, code) => stub.redeemConnectFlow(flowId, secret, code),
+      };
+    },
+  };
 }
 
 export function normalizeUsername(username: string) {

@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { useOptionalHost } from "./host.ts";
 
 /**
  * Небольшой рендер Markdown без зависимостей: текст разбирается в дерево и строится из React-элементов,
@@ -240,6 +241,14 @@ export function markdownToPlain(source: string): string {
   return blockText(parseMarkdown(source)).filter(Boolean).join(" ");
 }
 
+/** Ссылка в тексте. Фрейму не даны окна и переходы, поэтому её открывает оболочка: свой адрес — на
+ * той же странице, внешний сайт — новой вкладкой. Без хоста (вне фрейма) — обычная ссылка. */
+function MarkdownLink({ href, children }: { href: string; children: ReactNode }) {
+  const host = useOptionalHost();
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="text-kumo-link underline"
+    onClick={event => { if (!host) return; event.preventDefault(); void host.openLink(href); }}>{children}</a>;
+}
+
 function renderInline(nodes: Inline[]): ReactNode[] {
   return nodes.map((node, index) => {
     switch (node.kind) {
@@ -248,7 +257,7 @@ function renderInline(nodes: Inline[]): ReactNode[] {
       case "strong": return <strong key={index} className="font-semibold">{renderInline(node.children)}</strong>;
       case "em": return <em key={index}>{renderInline(node.children)}</em>;
       case "del": return <del key={index}>{renderInline(node.children)}</del>;
-      case "link": return <a key={index} href={node.href} target="_blank" rel="noopener noreferrer" className="text-kumo-link underline">{renderInline(node.children)}</a>;
+      case "link": return <MarkdownLink key={index} href={node.href}>{renderInline(node.children)}</MarkdownLink>;
       case "break": return <br key={index} />;
     }
   });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  LOGIN_CODE_TTL_MS, LOGIN_COOKIE, LOGIN_FINISH_PATH, PendingLoginState, handleLoginFinish, handleLoginStart,
+  LOGIN_CODE_TTL_MS, LOGIN_COOKIE, LOGIN_FINISH_PATH, PendingLoginState, confirmLoginBrowser, handleLoginFinish, handleLoginStart,
   parseReturnTo, redeemLoginCode, type LoginPort, type PendingLoginPort,
 } from "../src/auth/login-return.js";
 
@@ -27,7 +27,7 @@ function stand(options: { vendorAllowed?: boolean } = {}) {
   let clock = 1_000_000;
   const logins = new Map<string, PendingLoginState>();
   const kvs = new Map<string, ReturnType<typeof memoryKv>>();
-  const connects: { vendorId: string; pendingId: string; returnPath: string }[] = [];
+  const connects: { vendorId: string; pendingId: string }[] = [];
   let next = 0;
   const port: LoginPort = {
     create() {
@@ -38,9 +38,9 @@ function stand(options: { vendorAllowed?: boolean } = {}) {
       return { id, stub: logins.get(id)! as PendingLoginPort };
     },
     get: id => logins.get(id) ?? null,
-    async connect(vendorId, pendingId, returnPath) {
+    async connect(vendorId, pendingId) {
       if (options.vendorAllowed === false) throw new Error(`Sign-in via "${vendorId}" is not enabled on this deployment.`);
-      connects.push({ vendorId, pendingId, returnPath });
+      connects.push({ vendorId, pendingId });
       return `${ORIGIN}/gatekeeper/${vendorId}/oauth/start/${"a".repeat(64)}/${"b".repeat(64)}`;
     },
   };
@@ -50,9 +50,18 @@ function stand(options: { vendorAllowed?: boolean } = {}) {
     // Гейткипер завершил вход и передал результат через обратный вызов оболочки; одноразовый
     // признак результата гейткипер отдаёт браузеру, прошедшему вход, в адресе возврата.
     handles: new Map<string, string>(),
-    async deliver(pendingId: string, token = TOKEN) {
-      const handle = `${pendingId}.${await logins.get(pendingId)!.deliver(token)}`;
+    cookies: new Map<string, string>(),
+    // Гейткипер в браузере с этой cookie сначала спрашивает оболочку, тот ли это браузер.
+    async confirm(pendingId: string, cookie = this.cookies.get(pendingId) ?? "") {
+      const confirmed = await confirmLoginBrowser(cookie.split("=")[1], pendingId, port);
+      if (!confirmed) return null;
+      const handle = new URL(confirmed.returnPath, ORIGIN).searchParams.get("handle")!;
       this.handles.set(pendingId, handle);
+      return handle;
+    },
+    async deliver(pendingId: string, token = TOKEN, cookie?: string) {
+      const handle = await this.confirm(pendingId, cookie);
+      if (handle) await logins.get(pendingId)!.deliver(token);
       return handle;
     },
   };
@@ -62,7 +71,9 @@ const cookieOf = (response: Response) => response.headers.get("Set-Cookie")!.spl
 
 async function startLogin(s: ReturnType<typeof stand>, returnTo = "/gatekeepers/mnemos") {
   const response = await handleLoginStart(new Request(`${ORIGIN}/api/login/start?vendor=mnemos&return_to=${encodeURIComponent(returnTo)}`), s.port);
-  return { response, cookie: response.status === 302 ? cookieOf(response) : "" };
+  const cookie = response.status === 302 ? cookieOf(response) : "";
+  if (cookie) s.cookies.set(pendingOf(cookie), cookie);
+  return { response, cookie };
 }
 
 // Возврат браузера от гейткипера. По умолчанию — с признаком результата этого входа.
@@ -84,8 +95,7 @@ describe("вход на той же странице", () => {
     expect(setCookie).toMatch(new RegExp(`^${LOGIN_COOKIE}=[0-9a-f]{64}\\.[0-9a-f]{64}; Path=/; Max-Age=\\d+; HttpOnly; Secure; SameSite=Lax$`));
     expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    // Гейткиперу сказано вернуть браузер на путь завершения оболочки, а не закрыть окно.
-    expect(s.connects).toEqual([{ vendorId: "mnemos", pendingId: cookie.split("=")[1].split(".")[0], returnPath: LOGIN_FINISH_PATH }]);
+    expect(s.connects).toEqual([{ vendorId: "mnemos", pendingId: cookie.split("=")[1].split(".")[0] }]);
 
     await s.deliver(s.connects[0].pendingId);
     const back = await finish(s, cookie);
@@ -186,7 +196,8 @@ describe("вход на той же странице", () => {
   it("неуспешный вход возвращает на исходный адрес с причиной, а не с кодом", async () => {
     const s = stand();
     const { cookie } = await startLogin(s, "/x");
-    s.handles.set(s.connects[0].pendingId, `${s.connects[0].pendingId}.${await s.logins.get(s.connects[0].pendingId)!.fail("signups_disabled")}`);
+    await s.confirm(s.connects[0].pendingId);
+    await s.logins.get(s.connects[0].pendingId)!.fail("signups_disabled");
     const back = await finish(s, cookie);
     expect(back.status).toBe(303);
     expect(back.headers.get("Location")).toBe("/x#login-error=signups_disabled");
@@ -204,17 +215,16 @@ describe("вход на той же странице", () => {
     // Злоумышленник начал вход у себя (получил cookie), а адрес гейткипера переслал жертве.
     const attacker = await startLogin(s);
     const pendingId = s.connects[0].pendingId;
-    // У жертвы уже есть сеанс Mnemos: вход проходит тихо, гейткипер кладёт её личность во вход
-    // злоумышленника и возвращает браузер ЖЕРТВЫ с признаком результата.
-    const handle = await s.deliver(pendingId, "victim@example.ru:victim-secret");
-    const victim = await finish(s, "", handle);
-    expect(victim.headers.get("Location")).toBe("/#login-error=other_tab");
-    // Браузер жертвы без cookie этого входа гасит вход: злоумышленнику нечего забрать.
-    expect(s.kvs.get(pendingId)!.size()).toBe(0);
+    // У жертвы открыт сеанс Mnemos, вход у провайдера проходит тихо. Но гейткипер ДО записи
+    // личности спрашивает оболочку, тот ли это браузер: в браузере жертвы cookie злоумышленника нет.
+    expect(await s.deliver(pendingId, "victim@example.ru:victim-secret", "")).toBeNull();
+    // И собственная cookie жертвы (её свой вход) к чужому входу не подходит.
+    const victimOwn = await startLogin(s);
+    expect(await s.deliver(pendingId, "victim@example.ru:victim-secret", victimOwn.cookie)).toBeNull();
+    // Злоумышленнику нечего забрать: личности во входе нет, кода нет.
     const stolen = await finish(s, attacker.cookie, null);
     expect(stolen.headers.get("Location")).not.toContain("#login=");
-    const withHandle = await finish(s, attacker.cookie, handle);
-    expect(withHandle.headers.get("Location")).not.toContain("#login=");
+    expect(JSON.stringify(s.kvs.get(pendingId)!.values())).not.toContain("victim");
   });
 
   it("возврат без признака результата кода не даёт, даже с верной cookie", async () => {
@@ -222,7 +232,7 @@ describe("вход на той же странице", () => {
     const { cookie } = await startLogin(s, "/x");
     await s.deliver(s.connects[0].pendingId);
     const back = await finish(s, cookie, null);
-    expect(back.headers.get("Location")).toBe("/x#login-error=failed");
+    expect(back.headers.get("Location")).toBe("/#login-error=failed");
   });
 
   it("чужой признак результата с верной cookie — отказ", async () => {
@@ -240,17 +250,33 @@ describe("вход на той же странице", () => {
     const firstHandle = await s.deliver(s.connects[0].pendingId);
     const back = await finish(s, second.cookie, firstHandle);
     expect(back.headers.get("Location")).toBe("/#login-error=other_tab");
+    // Вход первой вкладки погашен: признак, попавший не в тот браузер, больше ничего не даст.
+    expect(s.kvs.get(s.connects[0].pendingId)!.size()).toBe(0);
     await s.deliver(s.connects[1].pendingId);
     const ok = await finish(s, second.cookie);
     expect(await redeemLoginCode(second.cookie, codeOf(ok), s.port)).toBe(TOKEN);
     expect(first.cookie).not.toBe(second.cookie);
   });
 
-  it("гейткипер сообщил о сбое входа — возврат на исходный адрес с причиной", async () => {
+  it("браузер подтверждён, но вход у гейткипера сорвался — возврат на исходный адрес с причиной", async () => {
     const s = stand();
     const { cookie } = await startLogin(s, "/x");
-    const back = await handleLoginFinish(new Request(`${ORIGIN}${LOGIN_FINISH_PATH}?error=failed`, { headers: { Cookie: cookie } }), s.port);
+    await s.confirm(s.connects[0].pendingId);
+    const back = await finish(s, cookie);
     expect(back.headers.get("Location")).toBe("/x#login-error=failed");
-    expect(s.kvs.get(s.connects[0].pendingId)!.size()).toBe(0);
+  });
+
+  it("личность без подтверждения браузера не принимается", async () => {
+    const s = stand();
+    await startLogin(s);
+    await expect(s.logins.get(s.connects[0].pendingId)!.deliver("victim@example.ru:victim-secret")).rejects.toThrow();
+    expect(JSON.stringify(s.kvs.get(s.connects[0].pendingId)!.values())).not.toContain("victim");
+  });
+
+  it("подтверждение браузера одноразовое", async () => {
+    const s = stand();
+    await startLogin(s);
+    expect(await s.confirm(s.connects[0].pendingId)).not.toBeNull();
+    expect(await s.confirm(s.connects[0].pendingId)).toBeNull();
   });
 });

@@ -5,6 +5,7 @@
 // A sibling of the generic MCP connector rather than a mode of it: the endpoint is a deployment
 // setting rather than user input, and a grant is scoped to one upstream server. Everything else is
 // shared via `@gadgets/mcp-shared`. See the README.
+import { shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { RpcStub, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { validateRpc, skipRpcValidation } from "capnweb-validate";
 import { createLogger } from "@gadgets/backend-utils/logger";
@@ -59,7 +60,6 @@ import {
   errorPageHtml,
   htmlResponse,
   INVALID_LINK_HTML,
-  SELF_CLOSING_HTML,
 } from "@gadgets/mcp-shared/html";
 import { handleMcpHttpRequest } from "@gadgets/mcp-shared/http";
 import {
@@ -134,7 +134,7 @@ export default {
       log: logger,
       connect: async (request, account, initiationNonce) => {
         if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
-        return continueConnect(account, initiationNonce, env);
+        return continueConnect(account, initiationNonce, env, shellBrowserProof(request));
       },
     });
   },
@@ -146,6 +146,7 @@ async function continueConnect(
   account: DurableObjectStub<McpAccount>,
   initiationNonce: string,
   env: Env,
+  proof: ShellBrowserProof,
 ): Promise<Response> {
   const config = readPortalConfig(env);
   if (!config) {
@@ -156,7 +157,7 @@ async function continueConnect(
 
   let outcome: ConnectOutcome;
   try {
-    outcome = await account.beginConnect(initiationNonce, portalServer(config));
+    outcome = await account.beginConnect(initiationNonce, portalServer(config), proof);
   } catch (err) {
     logger.warn("connect failed", { event: "connect.failed", error: err });
     return htmlResponse(errorPageHtml(
@@ -165,7 +166,7 @@ async function continueConnect(
 
   if (outcome.kind === "invalid") return htmlResponse(INVALID_LINK_HTML, 400);
   if (outcome.kind === "redirect") return Response.redirect(outcome.url, 302);
-  return htmlResponse(SELF_CLOSING_HTML);
+  return shellReturnResponse(outcome.returnPath);
 }
 
 // ---------------------------------------------------------------------------

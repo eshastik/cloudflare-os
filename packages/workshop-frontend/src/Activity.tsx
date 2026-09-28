@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import SmartLink from './components/SmartLink'
 import { Switch, useKumoToastManager } from '@cloudflare/kumo'
 import { CaretRight, Check, Eye, Lightning, ShieldCheck } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
@@ -527,14 +528,12 @@ function ReviewRequest({
           </button>
           <p className="mt-0.5 truncate text-[11.5px] leading-4 tracking-[-0.1px] text-kumo-inactive">
             {resourceUrl ? (
-              <a
+              <SmartLink
                 href={resourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="hover:text-kumo-default hover:underline"
               >
                 {record.resourceTitle}
-              </a>
+              </SmartLink>
             ) : record.resourceTitle}
             <span className="px-1">·</span>
             {formatRelativeTime(record.createdAt)}
@@ -623,14 +622,12 @@ function HistoryRow({
               </ResolverBadge>
             )}
             {resourceUrl && (
-              <a
+              <SmartLink
                 href={resourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="text-kumo-subtle hover:text-kumo-default hover:underline"
               >
                 Открыть
-              </a>
+              </SmartLink>
             )}
             {record.type === 'bindHook' && record.hookId !== undefined && (
               <HookToggle

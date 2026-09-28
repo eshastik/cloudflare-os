@@ -2,6 +2,7 @@ import {
   ArrowUpRight, Buildings, CalendarBlank, CheckCircle, Code, CurrencyRub, Envelope, Eye, Key, LinkSimple,
   PaperPlaneTilt, ShareNetwork, ShieldCheck, Stamp, Trash, UserPlus, Users, XCircle, type Icon,
 } from "@phosphor-icons/react";
+import SmartLink from '../SmartLink'
 import type { ActionCardIcon, ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
 import { safeExternalUrl } from "../../utils/safeExternalUrl";
 
@@ -100,9 +101,9 @@ export function ActionConfirmCard({ icon, title, details, state, outcome, busy, 
               </button>
             )}
             {state === "approved" && link && (
-              <a href={link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-0.5 text-kumo-link hover:underline">
+              <SmartLink href={link} className="flex items-center gap-0.5 text-kumo-link hover:underline">
                 Открыть <ArrowUpRight size={12} weight="bold" aria-hidden="true" />
-              </a>
+              </SmartLink>
             )}
           </div>
         )}

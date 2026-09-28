@@ -189,6 +189,13 @@ test("«Материалы»: Markdown в просмотре оформлен, �
     assert.equal(links[0].getAttribute("href"), "https://example.com");
     assert.equal(links[0].getAttribute("rel"), "noopener noreferrer");
     assert.ok(shown.textContent.includes("плохая"));
+    // Фрейму не даны всплывающие окна: ссылку открывает оболочка (внешнюю — новой вкладкой,
+    // свою — на той же странице), а не сам фрейм.
+    const click = new app.dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    links[0].dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, "фрейм сам не переходит");
+    await app.until(() => app.calls.some(([m]) => m === "openLink"), "ссылку открывает оболочка");
+    assert.deepEqual(app.calls.find(([m]) => m === "openLink"), ["openLink", "https://example.com"]);
   } finally { app.dispose(); }
 });
 

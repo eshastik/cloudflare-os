@@ -1,11 +1,12 @@
 import { stripTrailingSlashes } from "@gadgets/workshop-shared/gatekeeper";
+import { shellBrowserProof, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { NONCE_BYTES } from "./connect-nonce.js";
 import { htmlResponse, INVALID_LINK_HTML } from "./html.js";
 import type { McpLog } from "./log.js";
 import { handleOAuthCallback } from "./oauth-callback.js";
 
 type OAuthCallbackAccount = {
-  acceptAuthCode(code: string, nonce: string, issuer?: string): Promise<boolean>;
+  acceptAuthCode(code: string, nonce: string, issuer?: string, proof?: ShellBrowserProof): Promise<string | false>;
 };
 
 /** Routes the HTTP paths common to both MCP connectors. */
@@ -26,7 +27,7 @@ export async function handleMcpHttpRequest<A extends OAuthCallbackAccount>(
 
   const relativePath = url.pathname.slice(basePath.length);
   if (relativePath === "/oauth") {
-    return handleOAuthCallback(url, options.accountForId, options.log);
+    return handleOAuthCallback(url, options.accountForId, options.log, shellBrowserProof(request));
   }
 
   const path = relativePath.slice(1).split("/");

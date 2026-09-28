@@ -15,6 +15,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { GatekeeperConnectCallback, GatekeeperUser }
   from "@gadgets/workshop-shared/gatekeeper";
+import { confirmShellBrowser, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import {
   auth,
   refreshAuthorization,
@@ -99,7 +100,7 @@ export function resolveConnectTarget(
 
 // What `beginConnect` tells the HTTP handler to do next.
 export type ConnectOutcome =
-  | { kind: "done" }
+  | { kind: "done"; returnPath: string }
   | { kind: "redirect"; url: string }
   | { kind: "invalid" };
 
@@ -273,7 +274,7 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
   // Probes unauthenticated first, since a 401 is how a server tells us both that it needs OAuth and
   // where its authorization server is.
   async beginConnect(
-    initiationNonce: string, target: ConnectedServer | null,
+    initiationNonce: string, target: ConnectedServer | null, proof: ShellBrowserProof = {},
   ): Promise<ConnectOutcome> {
     const existing = this.server();
     const server = resolveConnectTarget(existing, target);
@@ -333,10 +334,11 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
       // token from every later request. Only an endpoint that answered with no credential at all is.
       const connected: ConnectedServer =
         server.auth === "token" ? server : { ...server, auth: "none" };
+      const gate = await this.confirmBrowser(proof);
       this.ctx.storage.kv.put("server", connected);
       await this.complete(connected, info, generation);
       log.info("connected without authorization", { event: "connect.completed" });
-      return { kind: "done" };
+      return { kind: "done", returnPath: gate.returnPath };
     } catch (err) {
       if (!(err instanceof McpAuthRequiredError)) {
         this.restoreSelection(initiationNonce);
@@ -358,7 +360,7 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
       const oauthServer: ConnectedServer = { ...server, auth: "oauth" };
       this.ctx.storage.kv.put("server", oauthServer);
       try {
-        return await this.beginOAuth(oauthServer, err.resourceMetadataUrl, generation);
+        return await this.beginOAuth(oauthServer, err.resourceMetadataUrl, generation, proof);
       } catch (oauthErr) {
         this.restoreSelection(initiationNonce);
         throw oauthErr;
@@ -492,6 +494,7 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
 
   private async beginOAuth(
     server: ConnectedServer, resourceMetadataUrl: string | null, generation: number,
+    proof: ShellBrowserProof,
   ): Promise<ConnectOutcome> {
     const selection = this.ctx.storage.kv.get<StoredNonce>("nonce");
     let redirectUrl: URL | undefined;
@@ -525,8 +528,9 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
         const tokens = this.ctx.storage.kv.get<OAuthTokens>("tokens");
         if (!tokens) throw new Error("The authorization server returned no access token.");
         const info = await this.probe(server, tokens.access_token, generation);
+        const gate = await this.confirmBrowser(proof);
         await this.complete(server, info, generation);
-        return { kind: "done" };
+        return { kind: "done", returnPath: gate.returnPath };
       }
       throw new Error("The authorization server returned no redirect.");
     } catch (err) {
@@ -545,7 +549,9 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
   }
 
   // Completes the OAuth code exchange. Returns false when the callback's nonce doesn't match.
-  async acceptAuthCode(code: string, oauthNonce: string, issuer?: string): Promise<boolean> {
+  async acceptAuthCode(
+    code: string, oauthNonce: string, issuer?: string, proof: ShellBrowserProof = {},
+  ): Promise<string | false> {
     const stored = this.ctx.storage.kv.get<StoredNonce>("nonce");
     if (!stored || stored.stage !== "oauth" || Date.now() >= stored.expiresAt ||
         !constantTimeEqual(stored.value, oauthNonce)) {
@@ -559,6 +565,10 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
 
     const server = this.requireServer();
     if (!this.isCurrentConnection(server, pending.generation)) return false;
+    // До обмена кода (он записывает токены) оболочка подтверждает, что поток завершает браузер,
+    // который его начал: пересланная ссылка не подключит чужой аккаунт.
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) return false;
     let result: Awaited<ReturnType<typeof auth>>;
     try {
       result = await auth(this.oauthProvider(server, pending.generation), {
@@ -586,7 +596,14 @@ export abstract class McpAccountBase<E extends AccountEnv, P = unknown>
     const info = await this.probe(server, tokens.access_token, pending.generation);
     if (!this.isCurrentConnection(server, pending.generation)) return false;
     await this.complete(server, info, pending.generation);
-    return true;
+    return gate.returnPath;
+  }
+
+  // Подтверждение браузера оболочкой перед записью подключения (@gadgets/workshop-shared/shell-browser).
+  private async confirmBrowser(proof: ShellBrowserProof): Promise<{ returnPath: string }> {
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) throw new Error("This connection was started in another browser. Start it again here.");
+    return gate;
   }
 
   // Hands the freshly-minted account back to the Workshop (or, on reconnect, just says so).

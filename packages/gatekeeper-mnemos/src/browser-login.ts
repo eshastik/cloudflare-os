@@ -1,4 +1,6 @@
 import type { AccountStorage } from "./account-session.ts";
+import { confirmShellBrowser, isShellReturnPath, shellBrowserProof, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
+import type { GatekeeperConnectCallback } from "@gadgets/workshop-shared/gatekeeper";
 
 const KEY = "mnemosBrowserLogin";
 interface BrowserLogin { nonce: string; phase: "initiation" | "browser"; deadline: number }
@@ -54,22 +56,25 @@ export function finishScriptHash(): Promise<string> {
     .then(sum => "sha256-" + btoa(String.fromCharCode(...new Uint8Array(sum))));
 }
 
-/** Путь оболочки, куда вернуть браузер после входа: только «/…» этого же сайта, не полный адрес. */
-export function parseReturnPath(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 512 || !/^\/[A-Za-z0-9._~\/-]*$/.test(value) || value.includes("//")) return undefined;
-  if (value.split("/").some(segment => segment === "." || segment === "..")) return undefined;
-  return value;
+/** Завершение входа или подключения: до записи учётных данных (finish) оболочка подтверждает,
+ * что его завершает браузер, который его начал; пересланная ссылка не кладёт чужую личность в
+ * чужой поток. После подтверждения браузер при любом исходе возвращается в оболочку. */
+export async function completeWithShellBrowser(callback: Fetcher<GatekeeperConnectCallback> | undefined,
+    proof: ShellBrowserProof, finish: () => Promise<void>): Promise<{ returnPath?: string }> {
+  if (!callback) { await finish(); return {}; }
+  const gate = await confirmShellBrowser(callback, proof);
+  if (!gate) throw new Error("Browser not confirmed by CloudflareOS");
+  try { await finish(); } catch { /* причину покажет оболочка */ }
+  return { returnPath: gate.returnPath };
 }
-/** Признак результата, выданный оболочкой: «<id входа>.<секрет>». */
-const RETURN_HANDLE = /^[0-9a-f]{64}\.[A-Za-z0-9_-]{43}$/;
 
 /** Minimal trusted account port; the HTTP boundary never accepts credentials or identity. */
 export interface BrowserLoginAccount {
   loginOrganizations?(nonce: string): Promise<{id:string;name:string}[]>;
   startBrowserLogin(nonce: string, profile?: string, invitation?: string): Promise<{ url: string; browserNonce: string }>;
-  /** returnPath — путь оболочки, заданный ею при запуске входа (вход на той же странице);
-   * returnHandle — признак результата от оболочки; failed — вход сорвался после проверки браузера. */
-  completeBrowserLogin(nonce: string, state: string, code: string): Promise<{ returnPath?: string; returnHandle?: string; failed?: boolean } | void>;
+  /** proof — cookie оболочки из этого браузера: до записи учётных данных они уходят оболочке на
+   * подтверждение (callback.confirmBrowser). returnPath — путь оболочки, куда вернуть браузер. */
+  completeBrowserLogin(nonce: string, state: string, code: string, proof: ShellBrowserProof): Promise<{ returnPath?: string } | void>;
 }
 
 /** Only the configured callback origin/path and nonce-bearing initiation route exist. */
@@ -126,13 +131,11 @@ export async function handleBrowserLogin(request: Request, callbackUrl: string, 
     if ([...url.searchParams.keys()].some(key => key !== "state" && key !== "code") || url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length !== 1) return reject(400);
     const state = url.searchParams.get("state")!, code = url.searchParams.get("code")!;
     if (!state || state.length > 512 || !code || code.length > 8192) return reject(400);
-    const completed = await account(binding[0]).completeBrowserLogin(binding[1], state, code);
-    const returnPath = parseReturnPath(completed?.returnPath);
-    // Вход на той же странице: браузер возвращается в оболочку с признаком результата, а она выдаёт
-    // код, только если у этого же браузера есть её cookie входа. Сбой — возврат с причиной.
-    const handle = completed?.returnHandle;
-    const query = !completed?.failed && typeof handle === "string" && RETURN_HANDLE.test(handle) ? `?handle=${handle}` : "?error=failed";
-    const done = returnPath ? new Headers({ ...headers, Location: callback.origin + returnPath + query })
+    const completed = await account(binding[0]).completeBrowserLogin(binding[1], state, code, shellBrowserProof(request));
+    // Вход и подключение на той же странице: браузер возвращается в оболочку, а она выдаёт код,
+    // только если у этого же браузера есть её cookie.
+    const returnPath = isShellReturnPath(completed?.returnPath) ? completed.returnPath : undefined;
+    const done = returnPath ? new Headers({ ...headers, Location: callback.origin + returnPath })
       : new Headers({ ...headers, "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": `default-src 'none'; script-src '${await finishScriptHash()}'; frame-ancestors 'none'; base-uri 'none'` });
     done.append("Set-Cookie", clearCookie);

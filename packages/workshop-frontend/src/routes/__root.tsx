@@ -17,6 +17,7 @@ import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
 import UploadDock from '../UploadDock'
+import ConnectReturnNotice from '../auth/ConnectReturnNotice'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -205,6 +206,7 @@ function AuthenticatedShell({
     <>
       {connectionLost && <ConnectionLostBanner />}
       <AccountSelectionModal />
+      <ConnectReturnNotice api={authenticatedApi} />
       <AppShell bare={isWorkspaceEditor}>
         <Outlet />
       </AppShell>

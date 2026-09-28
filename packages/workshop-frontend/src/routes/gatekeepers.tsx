@@ -1,4 +1,5 @@
 import { logRpcFailure } from '../rpcErrors'
+import { startAccountConnect } from '../auth/accountConnect'
 import { createFileRoute, useLocation, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useKumoToastManager } from '@cloudflare/kumo'
@@ -611,8 +612,8 @@ function ConnectorsPage() {
         // If the gatekeeper provides a management UI, its nav entry should appear without a reload.
         refreshGatekeeperApps(authenticatedApi)
       } else {
-        const { url } = await authenticatedApi.connectAccount(vendorId, resourceUrlPatterns)
-        window.open(url, '_blank', 'noopener,noreferrer')
+        // Подключение идёт на той же странице: она уходит к сервису и возвращается сюда.
+        await startAccountConnect({ kind: 'connect', vendorId, resourceUrlPatterns })
       }
       handleCloseModal()
     } catch (err) {
@@ -627,13 +628,7 @@ function ConnectorsPage() {
     if (!modalTarget || modalTarget.kind !== 'manage') return
     setEnsuringResourceUrlPatterns((prev) => [...new Set([...prev, ...resourceUrlPatterns])])
     try {
-      const result = await authenticatedApi.ensureAccountResources(
-        modalTarget.accountId,
-        resourceUrlPatterns,
-      )
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer')
-      }
+      await startAccountConnect({ kind: 'resources', accountId: modalTarget.accountId, resourceUrlPatterns })
       // On success the new grant arrives via subscribeConnectedAccounts(); the toggle reflects it
       // once `grantedResourceUrlPatterns` updates.
     } catch (err) {
@@ -668,8 +663,7 @@ function ConnectorsPage() {
   const handleReconnect = async (accountId: number) => {
     setReconnectingAccountId(accountId)
     try {
-      const { url } = await authenticatedApi.reconnectAccount(accountId)
-      window.open(url, '_blank', 'noopener,noreferrer')
+      await startAccountConnect({ kind: 'reconnect', accountId })
     } catch (err) {
       console.error('Failed to reconnect account:', err)
       toasts.add({ title: 'Не удалось переподключить аккаунт. Попробуйте ещё раз.', variant: 'error' })

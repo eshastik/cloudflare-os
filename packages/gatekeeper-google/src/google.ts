@@ -1,3 +1,4 @@
+import { confirmShellBrowser, shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import {createApprovedGoogleCalendar} from './calendar-create';
 import {sendApprovedGmail} from './mail-send';
 import {SelectedGmailReader} from "./mail-source";
@@ -178,13 +179,6 @@ function getBasePath(env: Env) {
 
 // =======================================================================================
 
-const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <body>
-    <script type="text/javascript">window.close();</script>
-    <p>Authorization complete. You may close this tab and return to Cloudflare OS.
-  </body>
-</html>`;
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -426,16 +420,13 @@ export default {
 
       let userObjectId = ctx.exports.UserAccount.idFromString(doId);
       let stub: DurableObjectStub<UserAccount> = ctx.exports.UserAccount.get(userObjectId);
-      if (!await stub.acceptAuthCode(code, oauthNonce)) {
+      const returnPath = await stub.acceptAuthCode(code, oauthNonce, shellBrowserProof(req));
+      if (!returnPath) {
         return new Response(INVALID_LINK_HTML, {
           headers: { "Content-Type": "text/html; charset=utf-8" }
         });
       }
-      return new Response(SELF_CLOSING_HTML, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8"
-        }
-      });
+      return shellReturnResponse(returnPath);
     } else {
       return new Response("Not Found", {status: 404});
     }
@@ -600,7 +591,7 @@ export class UserAccount extends DurableObject<Env> {
   }
 
   // Returns false if the OAuth nonce is invalid or expired.
-  async acceptAuthCode(code: string, oauthNonce: string): Promise<boolean> {
+  async acceptAuthCode(code: string, oauthNonce: string, proof: ShellBrowserProof = {}): Promise<string | false> {
     // Verify and consume the OAuth nonce.
     let stored = this.ctx.storage.kv.get<StoredNonce>("nonce");
     if (!stored || stored.stage !== "oauth" ||
@@ -608,6 +599,11 @@ export class UserAccount extends DurableObject<Env> {
       return false;
     }
     this.ctx.storage.kv.delete("nonce");
+
+    // До записи учётных данных оболочка подтверждает, что поток завершает браузер, который его
+    // начал: пересланная ссылка не подключит чужой аккаунт (@gadgets/workshop-shared/shell-browser).
+    const gate = await confirmShellBrowser(this.ctx.storage.kv.get<Fetcher<GatekeeperConnectCallback>>("callback"), proof);
+    if (!gate) return false;
 
     let { CLIENT_ID: clientId, CLIENT_SECRET: clientSecret } = this.env;
     if (!clientId || !clientSecret) {
@@ -669,7 +665,7 @@ export class UserAccount extends DurableObject<Env> {
       }
     }
 
-    return true;
+    return gate.returnPath;
   }
 
   hasRefreshToken() {

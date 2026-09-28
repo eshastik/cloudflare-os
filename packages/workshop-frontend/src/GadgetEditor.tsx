@@ -1323,6 +1323,7 @@ export default function GadgetEditor() {
             authenticatedApi={authenticatedApi}
             onConfirm={observerConfig.resolve}
             onCancel={cancelObserverConfig}
+            restoreKey={`observer-config:${id}`}
           />
         )}
       </div>

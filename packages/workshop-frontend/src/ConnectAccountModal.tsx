@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { startAccountConnect } from './auth/accountConnect'
 import { Dialog, Text, Loader, useKumoToastManager } from '@cloudflare/kumo'
 import { RpcStub } from 'capnweb'
 import { AuthenticatedApi, GatekeeperVendorFilter } from '@gadgets/workshop-shared/api'
@@ -64,8 +65,7 @@ export default function ConnectAccountModal({
   const handleConnect = async (vendorId: string) => {
     setConnecting(vendorId)
     try {
-      const result = await authenticatedApi.connectAccount(vendorId)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
+      await startAccountConnect({ kind: 'connect', vendorId })
       onInitiated()
     } catch (error) {
       console.error('Failed to initiate connection:', error)

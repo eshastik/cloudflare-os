@@ -15,6 +15,7 @@ import FrontendErrorBoundary from './FrontendErrorBoundary'
 import { installWorkshopErrorReporting, reportIssue } from './errorReporting'
 import { applySiteFavicon, cacheBustSiteLogoUrl } from './siteLogoUtils'
 import { captureLoginReturn } from './auth/loginReturn'
+import { captureConnectReturn } from './auth/accountConnect'
 
 // ---------------------------------------------------------------------------
 // Dev auto-login: if VITE_DEV_AUTO_LOGIN=true, automatically create/login
@@ -124,6 +125,7 @@ currentStub.onRpcBroken(handleBroken);
 
 // Код входа забирается из адреса до запуска маршрутизатора, чтобы он не попал в его историю.
 captureLoginReturn()
+captureConnectReturn()
 const router = createRouter()
 applyStoredThemeMode()
 

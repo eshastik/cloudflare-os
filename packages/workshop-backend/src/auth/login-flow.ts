@@ -21,7 +21,8 @@ import { createWorkshopLogger } from "../observability";
 import { gatekeeperLoginPolicy } from "./login-policy.js";
 import { readAdminConfig } from "../admin-config.js";
 import { shellLoginTarget } from "./login-aliases.js";
-import { PendingLoginState, type LoginFailure } from "./login-return.js";
+import { PendingLoginState, confirmLoginBrowser, type LoginFailure } from "./login-return.js";
+import type { ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import type { UserDurableObject } from "../user.js";
 
 const logger = createWorkshopLogger("workshop.auth");
@@ -36,10 +37,10 @@ export class PendingLogin extends DurableObject<Cloudflare.Env> {
     await this.ctx.storage.setAlarm(deadline);
     return deadline;
   }
-  async deliver(token: string): Promise<string> { return this.#state.deliver(token); }
-  async fail(reason: LoginFailure): Promise<string> { return this.#state.fail(reason); }
+  async confirm(secret: string): Promise<string | null> { return this.#state.confirm(secret); }
+  async deliver(token: string): Promise<void> { await this.#state.deliver(token); }
+  async fail(reason: LoginFailure): Promise<void> { await this.#state.fail(reason); }
   async abandon(handle: string): Promise<void> { await this.#state.abandon(handle); }
-  async abandonBrowser(secret: string): Promise<string | null> { return this.#state.abandonBrowser(secret); }
   async issueCode(secret: string, handle: string) {
     const result = await this.#state.issueCode(secret, handle);
     if (result?.codeDeadline) await this.ctx.storage.setAlarm(result.codeDeadline);
@@ -84,16 +85,22 @@ export class LoginConnectCallbackImpl
     return this.ctx.exports.PendingLogin.get(id);
   }
 
-  // Возвращает признак результата «<id входа>.<секрет>»: гейткипер отдаёт его браузеру, прошедшему
-  // вход, в адресе возврата. Код входа выдаётся только браузеру с этим признаком и cookie входа
-  // (auth/login-return.ts).
-  async complete(account: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<{ returnHandle: string }> {
+  // Гейткипер зовёт это в браузере, вернувшемся от провайдера, ДО записи личности: cookie входа
+  // должна быть у этого браузера (auth/login-return.ts).
+  async confirmBrowser(proof: ShellBrowserProof): Promise<{ returnPath: string } | null> {
+    return confirmLoginBrowser(typeof proof?.login === "string" ? proof.login : undefined, this.ctx.props.pendingId, {
+      create() { throw new Error("unreachable"); },
+      get: id => this.ctx.exports.PendingLogin.get(this.ctx.exports.PendingLogin.idFromString(id)),
+      async connect() { throw new Error("unreachable"); },
+    });
+  }
+
+  async complete(account: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void> {
     const loginLogger = logger.with({
       operation: "gatekeeper.login",
       vendorId: this.ctx.props.vendorId,
     });
     const pending = this.#pending();
-    const handle = (secret: string) => ({ returnHandle: `${this.ctx.props.pendingId}.${secret}` });
     // `account` is a call parameter, so Cap'n Web disposes it automatically when this method
     // returns — no explicit disposal needed. We read the verified email to resolve/create the user.
     // The email's local-part seeds the initial display name, like the Cloudflare Access flow.
@@ -103,7 +110,8 @@ export class LoginConnectCallbackImpl
         loginLogger.info("gatekeeper login finished", {
           event: "gatekeeper.login.finished", outcome: "no_email",
         });
-        return handle(await pending.fail("no_email"));
+        await pending.fail("no_email");
+        return;
       }
       const signupsEnabled = (await readAdminConfig(this.env)).signupsEnabled;
       const token = await signInViaGatekeeper(this.ctx.exports.UserDurableObject, this.env, email,
@@ -113,13 +121,13 @@ export class LoginConnectCallbackImpl
         loginLogger.info("gatekeeper login finished", {
           event: "gatekeeper.login.finished", outcome: "signups_disabled",
         });
-        return handle(await pending.fail("signups_disabled"));
+        await pending.fail("signups_disabled");
+        return;
       }
-      const result = handle(await pending.deliver(token));
+      await pending.deliver(token);
       loginLogger.info("gatekeeper login finished", {
         event: "gatekeeper.login.finished", outcome: "ok",
       });
-      return result;
     } catch (err) {
       loginLogger.error("gatekeeper login failed", {
         event: "gatekeeper.login.failed", error: err,
@@ -127,7 +135,7 @@ export class LoginConnectCallbackImpl
       loginLogger.info("gatekeeper login finished", {
         event: "gatekeeper.login.finished", outcome: "error",
       });
-      return handle(await pending.fail("failed"));
+      await pending.fail("failed").catch(() => {});
     }
   }
 

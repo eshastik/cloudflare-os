@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { startAccountConnect } from '../../auth/accountConnect'
 import { CloudflareUsageInfo, CloudflareAccountOption } from '@gadgets/workshop-shared/api'
 import { Dialog, Button, Loader, useKumoToastManager } from '@cloudflare/kumo'
 import { CloudWarning, Lightning } from '@phosphor-icons/react'
@@ -58,8 +59,7 @@ export default function OutOfCreditsModal({ open, onClose }: OutOfCreditsModalPr
     if (!auth) return
     setConnecting(true)
     try {
-      const { url } = await auth.authenticatedApi.connectAccount('cloudflare')
-      window.open(url, '_blank', 'noopener,noreferrer')
+      await startAccountConnect({ kind: 'connect', vendorId: 'cloudflare' })
     } catch {
       // ignore
     } finally {
@@ -183,7 +183,7 @@ export default function OutOfCreditsModal({ open, onClose }: OutOfCreditsModalPr
                   <Button variant="secondary" onClick={onClose}>Закрыть</Button>
                   <Button
                     variant="primary"
-                    onClick={() => window.open(buildAddCreditsUrl(usage.accountId), '_blank')}
+                    onClick={() => window.open(buildAddCreditsUrl(usage.accountId), '_blank', 'noopener,noreferrer')}
                   >
                     Пополнить баланс в Cloudflare
                   </Button>

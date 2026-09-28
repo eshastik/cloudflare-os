@@ -1,4 +1,5 @@
 import { logRpcFailure } from './rpcErrors'
+import { startAccountConnect } from './auth/accountConnect'
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate, useParams, useRouter } from '@tanstack/react-router'
 import { RpcStub } from 'capnweb'
@@ -199,9 +200,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     if (!authenticatedApi) return
     setConnectingVendor(vendorId)
     try {
-      const result = await authenticatedApi.connectAccount(vendorId)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Завершите подключение аккаунта в новой вкладке.', variant: 'success' })
+      await startAccountConnect({ kind: 'connect', vendorId })
     } catch (err) {
       console.error('Failed to initiate connection:', err)
       toasts.add({ title: 'Не удалось начать подключение', variant: 'error' })
@@ -214,9 +213,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
     if (!authenticatedApi) return
     setReconnectingAccountId(accountId)
     try {
-      const result = await authenticatedApi.reconnectAccount(accountId)
-      window.open(result.url, '_blank', 'noopener,noreferrer')
-      toasts.add({ title: 'Завершите повторное подключение в новой вкладке.', variant: 'success' })
+      await startAccountConnect({ kind: 'reconnect', accountId })
     } catch (err) {
       console.error('Failed to initiate reconnect:', err)
       toasts.add({ title: 'Не удалось начать повторное подключение', variant: 'error' })
@@ -889,7 +886,7 @@ export default function BlueprintLandingPage({ rpcStub }: Props) {
                 {sourceWorkspace && (
                   <DropdownMenu.Item
                     icon={<ArrowSquareOut size={13} className="mr-2" />}
-                    onClick={() => window.open(`/workspace/${sourceWorkspace.workspaceId}`, '_blank', 'noopener,noreferrer')}
+                    onClick={() => router.history.push(`/workspace/${sourceWorkspace.workspaceId}`)}
                     className={MENU_ITEM}
                   >
                     Открыть беседу

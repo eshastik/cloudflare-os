@@ -76,6 +76,9 @@ const MAX_PHOTO_IDS = 200
 // Near the max int, so the full-viewport iframe sits above all Workshop chrome.
 const overlayZIndex = 2147483000
 
+/** Переход страницы; вынесен, чтобы тесты могли его перехватить. */
+export const gitHubNavigation = { assign(url: string) { window.location.assign(url) } }
+
 let pendingGitHubReturn: GitHubReturn | null = typeof window === 'undefined' ? null : readGitHubReturn(window.location.search)
 
 const baseIframeStyle: CSSProperties = {
@@ -163,6 +166,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     uploadLink?: UploadLink,
     private readonly launchShared?: (scope: string, owner: string, resource: string) => Promise<boolean>,
     private readonly photos?: FramePersonPhotos,
+    private readonly openPath: (path: string) => void = () => {},
   ) {
     super()
     this.#uploadLink = uploadLink
@@ -263,14 +267,31 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.navigateApprovals()
   }
 
-  /** Открывает страницу установки или настроек приложения GitHub в новой вкладке. false — адрес не из перечня или браузер не открыл вкладку. */
+  /** Уводит эту же страницу на вход, установку или настройки приложения GitHub; GitHub вернёт её сюда
+   * с итогом в адресе (readGitHubReturn). Новая вкладка на телефоне уводила из приложения, а исходная
+   * засыпала. false — адрес не из перечня. */
   openGitHubAppPage(url: string): boolean {
     this.#uploadLifetime.signal.throwIfAborted()
     if (!isGitHubAppPage(url)) return false
-    // Без noopener в свойствах: с ним window.open всегда отдаёт null, и не узнать, открылась ли вкладка.
-    const opened = window.open(url, '_blank')
-    if (!opened) return false
-    opened.opener = null
+    gitHubNavigation.assign(url)
+    return true
+  }
+
+  /** Ссылка из текста фрейма (фрейму окна и переходы не даны): адрес оболочки открывается на той же
+   * странице, внешний сайт и почта — новой вкладкой. Служебные адреса оболочки (/api, /gatekeeper —
+   * вход и подключения) фрейму не открыть. false — адрес не принят. */
+  openLink(url: string): boolean {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (typeof url !== 'string' || url.length > 4096) return false
+    let parsed: URL
+    try { parsed = new URL(url) } catch { return false }
+    if (parsed.origin === window.location.origin && (parsed.protocol === 'https:' || parsed.protocol === 'http:')) {
+      if (/^\/(api|gatekeeper)(\/|$)/.test(parsed.pathname)) return false
+      this.openPath(parsed.pathname + parsed.search + parsed.hash)
+      return true
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:' && parsed.protocol !== 'mailto:') return false
+    window.open(parsed.href, '_blank', 'noopener,noreferrer')
     return true
   }
 
@@ -750,6 +771,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           return launchSharedDocument(authenticatedApi, frame, accountId, { scope, owner, resource }, async id => { await navigate({to: '/workspace/$id', params: {id}}) })
         },
         frame.nativeWrites ? new FramePersonPhotos(frame.nativeWrites.selector, frame.nativeWrites.storageOrigin) : undefined,
+        // Переход откладывается: он закрывает фрейм, а ответ на вызов должен успеть дойти.
+        path => { setTimeout(() => { void navigate({ href: path }) }, 0) },
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host

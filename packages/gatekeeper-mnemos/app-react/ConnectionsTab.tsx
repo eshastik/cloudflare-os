@@ -205,8 +205,8 @@ function accountNote(a: GitHubAccountRow): string {
   return `${kind}${repos}${via}`;
 }
 
-/** «Ваши аккаунты GitHub»: у каждого человека свои. GitHub открывается в новой вкладке: фрейму Mnemos
- * самому открывать окна нельзя, это делает хост и только для страниц приложения GitHub. */
+/** «Ваши аккаунты GitHub»: у каждого человека свои. Страница уходит на GitHub и возвращается сюда с
+ * итогом: фрейму Mnemos самому уходить нельзя, это делает хост и только для страниц приложения GitHub. */
 export function GitHubAccounts({ accounts, reload, changed }: { accounts: { value: GitHubAccountPage | null; error: string; loading: boolean }; reload(): Promise<void>; changed(): void }) {
   const ui = useUi();
   const host = useHost();
@@ -220,8 +220,8 @@ export function GitHubAccounts({ accounts, reload, changed }: { accounts: { valu
   if (!page?.available) return null;
   async function open(url: string, what: string) {
     const opened = await host.openGitHubAppPage(url);
-    if (opened) { setPending(""); setNotice({ tone: "success", text: `${what} открыт в новой вкладке. Когда закончите, вернитесь сюда — список обновится сам.` }); }
-    else { setPending(url); setNotice({ tone: "danger", text: "Браузер не открыл новую вкладку. Нажмите «Открыть GitHub»." }); }
+    if (opened) { setPending(""); setNotice({ tone: "success", text: `Переходим в ${what}…` }); }
+    else { setPending(url); setNotice({ tone: "danger", text: "Не удалось перейти на GitHub. Нажмите «Открыть GitHub»." }); }
   }
   async function connect() {
     if (busy) return;

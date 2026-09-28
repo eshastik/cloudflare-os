@@ -23,7 +23,8 @@ async function deliveredLogin(returnTo = "/gatekeepers/mnemos") {
   const secret = "5".repeat(64);
   const stub = logins.get(id);
   await stub.begin(await sha256(secret), returnTo);
-  const handle = `${id.toString()}.${await stub.deliver(TOKEN)}`;
+  const handle = `${id.toString()}.${await stub.confirm(secret)}`;
+  await stub.deliver(TOKEN);
   return { cookie: `${LOGIN_COOKIE}=${id.toString()}.${secret}`, handle };
 }
 

@@ -24,6 +24,9 @@ vi.mock('@cloudflare/kumo', () => ({
   Text: ({ children }: { children: ReactNode }) => children,
 }))
 
+const router = vi.hoisted(() => ({ push: vi.fn<(path: string) => void>() }))
+vi.mock('@tanstack/react-router', () => ({ useRouter: () => ({ history: { push: router.push } }) }))
+
 import GadgetUI from './GadgetUI'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 
@@ -205,6 +208,33 @@ describe('GadgetUI RPC recovery', () => {
       await act(async()=>root.render(<GadgetUI gadget={gadget.stub} height="100px" reloadTrigger={1} isVisible={false} readinessApi={readinessApi} readinessSurface="cloudflareos.document" />))
       await vi.waitFor(()=>expect(samples.map(s=>s.outcome)).toEqual(['pending','ready','pending','abandoned']))
     } finally { raf.mockRestore() }
+  })
+
+  it('ссылка гаджета на адрес оболочки открывается на той же странице, только по нажатию и не на служебные адреса', async () => {
+    const gadget = fakeGadget('links', 'document.body.textContent = "links"')
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
+    await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const frame = container.querySelector('iframe')!
+    // Фрейм сравнивает адрес ссылки с адресом оболочки: без него своя ссылка ушла бы в новую вкладку.
+    expect(decodeURIComponent(frame.srcdoc)).toContain(`const shellOrigin = ${JSON.stringify(window.location.origin)}`)
+    const activation = { isActive: true }
+    Object.defineProperty(navigator, 'userActivation', { value: activation, configurable: true })
+    router.push.mockClear()
+    const send = (path: unknown, active = true, source: Window | null = frame.contentWindow, origin = 'null') => {
+      activation.isActive = active
+      window.dispatchEvent(new MessageEvent('message', { source, origin, data: { type: 'open-internal', path } }))
+    }
+    send('/workspace/abc?chat=1#m')
+    expect(router.push).toHaveBeenCalledWith('/workspace/abc?chat=1#m')
+    send('/workspace/b', false)            // без нажатия человека
+    send('/api/login/start?vendor=mnemos') // служебный адрес
+    send('/gatekeeper/google/abc/def')     // вход и подключения
+    send('//evil.example/x')
+    send('https://evil.example/')
+    send(42)
+    send('/workspace/c', true, window)     // не из этого фрейма
+    send('/workspace/d', true, frame.contentWindow, 'https://foreign.example')
+    expect(router.push).toHaveBeenCalledTimes(1)
   })
 
   it('does not report old native code without the readiness protocol as a failed load', async () => {

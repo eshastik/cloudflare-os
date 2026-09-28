@@ -1,3 +1,4 @@
+import { confirmShellBrowser, shellBrowserProof, shellReturnResponse, type ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { WorkerEntrypoint, DurableObject, RpcTarget, RpcStub } from "cloudflare:workers";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import {
@@ -131,13 +132,6 @@ class EmailMailboxConfiguratorUI extends RpcTarget implements EmailMailboxConfig
 
 // =======================================================================================
 
-const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <body>
-    <script type="text/javascript">window.close();</script>
-    <p>Authorization complete. You may close this tab and return to Cloudflare OS.
-  </body>
-</html>`;
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -172,16 +166,13 @@ export default {
       // This is a connectAccount completion URL. Route to the UserAccount DO.
       let userObjectId = ctx.exports.UserAccount.idFromString(path[0]);
       let stub: DurableObjectStub<UserAccount> = ctx.exports.UserAccount.get(userObjectId);
-      if (!await stub.complete(path[1])) {
+      const returnPath = await stub.complete(path[1], shellBrowserProof(req));
+      if (!returnPath) {
         return new Response(INVALID_LINK_HTML, {
           headers: { "Content-Type": "text/html; charset=utf-8" }
         });
       }
-      return new Response(SELF_CLOSING_HTML, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8"
-        }
-      });
+      return shellReturnResponse(returnPath);
     } else {
       return new Response("Not Found", { status: 404 });
     }
@@ -308,7 +299,7 @@ export class UserAccount extends DurableObject<Env> {
   }
 
   // Returns false if the nonce is invalid or expired.
-  async complete(nonce: string): Promise<boolean> {
+  async complete(nonce: string, proof: ShellBrowserProof = {}): Promise<string | false> {
     let stored = this.ctx.storage.kv.get<{value: string, expiresAt: number}>("nonce");
     if (!stored || Date.now() >= stored.expiresAt || !constantTimeEqual(stored.value, nonce)) {
       return false;
@@ -319,6 +310,9 @@ export class UserAccount extends DurableObject<Env> {
     if (!callback) {
       return false;
     }
+    // Подключение завершает только браузер, который его начал (@gadgets/workshop-shared/shell-browser).
+    const gate = await confirmShellBrowser(callback, proof);
+    if (!gate) return false;
 
     let props: GatekeeperUserImplProps = {
       userAccountId: this.ctx.id.toString(),
@@ -329,7 +323,7 @@ export class UserAccount extends DurableObject<Env> {
     this.ctx.storage.deleteAlarm();
     this.ctx.storage.kv.delete("callback");
 
-    return true;
+    return gate.returnPath;
   }
 
   async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {

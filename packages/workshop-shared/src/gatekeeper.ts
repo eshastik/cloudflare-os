@@ -1,3 +1,4 @@
+import type { ShellBrowserProof } from "./shell-browser.js";
 import type {CalendarDraftContent,CalendarDraftExecution} from './calendar-draft';
 /** Plain calendar outcome shared with human and agent clients. */
 export type {CalendarDraftExecution} from './calendar-draft';
@@ -859,17 +860,9 @@ export type ResourceConfiguratorFrame = GatekeeperUiFrame;
 // method). `resourceUrlPatterns`, if given, limits the connection to the authorization needed for
 // those grantable resource types; if omitted, authorization for all the vendor's resource types
 // is requested.
-//
-// `returnPath`, if given, is a path on the shell's own origin (it starts with a single "/"). When
-// the flow completes, the gatekeeper sends the browser there (HTTP 303, same tab) instead of
-// closing its window: on phones there are no pop-ups, so the flow runs in the tab the user started
-// it from. Gatekeepers must accept only such paths, never a full URL. On success the gatekeeper
-// appends `?handle=<returnHandle>` from `callback.complete()`; if the flow fails after the
-// gatekeeper verified its own browser binding, it sends the browser to `returnPath?error=failed`.
 export type GatekeeperConnectOptions = {
   scopes?: "auth" | "full";
   resourceUrlPatterns?: string[];
-  returnPath?: string;
 };
 
 export interface GatekeeperVendor extends WorkerEntrypoint {
@@ -877,8 +870,9 @@ export interface GatekeeperVendor extends WorkerEntrypoint {
   describe(): Promise<VendorDescription>;
 
   // Start the auth flow to connect to the user's remote account. Returns the URL which the user
-  // should open in their browser in order to complete the flow. This URL will be opened in a new
-  // tab; when it completes, it should close itself using window.close().
+  // should open in their browser in order to complete the flow. The shell navigates the same tab
+  // there; when the flow completes, the gatekeeper sends the browser back to the path returned by
+  // `callback.confirmBrowser()` (see GatekeeperConnectCallback).
   //
   // When the flow completes, `callback.complete()` should be called to add the connection to the
   // user's list of authorizations. (`callback` can be stored.)
@@ -951,12 +945,19 @@ export interface GatekeeperConnectCallback extends WorkerEntrypoint {
   // the Workshop to proactively show the account as expired in the UI without waiting for an
   // operation to fail. If not provided, the system relies on the gatekeeper calling
   // `credentialsExpired()` when a refresh or authorization failure is detected.
+  complete(user: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void>;
+
+  // Binds the flow to the browser that started it. The gatekeeper MUST call this from the browser
+  // request that finishes the flow (the provider's redirect back, or the form submission), with
+  // `shellBrowserProof(request)` from "@gadgets/workshop-shared/shell-browser", BEFORE it stores or
+  // exchanges any credential — for a first connect, a reconnect and a scope expansion alike.
   //
-  // The Workshop may return `returnHandle`: a one-time token the gatekeeper must append to the
-  // shell's `returnPath` as `?handle=<returnHandle>` when it sends the browser back. It proves to
-  // the Workshop which browser actually finished the flow. Gatekeepers ignore it without a
-  // `returnPath`.
-  complete(user: Fetcher<GatekeeperUser>, expiresAt?: Date): Promise<void | { returnHandle?: string }>;
+  // null: this browser did not start the flow (for example, someone forwarded the gatekeeper's
+  // link). The gatekeeper must discard the attempt and store nothing. Otherwise it gets a path on
+  // the shell's own origin: after calling complete() / credentialsRestored(), it sends the browser
+  // there with HTTP 303 (`shellReturnResponse()`), success or failure, instead of closing a window.
+  // The flow runs in the same tab: phones have no pop-ups.
+  confirmBrowser(proof: ShellBrowserProof): Promise<{ returnPath: string } | null>;
 
   // Note: If the authorization flow fails, the error can be displayed directly to the user, and
   // the callback can be discarded.
@@ -1306,7 +1307,8 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   revoke(): Promise<void>;
 
   // Start the flow to refresh/replace credentials on this account. Returns the URL for the user
-  // to visit in a new tab to complete re-authentication. When the flow completes, the
+  // to visit (in the same tab) to complete re-authentication. As with connectAccount(), the
+  // gatekeeper calls `callback.confirmBrowser()` before replacing any credential. When the flow completes, the
   // GatekeeperConnectCallback (provided during the original connectAccount() flow) will be
   // notified via credentialsRestored(). The existing account Fetcher and all gatekeeper bindings
   // created through it continue to work with the new credentials.
@@ -1331,7 +1333,8 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   // Returns the URL for the user to visit to authorize them, or no URL if nothing was needed.
   // Gatekeepers with no grantable resource types should return no URL.
   //
-  // SECURITY: As with connectAccount(), any returned URL must include a cryptographic nonce.
+  // SECURITY: As with connectAccount(), any returned URL must include a cryptographic nonce, and
+  // the flow calls `callback.confirmBrowser()` before storing the expanded grant.
   ensureResources(resourceUrlPatterns: string[]): Promise<{url?: string}>;
 
   // ---------------------------------------------------------------------------

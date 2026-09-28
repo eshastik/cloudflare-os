@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { restoreAfterConnect, startAccountConnect } from './auth/accountConnect'
 import { Dialog, Select, Loader, Text, useKumoToastManager } from '@cloudflare/kumo'
 import { Warning, Plus, ArrowClockwise, CheckCircle } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
@@ -73,6 +74,9 @@ interface ObserverConfigModalProps {
   authenticatedApi: RpcStub<AuthenticatedApi>
   onConfirm: (choices: ObserverAccountChoice[]) => void
   onCancel: () => void
+  // Подключение аккаунта уводит страницу к гейткиперу; выбранные аккаунты сохраняются под этим
+  // ключом и возвращаются, когда пространство откроется снова (auth/accountConnect.ts).
+  restoreKey?: string
 }
 
 export default function ObserverConfigModal({
@@ -80,13 +84,16 @@ export default function ObserverConfigModal({
   authenticatedApi,
   onConfirm,
   onCancel,
+  restoreKey,
 }: ObserverConfigModalProps) {
   const toasts = useKumoToastManager()
 
   const [accounts, setAccounts] = useState<Map<number, AccountInfo>>(new Map())
   const [ready, setReady] = useState(false)
   // gatekeeperId -> chosen accountId (undefined = not yet chosen).
-  const [choices, setChoices] = useState<Record<number, number | undefined>>({})
+  const [choices, setChoices] = useState<Record<number, number | undefined>>(
+    () => (restoreKey && restoreAfterConnect<Record<number, number | undefined>>(restoreKey)) || {})
+  const connectRestore = () => restoreKey ? { key: restoreKey, state: choices } : undefined
   // Vendor metadata keyed by vendorId, used both for display and to resolve the resource scopes each
   // observer binding needs.
   const [vendorsById, setVendorsById] = useState<Map<string, GatekeeperVendorInfo>>(new Map())
@@ -213,11 +220,9 @@ export default function ObserverConfigModal({
         await authenticatedApi.provisionAmbientAccount(vendorId)
       } else {
         const required = requiredResourceUrlPatterns(need, vendor)
-        const { url } = await authenticatedApi.connectAccount(
-          vendorId,
-          required.length > 0 ? required : undefined,
-        )
-        window.open(url, '_blank', 'noopener,noreferrer')
+        await startAccountConnect(
+          { kind: 'connect', vendorId, resourceUrlPatterns: required.length > 0 ? required : undefined },
+          connectRestore())
       }
     } catch (err) {
       console.error('Failed to initiate connection:', err)
@@ -230,9 +235,7 @@ export default function ObserverConfigModal({
   const handleReconnect = async (accountId: number) => {
     setReconnecting(accountId)
     try {
-      const { url } = await authenticatedApi.reconnectAccount(accountId)
-      window.open(url, '_blank', 'noopener,noreferrer')
-      // Subscription fires add() with credentialsValid:true on completion, clearing `reconnecting`.
+      await startAccountConnect({ kind: 'reconnect', accountId }, connectRestore())
     } catch (err) {
       console.error('Failed to initiate reconnection:', err)
       toasts.add({ title: 'Не удалось начать повторный вход', variant: 'error' })
@@ -250,9 +253,8 @@ export default function ObserverConfigModal({
     if (missing.length === 0) return
     setGranting(account.id)
     try {
-      const { url } = await authenticatedApi.ensureAccountResources(account.id, missing)
-      if (url) window.open(url, '_blank', 'noopener,noreferrer')
-      else setGranting(null)
+      const outcome = await startAccountConnect({ kind: 'resources', accountId: account.id, resourceUrlPatterns: missing }, connectRestore())
+      if (outcome === 'done') setGranting(null)
     } catch (err) {
       console.error('Failed to request additional access:', err)
       toasts.add({ title: 'Не удалось запросить дополнительный доступ', variant: 'error' })

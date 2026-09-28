@@ -26,7 +26,8 @@ import { LanguageModelGatekeeper } from "./ai-models";
 import { getAiGatewayConfig } from "./ai-gateway.js";
 import { AdminSettings, AdminApiImpl } from "./admin-settings.js";
 import { BlueprintKvRecord, buildBlueprintArchiveStream, sanitizeBlueprintOutput, listFeaturedBlueprintsFromKv, parseBlueprintArchive, randomBlueprintId, readBlueprintContent, readBlueprintKvRecord } from "./blueprint-archive.js";
-import { GatekeeperConnectCallbackImpl, normalizeUsername, UserDurableObject } from "./user";
+import { GatekeeperConnectCallbackImpl, normalizeUsername, userConnectPort, UserDurableObject } from "./user";
+import { connectRejected, CONNECT_FINISH_PATH, CONNECT_START_PATH, handleConnectFinish, handleConnectStart, redeemConnectCode } from "./auth/connect-return.js";
 import { gatekeeperLoginPolicy } from "./auth/login-policy.js";
 import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PATH, redeemLoginCode, loginRejected, type LoginPort } from "./auth/login-return.js";
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
@@ -86,7 +87,8 @@ type Env = Cloudflare.Env & ChatVoiceConfig & {
 class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   constructor(private ctx: ExecutionContext, private env: Env,
       private user: DurableObjectStub<UserDurableObject>,
-      private abortSession: (reason: Error) => void) {
+      private abortSession: (reason: Error) => void,
+      private loginRequest: { cookie: string | null; sameSite: boolean } = { cookie: null, sameSite: false }) {
     super();
 
     this.overseers = this.ctx.exports.OverseerDurableObject;
@@ -359,12 +361,12 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return this.user.listGatekeeperVendors(filter);
   }
 
-  connectAccount(vendorId: string, resourceUrlPatterns?: string[]): Promise<{url: string}> {
-    return this.user.connectAccount(vendorId, resourceUrlPatterns);
-  }
-
-  ensureAccountResources(accountId: number, resourceUrlPatterns: string[]): Promise<{url?: string}> {
-    return this.user.ensureAccountResources(accountId, resourceUrlPatterns);
+  // Обмен кода подключения (auth/connect-return.ts): только в сеансе пользователя, начавшего
+  // подключение, и только из браузера с его cookie.
+  async completeConnect(code: string) {
+    if (!this.loginRequest.sameSite) throw connectRejected();
+    return redeemConnectCode(this.loginRequest.cookie, true, this.user.id.toString(), code,
+        userConnectPort(this.users));
   }
 
   listAddableGatekeepers(): Promise<GatekeeperVendorInfo[]> {
@@ -383,10 +385,6 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
 
   disconnectAccount(accountId: number): Promise<void> {
     return this.user.disconnectAccount(accountId);
-  }
-
-  reconnectAccount(accountId: number): Promise<{url: string}> {
-    return this.user.reconnectAccount(accountId);
   }
 
   startResourceConfigurator(
@@ -722,6 +720,26 @@ async function serveBlueprintScreenshot(env: Env, blueprintId: string): Promise<
   });
 }
 
+// Подключение аккаунта (auth/connect-return.ts): ключ сеанса из заголовка Authorization проверяется
+// тем же путём, что и authenticate().
+function connectPort(ctx: ExecutionContext, env: Env) {
+  const users = ctx.exports.UserDurableObject;
+  return userConnectPort(users, async (token, request) => {
+    if (env.CF_ACCESS_AUD) {
+      // За Cloudflare Access ключа сеанса нет: пользователь — почта из проверенного JWT Access.
+      const payload = await verifyCfAccessJwt(request, env);
+      if (!payload?.email) throw createAuthError(AUTH_ERROR_CODES.notAuthenticatedWithAccess);
+      return users.idFromName(payload.email as string).toString();
+    }
+    if (!token) throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);
+    const split = token.split(":");
+    if (split.length !== 2) throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);
+    const id = users.idFromName(split[0]);
+    await users.get(id).authenticate(split[1]);
+    return id.toString();
+  });
+}
+
 // Вход через гейткипер на той же странице (auth/login-return.ts): ожидающие входы — PendingLogin DO,
 // запуск входа у гейткипера — с проверкой разрешённого списка.
 function loginPort(ctx: ExecutionContext, env: Env): LoginPort {
@@ -734,7 +752,7 @@ function loginPort(ctx: ExecutionContext, env: Env): LoginPort {
     get(id) {
       try { return logins.get(logins.idFromString(id)); } catch { return null; }
     },
-    async connect(vendorId, pendingId, returnPath) {
+    async connect(vendorId, pendingId) {
       if (!getAuthGatekeeperAllowlist(env).includes(vendorId)) {
         throw new Error(`Sign-in via "${vendorId}" is not enabled on this deployment.`);
       }
@@ -746,7 +764,7 @@ function loginPort(ctx: ExecutionContext, env: Env): LoginPort {
       // For most providers, sign-in needs only minimal scopes to verify the user's email (the grant
       // is transient); Cloudflare and Mnemos request the full scope set up front (auth/login-policy.ts).
       const { scopes } = gatekeeperLoginPolicy(vendorId, false);
-      const { url } = await vendor.connectAccount(callback, { scopes, returnPath });
+      const { url } = await vendor.connectAccount(callback, { scopes });
       return url;
     },
   };
@@ -789,7 +807,7 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
       user_id: userId.toString(),
       source: "session_token",
     });
-    return new AuthenticatedApiImpl(this.ctx, this.env, stub, this.abortSession);
+    return new AuthenticatedApiImpl(this.ctx, this.env, stub, this.abortSession, this.loginRequest);
   }
 
   async authenticateFromCfAccess(): Promise<AuthenticatedApi> {
@@ -814,7 +832,7 @@ class PublicApiImpl extends RpcTarget implements PublicApi {
       user_id: userId.toString(),
       source: "cf_access",
     });
-    return new AuthenticatedApiImpl(this.ctx, this.env, stub, this.abortSession);
+    return new AuthenticatedApiImpl(this.ctx, this.env, stub, this.abortSession, this.loginRequest);
   }
 
   async login(username: string, passwordHash: Uint8Array): Promise<string | null> {
@@ -908,6 +926,9 @@ export default {
     // Вход через гейткипер на той же странице: уход к гейткиперу и возврат с одноразовым кодом.
     if (url.pathname === LOGIN_START_PATH) return handleLoginStart(req, loginPort(ctx, env));
     if (url.pathname === LOGIN_FINISH_PATH) return handleLoginFinish(req, loginPort(ctx, env));
+    // Подключение внешнего аккаунта на той же странице с привязкой к браузеру.
+    if (url.pathname === CONNECT_START_PATH) return handleConnectStart(req, connectPort(ctx, env));
+    if (url.pathname === CONNECT_FINISH_PATH) return handleConnectFinish(req, connectPort(ctx, env));
 
     if (url.pathname === SERVICE_ROUTE) {
       return handleServiceRoute(req, {

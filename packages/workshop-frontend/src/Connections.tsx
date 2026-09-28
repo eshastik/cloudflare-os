@@ -9,7 +9,8 @@ import {
 } from '@phosphor-icons/react'
 import { RpcStub } from 'capnweb'
 import { Overseer, GadgetClient, GadgetBindingInfo, BoundHookInfo, AuthenticatedApi, WorkpieceId } from '@gadgets/workshop-shared/api'
-import GatekeeperModal from './GatekeeperModal'
+import GatekeeperModal, { type GatekeeperModalRestore } from './GatekeeperModal'
+import { restoreAfterConnect } from './auth/accountConnect'
 import { GatekeeperIcon } from './components/GatekeeperIcon'
 import { HookToggle } from './components/HookToggle'
 import { useVendorBranding } from './useVendorBranding'
@@ -46,7 +47,11 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
   const [loading, setLoading] = useState(true)
   const [editingBinding, setEditingBinding] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
-  const [isNewConnectionModalVisible, setIsNewConnectionModalVisible] = useState(false)
+  // Подключение аккаунта из окна уводит страницу к гейткиперу; окно открывается снова после
+  // возврата с тем же выбором (auth/accountConnect.ts).
+  const modalRestoreKey = `gatekeeper-modal:connections:${chatId ?? "gadget"}`
+  const [restoredModal] = useState(() => restoreAfterConnect<GatekeeperModalRestore>(modalRestoreKey))
+  const [isNewConnectionModalVisible, setIsNewConnectionModalVisible] = useState(() => restoredModal !== null)
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; resourceTitle: string } | null>(null)
   const [deleteHookTarget, setDeleteHookTarget] = useState<{ id: number; title: string } | null>(null)
   const [togglingHooks, setTogglingHooks] = useState<Set<number>>(new Set())
@@ -446,6 +451,8 @@ export default function Connections({ overseer, gadget, chatId, authenticatedApi
       <GatekeeperModal
         open={isNewConnectionModalVisible}
         onClose={() => setIsNewConnectionModalVisible(false)}
+        restoreKey={modalRestoreKey}
+        restoredState={restoredModal?.modal}
         getOverseer={() => overseer}
         spawnerEnvCandidates={spawnerEnvCandidates}
         onCreated={async (gk) => {

@@ -345,8 +345,11 @@ export interface Host extends RpcTarget {
   downloadFile(project:string,node:string,version:string,filename:string):Promise<void>;
   downloadText(project: string, node: string, head: string, side: number): Promise<string>;
   ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string>;
-  /** Открывает страницу установки или настроек приложения GitHub в новой вкладке; false — не открылась. */
+  /** Уводит страницу на вход, установку или настройки приложения GitHub; false — адрес не из перечня. */
   openGitHubAppPage(url: string): Promise<boolean>;
+  /** Открывает ссылку из текста: адрес оболочки — на той же странице, внешний сайт — новой вкладкой.
+   *  Фрейму окна и переходы не даны. false — адрес не принят. */
+  openLink(url: string): Promise<boolean>;
   /** Итог возврата с GitHub (?github=…), отдаётся один раз; null — возврата не было. */
   takeGitHubReturn(): Promise<{ result: "connected" | "updated" | "failed"; reason: string } | null>
   /** Фото людей байтами, по одному ответу на каждый id (до 200 за вызов): оболочка скачивает их из хранилища,

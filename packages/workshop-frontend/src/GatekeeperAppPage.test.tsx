@@ -11,6 +11,9 @@ const dispose = vi.hoisted(() => vi.fn<(frame: unknown) => void>())
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 vi.mock('./SandboxedGatekeeperApp', () => ({ default: () => <div>Opened application</div> }))
 vi.mock('./errorReporting', () => ({ reportIssue: vi.fn<() => void>() }))
+const connect = vi.hoisted(() => ({ start: vi.fn<(request: unknown) => Promise<'navigating'>>(async () => 'navigating') }))
+// Переподключение уводит эту же страницу ко входу сервиса (auth/accountConnect.ts).
+vi.mock('./auth/accountConnect', () => ({ startAccountConnect: connect.start }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: dispose }))
 vi.mock('./OrganizationSummaryPanel', () => ({ default: ({ appId }: { appId: string }) => 'Свод организаций ' + appId }))
 vi.mock('./CalendarConnectionPanel', () => ({ default: () => 'Панель календаря' }))
@@ -65,10 +68,8 @@ it('opens the only account of the vendor at once, recovers with it, clears the e
     expect(container.textContent).toContain('Не удалось открыть «Память»')
     expect(container.textContent).not.toContain('Other service account')
     await click('Переподключить Peer account')
-    expect(api.reconnectAccount).toHaveBeenCalledWith(7)
-    const link = container.querySelector('a')!
-    expect(link.href).toBe('https://login.example/reconnect')
-    expect(link.rel).toBe('noopener noreferrer')
+    expect(connect.start).toHaveBeenCalledWith({ kind: 'reconnect', accountId: 7 })
+    expect(container.querySelector('a')).toBeNull()
     await click('Открыть приложение ещё раз')
     expect(container.textContent).toContain('Opened application')
     // Подключения открываются ссылкой из «Настроек», кнопки над приложением больше нет.

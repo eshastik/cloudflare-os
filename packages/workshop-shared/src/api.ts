@@ -105,7 +105,7 @@ export interface PublicApi extends RpcTarget {
 // Subscription callback for AuthenticatedApi.subscribeConnectedAccounts().
 export interface ConnectedAccountsSubscriber {
   // If `credentialsValid` is false, the account's credentials are known to be expired, and the
-  // UI should call reconnectAccount() to fix this if the user tries to select this account.
+  // UI should start a reconnect (POST /api/connect/start, kind "reconnect") if the user tries to select this account.
   add(id: number, description: AccountDescription, vendor: VendorDescription,
       supportedResources: SupportedResource[], credentialsValid: boolean, vendorId: string): void;
   remove(id: number): void;
@@ -285,6 +285,7 @@ export const AUTH_ERROR_CODES = {
   invalidSessionToken: "INVALID_SESSION_TOKEN",
   notAuthenticatedWithAccess: "NOT_AUTHENTICATED_WITH_ACCESS",
   loginCodeRejected: "LOGIN_CODE_REJECTED",
+  connectCodeRejected: "CONNECT_CODE_REJECTED",
 } as const;
 
 /** An expected authentication failure code. */
@@ -296,6 +297,7 @@ export const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
   [AUTH_ERROR_CODES.invalidSessionToken]: "invalid session token",
   [AUTH_ERROR_CODES.notAuthenticatedWithAccess]: "Not authenticated with Access.",
   [AUTH_ERROR_CODES.loginCodeRejected]: "Ссылка входа устарела или открыта в другом браузере. Войдите ещё раз.",
+  [AUTH_ERROR_CODES.connectCodeRejected]: "Ссылка подключения устарела или открыта в другом браузере. Подключите аккаунт ещё раз.",
 };
 
 const authErrors = codedErrorFamily(AUTH_ERROR_MESSAGES);
@@ -481,21 +483,16 @@ export interface AuthenticatedApi extends RpcTarget {
   // List all third-party services that this account can connect to.
   listGatekeeperVendors(filter?: GatekeeperVendorFilter): Promise<GatekeeperVendorInfo[]>;
 
-  // Connect this account to a specific account on a third-party service. Returns the URL which
-  // should be opened in a new tab in the user's browser to complete the authorization. When the
-  // authorization flow completes, the account will be added to the list, which can be observed
-  // through subscribeConnectedAccounts().
-  //
-  // `resourceUrlPatterns`, if given, limits the connection to the authorization needed for those
-  // grantable resource types (those with `grantable`; see `SupportedResource`). If omitted,
-  // authorization for all of the vendor's resource types is requested.
-  connectAccount(vendorId: string, resourceUrlPatterns?: string[]): Promise<{url: string}>;
-
-  // Ensure the authorization for the listed grantable resource types (by `urlPattern`) is granted
-  // on a connected account, expanding if needed. Returns a URL to open in a new tab to authorize
-  // them, or no url if nothing was needed. The updated grant is observable via
-  // subscribeConnectedAccounts().
-  ensureAccountResources(accountId: number, resourceUrlPatterns: string[]): Promise<{url?: string}>;
+  // Connecting a third-party account (first connect, reconnect, scope expansion) happens in the
+  // same tab and is bound to the browser that started it:
+  //   POST /api/connect/start with `Authorization: Bearer <session token>` and JSON
+  //   {kind: "connect", vendorId, resourceUrlPatterns?, returnTo} |
+  //   {kind: "reconnect", accountId, returnTo} | {kind: "resources", accountId, resourceUrlPatterns, returnTo}
+  // returns {url} (navigate there) or {done: true} (nothing to authorize). The gatekeeper brings the
+  // browser back to `<returnTo>#connect=<code>` (or `#connect-error=<reason>`); the client passes
+  // the code here. The code works once, for 90 seconds, only in the browser and the session that
+  // started the flow. A new account is recorded only now; subscribers then see it.
+  completeConnect(code: string): Promise<{ kind: "connect" | "reconnect" | "resources"; vendorId?: string; accountId: number }>;
 
   // List the auto-provisioning ("ambient") gatekeepers the user can opt into right now: those set to
   // 'optional' by the admin that the user hasn't added yet. Rendered as an "Available" section on the
@@ -594,11 +591,6 @@ export interface AuthenticatedApi extends RpcTarget {
   // Import a `.gadget` archive from another Workshop instance. The imported blueprint is stored
   // as a local blueprint owned by the current user.
   importBlueprint(archive: ReadableStream<Uint8Array>): Promise<string>;
-
-  // Re-authenticate a connected account whose credentials have expired (or may be about to
-  // expire). Returns the URL to open in a new tab. When the OAuth flow completes, the account
-  // is updated and subscribers are notified with credentialsValid: true.
-  reconnectAccount(accountId: number): Promise<{url: string}>;
 
   // --- Gatekeeper management apps ---
 

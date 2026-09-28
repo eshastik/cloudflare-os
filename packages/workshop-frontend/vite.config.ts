@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => {
         '/api/site-logo': `http://${backendHost}`,
         // Вход через гейткипер: уход на /api/login/start и возврат через /api/login/finish.
         '/api/login': `http://${backendHost}`,
+        // Подключение внешнего аккаунта на той же странице.
+        '/api/connect': `http://${backendHost}`,
       },
     },
     build: {

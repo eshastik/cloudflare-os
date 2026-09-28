@@ -1,4 +1,5 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
+import SmartLink from './components/SmartLink'
 import remarkGfm from 'remark-gfm'
 import { useServerConfig } from './ServerConfigContext'
 
@@ -17,14 +18,12 @@ import { useServerConfig } from './ServerConfigContext'
 const INLINE_MARKDOWN_COMPONENTS: Components = {
   p: ({ children }) => <>{children}</>,
   a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+    <SmartLink
+      href={href ?? ''}
       className="text-kumo-brand hover:underline pointer-events-auto"
     >
       {children}
-    </a>
+    </SmartLink>
   ),
 }
 

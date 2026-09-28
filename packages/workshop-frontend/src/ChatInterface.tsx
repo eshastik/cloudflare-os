@@ -1,4 +1,6 @@
 import { displayChatTitle } from './chatTitle'
+import SmartLink from './components/SmartLink';
+import { restoreAfterConnect } from './auth/accountConnect';
 import ChatTemplatePicker, { messageWithTemplate, type ChatTemplate } from "./ChatTemplatePicker";
 import { VoiceInput } from "./components/chat/VoiceInput";
 import CorporateWorkContext from "./CorporateWorkContext";
@@ -105,7 +107,7 @@ import {
 } from "./components/chat/composer-tokens";
 import CapsuleOverlay, { CAPSULE_OVERLAY_GAP } from "./CapsuleOverlay";
 import type { SelectableItem } from "./ResourcePicker";
-import GatekeeperModal from "./GatekeeperModal";
+import GatekeeperModal, { type GatekeeperModalRestore } from "./GatekeeperModal";
 import { GatekeeperIcon } from "./components/GatekeeperIcon";
 import { formatOf, FORMAT_ICONS, localizedNoun } from "./components/format/formats";
 import { FormatMiniature } from "./components/format/FormatVisuals";
@@ -1086,14 +1088,12 @@ function CapsuleMention({ capsule }: { capsule: CapsuleSpecifier }) {
     </>
   );
   return safeUrl ? (
-    <a
+    <SmartLink
       href={safeUrl}
-      target="_blank"
-      rel="noopener noreferrer"
       className={styles.capsuleMention}
     >
       {body}
-    </a>
+    </SmartLink>
   ) : (
     <span className={styles.capsuleMention}>{body}</span>
   );
@@ -1138,14 +1138,12 @@ function getMarkdownComponents(
       }
 
       return (
-        <a
+        <SmartLink
           {...props}
           href={safeHref}
-          target="_blank"
-          rel="noopener noreferrer"
         >
           {children}
-        </a>
+        </SmartLink>
       );
     },
   };
@@ -1483,14 +1481,12 @@ const ObservationDetails = memo(function ObservationDetails(
           {metadata && (
             <p className="mt-0.5 mb-0 truncate text-[12px] leading-4 text-kumo-inactive">
               {safeResourceUrl && log.resourceTitle ? (
-                <a
+                <SmartLink
                   href={safeResourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className="hover:underline"
                 >
                   {metadata}
-                </a>
+                </SmartLink>
               ) : metadata}
             </p>
           )}
@@ -1949,8 +1945,14 @@ export const ChatInput = ({
   onFolderProjectCreated?: (project: ChatProjectChoice) => void;
 }) => {
   const toasts = useKumoToastManager();
-  const [inputValue, setInputValue] = useState("");
-  const [capsules, setCapsules] = useState<InputCapsule[]>([]);
+  // Подключение аккаунта из подсказки ресурса уводит страницу к гейткиперу; набранное сообщение
+  // переживает уход и возвращается в это же поле (auth/accountConnect.ts).
+  const composerRestoreKey = `chat-composer:${chatKey ?? "new"}`;
+  const attachRestoreKey = `gatekeeper-modal:attach:${chatKey ?? "new"}`;
+  const [restoredAttach] = useState(() => restoreAfterConnect<GatekeeperModalRestore<{ input: string; capsules: InputCapsule[] }>>(attachRestoreKey));
+  const [restoredComposer] = useState(() => restoreAfterConnect<{ input: string; capsules: InputCapsule[] }>(composerRestoreKey) ?? restoredAttach?.parent ?? null);
+  const [inputValue, setInputValue] = useState(() => restoredComposer?.input ?? "");
+  const [capsules, setCapsules] = useState<InputCapsule[]>(() => restoredComposer?.capsules ?? []);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -2003,7 +2005,7 @@ export const ChatInput = ({
   }, []);
 
   // Attach modal state
-  const [attachModalOpen, setAttachModalOpen] = useState(false);
+  const [attachModalOpen, setAttachModalOpen] = useState(() => restoredAttach !== null);
   // Save the cursor position when the attach modal opens, so we can insert the capsule there.
   const attachCursorPosRef = useRef(0);
 
@@ -3190,6 +3192,7 @@ export const ChatInput = ({
                 onRefine={handleRefine}
                 onDismiss={() => setActiveUrl(null)}
                 lineOffset={urlLineOffset}
+                connectRestore={{ key: composerRestoreKey, state: { input: inputValue, capsules } }}
                 activeIndex={overlayIndex}
                 onItems={handleOverlayItems}
                 activateRef={overlayActivateRef}
@@ -3509,6 +3512,9 @@ export const ChatInput = ({
         onClose={() => setAttachModalOpen(false)}
         getOverseer={getOverseer}
         onCreated={handleAttachCreated}
+        restoreKey={attachRestoreKey}
+        restoreParent={{ input: inputValue, capsules }}
+        restoredState={restoredAttach?.modal}
       />
     </div>
   );
@@ -4148,6 +4154,13 @@ function fallbackToStoredModelSelection(
   return getStoredSelectedModel(availableModels);
 }
 
+type ConnectionAcceptState = {
+  requestId: string;
+  vendorId: string;
+  resourceUrl?: string;
+  resourceUrlPattern?: string;
+};
+
 interface ChatInterfaceProps {
   overseer: RpcStub<Overseer>;
   selectedChatId: number | null;
@@ -4436,12 +4449,11 @@ function ChatInterface({
   );
   // Connection-request (agent requestConnection) accept flow. When set, the GatekeeperModal opens
   // pre-seeded with the agent's vendor/resource; on creation we finalize acceptConnectionRequest.
-  const [connectionAccept, setConnectionAccept] = useState<{
-    requestId: string;
-    vendorId: string;
-    resourceUrl?: string;
-    resourceUrlPattern?: string;
-  } | null>(null);
+  // Подключение аккаунта из этого окна уводит страницу к гейткиперу; запрос агента и выбор в окне
+  // возвращаются после возврата (auth/accountConnect.ts).
+  const acceptRestoreKey = `gatekeeper-modal:accept:${selectedChatId ?? "new"}`;
+  const [restoredAccept] = useState(() => restoreAfterConnect<GatekeeperModalRestore<ConnectionAcceptState>>(acceptRestoreKey));
+  const [connectionAccept, setConnectionAccept] = useState<ConnectionAcceptState | null>(() => restoredAccept?.parent ?? null);
   // Read via this ref inside handleConnectionCreated to avoid a stale closure: that callback is
   // passed as the `onCreated` prop to GatekeeperModal, so it would otherwise capture an outdated
   // `connectionAccept`.
@@ -6342,15 +6354,13 @@ function ChatInterface({
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] leading-4 text-kumo-inactive">
                     <span className="min-w-0 truncate">
                       {safeResourceUrl ? (
-                        <a
+                        <SmartLink
                           href={safeResourceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
                           className="hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
                           {log.resourceTitle}
-                        </a>
+                        </SmartLink>
                       ) : (
                         log.resourceTitle
                       )}
@@ -6489,15 +6499,13 @@ function ChatInterface({
         {log.resourceTitle && (
           <span className="min-w-0 truncate">
             {safeResourceUrl ? (
-              <a
+              <SmartLink
                 href={safeResourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="hover:underline"
                 onClick={(e) => e.stopPropagation()}
               >
                 {log.resourceTitle}
-              </a>
+              </SmartLink>
             ) : (
               log.resourceTitle
             )}
@@ -7884,6 +7892,9 @@ function ChatInterface({
         initialVendorId={connectionAccept?.vendorId}
         initialResourceUrl={connectionAccept?.resourceUrl}
         initialResourceUrlPattern={connectionAccept?.resourceUrlPattern}
+        restoreKey={acceptRestoreKey}
+        restoreParent={connectionAccept}
+        restoredState={restoredAccept?.modal}
       />
       <OutOfCreditsModal
         open={usageModalOpen}

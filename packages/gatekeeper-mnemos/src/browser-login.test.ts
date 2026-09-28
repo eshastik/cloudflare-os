@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BrowserLoginBinding, FINISH_SCRIPT, finishScriptHash, handleBrowserLogin, parseReturnPath } from "./browser-login.ts";
+import { BrowserLoginBinding, FINISH_SCRIPT, completeWithShellBrowser, finishScriptHash, handleBrowserLogin } from "./browser-login.ts";
 import type { AccountStorage } from "./account-session.ts";
 
 function storage(): AccountStorage {
@@ -58,34 +58,49 @@ test("HTTP callback requires the browser cookie and rejects ambiguous inputs bef
   assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
 });
 
-test("вход оболочки на той же странице: браузер возвращается на путь оболочки с признаком результата, окно не закрывается", async () => {
+test("вход и подключение на той же странице: cookie оболочки уходят на подтверждение браузера, браузер возвращается в оболочку", async () => {
   const callback = "https://os.example/gatekeeper/mnemos/oauth", id = "a".repeat(64), browser = "c".repeat(64);
-  const cookie = `__Host-mnemos-login=${id}.${browser}`;
-  const handle = `${"e".repeat(64)}.${"H".repeat(43)}`;
-  const port = (result: { returnPath?: string; returnHandle?: string; failed?: boolean }) => () => ({
+  const shellLogin = `${"e".repeat(64)}.${"f".repeat(64)}`, shellConnect = `${"1".repeat(64)}.${"2".repeat(32)}.${"3".repeat(64)}`;
+  const cookie = `__Host-mnemos-login=${id}.${browser}; __Host-os-login=${shellLogin}; __Host-os-connect=${shellConnect}; other=secret`;
+  const returnPath = `/api/login/finish?handle=${"e".repeat(64)}.${"H".repeat(43)}`;
+  let seen: unknown;
+  const port = (result: { returnPath?: string } | void) => () => ({
     async startBrowserLogin() { return { url: "https://provider.example/auth", browserNonce: browser }; },
-    async completeBrowserLogin() { return result; },
+    async completeBrowserLogin(_nonce: string, _state: string, _code: string, proof: unknown) { seen = proof; return result; },
   });
-  const run = (result: Parameters<typeof port>[0]) => handleBrowserLogin(new Request(`${callback}?state=s&code=c`, { headers: { Cookie: cookie } }), callback, port(result));
-  const done = await run({ returnPath: "/api/login/finish", returnHandle: handle });
+  const run = (result: { returnPath?: string } | void) => handleBrowserLogin(new Request(`${callback}?state=s&code=c`, { headers: { Cookie: cookie } }), callback, port(result));
+  const done = await run({ returnPath });
+  // Подтверждению браузера уходят только cookie оболочки, чужие — нет.
+  assert.deepEqual(seen, { login: shellLogin, connect: shellConnect });
   assert.equal(done.status, 303);
-  assert.equal(done.headers.get("Location"), `https://os.example/api/login/finish?handle=${handle}`);
+  assert.equal(done.headers.get("Location"), `https://os.example${returnPath}`);
   assert.ok(done.headers.getSetCookie().some(value => value.startsWith("__Host-mnemos-login=;")), "cookie входа Mnemos стирается");
   assert.equal(done.headers.get("Referrer-Policy"), "no-referrer");
   assert.equal(await done.text(), "");
-  // Вход у Mnemos сорвался после проверки браузера — оболочка узнаёт об этом и показывает причину.
-  const failed = await run({ returnPath: "/api/login/finish", failed: true });
-  assert.equal(failed.status, 303);
-  assert.equal(failed.headers.get("Location"), "https://os.example/api/login/finish?error=failed");
-  // Признак результата неправильного вида в адрес не попадает: это сбой.
-  const odd = await run({ returnPath: "/api/login/finish", returnHandle: "a&b=c" });
-  assert.equal(odd.headers.get("Location"), "https://os.example/api/login/finish?error=failed");
-  // Путь возврата — только путь этого же сайта; всё остальное даёт прежнюю страницу завершения.
-  for (const bad of ["https://evil.example/x", "//evil.example/x", "/\\evil.example", "api/login/finish", "/.//evil.example", "/a/../b", "/a//b"]) {
-    assert.equal(parseReturnPath(bad), undefined, bad);
-    const page = await run({ returnPath: bad, returnHandle: handle });
+  // Путь возврата — только путь завершения оболочки; иначе прежняя страница завершения.
+  for (const bad of ["https://evil.example/x", "//evil.example/x", "/api/login/finish", "/api/login/finish?handle=a b", "/x?handle=1"]) {
+    const page = await run({ returnPath: bad });
     assert.equal(page.status, 200, bad);
     assert.equal(page.headers.get("Location"), null, bad);
   }
-  assert.equal(parseReturnPath("/api/login/finish"), "/api/login/finish");
+});
+
+test("учётные данные записываются только после того, как оболочка подтвердила браузер", async () => {
+  const proof = { connect: "x" };
+  const shell = (answer: { returnPath: string } | null) => ({ calls: [] as unknown[], async confirmBrowser(p: unknown) { this.calls.push(p); return answer; } });
+  const returnPath = `/api/connect/finish?handle=${"1".repeat(64)}.${"2".repeat(32)}.${"H".repeat(43)}`;
+  // Пересланная ссылка: браузер не тот — ничего не записывается.
+  let finished = 0;
+  const refused = shell(null);
+  await assert.rejects(completeWithShellBrowser(refused as never, proof, async () => { finished++; }));
+  assert.equal(finished, 0);
+  assert.deepEqual(refused.calls, [proof]);
+  // Тот браузер: запись и возврат в оболочку.
+  assert.deepEqual(await completeWithShellBrowser(shell({ returnPath }) as never, proof, async () => { finished++; }), { returnPath });
+  assert.equal(finished, 1);
+  // Сбой после подтверждения — браузер всё равно возвращается в оболочку, она покажет причину.
+  assert.deepEqual(await completeWithShellBrowser(shell({ returnPath }) as never, proof, async () => { throw new Error("IAM"); }), { returnPath });
+  // Без обратного вызова оболочки (старое подключение) — как прежде.
+  assert.deepEqual(await completeWithShellBrowser(undefined, proof, async () => { finished++; }), {});
+  await assert.rejects(completeWithShellBrowser(undefined, proof, async () => { throw new Error("IAM"); }));
 });

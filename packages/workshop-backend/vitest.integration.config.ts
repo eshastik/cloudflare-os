@@ -7,6 +7,7 @@ const EXPECTED_OPEN_ERROR_CODES = new Set([
   "WORKSPACE_ACCESS_DENIED",
   // Отказ обмена кода входа (повтор, чужой браузер, чужая страница).
   "LOGIN_CODE_REJECTED",
+  "CONNECT_CODE_REJECTED",
 ]);
 
 export default defineConfig({

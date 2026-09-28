@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { AccountDescription, SupportedResource, VendorDescription } from '@gadgets/workshop-shared/gatekeeper'
 import { useAuthenticatedApi } from './AuthContext'
 import ResourcePicker, { type SelectableItem } from './ResourcePicker'
+import type { RestoreState } from './auth/accountConnect'
 import styles from './CapsuleOverlay.module.css'
 
 export interface CapsuleOverlayProps {
@@ -21,6 +22,8 @@ export interface CapsuleOverlayProps {
   // Distance from the bottom of the positioning parent to the line the URL is on, so the panel sits
   // with that line rather than above the whole composer.
   lineOffset?: number
+  // Состояние композера, которое переживёт уход страницы при подключении аккаунта.
+  connectRestore?: RestoreState
 }
 
 // Minimum URL length to trigger showing the overlay (show once the scheme is complete).
@@ -37,7 +40,7 @@ const OVERLAY_VIEWPORT_MARGIN = 24
 // Below this the panel is more frustrating than useful, so it is allowed to overflow instead.
 const MIN_OVERLAY_HEIGHT = 160
 
-export default function CapsuleOverlay({ url, onSelectAccount, onRefine, onDismiss, activeIndex, onItems, activateRef, lineOffset }: CapsuleOverlayProps) {
+export default function CapsuleOverlay({ url, onSelectAccount, onRefine, onDismiss, activeIndex, onItems, activateRef, lineOffset, connectRestore }: CapsuleOverlayProps) {
   const { authenticatedApi } = useAuthenticatedApi()
   const overlayRef = useRef<HTMLDivElement>(null)
   // A list that fills in row by row moves under the pointer and shuffles what Tab is aimed at, so
@@ -87,6 +90,7 @@ export default function CapsuleOverlay({ url, onSelectAccount, onRefine, onDismi
       <ResourcePicker
         authenticatedApi={authenticatedApi}
         searchText={url}
+        connectRestore={connectRestore}
         onSelectAccount={onSelectAccount}
         onRefine={onRefine}
         onReadyChange={onReadyChange}
