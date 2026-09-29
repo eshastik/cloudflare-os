@@ -16,26 +16,26 @@ function response(text:string,status=200){return new Response(text,{status,heade
 
 export default {
  async fetch(request:Request,env:Env,ctx:ExecutionContext){
-  if(request.method!=='GET')return response('Method not allowed.',405);
+  if(request.method!=='GET')return response('Метод не поддерживается.',405);
   try{
    const url=new URL(request.url),root=new URL(base(env));
-   if(url.origin!==root.origin)return response('Not found.',404);
+   if(url.origin!==root.origin)return response('Страница не найдена.',404);
    const relative=url.pathname.slice(root.pathname==='/'?0:root.pathname.length);
-   if(root.pathname!=='/'&&!url.pathname.startsWith(root.pathname+'/'))return response('Not found.',404);
+   if(root.pathname!=='/'&&!url.pathname.startsWith(root.pathname+'/'))return response('Страница не найдена.',404);
    const start=/^\/([a-f0-9]{64})\/([a-f0-9]{64})$/.exec(relative);
    if(start){
-    if(url.search)return response('Invalid authorization request.',400);
+    if(url.search)return response('Ссылка для входа неверна. Вернитесь на сайт и начните подключение снова.',400);
     const account=ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(start[1]));
     const destination=await account.begin(start[2]);
     return new Response(null,{status:302,headers:{Location:destination,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
    }
-   if(relative!=='/oauth')return response('Not found.',404);
-   if(url.searchParams.getAll('state').length!==1||url.searchParams.getAll('code').length!==1||url.searchParams.has('error'))return response('Authorization was not completed.',400);
+   if(relative!=='/oauth')return response('Страница не найдена.',404);
+   if(url.searchParams.getAll('state').length!==1||url.searchParams.getAll('code').length!==1||url.searchParams.has('error'))return response('Вход не завершён. Вернитесь на сайт и начните подключение снова.',400);
    const state=/^([a-f0-9]{64}):([a-f0-9]{64})$/.exec(url.searchParams.get('state')!);
-   if(!state)return response('Invalid authorization state.',400);
+   if(!state)return response('Ссылка для входа устарела. Вернитесь на сайт и начните подключение снова.',400);
    const returnPath=await ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(state[1])).finish(url.searchParams.get('code')!,state[2],shellBrowserProof(request));
    return shellReturnResponse(returnPath);
-  }catch(error){logger.warn('Yandex connection failed',{event:'connection.failed',error});return response('Подключение не подтверждено. Вернитесь в CloudflareOS и повторите вход.',400);}
+  }catch(error){logger.warn('Yandex connection failed',{event:'connection.failed',error});return response('Подключение не подтверждено. Вернитесь на сайт и повторите вход.',400);}
  }
 };
 

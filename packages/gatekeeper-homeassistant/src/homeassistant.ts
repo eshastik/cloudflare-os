@@ -187,11 +187,11 @@ const SUPPORTED_RESOURCES: SupportedResource[] = [
 // HTML pages for the connect flow
 
 const CONNECT_FORM_HTML = (params: { actionUrl: string; error?: string }) => `<!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Connect Home Assistant</title>
+<title>Подключение Home Assistant</title>
 <style>
   body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; margin: 0; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
   .card { background: white; padding: 2rem; max-width: 540px; width: 100%; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
@@ -209,30 +209,30 @@ const CONNECT_FORM_HTML = (params: { actionUrl: string; error?: string }) => `<!
 </head>
 <body>
   <div class="card">
-    <h1>Connect Home Assistant</h1>
-    <p>Provide the URL of your Home Assistant instance and a long-lived access token. Cloudflare OS will use these to read entity states and control devices.</p>
+    <h1>Подключение Home Assistant</h1>
+    <p>Укажите адрес вашего Home Assistant и долгосрочный токен доступа. По ним система будет читать состояния устройств и управлять ими.</p>
     ${params.error ? `<div class="error">${escapeHtml(params.error)}</div>` : ""}
     <form method="POST" action="${escapeAttr(params.actionUrl)}">
-      <label for="baseUrl">Home Assistant URL</label>
+      <label for="baseUrl">Адрес Home Assistant</label>
       <input id="baseUrl" name="baseUrl" type="url" required placeholder="https://homeassistant.local:8123" autofocus>
-      <div class="hint">Include the protocol (http:// or https://) and port if non-standard. No trailing slash.</div>
+      <div class="hint">С протоколом (http:// или https://) и портом, если он нестандартный. Без косой черты в конце.</div>
 
-      <label for="token">Long-Lived Access Token</label>
+      <label for="token">Долгосрочный токен доступа</label>
       <input id="token" name="token" type="password" required placeholder="eyJhbGc...">
-      <div class="hint">Tokens never expire; they grant full account access until revoked in HA.</div>
+      <div class="hint">Токен не истекает и даёт полный доступ к аккаунту, пока его не отзовут в Home Assistant.</div>
 
       <details>
-        <summary>How to create a long-lived access token</summary>
+        <summary>Как создать долгосрочный токен</summary>
         <ol>
-          <li>Open your Home Assistant in a browser.</li>
-          <li>Click your username in the bottom-left corner.</li>
-          <li>Select the <b>Security</b> tab.</li>
-          <li>Scroll to the bottom and click <b>Create Token</b> under "Long-lived access tokens".</li>
-          <li>Give it a name like "Cloudflare OS", then copy the token and paste it above.</li>
+          <li>Откройте Home Assistant в браузере.</li>
+          <li>Нажмите на имя пользователя в левом нижнем углу.</li>
+          <li>Откройте вкладку <b>Security</b> («Безопасность»).</li>
+          <li>Внизу, в разделе «Long-lived access tokens», нажмите <b>Create Token</b>.</li>
+          <li>Дайте токену имя, например «Mnemos», скопируйте его и вставьте в поле выше.</li>
         </ol>
       </details>
 
-      <button type="submit">Connect</button>
+      <button type="submit">Подключить</button>
     </form>
   </div>
 </body>
@@ -240,11 +240,11 @@ const CONNECT_FORM_HTML = (params: { actionUrl: string; error?: string }) => `<!
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Link Expired</title></head>
+<html lang="ru">
+<head><meta charset="UTF-8"><title>Ссылка устарела</title></head>
 <body style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center;">
-  <h2 style="color: #d97706;">Authorization Link Expired</h2>
-  <p>This connection link is invalid or has expired. Please return to Cloudflare OS and start over.</p>
+  <h2 style="color: #d97706;">Ссылка для подключения устарела</h2>
+  <p>Ссылка для подключения недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
 </body>
 </html>`;
 
@@ -292,13 +292,13 @@ export default {
         try {
           formData = await req.formData();
         } catch {
-          return new Response("Invalid form submission.", { status: 400 });
+          return new Response("Форма отправлена с ошибкой. Откройте подключение заново.", { status: 400 });
         }
         const baseUrlInput = String(formData.get("baseUrl") ?? "").trim();
         const tokenInput = String(formData.get("token") ?? "").trim();
         if (!baseUrlInput || !tokenInput) {
           return new Response(
-            CONNECT_FORM_HTML({ actionUrl: req.url, error: "Both URL and token are required." }),
+            CONNECT_FORM_HTML({ actionUrl: req.url, error: "Укажите и адрес, и токен." }),
             { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 400 },
           );
         }
@@ -314,7 +314,7 @@ export default {
           normalizedUrl = `${u.protocol}//${u.host}${stripTrailingSlashes(u.pathname)}`;
         } catch (e: any) {
           return new Response(
-            CONNECT_FORM_HTML({ actionUrl: req.url, error: `Invalid URL: ${e.message}` }),
+            CONNECT_FORM_HTML({ actionUrl: req.url, error: "Адрес указан неверно: нужен полный адрес с http:// или https://." }),
             { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 400 },
           );
         }
@@ -335,7 +335,7 @@ export default {
       }
     }
 
-    return new Response("Not Found", { status: 404 });
+    return new Response("Страница не найдена", { status: 404 });
   },
 };
 
@@ -437,9 +437,8 @@ export class UserAccount extends DurableObject<Env> {
       const rest = new HomeAssistantRest(creds);
       await rest.ping();
     } catch (e: any) {
-      const msg = e instanceof HomeAssistantError
-        ? e.message
-        : `Unable to reach Home Assistant: ${e?.message ?? e}`;
+      // Подробность ответа Home Assistant остаётся английской: её пишет сам сервис.
+      const msg = `Не удалось связаться с Home Assistant: ${e?.message ?? e}`;
       return { kind: "error", message: msg };
     }
 
@@ -458,7 +457,7 @@ export class UserAccount extends DurableObject<Env> {
     if (!callback) {
       // Callback evicted — should not normally happen.
       this.ctx.storage.kv.delete("credentials");
-      return { kind: "error", message: "Connection callback expired. Please restart." };
+      return { kind: "error", message: "Подключение устарело. Вернитесь на сайт и начните подключение снова." };
     }
 
     const reconnecting = this.ctx.storage.kv.get<boolean>("reconnecting");
@@ -467,7 +466,7 @@ export class UserAccount extends DurableObject<Env> {
       try {
         await callback.credentialsRestored();
       } catch (e: any) {
-        return { kind: "error", message: `Failed to notify workshop: ${e?.message ?? e}` };
+        return { kind: "error", message: `Не удалось завершить подключение на сайте: ${e?.message ?? e}` };
       }
     } else {
       try {
@@ -475,7 +474,7 @@ export class UserAccount extends DurableObject<Env> {
         await callback.complete(this.ctx.exports.HomeAssistantUserImpl({ props }));
       } catch (e: any) {
         this.ctx.storage.kv.delete("credentials");
-        return { kind: "error", message: `Failed to notify workshop: ${e?.message ?? e}` };
+        return { kind: "error", message: `Не удалось завершить подключение на сайте: ${e?.message ?? e}` };
       }
     }
 

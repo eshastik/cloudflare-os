@@ -84,7 +84,7 @@ export interface BrowserLoginAccount {
 
 /** Only the configured callback origin/path and nonce-bearing initiation route exist. */
 export async function handleBrowserLogin(request: Request, callbackUrl: string, account: (id: string) => BrowserLoginAccount): Promise<Response> {
-  const reject = (status: number) => new Response("Вход не завершён. Вернитесь в CloudflareOS и повторите подключение.", { status, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" } });
+  const reject = (status: number) => new Response("Вход не завершён. Вернитесь на сайт и повторите подключение.", { status, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" } });
   let callback: URL;
   try { callback = new URL(callbackUrl); } catch { return reject(404); }
   const url = new URL(request.url);

@@ -78,17 +78,17 @@ function getBasePath(env: Env) {
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Authorization Link Expired</title></head>
+<html lang="ru"><head><meta charset="UTF-8"><title>Ссылка для входа устарела</title></head>
 <body style="font-family: system-ui, sans-serif; text-align: center; padding: 3rem;">
-<h1 style="color:#d97706;">Authorization Link Expired</h1>
-<p>This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.</p>
-<button onclick="window.close()">Close</button></body></html>`;
+<h1 style="color:#d97706;">Ссылка для входа устарела</h1>
+<p>Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
+<button onclick="window.close()">Закрыть</button></body></html>`;
 
 const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Configuration Required</title></head>
+<html lang="ru"><head><meta charset="UTF-8"><title>Подключение не настроено</title></head>
 <body style="font-family: system-ui, sans-serif; text-align: center; padding: 3rem;">
-<h1 style="color:#d97706;">Cloudflare Gatekeeper Not Configured</h1>
-<p>Please see the README.md for instructions on configuring an OAuth client ID and secret.</p>
+<h1 style="color:#d97706;">Подключение Cloudflare не настроено</h1>
+<p>Администратор установки должен указать идентификатор и секрет OAuth-клиента Cloudflare (порядок описан в README.md).</p>
 </body></html>`;
 
 // Main HTTP entrypoint — used only to initiate and complete the OAuth flow.
@@ -119,16 +119,16 @@ export default {
     } else if (relPath === "/oauth") {
       const error = url.searchParams.get("error");
       if (error) {
-        return new Response(`${error}: ${url.searchParams.get("error_description")}`);
+        return new Response(`Вход не выполнен: ${error}: ${url.searchParams.get("error_description")}. Вернитесь на сайт и начните подключение снова.`);
       }
       const state = url.searchParams.get("state");
-      if (!state) return new Response("Error: no 'state' provided");
+      if (!state) return new Response("Ошибка входа: в ответе сервиса нет параметра state. Вернитесь на сайт и начните подключение снова.");
       const colonIdx = state.indexOf(":");
-      if (colonIdx < 0) return new Response("Error: malformed state");
+      if (colonIdx < 0) return new Response("Ошибка входа: параметр state повреждён. Вернитесь на сайт и начните подключение снова.");
       const doId = state.slice(0, colonIdx);
       const oauthNonce = state.slice(colonIdx + 1);
       const code = url.searchParams.get("code");
-      if (!code) return new Response("Error: no 'code' provided");
+      if (!code) return new Response("Ошибка входа: в ответе сервиса нет кода авторизации. Вернитесь на сайт и начните подключение снова.");
 
       const stub = ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(doId));
       const returnPath = await stub.acceptAuthCode(code, oauthNonce, shellBrowserProof(req));
@@ -137,7 +137,7 @@ export default {
       }
       return shellReturnResponse(returnPath);
     }
-    return new Response("Not Found", { status: 404 });
+    return new Response("Страница не найдена", { status: 404 });
   },
 };
 

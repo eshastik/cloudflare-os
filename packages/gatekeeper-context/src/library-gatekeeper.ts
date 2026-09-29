@@ -132,7 +132,7 @@ export class ContextAccount
 
   async describe(): Promise<AccountDescription> {
     return {
-      displayName: "Context",
+      displayName: "Контекст",
       avatar: LIBRARY_ICON,
       singleton: { tsType: "ContextLibrary" },
       providesUi: { title: "Контекст и навыки", icon: LIBRARY_ICON },
@@ -255,8 +255,8 @@ export class ContextGatekeeper
   async describe(): Promise<ResourceDescription> {
     return {
       url: "context://library",
-      title: "Context",
-      snippet: "Search and read your team's shared context collections.",
+      title: "Контекст",
+      snippet: "Поиск и чтение общих подборок контекста команды.",
       suggestedBindingName: "CONTEXT",
       tsType: "ContextLibrary",
       hasSlashCommands: true,
@@ -342,7 +342,7 @@ export class ContextGatekeeper
       }))];
       let check = await this.#observers().prepareObservation(collectionIds);
       await authorizer.authorizeObservation({
-        title: "Context catalog",
+        title: "Каталог контекста",
         description: `Listed ${catalog.entries.length} available Context item(s).`,
         excludeObservers: check.excludeObservers,
       });
@@ -390,7 +390,7 @@ type GatekeeperVendorProps = {
 export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env, GatekeeperVendorProps> {
   async describe(): Promise<VendorDescription> {
     return {
-      displayName: "Context",
+      displayName: "Контекст",
       url: "https://workers.cloudflare.com/",
       logo: LIBRARY_ICON,
       tagline: "Общие подборки контекста: создание и справка",

@@ -5,11 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- Экран Mini App в Telegram (ADR 0027 Mnemos, этап 6). Свой строгий CSP: сторонний скрипт —
          только официальный telegram-web-app.js, запросы — только к своей установке (RPC и
-         хранилище Mnemos на том же адресе). script-src data: нужен одному: фрейм редактора — srcdoc,
-         он наследует политику страницы, а код редактора и Cap'n Web в нём подключаются data:-модулями
-         (как на сайте). frame-src 'none': srcdoc под него не попадает, а увести фрейм на чужой адрес
-         нельзя. В режиме разработки Vite снимает эту строку (vite.config.ts). -->
-    <meta http-equiv="Content-Security-Policy" data-mini-app-csp content="default-src 'none'; script-src 'self' data: https://telegram.org/js/telegram-web-app.js; style-src 'self' 'unsafe-inline' data:; font-src 'self' data:; img-src 'self' data:; media-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+         хранилище Mnemos на том же адресе). Фрейм редактора грузится отдельным адресом своей установки
+         (frame-src 'self') со своим заголовком CSP: data:-модули редактора разрешены только там, не
+         на этой странице. В режиме разработки Vite снимает эту строку (vite.config.ts). -->
+    <meta http-equiv="Content-Security-Policy" data-mini-app-csp content="default-src 'none'; script-src 'self' https://telegram.org/js/telegram-web-app.js; style-src 'self' 'unsafe-inline' data:; font-src 'self' data:; img-src 'self' data:; media-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'self'; object-src 'none'">
     <!-- Одноразовый токен экрана в адресе не должен уходить дальше этой страницы. -->
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

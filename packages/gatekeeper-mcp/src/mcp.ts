@@ -170,7 +170,7 @@ async function continueConnect(
 export class GatekeeperVendor extends WorkerEntrypoint<Env> implements GatekeeperVendorIface {
   async describe(): Promise<VendorDescription> {
     return {
-      displayName: "MCP Server",
+      displayName: "Сервер MCP",
       url: "https://modelcontextprotocol.io",
       logo: MCP_AVATAR,
       color: "#1a1d21",

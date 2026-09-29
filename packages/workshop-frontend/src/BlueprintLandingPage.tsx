@@ -1652,6 +1652,7 @@ function BlueprintGatekeeperBindingField({
         vendorId={binding.gatekeeperName}
         vendorName={vendor.description.displayName}
         resourceTitle={resource.title}
+        resourceUrlPattern={resource.urlPattern}
         connecting={connectingVendor === binding.gatekeeperName}
         reconnectingAccountId={reconnectingAccountId}
         onSelect={(id) => onChange({ accountId: id } as any)}

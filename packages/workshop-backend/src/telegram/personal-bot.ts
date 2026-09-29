@@ -58,6 +58,7 @@ export const VOICE_FAILED_REPLY = "Не получилось распознат�
 export const VOICE_BUSY_REPLY = "Предыдущее голосовое сообщение ещё распознаётся. Дождитесь ответа и отправьте снова.";
 export const BUSY_REPLY = "Агент ещё отвечает на прошлое сообщение в этом треде. Дождитесь ответа и напишите снова.";
 export const FAILED_REPLY = "Не получилось передать сообщение агенту. Повторите через минуту.";
+export const DELETED_ON_SITE_REPLY = "Эта беседа удалена на сайте. Чтобы начать новую, напишите сообщение вне этого треда.";
 export const NO_THREAD_REPLY = "Не получилось открыть тред для беседы. Проверьте, что в BotFather у бота включён режим тредов, и повторите.";
 export const ARCHIVED_NOTICE = "Беседа в архиве. Напишите сюда, чтобы вернуть её.";
 export const SITE_THREAD_TITLE = "Беседа с сайта";
@@ -182,6 +183,9 @@ export type ThreadLink = {
   createdAt: number;
   /** Беседа сайта, перенесённая в этот тред; нет — беседа создана из треда (по ключу). */
   workspace?: string | null;
+  /** Беседу удалили на сайте, а тред в Telegram ещё не удалён: удаление повторяет будильник бота,
+   *  сообщения из треда в беседу не идут. */
+  deletedOnSite?: boolean;
 };
 
 type ReplyState = { sent: number; unthreaded: boolean };
@@ -623,6 +627,7 @@ export class PersonalTelegramBot {
     } else if (input.thread !== null) {
       notice = undefined;
       link = this.#link(input.thread) ?? this.#newLink(record, input.thread, null, null);
+      if (link.deletedOnSite) { await this.#say(record, DELETED_ON_SITE_REPLY, link.thread); return; }
     } else {
       notice = undefined;
       let thread: number;
@@ -668,7 +673,10 @@ export class PersonalTelegramBot {
       return;
     }
     if (!result.accepted) {
-      await this.#say(record, result.message, link.thread);
+      // Беседу удалили на сайте, а удаление до бота не дошло: связь треда снимается, пустая беседа
+      // не создаётся.
+      if (result.deletedOnSite) this.deps.storage.delete(THREAD_PREFIX + link.thread);
+      await this.#say(record, result.deletedOnSite ? DELETED_ON_SITE_REPLY : result.message, link.thread);
       return;
     }
     let current = this.#link(link.thread) ?? link;
@@ -696,7 +704,8 @@ export class PersonalTelegramBot {
   /** Промежуточное состояние хода → черновик в треде, не чаще лимита Telegram. */
   async progress(ref: TelegramTurnRef, progress: GadgetProgress): Promise<void> {
     let record = this.#turnRecord(ref);
-    if (!record || this.#link(ref.thread)?.unlinked) return;
+    let current = this.#link(ref.thread);
+    if (!record || current?.unlinked || current?.deletedOnSite) return;
     let text = draftText(progress);
     if (!text.trim() || !this.deps.drafts.allow(this.deps.now())) return;
     try { await (await this.#api(record)).draft(ref.chat, ref.thread, this.#draftId(ref.update), text); }
@@ -711,6 +720,8 @@ export class PersonalTelegramBot {
     if (!record) return;
     let site = ref.site !== undefined;
     let existing = this.#link(ref.thread);
+    // Тред беседы, удалённой на сайте, уходит: ответы в него не шлются.
+    if (existing?.deletedOnSite) return;
     if (site && (!existing || existing.key !== this.#key(record, ref.thread) || existing.unlinked)) return;
     let stateKey = REPLY_PREFIX + (site ? "site:" + ref.site : ref.update);
     let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
@@ -1109,7 +1120,7 @@ export class PersonalTelegramBot {
 
   #linkState(record: BotRecord, link: ThreadLink | null): TelegramChatLink {
     let bot = record.bot.username;
-    return link && !link.unlinked ? { status: "linked", bot, url: `https://t.me/${bot}` } : { status: "available", bot };
+    return link && !link.unlinked && !link.deletedOnSite ? { status: "linked", bot, url: `https://t.me/${bot}` } : { status: "available", bot };
   }
 
   /** Можно ли перенести беседу владельца в Telegram и идёт ли она уже в треде (key — её тред). */
@@ -1125,7 +1136,7 @@ export class PersonalTelegramBot {
     let record = this.#connected(owner);
     if (!record) return { state: { status: "unavailable" }, key: null };
     let previous = input.previousKey ? this.#linkByKey(record, input.previousKey) : null;
-    if (previous && !previous.unlinked) return { state: this.#linkState(record, previous), key: previous.key };
+    if (previous && !previous.unlinked && !previous.deletedOnSite) return { state: this.#linkState(record, previous), key: previous.key };
 
     let title = (typeof input.title === "string" ? input.title.replace(/[\r\n]+/g, " ").trim() : "").slice(0, 128) || SITE_THREAD_TITLE;
     let api = await this.#api(record);
@@ -1146,6 +1157,24 @@ export class PersonalTelegramBot {
     return { state: this.#linkState(current, link), key: link.key };
   }
 
+  /** Удалить тред беседы, удалённой на сайте; сбой Telegram оставляет отметку для повтора. */
+  async #deleteThread(api: TelegramBotApi, chat: number, thread: number): Promise<boolean> {
+    try { await api.deleteTopic(chat, thread); }
+    catch (error) { if (!isThreadNotFound(error)) return false; }
+    if (this.#link(thread)?.deletedOnSite) this.deps.storage.delete(THREAD_PREFIX + thread);
+    return true;
+  }
+
+  /** Повтор удаления тредов бесед, удалённых на сайте. Зовёт будильник бота. */
+  async retrySiteDeletions(): Promise<void> {
+    let record = this.#record();
+    if (!record?.telegramOwner || record.connectedAt === null) return;
+    let pending = [...this.deps.storage.list<ThreadLink>({ prefix: THREAD_PREFIX })].filter(([, link]) => link.deletedOnSite);
+    if (!pending.length) return;
+    let api = await this.#api(record);
+    for (let [, link] of pending) await this.#deleteThread(api, record.telegramOwner.id, link.thread);
+  }
+
   /** Событие беседы сайта для её треда. Чужой или устаревший ключ ничего не делает. */
   async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
     let record = this.#connected(owner);
@@ -1161,7 +1190,7 @@ export class PersonalTelegramBot {
     };
     switch (event.type) {
       case "human": {
-        if (link.unlinked || typeof event.text !== "string" || !event.text.trim()) return;
+        if (link.unlinked || link.deletedOnSite || typeof event.text !== "string" || !event.text.trim()) return;
         let stateKey = REPLY_PREFIX + "human:" + event.id;
         let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
         let chunks = telegramChunks(event.text.slice(0, 16000));
@@ -1177,7 +1206,7 @@ export class PersonalTelegramBot {
       case "rename": {
         let title = typeof event.title === "string" ? event.title.replace(/[\r\n]+/g, " ").trim().slice(0, 128) : "";
         // Название, которое тред получил от человека (или неизвестно как), не трогаем.
-        if (link.unlinked || !title || title === link.title || (link.naming !== "client" && link.naming !== "bot")) return;
+        if (link.unlinked || link.deletedOnSite || !title || title === link.title || (link.naming !== "client" && link.naming !== "bot")) return;
         try { await api.renameTopic(chat, link.thread, title); } catch (error) { gone(error); return; }
         let current = this.#link(link.thread) ?? link;
         current.title = title;
@@ -1186,14 +1215,17 @@ export class PersonalTelegramBot {
         return;
       }
       case "archived": {
-        if (link.unlinked) return;
+        if (link.unlinked || link.deletedOnSite) return;
         try { await api.send(chat, ARCHIVED_NOTICE, { thread: link.thread }); } catch (error) { gone(error); }
         return;
       }
       case "deleted": {
-        this.deps.storage.delete(THREAD_PREFIX + link.thread);
-        if (link.unlinked) return;
-        try { await api.deleteTopic(chat, link.thread); } catch (error) { if (!isThreadNotFound(error)) throw error; }
+        if (link.unlinked) { this.deps.storage.delete(THREAD_PREFIX + link.thread); return; }
+        // Сначала отметка: с этого момента тред не ведёт в беседу, даже если Telegram не ответит.
+        // Удаление треда повторяет будильник бота (retrySiteDeletions); сайту удаление подтверждено.
+        link.deletedOnSite = true;
+        this.#putLink(link);
+        await this.#deleteThread(api, chat, link.thread);
         return;
       }
       case "decided": {

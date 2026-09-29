@@ -134,17 +134,17 @@ class EmailMailboxConfiguratorUI extends RpcTarget implements EmailMailboxConfig
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Authorization Link Expired</title>
+    <title>Ссылка для входа устарела</title>
   </head>
   <body style="font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Authorization Link Expired</h1>
-      <p style="color: #555; line-height: 1.6; margin: 0 0 1.5rem 0;">This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.</p>
-      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Close</button>
+      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Ссылка для входа устарела</h1>
+      <p style="color: #555; line-height: 1.6; margin: 0 0 1.5rem 0;">Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
+      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Закрыть</button>
     </div>
   </body>
 </html>`;
@@ -174,7 +174,7 @@ export default {
       }
       return shellReturnResponse(returnPath);
     } else {
-      return new Response("Not Found", { status: 404 });
+      return new Response("Страница не найдена", { status: 404 });
     }
   },
 
@@ -251,7 +251,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
 
   async describe(): Promise<VendorDescription> {
     return {
-      displayName: "Email",
+      displayName: "Почта",
       url: getBaseUrl(this.env),
       logo: { url: EMAIL_LOGO_URL },
       color: "#fff5df",
@@ -352,7 +352,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
                                 implements GatekeeperUser {
   async describe(): Promise<AccountDescription> {
     return {
-      displayName: "Email Receiver",
+      displayName: "Приём почты",
       avatar: { url: "" },  // TODO: email icon
     };
   }

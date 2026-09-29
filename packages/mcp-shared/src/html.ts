@@ -65,18 +65,18 @@ export const PAGE_STYLE = `
 `;
 
 export const SELF_CLOSING_HTML = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Connected</title></head>
-<body><p>Connected. You can close this window.</p><script>window.close();</script></body></html>`;
+<html lang="ru"><head><meta charset="utf-8"><title>Подключено</title></head>
+<body><p>Подключено. Это окно можно закрыть.</p><script>window.close();</script></body></html>`;
 
 export const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Link expired</title><style>${PAGE_STYLE}</style></head>
-<body><main><h1>This link has expired</h1>
-<p class="sub">Start the connection again.</p></main></body></html>`;
+<html lang="ru"><head><meta charset="utf-8"><title>Ссылка устарела</title><style>${PAGE_STYLE}</style></head>
+<body><main><h1>Ссылка для подключения устарела</h1>
+<p class="sub">Вернитесь на сайт и начните подключение снова.</p></main></body></html>`;
 
 // A minimal page reporting that connecting failed, with a reason the user can act on.
 export function errorPageHtml(title: string, detail: string): string {
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${PAGE_STYLE}</style></head>
 <body><main><h1>${escapeHtml(title)}</h1>
 <p class="sub">${escapeHtml(detail)}</p></main></body></html>`;

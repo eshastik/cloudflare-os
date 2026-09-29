@@ -26,12 +26,17 @@ export function AccountAvatar({ avatarUrl, logoUrl }: { avatarUrl: string | unde
   return <UserCircle size={17} className="text-kumo-subtle" />
 }
 
+export function isEmailMailboxPattern(urlPattern: string | undefined): boolean {
+  return urlPattern !== undefined && /\/mailbox\/:user$/.test(urlPattern)
+}
+
 export function AccountChooser({
   accounts,
   selectedAccountId,
   vendorId,
   vendorName,
   resourceTitle,
+  resourceUrlPattern,
   connecting,
   reconnectingAccountId,
   requiredResourceUrlPatterns,
@@ -46,6 +51,7 @@ export function AccountChooser({
   vendorId?: string
   vendorName: string
   resourceTitle?: string
+  resourceUrlPattern?: string
   connecting: boolean
   reconnectingAccountId: number | null
   requiredResourceUrlPatterns?: string[]
@@ -55,7 +61,8 @@ export function AccountChooser({
   onReconnect: (id: number) => void
   onGrantAccess?: (id: number) => void
 }) {
-  const isEmailMailbox = vendorId === 'email' && (resourceTitle === 'Почтовый ящик' || resourceTitle === 'Email Mailbox')
+  // Почтовый ящик узнаём по адресу ресурса, а не по названию: название видно людям и переводится.
+  const isEmailMailbox = vendorId === 'email' && isEmailMailboxPattern(resourceUrlPattern)
 
   return (
     <section className="overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">

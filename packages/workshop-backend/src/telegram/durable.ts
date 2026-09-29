@@ -119,6 +119,9 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   /** Доставка уведомлений Mnemos: по очереди с остальными отправками бота. */
   async alarm(): Promise<void> {
     let next = await this.#serialize(async () => {
+      // Треды бесед, удалённых на сайте, которые Telegram не удалил с первого раза.
+      try { await this.#core().retrySiteDeletions(); }
+      catch (error) { logger.warn("telegram thread deletion not retried", { event: "telegram.site.delete.failed", error }); }
       try { return await this.#core().pollNotifications(); }
       catch (error) {
         logger.warn("telegram notifications not delivered", { event: "telegram.notify.failed", error });

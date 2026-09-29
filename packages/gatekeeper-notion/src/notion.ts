@@ -167,24 +167,24 @@ const SUPPORTED_RESOURCES: SupportedResource[] = [WORKSPACE_RESOURCE, ITEM_RESOU
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><title>Authorization Link Expired</title></head>
+<html lang="ru">
+  <head><meta charset="UTF-8"><title>Ссылка для входа устарела</title></head>
   <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem;">Authorization Link Expired</h1>
-      <p style="color: #555; line-height: 1.6;">This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.</p>
-      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Close</button>
+      <h1 style="color: #d97706; font-size: 1.5rem;">Ссылка для входа устарела</h1>
+      <p style="color: #555; line-height: 1.6;">Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
+      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Закрыть</button>
     </div>
   </body>
 </html>`;
 
 const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><title>Configuration Required</title></head>
+<html lang="ru">
+  <head><meta charset="UTF-8"><title>Подключение не настроено</title></head>
   <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem;">Notion Gatekeeper Not Configured</h1>
-      <p style="color: #555; line-height: 1.6;">Please configure a Notion OAuth client ID and secret for this gatekeeper.</p>
+      <h1 style="color: #d97706; font-size: 1.5rem;">Подключение Notion не настроено</h1>
+      <p style="color: #555; line-height: 1.6;">Администратор установки должен указать идентификатор и секрет OAuth-клиента Notion.</p>
     </div>
   </body>
 </html>`;
@@ -248,19 +248,19 @@ export default {
       // Completion redirect from Notion.
       const error = url.searchParams.get("error");
       if (error) {
-        return new Response(`Authorization failed: ${error}`, {
+        return new Response(`Вход не выполнен: ${error}. Вернитесь на сайт и начните подключение снова.`, {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
       const state = url.searchParams.get("state");
-      if (!state) return new Response("Error: no 'state' provided");
+      if (!state) return new Response("Ошибка входа: в ответе сервиса нет параметра state. Вернитесь на сайт и начните подключение снова.");
       const colonIdx = state.indexOf(":");
-      if (colonIdx < 0) return new Response("Error: malformed state");
+      if (colonIdx < 0) return new Response("Ошибка входа: параметр state повреждён. Вернитесь на сайт и начните подключение снова.");
       const doId = state.slice(0, colonIdx);
       const oauthNonce = state.slice(colonIdx + 1);
 
       const code = url.searchParams.get("code");
-      if (!code) return new Response("Error: no 'code' provided");
+      if (!code) return new Response("Ошибка входа: в ответе сервиса нет кода авторизации. Вернитесь на сайт и начните подключение снова.");
 
       const stub = ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(doId));
       const returnPath = await stub.acceptAuthCode(code, oauthNonce, shellBrowserProof(req));
@@ -271,7 +271,7 @@ export default {
       }
       return shellReturnResponse(returnPath);
     } else {
-      return new Response("Not Found", { status: 404 });
+      return new Response("Страница не найдена", { status: 404 });
     }
   },
 };

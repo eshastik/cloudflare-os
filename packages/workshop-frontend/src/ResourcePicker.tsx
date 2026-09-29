@@ -66,6 +66,9 @@ export interface ResourcePickerProps {
 }
 
 type AccountEntry = {
+  // Счета сопоставляются с сервисом по его идентификатору: видимое название переводится и может
+  // совпасть у двух сервисов.
+  vendorId: string
   description: AccountDescription
   vendor: VendorDescription
   supportedResources: SupportedResource[]
@@ -117,11 +120,11 @@ export default function ResourcePicker({
     seenAccountIdsRef.current = new Set()
 
     class AccountsSubscriber extends RpcTarget implements ConnectedAccountsSubscriber {
-      add(id: number, description: AccountDescription, vendor: VendorDescription, supportedResources: SupportedResource[] = [], credentialsValid: boolean = true, _vendorId: string = '') {
+      add(id: number, description: AccountDescription, vendor: VendorDescription, supportedResources: SupportedResource[] = [], credentialsValid: boolean = true, vendorId: string = '') {
         seenAccountIdsRef.current.add(id)
         setAllAccounts(prev => {
           const next = new Map(prev)
-          next.set(id, { description, vendor, supportedResources, credentialsValid })
+          next.set(id, { vendorId, description, vendor, supportedResources, credentialsValid })
           return next
         })
         // Clear reconnecting state if this account was being reconnected and is now valid.
@@ -289,9 +292,9 @@ export default function ResourcePicker({
   if (lowerSearch && httpItem && hasSpecificMatches) {
     matchedResources = matchedResources.filter(({ resource }) => resource.urlPattern !== 'https://*')
 
-    const httpVendorName = httpItem.vendor.description.displayName
+    const httpVendorId = httpItem.vendor.id
     const httpAccounts = [...allAccounts.entries()]
-      .filter(([_, { vendor: v }]) => v.displayName === httpVendorName)
+      .filter(([_, account]) => account.vendorId === httpVendorId)
 
     const hasMatchingAccounts = lowerSearch
       ? httpAccounts.some(([_, { description }]) => {
@@ -324,7 +327,7 @@ export default function ResourcePicker({
       }
 
       let vendorAccounts = [...allAccounts.entries()]
-        .filter(([_, { vendor: v }]) => v.displayName === vendor.description.displayName)
+        .filter(([_, account]) => account.vendorId === vendor.id)
         .map(([id, data]) => ({ id, ...data }))
 
       if (accountsOnly && lowerSearch) {
@@ -518,7 +521,7 @@ export default function ResourcePicker({
 
             // --- Full match or no-refine prefix: render with accounts ---
             let vendorAccounts = [...allAccounts.entries()]
-              .filter(([_, { vendor: v }]) => v.displayName === vendor.description.displayName)
+              .filter(([_, account]) => account.vendorId === vendor.id)
               .map(([id, data]) => ({ id, ...data }))
 
             // In accounts-only mode (HTTP alongside specific matches), only show

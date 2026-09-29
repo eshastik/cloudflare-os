@@ -852,6 +852,7 @@ export default function GatekeeperModal({
                     vendorId={selectedConnection.vendorId}
                     vendorName={selectedConnection.vendor}
                     resourceTitle={selectedConnection.resourceUrlPattern ? selectedConnection.title : undefined}
+                    resourceUrlPattern={selectedConnection.resourceUrlPattern}
                     connecting={connectingVendor === selectedConnection.vendorId}
                     reconnectingAccountId={reconnectingAccountId}
                     requiredResourceUrlPatterns={requiredResourceUrlPatterns(selectedConnection)}

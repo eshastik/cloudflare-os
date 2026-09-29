@@ -602,6 +602,19 @@ type TelegramLinkRecord = {
   through?: number;
 };
 
+// Удаление беседы, ещё не подтверждённое объектом бота: повторяется, пока он его не примет.
+type TelegramDeletionRecord = {
+  chatId: number;
+  key: string;
+  owner: string;
+  attempts: number;
+  nextAt: number;
+};
+
+const TELEGRAM_DELETION_RETRY_MS = 30_000;
+const TELEGRAM_DELETION_MAX_RETRY_MS = 60 * 60 * 1000;
+export const EXTERNAL_CHAT_DELETED = "Эта беседа удалена на сайте. Чтобы начать новую, напишите сообщение вне этого треда.";
+
 // Кто принимает решение по действию: профиль для журнала, объект пользователя (от его имени
 // возобновляется ход) и владелец ли он беседы.
 type ActionDecider = {
@@ -891,6 +904,10 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // Беседа убрана владельцем в архив; новое сообщение из треда Telegram возвращает её.
       archived: false,
 
+      // Беседа удалена на сайте, а у неё были треды Telegram: объект остаётся с этой отметкой
+      // (и недоставленными удалениями тредов), чтобы сообщение из треда не создало её заново.
+      deletedOnSite: false,
+
       codeVersion: 0,
       totalCost: 0,
 
@@ -1033,6 +1050,10 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       }),
 
       telegramLinks: collection<TelegramLinkRecord>()({
+        primaryKey: "chatId",
+      }),
+
+      telegramDeletions: collection<TelegramDeletionRecord>()({
         primaryKey: "chatId",
       }),
 
@@ -1413,6 +1434,10 @@ class OverseerImpl implements AgentHooks {
     }
   }
 
+  updateTelegramDeletionAlarm(): void {
+    this.#updateExternalMessageResponseDeliveryAlarm();
+  }
+
   #updateExternalMessageResponseDeliveryAlarm(): void {
     if (this.#runningAgents.size > 0) return;
 
@@ -1427,9 +1452,15 @@ class OverseerImpl implements AgentHooks {
       return;
     }
 
+    let next = Infinity;
     let nextDeliveredRecord = [...this.storage.gadgetResponseDeliveries.deliveredByDeliveredAt.list({ limit: 1 })][0];
     if (nextDeliveredRecord?.status === "delivered") {
-      this.ctx.storage.setAlarm(nextDeliveredRecord.deliveredAt + AGENT_RESPONSE_DELIVERED_RETENTION_MS);
+      next = nextDeliveredRecord.deliveredAt + AGENT_RESPONSE_DELIVERED_RETENTION_MS;
+    }
+    // Тот же будильник повторяет недоставленные удаления тредов Telegram.
+    for (let deletion of this.storage.telegramDeletions.list()) next = Math.min(next, deletion.nextAt);
+    if (next !== Infinity) {
+      this.ctx.storage.setAlarm(next);
       return;
     }
 
@@ -4179,6 +4210,29 @@ class OverseerImpl implements AgentHooks {
     for (let link of Array.from(this.storage.telegramLinks.list())) this.#sendTelegramEvent(link, event);
   }
 
+  // Удаление беседы доходит до объекта бота повтором до подтверждения, как ответ агента: сбой
+  // оставляет запись, будильник беседы пробует снова. Объект бота сам доводит удаление треда.
+  queueTelegramDeletion(link: TelegramLinkRecord): void {
+    this.storage.telegramDeletions.put({ chatId: link.chatId, key: link.key, owner: link.owner, attempts: 0, nextAt: Date.now() });
+    this.ctx.waitUntil(this.deliverTelegramDeletions().finally(() => this.#updateExternalMessageResponseDeliveryAlarm()));
+  }
+
+  async deliverTelegramDeletions(): Promise<void> {
+    let now = Date.now();
+    for (let record of Array.from(this.storage.telegramDeletions.list())) {
+      if (record.nextAt > now) continue;
+      try {
+        await this.telegramBot(record.owner).siteEvent(record.owner, record.key, { type: "deleted" });
+        this.storage.telegramDeletions.delete(record.chatId);
+      } catch (err) {
+        let attempts = record.attempts + 1;
+        let delay = Math.min(TELEGRAM_DELETION_RETRY_MS * 2 ** Math.min(attempts - 1, 10), TELEGRAM_DELETION_MAX_RETRY_MS);
+        this.storage.telegramDeletions.put({ ...record, attempts, nextAt: Date.now() + delay });
+        this.logger.warn("telegram thread deletion not delivered", { event: "telegram.site.delete.retry", chatId: record.chatId, error: err });
+      }
+    }
+  }
+
   #sendTelegramEvent(link: TelegramLinkRecord, event: SiteEvent): void {
     this.ctx.waitUntil(this.telegramBot(link.owner).siteEvent(link.owner, link.key, event).catch(err => {
       this.logger.warn("telegram site event failed", { event: "telegram.site.event.failed", operation: event.type, error: err });
@@ -5478,7 +5532,7 @@ class OverseerImpl implements AgentHooks {
       .filter(record => record.hasSlashCommands)
       .map(record => ({
         gatekeeperId: record.id,
-        providerLabel: record.resourceTitle || `Gatekeeper ${record.id}`,
+        providerLabel: record.resourceTitle || `Подключение ${record.id}`,
         gatekeeper: this.getGatekeeperFacet(record.id),
       }));
     return [{
@@ -7250,6 +7304,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
   //   the agents yet again.
   async alarm() {
     await this.impl.waitForAllAgentsToComplete();
+    await this.impl.deliverTelegramDeletions();
     await this.impl.deliverReadyExternalMessageResponses();
   }
 
@@ -7450,13 +7505,15 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
         this.impl.maintainNativeAccess(profileId, clientUser, "build"));
   }
 
+  // Запись канала о чате, которого больше нет, остаётся: по ней видно, что чат удалили на сайте.
   #getExternalChat(externalChatKey: string): ExternalChatRecord | undefined {
     let externalChat = this.impl.storage.externalChats.get(externalChatKey);
-    if (externalChat && !this.impl.storage.chatMeta.get(externalChat.chatId)) {
-      this.impl.storage.externalChats.delete(externalChat.externalChatKey);
-      externalChat = undefined;
-    }
-    return externalChat;
+    return externalChat && this.impl.storage.chatMeta.get(externalChat.chatId) ? externalChat : undefined;
+  }
+
+  #externalChatDeleted(externalChatKey: string): boolean {
+    let externalChat = this.impl.storage.externalChats.get(externalChatKey);
+    return !!externalChat && !this.impl.storage.chatMeta.get(externalChat.chatId);
   }
 
   async receiveExternalMessage(
@@ -7481,8 +7538,8 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     // Create the Gadget if it doesn't exist yet. Беседу сайта, перенесённую в канал, заново не
     // создаём: её удалили на сайте.
     let ownerId = this.impl.ownerId;
-    if (!ownerId && input.existingOnly) {
-      return { accepted: false, message: "Эта беседа удалена на сайте. Чтобы начать новую, напишите сообщение вне этого треда." };
+    if (!ownerId && (input.existingOnly || this.impl.storage.deletedOnSite.get())) {
+      return { accepted: false, message: EXTERNAL_CHAT_DELETED, deletedOnSite: true };
     }
     if (!ownerId) {
       this.impl.ownerId = callerId;
@@ -7509,6 +7566,12 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
           message: "У вас нет доступа к агенту этой беседы.",
         };
       }
+    }
+
+    // Чат беседы удалён на сайте (или беседа сайта перенесена в тред, а её чата больше нет): новый
+    // пустой чат не создаётся, тред отвязывается.
+    if (this.#externalChatDeleted(input.externalChatKey) || (input.existingOnly && !this.#getExternalChat(input.externalChatKey))) {
+      return { accepted: false, message: EXTERNAL_CHAT_DELETED, deletedOnSite: true };
     }
 
     // Complete pending registration in the owner's UserDO.
@@ -8518,10 +8581,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       await this.impl.ctx.storage.deleteAll();
       this.impl.scheduleRevocationRestart();
       this.impl.ownerId = undefined;
+      // После удаления данных остаются только отметка и удаления тредов: их доставку повторяет
+      // будильник, а отметка не даёт сообщению из треда создать беседу заново.
+      if (telegramLinks.length) {
+        this.impl.storage.deletedOnSite.put(true);
+        for (let link of telegramLinks) {
+          this.impl.storage.telegramDeletions.put({ chatId: link.chatId, key: link.key, owner: link.owner, attempts: 0, nextAt: Date.now() });
+        }
+      }
     });
 
-    for (let link of telegramLinks) {
-      this.impl.ctx.waitUntil(this.impl.telegramBot(link.owner).siteEvent(link.owner, link.key, { type: "deleted" }).catch(() => {}));
+    if (telegramLinks.length) {
+      this.impl.ctx.waitUntil(this.impl.deliverTelegramDeletions().finally(() => this.impl.updateTelegramDeletionAlarm()));
     }
 
     this.impl.logger.info("deleted workspace", {
@@ -9503,7 +9574,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     let startedAt = Date.now();
     let response = this.impl.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId);
     if (response?.status === "waiting") {
-      this.impl.deliverExternalMessageResponse(response, "The chat was deleted before the agent responded.");
+      this.impl.deliverExternalMessageResponse(response, "Беседу удалили на сайте раньше, чем агент ответил.");
     }
 
     // Delete any gadgets and binding edges still provisional to this chat (stamped or not):
@@ -9526,9 +9597,10 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }
     this.impl.storage.chatMeta.delete(chatId);
     this.impl.storage.chatContext.delete(chatId);
-    // Тред Telegram этой беседы удаляется вместе с ней.
-    this.impl.notifyTelegram(chatId, { type: "deleted" });
+    // Тред Telegram этой беседы удаляется вместе с ней, повтором до подтверждения.
+    let telegramLink = this.impl.storage.telegramLinks.get(chatId);
     this.impl.storage.telegramLinks.delete(chatId);
+    if (telegramLink) this.impl.queueTelegramDeletion(telegramLink);
     // Buffer the keys first: deleting invalidates the list cursor.
     let checkpoints = Array.from(
         this.impl.storage.chatCompactions.list({prefix: `${keyString(chatId)}.`}),

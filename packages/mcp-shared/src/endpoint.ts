@@ -65,26 +65,26 @@ export function isBlockedHost(hostname: string): boolean {
 // checks for local development, allowing HTTP and otherwise-blocked hosts.
 export function validateCustomEndpoint(env: InsecureEnv, input: string): EndpointValidation {
   const trimmed = input.trim();
-  if (!trimmed) return { ok: false, reason: "Enter the MCP server's endpoint URL." };
+  if (!trimmed) return { ok: false, reason: "Укажите адрес сервера MCP." };
 
   let url: URL;
   try {
     url = new URL(trimmed);
   } catch {
-    return { ok: false, reason: "That is not a valid URL." };
+    return { ok: false, reason: "Адрес указан неверно." };
   }
 
   const insecureAllowed = fetchOptions(env).allowInsecure === true;
   if (url.protocol !== "https:" && !(insecureAllowed && url.protocol === "http:")) {
-    return { ok: false, reason: "The endpoint must use https://." };
+    return { ok: false, reason: "Адрес сервера должен начинаться с https://." };
   }
   if (!insecureAllowed && isBlockedHost(url.hostname)) {
-    return { ok: false, reason: "That host is not reachable from Cloudflare OS." };
+    return { ok: false, reason: "Этот адрес недоступен с сервера установки." };
   }
 
   // Credentials in the URL would end up in logs and approval prompts.
   if (url.username || url.password) {
-    return { ok: false, reason: "Remove the username and password from the URL." };
+    return { ok: false, reason: "Уберите из адреса имя пользователя и пароль." };
   }
 
   url.hash = "";

@@ -25,21 +25,21 @@ const FORM_STYLE = `
 // Renders the endpoint prompt shown when the user starts connecting.
 export function connectFormHtml(path: string, error?: string): string {
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect an MCP server</title><style>${PAGE_STYLE}${FORM_STYLE}</style></head>
+<title>Подключение сервера MCP</title><style>${PAGE_STYLE}${FORM_STYLE}</style></head>
 <body><main>
-  <h1>Connect an MCP server</h1>
-  <p class="sub">We will discover the server's tools and, if it requires authorization, take you
-  through its sign-in.</p>
+  <h1>Подключение сервера MCP</h1>
+  <p class="sub">Мы узнаем, какие инструменты есть у сервера, и, если он требует входа, проведём
+  вас через вход.</p>
   ${error ? `<p class="err">${escapeHtml(error)}</p>` : ""}
   <form method="POST" action="${escapeHtml(path)}">
-    <label for="url">Server URL</label>
+    <label for="url">Адрес сервера</label>
     <input id="url" type="url" name="url" placeholder="https://example.com/mcp" required autofocus>
-    <p class="hint">Only connect a server you trust. Its own annotations decide which of its tools
-    run without asking you and which wait for your approval, and an annotation is only as
-    trustworthy as the server that sent it.</p>
-    <button type="submit">Continue</button>
+    <p class="hint">Подключайте только сервер, которому доверяете. Сервер сам помечает, какие
+    инструменты выполняются сразу, а какие ждут вашего подтверждения, и эти пометки надёжны
+    ровно настолько, насколько надёжен сам сервер.</p>
+    <button type="submit">Продолжить</button>
   </form>
 </main></body></html>`;
 }

@@ -151,8 +151,8 @@ async function continueConnect(
   const config = readPortalConfig(env);
   if (!config) {
     return htmlResponse(errorPageHtml(
-      "No MCP server portal is configured",
-      "Ask an administrator to set this deployment's MCP server portal URL."), 503);
+      "Портал MCP-серверов не настроен",
+      "Попросите администратора указать адрес портала MCP-серверов для этой установки."), 503);
   }
 
   let outcome: ConnectOutcome;
@@ -161,7 +161,7 @@ async function continueConnect(
   } catch (err) {
     logger.warn("connect failed", { event: "connect.failed", error: err });
     return htmlResponse(errorPageHtml(
-      "Could not connect", err instanceof Error ? err.message : String(err)), 502);
+      "Не удалось подключиться", err instanceof Error ? err.message : String(err)), 502);
   }
 
   if (outcome.kind === "invalid") return htmlResponse(INVALID_LINK_HTML, 400);
@@ -177,7 +177,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Env> implements Gatekeepe
   async describe(): Promise<VendorDescription> {
     const config = readPortalConfig(this.env);
     return {
-      displayName: config?.name ?? "Cloudflare MCP Server Portals",
+      displayName: config?.name ?? "Порталы MCP-серверов Cloudflare",
       url: "https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/",
       logo: PORTAL_AVATAR,
       color: PORTAL_COLOR,

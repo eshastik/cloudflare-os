@@ -3,6 +3,7 @@ import { RpcTarget, newMessagePortRpcSession, type RpcStub } from 'capnweb'
 import { gadgetAccentVariables, isAccentHex } from '@gadgets/workshop-shared/accent-theme'
 import { createSandboxedHtml } from '../gadgetSandbox'
 import { queueNativeSnapshots, requestNativeSnapshot, type NativeSnapshotSource } from '../nativeSnapshotSource'
+import { MINI_APP_EDITOR_FRAME_PATH } from '@gadgets/workshop-shared/telegram-mini-app'
 import type { DocumentApi } from './miniAppDocument'
 
 // Фрейм настоящего редактора (тот же код, что на сайте) в Mini App. Хост урезан: фрейм получает
@@ -51,6 +52,8 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
       const window = frame.current?.contentWindow
       // Только наш фрейм и только непрозрачный источник: фрейм не мог уйти на другой адрес.
       if (!window || event.source !== window || event.origin !== 'null') return
+      // Фрейм загружен отдельным адресом со своим CSP; разметку редактора он получает отсюда.
+      if (event.data?.type === 'editor-frame-ready') { window.postMessage({ type: 'editor-frame-html', html }, '*'); return }
       if (event.data !== 'handshake' || !event.ports?.[0]) return
       const port = event.ports[0]
       session?.[Symbol.dispose](); editor?.[Symbol.dispose]()
@@ -82,5 +85,5 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
 
   if (!html) return <div className="ma-editor ma-editor-wait" role="status">Открываю редактор…</div>
   // Без allow-popups и allow-same-origin: фрейм не открывает окон и не видит страницу Mini App.
-  return <iframe ref={frame} className="ma-editor" srcDoc={html} sandbox="allow-scripts" title="Редактор документа" />
+  return <iframe ref={frame} className="ma-editor" src={MINI_APP_EDITOR_FRAME_PATH} sandbox="allow-scripts" title="Редактор документа" />
 }

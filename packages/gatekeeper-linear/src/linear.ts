@@ -125,24 +125,24 @@ const LINEAR_LOGO_URL = `data:image/svg+xml,${encodeURIComponent(LINEAR_LOGO_SVG
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><title>Authorization Link Expired</title></head>
+<html lang="ru">
+  <head><meta charset="UTF-8"><title>Ссылка для входа устарела</title></head>
   <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem;">Authorization Link Expired</h1>
-      <p style="color: #555; line-height: 1.6;">This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.</p>
-      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #5e6ad2; color: white; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+      <h1 style="color: #d97706; font-size: 1.5rem;">Ссылка для входа устарела</h1>
+      <p style="color: #555; line-height: 1.6;">Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
+      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #5e6ad2; color: white; border: none; border-radius: 4px; cursor: pointer;">Закрыть</button>
     </div>
   </body>
 </html>`;
 
 const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
-<html lang="en">
-  <head><meta charset="UTF-8"><title>Configuration Required</title></head>
+<html lang="ru">
+  <head><meta charset="UTF-8"><title>Подключение не настроено</title></head>
   <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem;">Linear Gatekeeper Not Configured</h1>
-      <p style="color: #555; line-height: 1.6;">Please configure a Linear OAuth client ID and secret for this gatekeeper.</p>
+      <h1 style="color: #d97706; font-size: 1.5rem;">Подключение Linear не настроено</h1>
+      <p style="color: #555; line-height: 1.6;">Администратор установки должен указать идентификатор и секрет OAuth-клиента Linear.</p>
     </div>
   </body>
 </html>`;
@@ -433,21 +433,21 @@ export default {
     if (relPath === "/oauth") {
       const error = url.searchParams.get("error");
       if (error) {
-        return new Response("Linear authorization failed. Please restart the connection flow from Cloudflare OS.", {
+        return new Response("Вход в Linear не выполнен. Вернитесь на сайт и начните подключение снова.", {
           status: 400,
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
       }
 
       const state = url.searchParams.get("state");
-      if (!state) return badRequest("Error: no 'state' provided");
+      if (!state) return badRequest("Ошибка входа: в ответе сервиса нет параметра state. Вернитесь на сайт и начните подключение снова.");
       const colonIndex = state.indexOf(":");
-      if (colonIndex < 0) return badRequest("Error: malformed state");
+      if (colonIndex < 0) return badRequest("Ошибка входа: параметр state повреждён. Вернитесь на сайт и начните подключение снова.");
 
       const doId = state.slice(0, colonIndex);
       const oauthNonce = state.slice(colonIndex + 1);
       const code = url.searchParams.get("code");
-      if (!code) return badRequest("Error: no 'code' provided");
+      if (!code) return badRequest("Ошибка входа: в ответе сервиса нет кода авторизации. Вернитесь на сайт и начните подключение снова.");
 
       // Validate the DO id shape before idFromString(), which throws (→ unhandled 500) on garbage.
       if (!/^[0-9a-f]{64}$/.test(doId)) {
@@ -463,7 +463,7 @@ export default {
       return shellReturnResponse(accepted);
     }
 
-    return new Response("Not Found", { status: 404 });
+    return new Response("Страница не найдена", { status: 404 });
   },
 };
 

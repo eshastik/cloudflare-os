@@ -234,8 +234,8 @@ export class SchedulerGatekeeper
   async describe(): Promise<ResourceDescription> {
     return {
       url: "scheduler://tasks",
-      title: "Scheduled Tasks",
-      snippet: "Run workspace callbacks on recurring and one-shot schedules.",
+      title: "Задачи по расписанию",
+      snippet: "Регулярные и разовые задачи рабочего пространства.",
       suggestedBindingName: "SCHEDULER",
       tsType: "ScheduleSession",
       hookTsType: "ScheduledTaskHook",
@@ -318,7 +318,7 @@ type ScheduleAccountProps = { accountId: string };
 /** Describes the account's ambient capability and generic management app. */
 export function describeScheduleAccount(): AccountDescription {
   return {
-    displayName: "Scheduled Tasks",
+    displayName: "Задачи по расписанию",
     avatar: SCHEDULER_ICON,
     singleton: { tsType: "ScheduleSession" },
     providesUi: { title: "Расписание", icon: SCHEDULER_ICON },
@@ -405,7 +405,7 @@ export class GatekeeperVendor extends WorkerEntrypoint<Cloudflare.Env> {
   /** Describes the auto-provisioned Scheduled Tasks vendor. */
   async describe(): Promise<VendorDescription> {
     return {
-      displayName: "Scheduled Tasks",
+      displayName: "Задачи по расписанию",
       url: "https://workers.cloudflare.com/",
       logo: SCHEDULER_ICON,
       tagline: "Запуск задач по расписанию",

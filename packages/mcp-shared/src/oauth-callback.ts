@@ -17,7 +17,7 @@ export async function handleOAuthCallback(
   if (error) {
     const detail = url.searchParams.get("error_description") ?? error;
     return htmlResponse(errorPageHtml(
-      "Authorization failed", `${detail} Start the connection again.`), 400);
+      "Вход не выполнен", `${detail} Вернитесь на сайт и начните подключение снова.`), 400);
   }
 
   const state = url.searchParams.get("state") ?? "";
@@ -40,7 +40,7 @@ export async function handleOAuthCallback(
   } catch (err) {
     log.warn("oauth code exchange failed", { event: "connect.oauth.failed", error: err });
     return htmlResponse(errorPageHtml(
-      "Could not finish connecting", err instanceof Error ? err.message : String(err)), 502);
+      "Не удалось завершить подключение", err instanceof Error ? err.message : String(err)), 502);
   }
   return shellReturnResponse(returnPath);
 }

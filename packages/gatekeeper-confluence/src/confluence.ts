@@ -171,16 +171,16 @@ const htmlResponse = (body: string): Response =>
 
 
 const page = (title: string, color: string, message: string): string => `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>${title}</title></head>
+<html lang="ru"><head><meta charset="UTF-8"><title>${title}</title></head>
 <body style="font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
 <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
 <h1 style="color: ${color}; font-size: 1.5rem;">${title}</h1>
 <p style="color: #555; line-height: 1.6;">${message}</p></div></body></html>`;
 
-const INVALID_LINK_HTML = page("Authorization Link Expired", "#d97706",
-  "This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.");
-const NOT_CONFIGURED_HTML = page("Confluence Gatekeeper Not Configured", "#d97706",
-  "Please configure an Atlassian OAuth client ID and secret for this gatekeeper.");
+const INVALID_LINK_HTML = page("Ссылка для входа устарела", "#d97706",
+  "Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.");
+const NOT_CONFIGURED_HTML = page("Подключение Confluence не настроено", "#d97706",
+  "Администратор установки должен указать идентификатор и секрет OAuth-клиента Atlassian.");
 
 // ---------------------------------------------------------------------------------------------
 // HTTP handler — OAuth initiation + completion.
@@ -213,14 +213,14 @@ export default {
       return Response.redirect(authUrl.toString(), 302);
     } else if (relPath === "/oauth") {
       const error = url.searchParams.get("error");
-      if (error) return new Response(`Authorization failed: ${error}`,
+      if (error) return new Response(`Вход не выполнен: ${error}. Вернитесь на сайт и начните подключение снова.`,
         { headers: { "content-type": "text/plain; charset=utf-8" } });
       const state = url.searchParams.get("state");
       const code = url.searchParams.get("code");
-      if (!state || !code) return new Response("Error: missing 'state' or 'code'",
+      if (!state || !code) return new Response("Ошибка входа: в ответе сервиса нет параметра state или кода авторизации. Вернитесь на сайт и начните подключение снова.",
         { headers: { "content-type": "text/plain; charset=utf-8" } });
       const colonIdx = state.indexOf(":");
-      if (colonIdx < 0) return new Response("Error: malformed state",
+      if (colonIdx < 0) return new Response("Ошибка входа: параметр state повреждён. Вернитесь на сайт и начните подключение снова.",
         { headers: { "content-type": "text/plain; charset=utf-8" } });
       const stub = ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(state.slice(0, colonIdx)));
       const oauthNonce = state.slice(colonIdx + 1);
@@ -228,7 +228,7 @@ export default {
       if (!returnPath) return htmlResponse(INVALID_LINK_HTML);
       return shellReturnResponse(returnPath);
     }
-    return new Response("Not Found", { status: 404 });
+    return new Response("Страница не найдена", { status: 404 });
   },
 };
 
@@ -582,7 +582,7 @@ export class ConfluenceSiteGatekeeperImpl extends DurableObject<Env, SiteGatekee
     return {
       url: this.ctx.props.webBase,
       title: site ? `${site.name} (Confluence)` : "Confluence site",
-      snippet: "Search, browse, and edit content across a Confluence site.",
+      snippet: "Поиск, просмотр и правка материалов на сайте Confluence.",
       suggestedBindingName: "CONFLUENCE_SITE",
       tsType: "ConfluenceSite",
     };

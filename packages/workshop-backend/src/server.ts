@@ -38,7 +38,8 @@ import { handleTelegramAppOpen, handleTelegramWebhook, telegramBotFor, TelegramB
 import type { NotificationKind, NotificationSettings, TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import { MNEMOS_NOTIFICATIONS_UNAVAILABLE } from "./user";
 import { MiniAppPublicApiImpl, type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort } from "./telegram/mini-app-api";
-import { MINI_APP_RPC_PATH } from "@gadgets/workshop-shared/telegram-mini-app";
+import { MINI_APP_EDITOR_FRAME_PATH, MINI_APP_RPC_PATH } from "@gadgets/workshop-shared/telegram-mini-app";
+import { handleMiniAppEditorFrame } from "./telegram/mini-app-frame";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
 import { handleClientErrorRequest } from "./client-errors.js";
@@ -1039,6 +1040,9 @@ export default {
     }
     if (url.pathname === MINI_APP_RPC_PATH) {
       return handleMiniAppRpc(req, env, ctx);
+    }
+    if (url.pathname === MINI_APP_EDITOR_FRAME_PATH) {
+      return handleMiniAppEditorFrame(req);
     }
     if (url.pathname.startsWith("/api/telegram/")) {
       return handleTelegramWebhook(req, ctx.exports.TelegramPersonalBot);

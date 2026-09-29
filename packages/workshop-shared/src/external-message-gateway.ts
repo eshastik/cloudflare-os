@@ -91,6 +91,8 @@ export type SubmitExternalMessageResult =
       accepted: false;
       // User-facing explanation of an actionable submission rejection.
       message: string;
+      /** Беседу удалили на сайте: канал снимает связь с ней и не шлёт в неё сообщения. */
+      deletedOnSite?: true;
     };
 
 /** Переименование беседы, созданной внешним каналом (название задал человек в канале). */

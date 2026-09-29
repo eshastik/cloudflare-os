@@ -181,32 +181,32 @@ function getBasePath(env: Env) {
 
 
 const INVALID_LINK_HTML = `<!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Authorization Link Expired</title>
+    <title>Ссылка для входа устарела</title>
   </head>
   <body style="font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Authorization Link Expired</h1>
-      <p style="color: #555; line-height: 1.6; margin: 0 0 1.5rem 0;">This authorization link is invalid or has expired. Please return to Cloudflare OS and try again.</p>
-      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Close</button>
+      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Ссылка для входа устарела</h1>
+      <p style="color: #555; line-height: 1.6; margin: 0 0 1.5rem 0;">Ссылка для входа недействительна или устарела. Вернитесь на сайт и начните подключение снова.</p>
+      <button onclick="window.close()" style="padding: 0.5rem 1.5rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">Закрыть</button>
     </div>
   </body>
 </html>`;
 
 const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuration Required</title>
+    <title>Подключение не настроено</title>
   </head>
   <body style="font-family: system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5;">
     <div style="max-width: 520px; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center;">
-      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Google Gatekeeper Not Configured</h1>
-      <p style="color: #555; line-height: 1.6; margin: 0;">Please see the README.md for instructions on configuring an OAuth client ID and secret so that this Cloudflare OS instance can access Google APIs.</p>
+      <h1 style="color: #d97706; font-size: 1.5rem; margin: 0 0 1rem 0;">Подключение Google не настроено</h1>
+      <p style="color: #555; line-height: 1.6; margin: 0;">Администратор установки должен указать идентификатор и секрет OAuth-клиента Google (порядок описан в README.md).</p>
     </div>
   </body>
 </html>`;
@@ -249,7 +249,7 @@ const GOOGLE_SHEETS_RESOURCE: SupportedResource = {
 
 const GOOGLE_CALENDAR_RESOURCE: SupportedResource = {
   urlPattern: "https://calendar.google.com/calendar/:calendarId/*",
-  title: "Google Calendar",
+  title: "Календарь Google",
   description:
       "Чтение и ведение календаря Google Calendar.",
   grantable: true,
@@ -405,18 +405,18 @@ export default {
 
       let error = url.searchParams.get("error");
       if (error) {
-        return new Response(`${error}: ${url.searchParams.get("error_description")}`);
+        return new Response(`Вход не выполнен: ${error}: ${url.searchParams.get("error_description")}. Вернитесь на сайт и начните подключение снова.`);
       }
 
       let state = url.searchParams.get("state");
-      if (!state) return new Response("Error: no 'state' provided");
+      if (!state) return new Response("Ошибка входа: в ответе сервиса нет параметра state. Вернитесь на сайт и начните подключение снова.");
       let colonIdx = state.indexOf(":");
-      if (colonIdx < 0) return new Response("Error: malformed state");
+      if (colonIdx < 0) return new Response("Ошибка входа: параметр state повреждён. Вернитесь на сайт и начните подключение снова.");
       let doId = state.slice(0, colonIdx);
       let oauthNonce = state.slice(colonIdx + 1);
 
       let code = url.searchParams.get("code");
-      if (!code) return new Response("Error: no 'code' provided");
+      if (!code) return new Response("Ошибка входа: в ответе сервиса нет кода авторизации. Вернитесь на сайт и начните подключение снова.");
 
       let userObjectId = ctx.exports.UserAccount.idFromString(doId);
       let stub: DurableObjectStub<UserAccount> = ctx.exports.UserAccount.get(userObjectId);
@@ -428,7 +428,7 @@ export default {
       }
       return shellReturnResponse(returnPath);
     } else {
-      return new Response("Not Found", {status: 404});
+      return new Response("Страница не найдена", {status: 404});
     }
   }
 }
@@ -1947,8 +1947,8 @@ export class GmailGatekeeperImpl extends DurableObject<Env, GmailGatekeeperImplP
 
     return {
       url: "https://mail.google.com/mail/",
-      title: "Gmail Inbox",
-      snippet: "Your personal Gmail inbox",
+      title: "Входящие Gmail",
+      snippet: "Ваши входящие в Gmail",
       suggestedBindingName: "GMAIL_INBOX",
       tsType: "GmailSession",
     };

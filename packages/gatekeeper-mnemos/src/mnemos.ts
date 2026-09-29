@@ -1645,7 +1645,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     let callbackUrl: string;
     try { callbackUrl = JSON.parse(env.MNEMOS_LOGIN_CONFIG ?? "").callbackUrl; }
-    catch { return new Response("Not Found", { status: 404 }); }
+    catch { return new Response("Страница не найдена", { status: 404 }); }
     const mailBridge = await handleMailBridge(request, callbackUrl, env.MNEMOS_MAIL_BRIDGE_TOKEN,
       (id,input) => ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(id)).resolveMailSelection(input),
       (id,input) => ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(id)).readMailSelection(input),

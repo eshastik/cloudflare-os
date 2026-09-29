@@ -12,6 +12,35 @@ import type { NativeDocumentFormat } from "./native-document.js";
 /** Адрес WebSocket точки RPC Mini App. Сессия передаётся первым вызовом, не в cookie. */
 export const MINI_APP_RPC_PATH = "/api/telegram-app/rpc";
 
+/** Адрес фрейма редактора Mini App. Фрейм грузится отдельным адресом со своим заголовком CSP,
+ *  а не srcdoc: srcdoc наследует политику страницы, и странице пришлось бы разрешать data:-скрипты. */
+export const MINI_APP_EDITOR_FRAME_PATH = "/api/telegram-app/editor-frame";
+
+/** Политика фрейма редактора — та же, что у фрейма гаджета на сайте (gadgetSandbox.ts):
+ *  код редактора и Cap'n Web подключаются data:-модулями, сеть закрыта.
+ *  sandbox стоит в самом заголовке, а не только атрибутом тега: чужой сайт встроит этот адрес без
+ *  атрибута, и принятый сообщением код исполнился бы в происхождении установки. frame-ancestors —
+ *  второй барьер: встраивает своя страница Mini App, а её в Telegram Web — web.telegram.org
+ *  (директива проверяет всех предков). */
+export const MINI_APP_EDITOR_FRAME_CSP =
+  "sandbox allow-scripts; frame-ancestors 'self' https://web.telegram.org; " +
+  "default-src 'none'; frame-src 'none'; script-src data: 'unsafe-inline'; style-src data: 'unsafe-inline'; " +
+  "img-src data:; media-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none'";
+
+/** Разметка фрейма: сообщает странице, что готов, и заменяет себя разметкой редактора, которую
+ *  страница собирает тем же createSandboxedHtml, что и сайт. Принимает её только от родителя. */
+export const MINI_APP_EDITOR_FRAME_HTML = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body><script>
+addEventListener("message", function onHtml(event) {
+  if (event.source !== parent || !event.data || event.data.type !== "editor-frame-html" || typeof event.data.html !== "string") return;
+  removeEventListener("message", onHtml);
+  document.open();
+  document.write(event.data.html);
+  document.close();
+});
+parent.postMessage({ type: "editor-frame-ready" }, "*");
+</script></body></html>`;
+
 /** Вид сессии Mini App: «<номер объекта бота>.<секрет>». */
 export const MINI_APP_SESSION = /^[0-9a-f]{64}\.[A-Za-z0-9_-]{43}$/;
 

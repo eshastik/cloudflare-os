@@ -2,7 +2,7 @@
 // Внешний вход агента подставной: здесь проверяется сторона бота (треды, названия, доставка).
 import { describe, expect, it } from "vitest";
 import {
-  ARCHIVED_NOTICE, BUSY_REPLY, CARD_ACCESS_CHANGED, CARD_APPROVED, CARD_DECIDING_MS, CARD_BUSY, CARD_FAILED, CARD_REJECTED, CARD_STALE, CARD_UNKNOWN, FAILED_REPLY,
+  ARCHIVED_NOTICE, BUSY_REPLY, DELETED_ON_SITE_REPLY, CARD_ACCESS_CHANGED, CARD_APPROVED, CARD_DECIDING_MS, CARD_BUSY, CARD_FAILED, CARD_REJECTED, CARD_STALE, CARD_UNKNOWN, FAILED_REPLY,
   PersonalTelegramBot, UNSUPPORTED_REPLY, VOICE_BUSY_REPLY, VOICE_UNAVAILABLE_REPLY, VoiceUnavailableError,
   type BotRecord, type CardRecord, type TelegramAgentGateway, type TelegramTurnRef, type ThreadLink,
 } from "../src/telegram/personal-bot";
@@ -47,6 +47,8 @@ async function harness(options: Options = {}) {
     // Номера вызовов sendMessage (с 1), на которых Telegram падает 500.
     failSends: new Set<number>(),
     sends: 0,
+    // deleteForumTopic падает 500 (Telegram недоступен).
+    failDeletes: false,
     nextThread: 500,
   };
   let fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -70,6 +72,7 @@ async function harness(options: Options = {}) {
       if (tg.rejectHtml && body.parse_mode === "HTML") return refuse("Bad Request: can't parse entities: unsupported start tag");
       return ok({ message_id: 100 + tg.sends, chat: { id: body.chat_id, type: "private" } });
     }
+    if (method === "deleteForumTopic" && tg.failDeletes) return new Response("{}", { status: 500 });
     if (["sendMessageDraft", "editForumTopic", "deleteForumTopic", "editMessageText", "editMessageReplyMarkup", "answerCallbackQuery"].includes(method)) return ok(true);
     if (method === "createForumTopic") return ok({ message_thread_id: tg.nextThread++, name: body.name, icon_color: 1 });
     if (method === "getFile") return ok({ file_id: body.file_id, file_path: "voice/file_1.oga", file_size: 3 });
@@ -509,6 +512,43 @@ describe("зеркало сайта в тред", () => {
     await h.bot.siteEvent(OWNER, key, { type: "deleted" });
     expect(h.calls.at(-1)).toEqual({ method: "deleteForumTopic", body: { chat_id: ALICE, message_thread_id: 500 } });
     expect(h.link(500)).toBeUndefined();
+  });
+
+  it("удаление при сбое Telegram: тред сразу не ведёт в беседу, будильник бота доводит удаление", async () => {
+    let { h, key } = await linked();
+    h.tg.failDeletes = true;
+    // Сайту удаление подтверждено: объект бота принял его и повторит сам.
+    await expect(h.bot.siteEvent(OWNER, key, { type: "deleted" })).resolves.toBeUndefined();
+    expect(h.link(500)).toMatchObject({ deletedOnSite: true });
+    expect(h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
+    // Сообщение в этот тред в беседу не идёт: ответ «удалена», хода нет.
+    await send(h, inThread(ALICE, 500, { text: "Ещё вопрос" }));
+    expect(h.submits).toEqual([]);
+    expect(messages(h.calls).at(-1)).toMatchObject({ message_thread_id: 500, text: DELETED_ON_SITE_REPLY });
+    // Зеркало, название и ответы в тред удалённой беседы не шлются.
+    let before = h.calls.length;
+    await h.bot.siteEvent(OWNER, key, { type: "human", id: "w:3:20", text: "С сайта" });
+    await h.bot.siteEvent(OWNER, key, { type: "rename", title: "Другое" });
+    await h.bot.deliver({ route: ROUTE, chat: ALICE, thread: 500, update: 0, site: `${WORKSPACE}:3:21` }, { text: "Ответ" });
+    expect(h.calls.length).toBe(before);
+    // Повтор, пока Telegram недоступен, отметку не снимает; потом удаляет тред и связь.
+    await h.bot.retrySiteDeletions();
+    expect(h.link(500)).toMatchObject({ deletedOnSite: true });
+    h.tg.failDeletes = false;
+    await h.bot.retrySiteDeletions();
+    expect(h.calls.at(-1)).toEqual({ method: "deleteForumTopic", body: { chat_id: ALICE, message_thread_id: 500 } });
+    expect(h.link(500)).toBeUndefined();
+  });
+
+  it("удаление не дошло до бота: вход отвечает «удалена», связь треда снимается, пустой беседы нет", async () => {
+    let h = await harness({ submit: async () => ({ accepted: false, message: "что-то другое", deletedOnSite: true }) });
+    let { key } = await h.bot.linkSiteChat(OWNER, siteInput());
+    expect(h.link(500)).toBeDefined();
+    await send(h, inThread(ALICE, 500, { text: "Ещё вопрос" }));
+    expect(h.submits).toHaveLength(1);
+    expect(h.link(500)).toBeUndefined();
+    expect(messages(h.calls).at(-1)).toMatchObject({ message_thread_id: 500, text: DELETED_ON_SITE_REPLY });
+    expect(h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
   });
 
   it("событие с чужим ключом ничего не делает", async () => {
