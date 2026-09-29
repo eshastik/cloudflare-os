@@ -71,6 +71,7 @@ function AgentCard({ agent, title, data }: { agent: AgentConnection; title: stri
   const absences = [...data.absences.values()].filter(a => a.enabled && (a.local_binding_id === agent.binding_id || a.managed_binding_id === agent.binding_id));
   const running = !!task && !!task.team_budget && task.submitted && !task.cancelled && task.outcome?.state !== "completed";
   const admin = isAdministrator(data.identity);
+  const ownerAccess = agent.access_mode === "owner";
 
   async function revoke() {
     setBusy(true); setNotice(null);
@@ -110,12 +111,12 @@ function AgentCard({ agent, title, data }: { agent: AgentConnection; title: stri
       {notice && <div className="mt-2"><Notice tone={notice.tone}>{notice.text}</Notice></div>}
 
       <dl className="mt-3 mb-0 grid grid-cols-[120px_minmax(0,1fr)] gap-x-4 gap-y-2 text-[13px] leading-[18px] text-kumo-default max-md:grid-cols-1">
-        <dt className="m-0 text-kumo-subtle">Проекты</dt>
+        <dt className="m-0 text-kumo-subtle">{ownerAccess ? "Доступ" : "Проекты"}</dt>
         <dd className="m-0">
-          {agent.revoked ? "Доступ отозван." : !agent.document_grants?.length ? "Доступа к проектам нет." : agent.document_grants.map((g, i) => <div key={i}>«{projectName(data.projects, g.project_id)}» · {g.node_id ? documentLabel(data, g.project_id, g.node_id) : "весь проект"} · {g.mode === "write" ? "чтение и черновики" : "только чтение"}</div>)}
-          <span className="block text-kumo-subtle">Агент видит не больше, чем его владелец.</span>
+          {agent.revoked ? "Доступ отозван." : ownerAccess ? "Полный доступ к платформе с вашими текущими правами." : !agent.document_grants?.length ? "Доступа к проектам нет." : agent.document_grants.map((g, i) => <div key={i}>«{projectName(data.projects, g.project_id)}» · {g.node_id ? documentLabel(data, g.project_id, g.node_id) : "весь проект"} · {g.mode === "write" ? "чтение и черновики" : "только чтение"}</div>)}
+          <span className="block text-kumo-subtle">{ownerAccess ? "Изменения ваших прав и доступ к новым проектам применяются автоматически." : "Агент видит не больше, чем его владелец."}</span>
           {!agent.revoked && agent.runtime_id === "workshop" && <><Pill className="mt-2" aria-expanded={editingScope} onClick={() => setEditingScope(!editingScope)}>Изменить проекты агента</Pill>{editingScope && <WorkshopScope agent={agent} data={data} onDone={() => setEditingScope(false)} />}</>}
-          {!agent.revoked && agent.runtime_id !== "workshop" && admin && <><Pill className="mt-2" aria-expanded={editingScope} onClick={() => setEditingScope(!editingScope)}>Настроить доступ к проекту</Pill>{editingScope && <AgentProjectAccess agent={agent} data={data} />}</>}
+          {!ownerAccess && !agent.revoked && agent.runtime_id !== "workshop" && admin && <><Pill className="mt-2" aria-expanded={editingScope} onClick={() => setEditingScope(!editingScope)}>Настроить доступ к проекту</Pill>{editingScope && <AgentProjectAccess agent={agent} data={data} />}</>}
         </dd>
         <dt className="m-0 text-kumo-subtle">Сейчас</dt>
         <dd className="m-0 flex flex-wrap items-center gap-2">{task ? `${(task.message ?? "").slice(0, 100) || "задача"} — ${taskState}` : "задач нет"}{agent.managed_runtime === true && <Pill tone="ghost" aria-expanded={history} onClick={() => setHistory(!history)}>{history ? "Скрыть историю" : "История задач"}</Pill>}</dd>
@@ -143,7 +144,7 @@ function AgentCard({ agent, title, data }: { agent: AgentConnection; title: stri
 export function agentStatus(agent: AgentConnection, running: boolean): { tone: "neutral" | "info" | "success" | "warning"; label: string } {
   if (agent.revoked) return { tone: "neutral", label: "Доступ отозван" };
   if (running) return { tone: "info", label: "Выполняет задачу" };
-  if (agent.document_grants?.length) return { tone: "success", label: "Работает" };
+  if (agent.access_mode === "owner" || agent.document_grants?.length) return { tone: "success", label: "Работает" };
   return { tone: "warning", label: "Не подключён ни к одному проекту" };
 }
 
@@ -220,7 +221,7 @@ function ExternalAgentSetup({data}: {data: MemoryData}) {
     : `claude mcp add --transport http --scope user --client-id ${quote(config.clientId)} --callback-port 19450 mnemos ${quote(config.resource)}\nclaude mcp login mnemos`
     : '';
   return <section aria-label="Подключить своего агента" className="mb-4 grid gap-3 rounded-2xl border border-kumo-fill bg-kumo-overlay p-5 text-[14px]">
-    <p className="m-0 text-kumo-subtle">Подключите Codex или Claude Code на своём компьютере к памяти организации.</p>
+    <p className="m-0 text-kumo-subtle">Подключите Codex или Claude Code на своём компьютере к платформе. Агент получит те же текущие права, что и вы.</p>
     <div className="flex gap-2" aria-label="Клиент агента">
       <Pill tone={client === 'codex' ? 'secondary' : 'ghost'} aria-pressed={client === 'codex'} onClick={() => {setClient('codex');setNotice('');}}>Codex</Pill>
       <Pill tone={client === 'claude' ? 'secondary' : 'ghost'} aria-pressed={client === 'claude'} onClick={() => {setClient('claude');setNotice('');}}>Claude Code</Pill>
@@ -232,8 +233,8 @@ function ExternalAgentSetup({data}: {data: MemoryData}) {
       <textarea aria-label="Команды подключения" readOnly value={command} onFocus={event => event.target.select()} className="min-h-28 w-full resize-y rounded-xl border border-kumo-fill bg-kumo-base p-3 font-mono text-xs leading-6" />
       <p className="m-0 font-medium">2. Подтвердите подключение в браузере</p>
       <p className="m-0 text-kumo-subtle">Откроется страница входа. Выберите организацию и нажмите «Подключить агента».</p>
-      <p className="m-0 font-medium">3. Откройте агенту проекты</p>
-      <p className="m-0 text-kumo-subtle">Обновите список и нажмите «Настроить доступ к проекту» в строке нового агента.</p>
+      <p className="m-0 font-medium">3. Проверьте подключение</p>
+      <p className="m-0 text-kumo-subtle">Обновите список агентов. Доступ к платформе, включая новые проекты, применяется автоматически по вашим правам. Отдельно выдавать права агенту не нужно.</p>
       <div className="flex flex-wrap items-center gap-2"><Pill disabled={checking} onClick={async () => {setChecking(true);setNotice('');try {await data.reloadConnections();setNotice('Список обновлён.');} catch {setNotice('Список не обновился. Повторите.');} finally {setChecking(false);}}}>{checking ? 'Обновляем…' : 'Обновить список агентов'}</Pill>
       {notice && <Notice>{notice}</Notice>}</div>
     </>}

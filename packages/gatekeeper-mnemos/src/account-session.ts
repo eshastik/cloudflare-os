@@ -640,6 +640,16 @@ export class MnemosAccountSession {
     if (content.node_id !== nodeId) throw new MnemosAPIError(502);
     return content;
   }
+  async readProjectDocumentPage(projectId: string, nodeId: string, offset: number, expectedRevision: number, ordinal?: number, radius?: number, maxBytes = 262144) {
+    this.#check();
+    const content = await this.#client.readProjectDocumentPage(projectId, nodeId, offset, expectedRevision, ordinal, radius, maxBytes, this.#lifetime.signal);
+    this.#check();
+    if (content.node_id !== nodeId || (expectedRevision > 0 && content.revision !== expectedRevision) || !Number.isSafeInteger(content.revision) || content.revision! < 1 || content.offset !== offset ||
+        !Number.isSafeInteger(content.next_offset) || content.next_offset! < offset ||
+        content.next_offset! - offset !== new TextEncoder().encode(content.text).length ||
+        !Number.isSafeInteger(content.total_bytes) || content.next_offset! > content.total_bytes!) throw new MnemosAPIError(502);
+    return content;
+  }
   /** Субъект сохраняется: сервер различает человеческое подтверждение и агентское исполнение. */
   async workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest) {
     this.#check(); const result = await this.#client.workshopAdminOperation(binding, operation, phase, request, this.#lifetime.signal); this.#check(); return result;
@@ -677,7 +687,7 @@ export class MnemosAccountSession {
     const page = await this.#client.searchProject(projectId, query, 20, this.#lifetime.signal);
     this.#check();
     if (!Array.isArray(page.hits) || page.hits.some(hit => hit.project_id !== projectId)) throw new MnemosAPIError(502);
-    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal, path }) => ({ project_id, node_id, name, text, ordinal, ...(typeof path === "string" ? { path } : {}) })), index_pending: page.index_pending, degraded: page.degraded };
+    return { hits: page.hits.map(({ project_id, node_id, name, text, ordinal, path }) => ({ project_id, node_id, name, text, ordinal, ...(typeof path === "string" ? { path } : {}) })), index_pending: page.index_pending || page.index_pending_unknown === true, degraded: page.degraded };
   }
   /** Submit only diagnostic activity; the API derives the human from this credential. */
   async recordWorkspaceActivity(stream: string, sequence: number, active: boolean): Promise<void> {
@@ -849,7 +859,7 @@ export class MnemosAccountSession {
     const preview = await this.#client.previewAgentConsent(request, this.#lifetime.signal);
     this.#check();
     if (revision !== this.#consentRevision) throw new MnemosAPIError(409);
-    if (!preview || typeof preview.client_id !== "string" || !preview.client_id ||
+    if (!preview || (preview.access_mode !== undefined && preview.access_mode !== "owner") || typeof preview.client_id !== "string" || !preview.client_id ||
         typeof preview.resource !== "string" || !preview.resource ||
         !Array.isArray(preview.scopes) || !preview.scopes.every(scope => typeof scope === "string" && scope.length > 0) ||
         typeof preview.expires_at !== "string" || !(Date.parse(preview.expires_at) > Date.now()) ||
@@ -866,6 +876,7 @@ export class MnemosAccountSession {
     const consent = this.#consent;
     if (!consent || selection !== consent.selection || typeof approved !== "boolean" ||
         !(Date.parse(consent.preview.expires_at) > Date.now())) throw new MnemosAPIError(409);
+    if (consent.preview.access_mode === "owner" && projectIds !== undefined) throw new MnemosAPIError(400);
     const shown = new Set((consent.preview.projects ?? []).map(p => p.project_id));
     if (projectIds !== undefined && (!Array.isArray(projectIds) || projectIds.length > 100 || !projectIds.every(id => typeof id === "string" && shown.has(id)))) throw new MnemosAPIError(400);
     // Consume locally before sending: an ambiguous response must never silently

@@ -30,7 +30,8 @@ interface MnemosLibrary {
    * указаны его project и node — это его личная версия. Текст извлекает Mnemos; читайте частями:
    * offset — с начала 0, следующая часть — nextOffset, пока done не станет true. Читайте только нужное.
    * state "preparing" — файл ещё разбирается: подождите несколько секунд и повторите вызов.
-   * noText — текстового слоя нет (скан, картинки). Проект беседы в scope агента не требуется. */
+   * noText — читаемого текста нет. Если failure задан, извлечение завершилось ошибкой;
+   * это не доказательство, что файл не содержит текста. Проект беседы в scope агента не требуется. */
   readChatFile(project: string, node: string, offset?: number): Promise<MnemosChatFileText>;
   /** Предложить создание проекта. Сначала покажется короткое подтверждение человеку.
    * requestId — стабильный уникальный ключ: повтор с тем же ключом не создаёт второй проект.
@@ -44,10 +45,12 @@ interface MnemosLibrary {
   proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write"): Promise<MnemosAdminProposal>;
   /** Проекты, доступные владельцу аккаунта. */
   listProjects(): Promise<MnemosProject[]>;
-  /** Гибридный поиск (полнотекст + смысл) по опубликованным документам одного проекта; до 20 совпадений. */
+  /** Гибридный поиск (полнотекст + смысл) по опубликованным документам одного проекта; до 20 совпадений.
+   * indexPending или degraded — выдача неполна; пустые hits не доказывают отсутствие документа. */
   searchProject(project: string, query: string): Promise<MnemosSearchResult>;
   /** Поиск сразу по всем проектам, доступным человеку. limit — от 1 до 50 (по умолчанию 20).
-   * У каждого совпадения свой проект: передавайте hit.project в readDocument(). */
+   * У каждого совпадения свой проект: передавайте hit.project в readDocument().
+   * При indexPending или degraded нельзя делать вывод об отсутствии документа по пустой выдаче. */
   search(query: string, limit?: number): Promise<MnemosSearchAllResult>;
   /** Содержимое одной папки проекта: вложенные папки и документы с путями.
    * folder — путь вроде "docs/отчёты" или id папки; пусто — корень проекта. До 500 строк. */
@@ -56,12 +59,21 @@ interface MnemosLibrary {
    *  или путь внутри проекта, например "docs/plan.md". Без window — документ целиком
    *  до 256 КиБ; если truncated, читайте частями: window = {ordinal, radius} отдаёт фрагмент
    *  ordinal (номер из поиска, с начала — 0) и radius соседних с каждой стороны (radius 1–50),
-   *  maxBytes — предел окна. Следующая часть — ordinal + 2*radius + 1. */
+   *  maxBytes — предел окна. Если truncated, продолжите ТО ЖЕ окно: offset = nextOffset, expectedRevision = revision.
+   * ordinal и radius сохраните. Для чтения всего документа продолжайте без ordinal и radius.
+   * К следующему окну переходите только после truncated=false. При смене версии начните чтение заново.
+   * Если nextOffset или revision отсутствуют, подключение устарело: непрерывное чтение не гарантируется. */
   readDocument(project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument>;
+  /** Прочитать точный исходник для правки. При первом вызове открывает личный черновик
+   * под правами агента. Только text/plain и text/markdown до 256 КиБ, без конфликтов.
+   * Сохраните head и передайте его в saveDraft(); опубликованное чтение не заменяет этот шаг. */
+  readDraft(project: string, document: string): Promise<MnemosDocument & {head: string}>;
   /** Сохранить существующий текстовый документ в личный черновик владельца без ожидания одобрения.
    * text/plain или text/markdown, до 256 КиБ. Конкурирующая правка приводит к отказу; перечитайте документ.
+   * expectedHead — head из readDraft(), на основе текста которого сделана правка.
+   * При отказе перечитайте readDraft() и заново примените свои изменения к новому тексту.
    * Чтобы изменения увидели коллеги, вызовите publishDraft(). */
-  saveDraft(project: string, document: string, content: string): Promise<MnemosDraftProposal>;
+  saveDraft(project: string, document: string, content: string, expectedHead: string): Promise<MnemosDraftProposal>;
   /** Опубликовать личный черновик проекта — весь черновик, включая правки человека. Сначала
    * человек подтверждает карточкой (status "awaiting_confirmation"; он может разрешить публикации
    * насовсем). После подтверждения: без согласования в проекте — публикуется сразу, с согласованием —
@@ -215,15 +227,21 @@ interface MnemosSearchResult {
 interface MnemosDocument {
   document: string;       // идентификатор документа
   name: string;           // имя файла
-  text: string;           // текст опубликованной версии
+  text: string;           // извлечённый текст; для точного исходника правки — readDraft()
   mediaType: string;
-  truncated: boolean;     // текст обрезан по лимиту размера: читайте частями через window
+  truncated: boolean;     // текущий текст или окно не дочитано
+  revision?: number;      // версия для продолжения; не смешивайте версии
+  nextOffset?: number;    // следующий байт UTF-8 внутри того же окна
+  totalBytes?: number;    // размер текста выбранного окна, не исходного файла
+  textState?: "ready" | "empty_window" | "no_text"; // пустое окно не означает отсутствия текста
 }
 
 interface MnemosReadWindow {
-  ordinal: number;        // номер фрагмента: из поиска или 0 с начала документа
-  radius: number;         // сколько соседних фрагментов с каждой стороны, 1–50
-  maxBytes?: number;      // предел окна, до 262144
+  ordinal?: number;       // вместе с radius; без них читается весь документ
+  radius?: number;        // сколько соседних фрагментов с каждой стороны, 1–50
+  maxBytes?: number;      // предел страницы, от 4 до 262144
+  offset?: number;        // nextOffset предыдущей страницы того же окна
+  expectedRevision?: number; // revision предыдущей страницы; обязательна при offset
 }
 
 interface MnemosSearchAllResult {

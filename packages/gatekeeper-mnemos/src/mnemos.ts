@@ -1521,6 +1521,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async searchAll(query: string, limit = 20) { return this.#session.searchAll(query, limit); }
   async readProjectDocument(projectId: string, nodeId: string) { return this.#session.readProjectDocument(projectId, nodeId); }
   async readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144) { return this.#session.readProjectDocumentWindow(projectId, nodeId, ordinal, radius, maxBytes); }
+  async readProjectDocumentPage(projectId: string, nodeId: string, offset: number, expectedRevision: number, ordinal?: number, radius?: number, maxBytes = 262144) { return this.#session.readProjectDocumentPage(projectId, nodeId, offset, expectedRevision, ordinal, radius, maxBytes); }
   async createCodeProject(...args: Parameters<MnemosAccountSession["createCodeProject"]>) { return this.#session.createCodeProject(...args); }
   async browseProject(projectId: string, cursor = "") {
     if (typeof projectId !== "string" || !projectId || projectId.length > 255 || typeof cursor !== "string" || cursor.length > 4096) throw new Error("Invalid project request");

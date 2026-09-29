@@ -84,10 +84,10 @@ test('native Sheets preserves pending edits on restore and ignores an old save a
     callbacks.operation({ type: 'snapshot', document: structuredClone(restored) });
     assert.equal(f.model.cells.sheet.A1.value, '=SUM(B1:B3)');
     assert.equal(f.model.restoreRevision, 2);
-    assert.match(window.document.querySelector('[role=alert]').textContent, /pending edits were not applied/);
-    const recover = [...window.document.querySelectorAll('button')].find(b => b.textContent === 'Show copy of your edits');
+    assert.match(window.document.querySelector('[role=alert]').textContent, /несохранённые правки не применены/);
+    const recover = [...window.document.querySelectorAll('button')].find(b => b.textContent === 'Показать копию правок');
     recover.click();
-    const copy = window.document.querySelector('textarea[aria-label="Pending workbook copy"]');
+    const copy = window.document.querySelector('textarea[aria-label="Копия несохранённых правок"]');
     assert.equal(window.document.activeElement, copy);
     assert.equal(copy.selectionEnd, copy.value.length);
     const recovery = JSON.parse(copy.value);
@@ -113,7 +113,7 @@ test('native Sheets preserves pending edits on restore and ignores an old save a
     finishSave({ status: 'restored', document: newer }); await offlineSave;
     assert.equal(f.model.restoreRevision, 4);
     assert.equal(f.model.cells.sheet.A3, undefined);
-    const copies = window.document.querySelectorAll('textarea[aria-label="Pending workbook copy"]');
+    const copies = window.document.querySelectorAll('textarea[aria-label="Копия несохранённых правок"]');
     assert.equal(copies.length, 2);
     assert.equal(JSON.parse(copies[0].value).document.cells.sheet.A3.value, 'offline edit');
   } finally { dom.window.close(); }
@@ -190,7 +190,7 @@ for (const kind of ['docs', 'sheets']) test(`${kind} client flush includes edits
       assert.equal(snapshot.document.cells.sheet.B1.value, '=SUM(A1:A3)');
     }
     fail = true; edit('Unsaved');
-    await assert.rejects(f.prepareNativeSnapshot(), /Save failed|not ready/);
+    await assert.rejects(f.prepareNativeSnapshot(), /Не удалось сохранить|Save failed|not ready/);
     assert.equal(exports, 1, 'failed save must not fall back to older server data');
     if (kind === 'docs') {
       // Docs retains its dirty DOM, so a successful subsequent save may export again.
@@ -290,7 +290,7 @@ test('Docs keeps a copy of pending edits on restore and ignores pre-restore ackn
     assert.equal(sent.restoreRevision, 0);
     const restored = { revision: 3, restoreRevision: 3, title: 'Restored', blocks: [{ id: 'two', html: '<p>Published</p>', version: 3 }] };
     callbacks.operation({ type: 'snapshot', document: restored });
-    const copy = JSON.parse(w.document.querySelector('textarea[aria-label="Pending document copy"]').value);
+    const copy = JSON.parse(w.document.querySelector('textarea[aria-label="Копия несохранённых правок"]').value);
     assert.equal(copy.document.title, 'Pending title');
     assert.match(copy.document.blocks[0].html, /Pending text/);
     assert.equal(f.titleInput.value, 'Restored');

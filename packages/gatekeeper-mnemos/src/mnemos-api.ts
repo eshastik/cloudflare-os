@@ -716,6 +716,15 @@ export class MnemosAPI {
     if (!Number.isSafeInteger(ordinal) || ordinal < 0 || !Number.isSafeInteger(radius) || radius < 1 || radius > 50 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 262144) throw new MnemosAPIError(400);
     return this.#request(`/v1/projects/${segment(projectId)}/nodes/${segment(nodeId)}/content?${new URLSearchParams({ ordinal: String(ordinal), radius: String(radius), max_bytes: String(maxBytes) })}`, "GET", signal);
   }
+  readProjectDocumentPage(projectId: string, nodeId: string, offset: number, expectedRevision: number, ordinal?: number, radius?: number, maxBytes = 262144, signal?: AbortSignal): Promise<DocumentContent> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || (offset > 0 && expectedRevision === 0) ||
+        !Number.isSafeInteger(maxBytes) || maxBytes < 4 || maxBytes > 262144 ||
+        ((ordinal !== undefined || radius !== undefined) && (!Number.isSafeInteger(ordinal) || ordinal! < 0 || !Number.isSafeInteger(radius) || radius! < 1 || radius! > 50))) throw new MnemosAPIError(400);
+    const params = new URLSearchParams({offset: String(offset), expected_revision: String(expectedRevision), max_bytes: String(maxBytes)});
+    if (ordinal === undefined) params.set("whole", "true");
+    else { params.set("ordinal", String(ordinal)); params.set("radius", String(radius)); }
+    return this.#request(`/v1/projects/${segment(projectId)}/nodes/${segment(nodeId)}/content?${params}`, "GET", signal);
+  }
   workshopAdminOperation(binding: string, operation: string, phase: "prepare" | "approve" | "reject" | "execute", request: import("./admin-operations.ts").AdminOperationRequest, signal?: AbortSignal): Promise<import("./admin-operations.ts").AdminOperation> {
     return this.#request(`/v1/agent-connections/${segment(binding)}/admin-operations/${segment(operation)}/${phase}`, "POST", signal, request);
   }
@@ -927,10 +936,12 @@ export class MnemosAPI {
   /** projectIds не передан — сервер отдаёт агенту все проекты, видимые человеку. */
   decideAgentConsent(id: string, preview: AgentConsentPreview, approved: boolean, signal?: AbortSignal, projectIds?: string[]): Promise<{ redirect_uri: string; binding_id?: string }> {
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(id) || typeof approved !== "boolean") throw new MnemosAPIError(400);
+    if (preview.access_mode === "owner" && projectIds !== undefined) throw new MnemosAPIError(400);
     if (projectIds !== undefined && (!Array.isArray(projectIds) || projectIds.length > 100 || !projectIds.every(p => typeof p === "string" && !!p && p.length <= 255))) throw new MnemosAPIError(400);
     return this.#request(`/v1/agent-authorizations/${id}`, "POST", signal, {
       expected_client_id: preview.client_id, expected_resource: preview.resource,
       expected_scopes: preview.scopes, approved,
+      ...(preview.access_mode ? { expected_access_mode: preview.access_mode } : {}),
       ...(projectIds !== undefined ? { project_ids: projectIds } : {}),
     });
   }
@@ -1290,7 +1301,7 @@ export class MnemosAPIError extends Error {
   readonly folderDrafts?: FolderDrafts;
   constructor(status: number,code?:FailureCode,refusal?:IngestRefusal,progress?:HistoryProgress,removedFolder?:RemovedFolderDocument[],removedFolderMore=0,folderDraftsValue?:FolderDrafts) { super(code===FOLDER_HAS_DRAFTS?folderHasDraftsMessage(folderDraftsValue??{folder_path:'',people:0,own:[]}):code===FOLDER_REMOVED?folderRemovedMessage(removedFolder??[],removedFolderMore):code==="request.rate_limit"?REQUEST_RATE_ERROR:code==="agent.memory_unavailable"?MEMORY_UNAVAILABLE_ERROR:code==="external_db.query_busy"?QUERY_CAPACITY_ERROR:code===UPLOAD_IN_PROGRESS?UPLOAD_IN_PROGRESS_ERROR:code===HISTORY_PREPARING?historyPreparingMessage(progress??{done:0,total:0}):code&&code in REPOSITORY_FAILURES?REPOSITORY_FAILURES[code as RepositoryFailureCode]:"Mnemos request failed"); this.status = status; if(code)this.code=code; if(refusal)this.refusal=refusal; if(code===HISTORY_PREPARING)this.progress=progress??{done:0,total:0}; if(code===FOLDER_REMOVED)this.removedFolder=removedFolder??[]; if(code===FOLDER_HAS_DRAFTS)this.folderDrafts=folderDraftsValue??{folder_path:'',people:0,own:[]}; }
 }
-export interface AgentConnectionPage { connections: { document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
+export interface AgentConnectionPage { connections: { access_mode?: "owner"; document_grants?: { project_id: string; node_id: string; resource_class: string; mode: string; granted_to: string }[]; binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; managed_runtime?: boolean; revoked: boolean }[]; next_cursor?: string }
 /** Запрос на слияние с человеческим состоянием результата. */
 export interface MergeRequestView { index: number; head_sha?: string; state?: "open" | "closed" | "merged"; outcome?: "draft" | "awaiting_approval" | "accepted" | "rejected" | "closed" | "reverted"; summary?: string; approval_required?: boolean; responsible?: { principal_id: string; display_name?: string }[]; revert_commit_sha?: string }
 export interface WorkshopAgentConnection { binding_id: string; agent_principal_id: string; runtime_id: string; runtime_agent_id: string; revoked: boolean; connection_name: string; project_ids: string[] }
@@ -1315,7 +1326,7 @@ export interface ProjectPage { projects: { id: string; name: string; slug: strin
 
 /** parse_failure — файл принят, но не разобран: причина словами от сервера. */
 export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean; parse_failure?: string }[]; next_cursor?: string; truncated: boolean }
-export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean }
+export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean; revision?: number; offset?: number; next_offset?: number; total_bytes?: number; text_state?: "ready" | "empty_window" | "no_text" }
 /** Часть извлечённого текста личной версии: смещения — байты UTF-8 текста; no_text — текстового слоя нет. */
 export interface DraftText { node_id: string; head: string; name: string; content_type: string; size_bytes: number; offset: number; next_offset: number; total_bytes: number; text: string; truncated: boolean; no_text?: boolean; failure?: string }
 export function validDraftText(value: unknown, node: string, offset: number): value is DraftText {
@@ -1356,6 +1367,7 @@ export interface ProjectSearchPage {
   /** path — путь в проекте; у приглашённого к одному документу это только имя. */
   hits: { project_id: string; node_id: string; name: string; text: string; ordinal: number; path?: string }[];
   index_pending: boolean;
+  index_pending_unknown?: boolean;
   degraded: boolean;
 }
 
@@ -1403,7 +1415,7 @@ export type PrivateParticipantMode = "" | "read" | "write";
 export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; document_only_read?: boolean; document_only_write?: boolean; org_units?: { org_unit_id: string; name: string }[] }[] }
 
 /** projects — проекты человека, которые можно отдать агенту; старый сервер их не присылает. */
-export interface AgentConsentPreview { client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }
+export interface AgentConsentPreview { access_mode?: "owner"; client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }
 export interface OrgUnitMember { principal_id: string; display_name: string; is_head: boolean }
 export interface OrgUnit { org_unit_id: string; name: string; members: OrgUnitMember[] }
 export interface OrgUnitDeletion { deleted: true; projects_made_private: number; requests_closed: number; invitations_revoked: number; members_removed: number }

@@ -794,6 +794,8 @@ export interface GatekeeperAgentConsent extends RpcTarget {
     account: string;
     /** Registered client requesting access. */
     client_id: string;
+    /** Полные текущие права владельца, включая будущие изменения доступа. */
+    access_mode?: "owner";
     /** Requested resource audience. */
     resource: string;
     /** Exact requested scopes. */

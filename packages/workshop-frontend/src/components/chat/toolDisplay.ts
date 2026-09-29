@@ -126,7 +126,7 @@ export const MNEMOS_LEGACY_TITLES: Record<string, string> = {
 
 /** Методы библиотеки MNEMOS, которые агент зовёт из кода, → вид шага: подпись идущего шага до прихода наблюдений. */
 export const MNEMOS_LIBRARY_METHODS: Record<string, string> = {
-  listPersonalDocuments: "mnemos.personal.list", readPersonalDocument: "mnemos.personal.read",
+  listPersonalDocuments: "mnemos.personal.list", readPersonalDocument: "mnemos.personal.read", readDraft: "mnemos.personal.read",
   readChatFile: "mnemos.chatfile.read", moveFileToProject: "mnemos.prepare",
   listProjects: "mnemos.projects", searchProject: "mnemos.search", search: "mnemos.search",
   readDocument: "mnemos.open", browseProject: "mnemos.browse", publishDraft: "mnemos.publish",

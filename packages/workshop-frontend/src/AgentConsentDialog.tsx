@@ -64,7 +64,7 @@ export default function AgentConsentDialog({ requestIds, api, onClose, returnTo 
     const selection = preview.selection, current = revision.current
     setBusy(true); setPreview(null); setNotice('')
     try {
-      const projectIds = preview.projects ? preview.projects.map(p => p.project_id).filter(id => chosen.has(id)) : undefined
+      const projectIds = preview.access_mode !== "owner" && preview.projects ? preview.projects.map(p => p.project_id).filter(id => chosen.has(id)) : undefined
       const result = await opened.frame.agentConsent.decide(selection, approved, projectIds)
       if (revision.current !== current) return
       const target = new URL(result.redirect_uri)
@@ -113,11 +113,11 @@ export default function AgentConsentDialog({ requestIds, api, onClose, returnTo 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-8 py-5">
           {preview && <>
             <p className="m-0 text-[15px] leading-relaxed text-kumo-default">
-              Агент будет работать от вашего имени: у него собственные разрешения, не шире ваших, и видит он не больше, чем вы.
-              {preview.projects && preview.projects.length > 0 && ' Выберите, к каким проектам его пустить.'}
+              {preview.access_mode === "owner" ? "Агент получит полный доступ к платформе с вашими текущими правами: сможет читать и изменять доступные вам данные и выполнять доступные вам действия. Изменения ваших прав, включая новые проекты, сразу применяются к агенту. Подключение можно отозвать в любое время." : "Агент будет работать от вашего имени в пределах выбранных разрешений."}
+              {preview.access_mode !== "owner" && preview.projects && preview.projects.length > 0 && ' Выберите, к каким проектам его пустить.'}
             </p>
 
-            {preview.projects && (
+            {preview.access_mode !== "owner" && preview.projects && (
               preview.projects.length === 0
                 ? <p className="m-0 text-[14px] leading-5 text-kumo-subtle">У вас пока нет проектов. Агент подключится без доступа к документам.</p>
                 : <ul aria-label="Проекты, с которыми агент сможет работать" className="m-0 list-none overflow-hidden rounded-2xl border border-kumo-fill p-0">
@@ -159,10 +159,10 @@ export default function AgentConsentDialog({ requestIds, api, onClose, returnTo 
                   ))}
                   <li className="flex items-center gap-3 border-t border-kumo-tint px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="m-0 text-[14px] leading-5 text-kumo-default">Всё остальное</p>
-                      <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">Не запрошено. Доступ ко всем документам не выдаётся.</p>
+                      <p className="m-0 text-[14px] leading-5 text-kumo-default">Граница доступа</p>
+                      <p className="m-0 mt-0.5 text-[12px] leading-4 text-kumo-subtle">{preview.access_mode === "owner" ? "Права проверяются при каждом действии. Агент не получает доступ к данным и действиям, недоступным вам." : "Не запрошено."}</p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">Нет</span>
+                    <span className="shrink-0 rounded-full bg-kumo-tint px-2 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">Ваши права</span>
                   </li>
                 </ul>
                 <p className="m-0 text-[13px] leading-5 text-kumo-subtle">Запрос действует до {formatExpiry(preview.expires_at)}.</p>

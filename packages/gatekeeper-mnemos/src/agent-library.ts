@@ -34,6 +34,7 @@ export interface LibraryReader {
   /** Методы ниже — те же, что у экрана управления; старые сессии их не знают, поэтому вызов защищён. */
   searchAll?(query: string, limit: number): Promise<ProjectSearchPage>;
   readProjectDocumentWindow?(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes: number): Promise<DocumentContent>;
+  readProjectDocumentPage?(projectId: string, nodeId: string, offset: number, expectedRevision: number, ordinal?: number, radius?: number, maxBytes?: number): Promise<DocumentContent>;
   readPublicationPolicy?(projectId: string): Promise<PublicationPolicy>;
   readPublicationReview?(id: string): Promise<PublicationReview>;
   checkTrackerAssignee?(project: string, node: string, head: string, principal: string): Promise<void>;
@@ -95,9 +96,10 @@ export interface MnemosSearchResult {
   hits: { document: string; name: string; text: string; ordinal: number }[];
   indexPending: boolean; degraded: boolean;
 }
-export interface MnemosDocument { document: string; name: string; text: string; mediaType: string; truncated: boolean }
+export interface MnemosDocument { document: string; name: string; text: string; mediaType: string; truncated: boolean; revision?: number; nextOffset?: number; totalBytes?: number; textState?: "ready" | "empty_window" | "no_text" }
+export interface MnemosDraftDocument extends MnemosDocument { head: string }
 /** Окно чтения: фрагмент ordinal и radius соседних фрагментов с каждой стороны. */
-export interface MnemosReadWindow { ordinal: number; radius: number; maxBytes?: number }
+export interface MnemosReadWindow { ordinal?: number; radius?: number; maxBytes?: number; offset?: number; expectedRevision?: number }
 export interface MnemosSearchAllResult {
   hits: { project: string; projectName: string; document: string; name: string; text: string; ordinal: number }[];
   indexPending: boolean; degraded: boolean;
@@ -229,7 +231,8 @@ interface SessionCalls {
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
   searchProject(queue: RpcStub<ApprovalQueue>, project: string, query: string): Promise<MnemosSearchResult>;
   readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument>;
-  saveDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string, content: string): Promise<MnemosDraftProposal>;
+  readDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosDraftDocument>;
+  saveDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string, content: string, expectedHead: string): Promise<MnemosDraftProposal>;
   search(queue: RpcStub<ApprovalQueue>, query: string, limit: number): Promise<MnemosSearchAllResult>;
   browseProject(queue: RpcStub<ApprovalQueue>, project: string, folder: string): Promise<MnemosFolderListing>;
   publishDraft(queue: RpcStub<ApprovalQueue>, project: string, message: string): Promise<MnemosPublication>;
@@ -260,7 +263,8 @@ export class MnemosLibrarySession extends RpcTarget {
   async readTracker(project: string, document: string): Promise<MnemosTracker> { return this.#calls.readTracker(this.#queue, project, document); }
   async changeTrackerTask(project: string, document: string, expectedHead: string, task: Task, create = false): Promise<MnemosTrackerChange> { return this.#calls.changeTrackerTask(this.#queue, project, document, expectedHead, task, create); }
   async createDraft(project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown" = "text/markdown") { return this.#calls.createDraft(this.#queue, project, parent, name, content, mediaType); }
-  async saveDraft(project: string, document: string, content: string): Promise<MnemosDraftProposal> { return this.#calls.saveDraft(this.#queue, project, document, content); }
+  async readDraft(project: string, document: string): Promise<MnemosDraftDocument> { return this.#calls.readDraft(this.#queue, project, document); }
+  async saveDraft(project: string, document: string, content: string, expectedHead: string): Promise<MnemosDraftProposal> { return this.#calls.saveDraft(this.#queue, project, document, content, expectedHead); }
   // ---- действия человека через карточку подтверждения ----
   async shareDocument(project: string, document: string, person: string, mode: ShareMode) { return this.#calls.propose(this.#queue, {kind: "share_document", project, document, person, mode}); }
   async moveFileToProject(project: string, document: string, target: string) { return this.#calls.propose(this.#queue, {kind: "move_file", project, document, target}); }
@@ -352,13 +356,14 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
         readDocument: (q, project, document, window) => this.#readDocument(q, project, document, window),
+        readDraft: (q, project, document) => this.#readDraft(q, project, document),
         search: (q, query, limit) => this.#search(q, query, limit),
         browseProject: (q, project, folder) => this.#browse(q, project, folder),
         publishDraft: (q, project, message) => this.#publish(q, project, message),
         readTracker: (q, project, document) => this.#readTracker(q, project, document),
         changeTrackerTask: (q, project, document, expectedHead, task, create) => this.#changeTracker(q, project, document, expectedHead, task, create),
         createDraft: (q, project, parent, name, content, mediaType) => this.#createDraft(q, project, parent, name, content, mediaType),
-        saveDraft: (q, project, document, content) => this.#saveDraft(q, project, document, content),
+        saveDraft: (q, project, document, content, expectedHead) => this.#saveDraft(q, project, document, content, expectedHead),
         propose: (q, request) => this.#propose(q, request),
         read: (q, request) => this.#read(q, request),
         actionStatus: (q, action) => this.#actionStatus(q, action),
@@ -563,15 +568,35 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     } finally {release(app);}
   }
 
-  async #saveDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string, content: string): Promise<MnemosDraftProposal> {
+  async #readDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string): Promise<MnemosDraftDocument> {
+    identifier(project, "проект"); identifier(document, "документ", 4096);
+    await this.#authorizePersonal(queue, {kind: "mnemos.personal.read", scopeId: project});
+    const agent = await this.#agent();
+    try {
+      const state = await this.#data(() => agent.ui.draftState(project));
+      if (!state.personal_exists) await this.#data(() => agent.ui.openDraft(project));
+      using reader = await this.#open();
+      const located = await this.#lookup(reader, project, document);
+      if (!located) throw new Error(UNAVAILABLE);
+      const {draft, text} = await this.#personalText(agent, project, located.id, TEXT_TYPES, "Черновик недоступен как текст или содержит конфликт.");
+      return {document: located.id, name: draft.terms[0]?.metadata?.name ?? located.name,
+        text, mediaType: draft.content_type!, truncated: false, head: draft.head};
+    } finally { release(agent); }
+  }
+
+  async #saveDraft(queue: RpcStub<ApprovalQueue>, project: string, document: string, content: string, expectedHead: string): Promise<MnemosDraftProposal> {
     identifier(project, "проект"); identifier(document, "документ", 4096);
     if (typeof content !== "string" || content.includes("\0")) throw new Error("Некорректное значение: содержимое.");
     if (bytes(content) > CONTENT_LIMIT) throw new Error("Текст превышает 256 КиБ.");
+    if (typeof expectedHead !== "string" || !/^[a-f0-9]{64}$/.test(expectedHead)) {
+      throw new Error("Сначала прочитайте readDraft(project, document) и передайте его head в saveDraft().");
+    }
     const app = await this.#app();
     try {
       const { ui } = app;
       await queue.authorizeObservation({title:"Черновик Mnemos",description:`Запись личного черновика в проекте ${project}.`,activity:{kind:"mnemos.edit",scopeId:project,subject:clip(document,200)},excludeObservers:await this.#excludedObservers()});
       const state = await this.#data(() => ui.draftState(project));
+      if (!state.personal_exists || state.personal_head !== expectedHead) throw new Error(STALE);
       const base: BaseVersion = state.personal_exists ? { head: state.personal_head, personal: true } : { head: state.shared_head, personal: false };
       const located = await this.#lookup(ui, project, document);
       if (!located) throw new Error(UNAVAILABLE);
@@ -715,16 +740,18 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       ...(page.index_pending ? {note: "индекс ещё строится"} : page.degraded ? {note: "поиск работал в упрощённом режиме"} : {})}});
     return {
       hits: page.hits.map(hit => ({ document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
-      indexPending: page.index_pending, degraded: page.degraded,
+      indexPending: page.index_pending || page.index_pending_unknown === true, degraded: page.degraded,
     };
   }
 
   async #readDocument(queue: RpcStub<ApprovalQueue>, project: string, document: string, window?: MnemosReadWindow): Promise<MnemosDocument> {
     identifier(project, "проект"); identifier(document, "документ", 4096);
-    if (window !== undefined && (!window || typeof window !== "object" || !Number.isSafeInteger(window.ordinal) || window.ordinal < 0 ||
-        !Number.isSafeInteger(window.radius) || window.radius < 1 || window.radius > 50 ||
-        (window.maxBytes !== undefined && (!Number.isSafeInteger(window.maxBytes) || window.maxBytes < 1 || window.maxBytes > CONTENT_LIMIT)))) {
-      throw new Error("Некорректное окно чтения: ordinal ≥ 0, radius от 1 до 50, maxBytes до 262144.");
+    if (window !== undefined && (!window || typeof window !== "object" ||
+        ((window.ordinal !== undefined || window.radius !== undefined) && (!Number.isSafeInteger(window.ordinal) || window.ordinal! < 0 || !Number.isSafeInteger(window.radius) || window.radius! < 1 || window.radius! > 50)) ||
+        (window.offset !== undefined && (!Number.isSafeInteger(window.offset) || window.offset < 0 || !Number.isSafeInteger(window.expectedRevision) || window.expectedRevision! < 1)) ||
+        (window.expectedRevision !== undefined && (!Number.isSafeInteger(window.expectedRevision) || window.expectedRevision < 1)) ||
+        (window.maxBytes !== undefined && (!Number.isSafeInteger(window.maxBytes) || window.maxBytes < 4 || window.maxBytes > CONTENT_LIMIT)))) {
+      throw new Error("Некорректное окно чтения: ordinal ≥ 0, radius от 1 до 50, maxBytes от 4 до 262144; для offset нужна expectedRevision.");
     }
     using reader = await this.#open();
     // Поиск узла не бросает: наблюдение записывается и при неудаче, а один текст ошибки после
@@ -749,8 +776,13 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     if (!located || !publication) throw new Error(UNAVAILABLE);
     const content = await this.#quiet(() => {
       if (!window) return reader.readProjectDocument(project, located.id);
+      if (window.offset !== undefined || window.expectedRevision !== undefined || (window.ordinal === undefined && window.maxBytes !== undefined)) {
+        if (!reader.readProjectDocumentPage) throw new Error(UNSUPPORTED);
+        return reader.readProjectDocumentPage(project, located.id, window.offset ?? 0, window.expectedRevision ?? 0, window.ordinal, window.radius, window.maxBytes ?? CONTENT_LIMIT);
+      }
+      if (window.ordinal === undefined) return reader.readProjectDocument(project, located.id);
       if (!reader.readProjectDocumentWindow) throw new Error(UNSUPPORTED);
-      return reader.readProjectDocumentWindow(project, located.id, window.ordinal, window.radius, window.maxBytes ?? CONTENT_LIMIT);
+      return reader.readProjectDocumentWindow(project, located.id, window.ordinal, window.radius!, window.maxBytes ?? CONTENT_LIMIT);
     });
     if (!content) throw new Error(UNAVAILABLE);
     // Код приложения агенту беседы не выдаётся (ADR 0028, п. 4): правка — через агента кода.
@@ -758,8 +790,12 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const shownName = located.name !== located.id ? located.name : undefined;
     await this.#recordWorkContext(queue, reader, project, {resourceName: shownName, publication, projectName, result: {ref,
       items: [{name: shownName ?? "Документ", documentId: located.id, projectId: project, ...(projectName ? {projectName} : {})}],
-      note: window ? `фрагменты ${Math.max(0, window.ordinal - window.radius)}–${window.ordinal + window.radius}` : `${Math.max(1, Math.round(bytes(content.text) / 1024))} КБ${content.truncated ? ", текст усечён" : ""}`}});
-    return { document: content.node_id, name: located.name, text: content.text, mediaType: content.media_type, truncated: content.truncated };
+      note: window?.ordinal !== undefined ? `фрагменты ${Math.max(0, window.ordinal - window.radius!)}–${window.ordinal + window.radius!}` : `${Math.max(1, Math.round(bytes(content.text) / 1024))} КБ${content.truncated ? ", текст усечён" : ""}`}});
+    return { document: content.node_id, name: located.name, text: content.text, mediaType: content.media_type, truncated: content.truncated,
+      ...(content.revision !== undefined ? {revision: content.revision} : {}),
+      ...(content.next_offset !== undefined ? {nextOffset: content.next_offset} : {}),
+      ...(content.total_bytes !== undefined ? {totalBytes: content.total_bytes} : {}),
+      ...(content.text_state !== undefined ? {textState: content.text_state} : {}) };
   }
 
   /** Поиск по всем проектам, которые видит человек. */
@@ -782,7 +818,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       items: page.hits.slice(0, RESULT_ITEMS).map(hit => ({name: hit.name, snippet: clip(hit.text.trim(), 200), projectId: hit.project_id, documentId: hit.node_id, ...(names.get(hit.project_id) ? {projectName: names.get(hit.project_id)} : {})}))});
     return {
       hits: page.hits.map(hit => ({ project: hit.project_id, projectName: names.get(hit.project_id) ?? "", document: hit.node_id, name: hit.name, text: hit.text, ordinal: hit.ordinal })),
-      indexPending: page.index_pending, degraded: page.degraded,
+      indexPending: page.index_pending || page.index_pending_unknown === true, degraded: page.degraded,
     };
   }
 

@@ -2,6 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mountMemoryApp } from "./app-react-harness.mjs";
 
+test("Внешний агент с правами владельца работает без отдельных разрешений на проекты", async () => {
+  const app = await mountMemoryApp({
+    async listAgentConnections() {
+      return { connections: [{ binding_id: "owner-agent", agent_principal_id: "claude-code-alice", runtime_id: "external", runtime_agent_id: "cc-owner", access_mode: "owner", document_grants: [], revoked: false }], next_cursor: "" };
+    },
+  }, { section: "agents" });
+  try {
+    await app.until(() => app.document.querySelector('[data-agent="owner-agent"]'), "подключение владельца");
+    const card = app.document.querySelector('[data-agent="owner-agent"]');
+    assert.match(card.textContent, /Работает/);
+    assert.match(card.textContent, /Полный доступ к платформе с вашими текущими правами/);
+    assert.doesNotMatch(card.textContent, /Не подключён ни к одному проекту|Настроить доступ к проекту|Выдать право/);
+    assert.ok([...card.querySelectorAll("button")].some(b => b.textContent === "Отозвать доступ"));
+  } finally { app.dispose(); }
+});
+
 test("«Агенты и расходы»: агенты по именам, без полей для идентификаторов; отзыв доступа; путь «Подключить своего»", async () => {
   let revoked = false;
   const app = await mountMemoryApp({

@@ -675,3 +675,18 @@ test("S15: связь Workshop заводится один раз по стаб�
   assert.equal(kv.get("mnemosWorkshopAgentCredential"), undefined);
   assert.equal(bearers.length, 4);
 });
+
+test("полная делегация подтверждается без выбора проектов и связана с показанным режимом",async()=>{
+  const decisions: unknown[]=[];
+  const account=new MnemosAccount(storage(),"https://memory.example",async(url,init)=>{
+    if(String(url).endsWith("/whoami"))return Response.json(human);
+    if(init?.method==="POST"){decisions.push(JSON.parse(String(init.body)));return Response.json({redirect_uri:"https://client.example/callback"});}
+    return Response.json({client_id:"client",resource:"https://memory.example/mcp",scopes:["mnemos.read","mnemos.write"],access_mode:"owner",projects:[],expires_at:new Date(Date.now()+60000).toISOString()});
+  });
+  await account.connect("human-token");const session=account.session();const preview=await session.previewAgentConsent("a".repeat(43));
+  assert.equal(preview.access_mode,"owner");
+  await assert.rejects(session.decideAgentConsent(preview.selection,true,[]));assert.equal(decisions.length,0);
+  preview.access_mode=undefined;
+  await session.decideAgentConsent(preview.selection,true);
+  assert.deepEqual(decisions,[{expected_client_id:"client",expected_resource:"https://memory.example/mcp",expected_scopes:["mnemos.read","mnemos.write"],approved:true,expected_access_mode:"owner"}]);
+});

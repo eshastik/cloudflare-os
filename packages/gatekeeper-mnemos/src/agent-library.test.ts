@@ -84,6 +84,11 @@ function fixture(overrides: Partial<Fixture> = {}) {
       state.calls.push(`window:${project}:${node}:${ordinal}:${radius}:${maxBytes}`);
       return { node_id: node, text: "Фрагмент", media_type: "text/markdown", truncated: true };
     },
+    async readProjectDocumentPage(project: string, node: string, offset: number, revision: number, ordinal?: number, radius?: number, maxBytes?: number) {
+      state.calls.push(`page:${project}:${node}:${offset}:${revision}:${ordinal}:${radius}:${maxBytes}`);
+      if (revision !== 7 && !(revision === 0 && offset === 0)) throw new MnemosAPIError(400);
+      return {node_id: node, text: "продолжение", media_type: "text/markdown", truncated: false, revision: 7, next_offset: 40, total_bytes: 40, text_state: "ready" as const};
+    },
     async searchAll(query: string, limit: number) {
       state.calls.push(`searchAll:${query}:${limit}`);
       return { hits: [{ project_id: "p2", node_id: "n2", name: "readme.md", text: "архив", ordinal: 3 }], index_pending: false, degraded: false };
@@ -294,7 +299,7 @@ test("describe ресурса и типы для агента", async () => {
   const types = await library.getTypeScriptTypes();
   assert.ok(types.length > 0);
   assert.match(types, /interface MnemosLibrary\b/);
-  assert.match(types, /saveDraft\(project: string, document: string, content: string\)/);
+  assert.match(types, /saveDraft\(project: string, document: string, content: string, expectedHead: string\)/);
   // Решение владельца 24.09: агенту — все действия человека; чувствительные — только через карточку подтверждения.
   assert.match(types, /publishDraft\(project: string, message\?: string\)/);
   for (const method of ["shareDocument", "requestReview", "decideReview", "decideAccessRequest", "invitePerson", "setProjectVisibility"]) {
@@ -428,7 +433,8 @@ test("TD-178: наблюдатель того же тенанта принят, 
 
 test("saveDraft saves immediately as the agent, without an approval request",async()=>{
  const {library,state}=fixture();const auth=authorizer(state);const session=await library.startSession(auth as any);
- const result=await session.saveDraft("p1","docs/plan.md",AFTER);
+ const source=await session.readDraft("p1","docs/plan.md");
+ const result=await session.saveDraft("p1","docs/plan.md",AFTER,source.head);
  assert.equal(result.status,"saved");assert.equal(result.document,"n1");assert.equal(result.head,HEAD_B);assert.equal(state.draftText,AFTER);assert.equal(auth.submitted.length,0);
  assert.deepEqual(humanWriteCalls(state),[]);assert.ok(state.calls.some(c=>c.startsWith("agent:save:")));
  await assert.rejects(library.applyAction(result.action),/уже/);session[Symbol.dispose]();
@@ -442,7 +448,7 @@ test("createDraft returns the new document immediately without publishing or ask
 test("revoked owner or agent cannot create or save a draft",async()=>{
  for(const flags of [{revoked:true},{agentRevoked:true}])for(const create of [true,false]){
   const {library,state}=fixture(flags);const session=await library.startSession(authorizer(state) as any);
-  await assert.rejects(create?session.createDraft("p1","","new.md",AFTER):session.saveDraft("p1","n1",AFTER));
+  await assert.rejects(create?session.createDraft("p1","","new.md",AFTER):session.saveDraft("p1","n1",AFTER,HEAD_A));
   assert.deepEqual(writeCalls(state),[]);session[Symbol.dispose]();
  }
 });
@@ -454,7 +460,7 @@ test("new drafts reject invalid folders, duplicate names and excessive content w
 test("opening a branch cannot overwrite a publication that raced with the draft write",async()=>{
  for(const create of [false]){
   const {library,state}=fixture({personalExists:false,openHead:HEAD_B});const session=await library.startSession(authorizer(state) as any);
-  await assert.rejects(create?session.createDraft("p1","","new.md",AFTER):session.saveDraft("p1","n1",AFTER),/устарел/);
+  await assert.rejects(create?session.createDraft("p1","","new.md",AFTER):session.saveDraft("p1","n1",AFTER,HEAD_S),/устарел/);
   assert.equal(state.calls.some(c=>c.startsWith("agent:save:")||c.startsWith("agent:create:")),false);session[Symbol.dispose]();
  }
 });
@@ -887,3 +893,59 @@ test("файл из беседы: читается только вложение
   await assert.rejects(old.readChatFile("p-personal", "node-9", 0));
   assert.equal(reads.length, 1);
 });
+
+
+test("saveDraft сохраняет правку человека между чтением агентом и записью", async () => {
+  const {library,state} = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  const source = await session.readDraft("p1", "n1");
+  assert.equal(source.text, BEFORE);
+  state.personalHead = HEAD_B;
+  const human = "Человек добавил важное условие после чтения агентом";
+  state.draftText = human;
+  await assert.rejects(session.saveDraft("p1", source.document, AFTER, source.head), /устарел/);
+  assert.equal(state.draftText, human);
+  assert.deepEqual(writeCalls(state), []);
+  session[Symbol.dispose]();
+});
+
+test("saveDraft без прочитанной версии отказывает до загрузки", async () => {
+  const {library,state} = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  await assert.rejects(session.saveDraft("p1", "n1", AFTER, undefined as any), /readDraft/);
+  assert.deepEqual(writeCalls(state), []);
+  session[Symbol.dispose]();
+});
+
+test("readDraft открывает личную ветку под агентом и возвращает точный исходник", async () => {
+  const {library,state} = fixture({personalExists:false});
+  const session = await library.startSession(authorizer(state) as any);
+  const source = await session.readDraft("p1", "docs/plan.md");
+  assert.equal(source.head, HEAD_S);
+  assert.equal(source.text, BEFORE);
+  assert.equal(source.document, "n1");
+  assert.ok(state.calls.includes("agent:openDraft:p1"));
+  assert.deepEqual(humanWriteCalls(state), []);
+  const result = await session.saveDraft("p1", source.document, AFTER, source.head);
+  assert.equal(result.status, "saved");
+  session[Symbol.dispose]();
+});
+
+
+test("продолжение опубликованного текста сохраняет окно и версию", async () => {
+  const { library, state } = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  const page = await session.readDocument("p1", "n1", {ordinal: 9, radius: 1, offset: 20, expectedRevision: 7, maxBytes: 100});
+  assert.ok(state.calls.includes("page:p1:n1:20:7:9:1:100"));
+  assert.equal(page.nextOffset, 40); assert.equal(page.revision, 7); assert.equal(page.textState, "ready");
+});
+
+test("продолжение целого документа не подставляет окно сегментов", async () => {
+  const { library, state } = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  await session.readDocument("p1", "n1", {offset: 20, expectedRevision: 7});
+  assert.ok(state.calls.includes("page:p1:n1:20:7:undefined:undefined:262144"));
+  await assert.rejects(session.readDocument("p1", "n1", {offset: 20}), /expectedRevision/);
+});
+
+ test("потолок первой страницы целого документа не игнорируется",async()=>{const {library,state}=fixture();const session=await library.startSession(authorizer(state) as any);await session.readDocument("p1","n1",{maxBytes:100});assert.ok(state.calls.includes("page:p1:n1:0:0:undefined:undefined:100"));});

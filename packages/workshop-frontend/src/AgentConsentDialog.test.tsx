@@ -17,7 +17,7 @@ if (!('ResizeObserver' in globalThis)) vi.stubGlobal('ResizeObserver', class { o
 const REQUEST = 'a'.repeat(43)
 const avatar = { url: 'https://example.test/avatar' }
 const vendor = { displayName: 'Память', url: 'https://example.test' }
-const previewValue = { selection: 'selection', account: 'org / alice', client_id: 'local-client', resource: 'https://memory.example/mcp', scopes: ['memory', 'drafts'], expires_at: '2099-01-01T00:00:00Z' }
+const previewValue = { selection: 'selection', account: 'org / alice', client_id: 'local-client', resource: 'https://memory.example/mcp', scopes: ['memory', 'drafts'], access_mode: 'owner' as const, expires_at: '2099-01-01T00:00:00Z' }
 
 /** Три аккаунта: без экрана управления, чужой вендор без agentConsent и аккаунт памяти с agentConsent. */
 function subscribeAccounts(consentFrame: object | null) {
@@ -64,11 +64,11 @@ for (const host of ['127.0.0.1', 'localhost']) for (const approved of [true, fal
     expect(text).toContain('org / alice')
     expect(text).toContain('local-client')
     expect(text).toContain('https://memory.example/mcp')
-    expect(text).toContain('собственные разрешения')
-    expect(text).not.toContain('получает ваши права')
+    expect(text).toContain('полный доступ к платформе')
+    expect(text).toContain('текущими правами')
     expect(text).toContain('записыва')
     expect(text).toContain('аудит')
-    expect(text).toContain('всем документам')
+    expect(text).toContain('недоступным вам')
     // Операции и область — построчно: у каждой запрошенной операции своя строка.
     expect(document.body.querySelectorAll('[data-scope-line]')).toHaveLength(2)
     expect(document.body.querySelector('[data-scope-line="memory"]')).not.toBeNull()
@@ -139,7 +139,7 @@ it('lets the person choose projects for the agent and returns to the client with
   const projects = [{ project_id: 'p1', name: 'Склад' }, { project_id: 'p2', name: 'Продажи' }, { project_id: 'p3', name: '' }]
   class Consent extends RpcTarget {
     decideCall = vi.fn(async (_selection: string, _approved: boolean, _ids?: string[]) => ({ redirect_uri: 'http://127.0.0.1:4321/callback?state=saved&code=issued' }))
-    async preview() { return { ...previewValue, projects } }
+    async preview() { return { ...previewValue, access_mode: undefined, projects } }
     async decide(selection: string, approved: boolean, ids?: string[]) { return this.decideCall(selection, approved, ids) }
   }
   const target = new Consent(), capability = new RpcStub(target)
@@ -159,4 +159,22 @@ it('lets the person choose projects for the agent and returns to the client with
     expect(target.decideCall).toHaveBeenCalledExactlyOnceWith('selection', true, ['p1', 'p3'])
     expect(returnTo).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4321/callback?state=saved&code=issued')
   } finally { await unmount(); capability[Symbol.dispose]() }
+})
+
+it('полная делегация не показывает настройки проектов даже при старом списке в ответе',async()=>{
+  class Consent extends RpcTarget {
+    decideCall=vi.fn(async(_selection:string,_approved:boolean,_ids?:string[])=>({redirect_uri:'http://127.0.0.1:4321/callback?state=saved&code=issued'}))
+    async preview(){return {...previewValue,access_mode:'owner' as const,projects:[{project_id:'p1',name:'Склад'}]}}
+    async decide(selection:string,approved:boolean,ids?:string[]){return this.decideCall(selection,approved,ids)}
+  }
+  const target=new Consent(),capability=new RpcStub(target)
+  subscribeAccounts({iframeHtml:'',ui:{},agentConsent:capability})
+  const {unmount}=await mount([REQUEST])
+  try {
+    expect(document.body.querySelectorAll('input[data-consent-project]')).toHaveLength(0)
+    expect(document.body.textContent).toContain('полный доступ к платформе')
+    expect(document.body.textContent).toContain('новые проекты')
+    await act(async()=>buttons().find(b=>b.textContent==='Подключить')!.click())
+    expect(target.decideCall).toHaveBeenCalledExactlyOnceWith('selection',true,undefined)
+  }finally{await unmount();capability[Symbol.dispose]()}
 })
