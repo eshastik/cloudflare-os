@@ -60,6 +60,10 @@ async function connectAs(principal: string, node: string, texts: Map<string, str
     version: async version => { const text = texts.get(version); if (!text) throw new Error("404"); return { sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" }; },
     text: async version => { const text = texts.get(version); if (!text) throw new Error("404"); return { text, sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" }; },
     latestPublished: async () => [...texts.keys()].filter(v => !v.startsWith("private:")).at(-1) ?? null,
+    publishedHead: async () => { const id = [...texts.keys()].filter(v => !v.startsWith("private:")).at(-1); return id ? { id, recordedAt: "2026-09-29T10:00:00Z", actor: principal } : null; },
+    node: () => { throw new Error("не нужен"); },
+    createApp: async () => { throw new Error("не нужен"); },
+    saveApp: async () => { throw new Error("не нужен"); },
     directory: async () => options.directory ?? EVERYONE,
     object: name => exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,
     profileName: async () => principal,
@@ -129,7 +133,8 @@ it("свой экземпляр у каждого: данные не общие;
   const node = "node-" + crypto.randomUUID();
   const texts = new Map([["private:v1", gadgetAppText(doc("v1", { collaborative: false }))]]);
   const anna = await connectAs("anna", node, texts, { personal: true });
-  const boris = await connectAs("boris", node, texts, { personal: true, access: "read" });
+  // Соавтор с правом правки: у каждого свой экземпляр. Получатель без правки открывает свою копию (этап 3).
+  const boris = await connectAs("boris", node, texts, { personal: true, access: "edit" });
   await anna.connection.deploy("private:v1");
   await boris.connection.deploy("private:v1");
   await (await anna.connection.connectToGadget() as Session).add("анины");

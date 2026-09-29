@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GADGET_APP_MIME, parseGadgetAppText } from "@gadgets/workshop-shared/gadget-app";
-import { GadgetBuildError, saveGadgetBuild, type GadgetSaveAPI } from "./gadget-bridge.ts";
+import { GadgetBuildError, checkGadgetEditable, gadgetReceipts, saveGadgetBuild, validGadgetRequest, type GadgetSaveAPI } from "./gadget-bridge.ts";
+import { MnemosAPIError } from "./mnemos-api.ts";
 import { WorkspaceClient, WorkspaceError, type WorkspaceGadgetBuild } from "./workspace-tasks.ts";
 
 const STORAGE = "https://storage.example";
@@ -122,4 +123,102 @@ test("Клиент службы: сборка с привязкой агента
   await assert.rejects(none.client.gadgetBuild("0123456789abcdef", "b"), (e: WorkspaceError) => e.code === "no_build" && e.message.includes("pnpm build"));
   const foreign = client(() => new Response("", { status: 404 }));
   await assert.rejects(foreign.client.gadgetBuild("0123456789abcdef", "b"), (e: WorkspaceError) => e.code === "not_found");
+});
+
+/** Mnemos с долговечным повтором по request_id: тот же request_id и то же тело — тот же узел. */
+function replayingApi(options: { loseFirstAnswer?: boolean } = {}) {
+  const base = api({ content_type: GADGET_APP_MIME });
+  const created = new Map<string, { node: string; body: string }>();
+  let nodes = 0, lose = options.loseFirstAnswer === true;
+  base.api.createPrivateDocument = async (project, request) => {
+    base.calls.push(["createPrivateDocument", project, request]);
+    const body = JSON.stringify(request), known = created.get(request.request_id);
+    if (known && known.body !== body) throw new MnemosAPIError(409);
+    const node = known?.node ?? `node-${++nodes}`;
+    created.set(request.request_id, { node, body });
+    if (lose) { lose = false; throw new TypeError("Network connection lost."); }
+    return { node_id: node, head: NEW_HEAD };
+  };
+  return { ...base, nodes: () => nodes };
+}
+
+function memoryKv() {
+  const map = new Map<string, unknown>();
+  return { map, kv: { get: <T>(k: string) => map.get(k) as T | undefined, put: <T>(k: string, v: T) => { map.set(k, structuredClone(v)); }, delete: (k: string) => { map.delete(k); } } };
+}
+
+test("Повтор создания после потерянного ответа даёт тот же узел, а не второй", async () => {
+  const mnemos = replayingApi({ loseFirstAnswer: true });
+  const { kv } = memoryKv();
+  const receipts = gadgetReceipts(kv);
+  await assert.rejects(saveGadgetBuild(mnemos.api, STORAGE, mnemos.fetcher, "p", build(), undefined, "chat-request-1", receipts), /Network connection lost/);
+  assert.equal(mnemos.nodes(), 1, "узел создан, ответ потерян");
+  const again = await saveGadgetBuild(mnemos.api, STORAGE, mnemos.fetcher, "p", build(), undefined, "chat-request-1", receipts);
+  assert.equal(again.resource, "node-1");
+  assert.equal(again.created, true);
+  assert.equal(mnemos.nodes(), 1, "второй узел не создан");
+  const creates = mnemos.calls.filter(c => c[0] === "createPrivateDocument").map(c => c[2]);
+  assert.equal(creates.length, 2);
+  assert.deepEqual(creates[1], creates[0], "повтор — то же тело с тем же request_id");
+  assert.equal(mnemos.calls.filter(c => c[0] === "openDraft").length, 1, "повтор не открывает черновик заново");
+  assert.equal(mnemos.calls.some(c => c[0] === "saveDraftDocument"), false, "та же сборка не пишет лишнюю версию");
+
+  // Сборка изменилась, пока ответ терялся: тот же узел получает её новой версией.
+  const third = await saveGadgetBuild(mnemos.api, STORAGE, mnemos.fetcher, "p", build({ name: "Дела команды 2" }), undefined, "chat-request-1", receipts);
+  assert.equal(third.resource, "node-1");
+  assert.equal(mnemos.nodes(), 1);
+  assert.deepEqual(mnemos.calls.filter(c => c[0] === "saveDraftDocument").map(c => c[2]), ["node-1"]);
+});
+
+test("Квитанция без узла: отказ 4xx — новый узел со свежим request_id, сбой 5xx — квитанция ждёт", async () => {
+  const mnemos = replayingApi();
+  const { kv, map } = memoryKv();
+  const receipts = gadgetReceipts(kv);
+  receipts.put("chat-request-2", { project: "p", sha: "x", body: { request_id: "stale-request", expected_head: HEAD, parent_id: "", name: "Дела", content_type: GADGET_APP_MIME, upload_id: "expired", message: "m" } });
+  mnemos.api.createPrivateDocument = (orig => async (project: string, request: Parameters<GadgetSaveAPI["createPrivateDocument"]>[1]) => {
+    if (request.request_id === "stale-request") throw new MnemosAPIError(404);
+    return orig(project, request);
+  })(mnemos.api.createPrivateDocument);
+  const saved = await saveGadgetBuild(mnemos.api, STORAGE, mnemos.fetcher, "p", build(), undefined, "chat-request-2", receipts);
+  const fresh = mnemos.calls.filter(c => c[0] === "createPrivateDocument").map(c => (c[2] as { request_id: string }).request_id);
+  assert.equal(fresh.length, 1);
+  assert.notEqual(fresh[0], "stale-request");
+  assert.equal(saved.resource, "node-1");
+  assert.equal(receipts.get("chat-request-2")?.node, "node-1");
+
+  const down = replayingApi();
+  receipts.put("chat-request-3", { project: "p", sha: "x", body: { request_id: "r3", expected_head: HEAD, parent_id: "", name: "Дела", content_type: GADGET_APP_MIME, upload_id: "u", message: "m" } });
+  down.api.createPrivateDocument = async () => { throw new MnemosAPIError(503); };
+  await assert.rejects(saveGadgetBuild(down.api, STORAGE, down.fetcher, "p", build(), undefined, "chat-request-3", receipts));
+  assert.equal(down.calls.some(c => c[0] === "openDraft"), false, "при сбое Mnemos новый узел не создаётся");
+  assert.equal(receipts.get("chat-request-3")?.body.request_id, "r3");
+  // Квитанция другого проекта не используется.
+  const other = replayingApi();
+  await saveGadgetBuild(other.api, STORAGE, other.fetcher, "q", build(), undefined, "chat-request-2", receipts);
+  assert.equal(other.calls.filter(c => c[0] === "createPrivateDocument").length, 1);
+  assert.equal((other.calls.find(c => c[0] === "createPrivateDocument")![2] as { request_id: string }).request_id, "chat-request-2");
+  assert.ok([...map.keys()].includes("gadgetCreateIndex"));
+});
+
+test("Квитанций хранится не больше ста; ключ квитанции проверяется", () => {
+  const { kv, map } = memoryKv();
+  const receipts = gadgetReceipts(kv);
+  for (let i = 0; i < 105; i++) receipts.put(`request-${String(i).padStart(4, "0")}`, { project: "p", sha: "s", body: {} as never });
+  assert.equal([...map.keys()].filter(k => k.startsWith("gadgetCreate:")).length, 100);
+  assert.equal(receipts.get("request-0000"), undefined);
+  assert.ok(receipts.get("request-0104"));
+  for (const bad of ["", "short", "a/b-cdefghij", "x".repeat(101), 5]) assert.equal(validGadgetRequest(bad), false, String(bad));
+  assert.equal(validGadgetRequest(crypto.randomUUID()), true);
+});
+
+test("Правка сохранённого гаджета: только существующий узел приложения в личной ветке", async () => {
+  for (const [name, existing] of [["удалён", null], ["документ", { content_type: "application/vnd.cloudflareos.document+json" }]] as const) {
+    const { api: session } = api(existing);
+    await assert.rejects(checkGadgetEditable(session, "p", "node-1"), /удалён, в конфликте или заменён/, name);
+  }
+  const conflicted = api({ content_type: GADGET_APP_MIME });
+  conflicted.api.readDraftDocument = async (_p, node) => ({ node_id: node, exists: true, conflicted: true, content_type: GADGET_APP_MIME, head: HEAD, terms: [] }) as never;
+  await assert.rejects(checkGadgetEditable(conflicted.api, "p", "node-1"), /в конфликте/);
+  const ok = api({ content_type: GADGET_APP_MIME });
+  assert.equal((await checkGadgetEditable(ok.api, "p", "node-1")).head, HEAD);
 });

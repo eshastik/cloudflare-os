@@ -61,7 +61,7 @@ export type StatusInput = {
   now?: number
 }
 export type DocumentStatusKind = 'unread' | 'unverified' | 'unsaved' | 'saved' | 'reviewing' | 'rejected' | 'stale' | 'conflict' | 'ready' | 'published' | 'changed' | 'readonly'
-export type PrimaryKind = 'save' | 'submit' | 'rework' | 'resubmit' | 'resolve' | 'publish' | 'start' | 'reopen'
+export type PrimaryKind = 'save' | 'submit' | 'rework' | 'resubmit' | 'resolve' | 'publish' | 'start' | 'reopen' | 'copy' | 'update'
 export type DocumentStatusModel = {
   kind: DocumentStatusKind
   version: string
@@ -70,7 +70,8 @@ export type DocumentStatusModel = {
   tone: 'neutral' | 'warning' | 'danger' | 'success' | 'info'
   /** disabled — кнопка видна, но недоступна: действие станет возможным после правки. */
   primary: { kind: PrimaryKind; label: string; hint?: string; disabled?: boolean } | null
-  secondary: { kind: 'withdraw'; label: string } | null
+  /** dismiss — «Не сейчас» у предложения обновить копию приложения. */
+  secondary: { kind: 'withdraw' | 'dismiss'; label: string } | null
 }
 
 function pluralChanges(n: number) {
@@ -208,7 +209,7 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
       className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>}
     {error && !compact && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger">{error}</span>}
     {error && compact && <span role="alert" title={error} className="h-2 w-2 shrink-0 rounded-full bg-kumo-danger" aria-label={error} />}
-    {model?.secondary && (!compact || !model.primary) && <WorkshopButton className={button} disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
+    {model?.secondary && (!compact || !model.primary || model.secondary.kind === 'dismiss') && <WorkshopButton className={button} disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
     {model?.primary && <WorkshopButton tone="primary" className={button} data-primary-action title={model.primary.hint} disabled={disabled || busy || model.primary.disabled} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
     {shareShown && <WorkshopButton tone="primary" className={button} onClick={onShare}>Поделиться</WorkshopButton>}
     {unsaved && onSaveToProject && <WorkshopButton tone="primary" className={button} data-primary-action title="Документ сохранится в выбранный проект Mnemos как ваш личный черновик; после этого появятся версии, согласование и скачивание в Word." disabled={disabled} onClick={onSaveToProject}>{compact ? 'Сохранить' : 'Сохранить в проект…'}</WorkshopButton>}

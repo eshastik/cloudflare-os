@@ -74,6 +74,33 @@ export function mnemosAppObjectName(installation: string, tenant: string, projec
   return JSON.stringify(owner === undefined ? ["mnemos-app", ...parts] : ["mnemos-app-personal", ...parts]);
 }
 
+/** Ключ объекта, где лежит опубликованная версия оригинала для копий (этап 3). Считается, как и ключ
+ *  экземпляра, только из ответа Mnemos о праве. */
+export function mnemosAppReleaseName(installation: string, tenant: string, project: string, node: string): string {
+  const parts = [installation, tenant, project, node];
+  if (!parts.every(part => typeof part === "string" && part && part.length <= 255)) throw new Error("Invalid app node.");
+  return JSON.stringify(["mnemos-app-release", ...parts]);
+}
+
+/** Опубликованная версия оригинала для копий. Код лежит кусками рядом. */
+export type AppRelease = { version: string; sha256: string; title: string; publishedAt: string; authorName: string; recordedAt: string; chunks: number };
+export type AppReleaseMeta = Omit<AppRelease, "chunks">;
+
+/** Связь копии с оригиналом: хранится в своём экземпляре копии у её владельца. */
+export type AppOrigin = {
+  installation: string; tenant: string; project: string; node: string;
+  /** Версия оригинала, стоящая в копии, и её сумма. */
+  version: string; sha256: string;
+  title: string; authorName: string; copiedAt: string; updatedAt: string;
+  /** Версия, по которой человек нажал «Не сейчас»; пусто — нет. */
+  dismissed: string;
+};
+
+/** Где лежит копия человека: хранится в его своём экземпляре оригинала. */
+export type AppCopyLink = { project: string; node: string };
+
+export const APP_RELEASE_OLDER = "Версия для копий уже новее.";
+
 /** Справочник общего экземпляра: пересечение видимого открывшему и запустившему. */
 export function intersectDirectory(directory: GadgetAppDirectory, scope: DirectoryScope | null): GadgetAppDirectory {
   if (!scope) return { people: [], departments: [] };
@@ -113,7 +140,7 @@ export class MnemosAppDurableObject extends DurableObject<Cloudflare.Env> {
     } else if (manifest.collaborative) throw new Error("Совместное приложение работает общим экземпляром.");
     // Ниже нет ожиданий: проверки и запись идут одним шагом объекта.
     const kv = this.#kv();
-    const kind = kv.get<AppObjectKind>("kind");
+    const kind = kv.get<string>("kind");
     if (kind && kind !== options.kind) throw new Error("Invalid deployment.");
     const previous = kv.get<DeployedApp>("deployed");
     if (options.onlyIfEmpty && previous) throw new Error(APP_ALREADY_RUNNING);
@@ -157,6 +184,99 @@ export class MnemosAppDurableObject extends DurableObject<Cloudflare.Env> {
     if (deployed.session) return (facet as unknown as { session(caller: GadgetAppCaller): Promise<unknown> }).session(checked);
     if (shared) throw new Error("Общий экземпляр открывается только через session(caller).");
     return facetStub(facet);
+  }
+
+  // ─── Копии (этап 3) ───────────────────────────────────────────────────────────────────────────
+  // Три вида записей в разных объектах: версия для копий — в объекте оригинала вида "release";
+  // связь копии с оригиналом — в своём экземпляре копии; где лежит копия — в своём экземпляре
+  // оригинала у получателя. Вид объекта не смешивается: версия для копий не запускается как
+  // экземпляр, а экземпляр не хранит версию для копий.
+
+  #requireKind(kind: "release" | "personal") {
+    const current = this.#kv().get<string>("kind");
+    if (current && current !== kind) throw new Error("Invalid app object.");
+    this.#kv().put("kind", kind);
+  }
+
+  /** Версия для копий без кода; null — ещё не записана. */
+  async release(): Promise<AppReleaseMeta | null> {
+    const release = this.#kv().get<AppRelease>("release");
+    if (!release) return null;
+    const { chunks: _chunks, ...meta } = release;
+    return meta;
+  }
+
+  /**
+   * Записать опубликованную версию оригинала для копий. Текст проверяется строго и сверяется с
+   * суммой из Mnemos; личные версии и совместные приложения — отказ; более старая публикация не
+   * заменяет более новую (два человека могли прочитать историю в разное время).
+   */
+  async setRelease(version: string, sha256: string, text: string, publishedAt: string, authorName: string): Promise<AppReleaseMeta> {
+    const actual = typeof text === "string" ? await gadgetAppSha256(text) : "";
+    if (typeof version !== "string" || !version || version.length > 300 || version.startsWith("private:") || !/^[a-f0-9]{64}$/.test(sha256) ||
+        typeof publishedAt !== "string" || publishedAt.length > 64 || typeof authorName !== "string" || authorName.length > 255) throw new Error("Invalid release.");
+    const manifest = parseGadgetAppText(text).document.manifest;
+    if (actual !== sha256) throw new Error("Код приложения не совпадает с версией в Mnemos.");
+    if (manifest.collaborative) throw new Error("Совместное приложение не копируется: им делятся доступом к общему экземпляру.");
+    // Ниже нет ожиданий: проверка порядка и запись идут одним шагом объекта.
+    const kv = this.#kv();
+    const previous = kv.get<AppRelease>("release");
+    if (previous && previous.version === version && previous.sha256 === sha256) { const { chunks: _c, ...meta } = previous; return meta; }
+    if (previous && Date.parse(previous.publishedAt) > Date.parse(publishedAt)) throw new Error(APP_RELEASE_OLDER);
+    this.#requireKind("release");
+    const chunks = Math.ceil(text.length / CHUNK_CHARS);
+    for (let i = 0; i < chunks; i++) kv.put(`release:${sha256}:${i}`, text.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS));
+    const release: AppRelease = { version, sha256, title: manifest.title, publishedAt, authorName, recordedAt: new Date().toISOString(), chunks };
+    kv.put("release", release);
+    if (previous && previous.sha256 !== sha256) for (let i = 0; i < previous.chunks; i++) kv.delete(`release:${previous.sha256}:${i}`);
+    logger.info("mnemos app release", { event: "mnemos_app.release", appVersion: version, operation: sha256 });
+    const { chunks: _chunks, ...meta } = release;
+    return meta;
+  }
+
+  /** Версия для копий вместе с кодом; сумма сверяется ещё раз. */
+  async releaseText(): Promise<{ release: AppReleaseMeta; text: string } | null> {
+    const release = this.#kv().get<AppRelease>("release");
+    if (!release) return null;
+    let text = "";
+    for (let i = 0; i < release.chunks; i++) {
+      const chunk = this.#kv().get<string>(`release:${release.sha256}:${i}`);
+      if (typeof chunk !== "string") throw new Error("Код приложения в хранилище повреждён.");
+      text += chunk;
+    }
+    if (await gadgetAppSha256(text) !== release.sha256) throw new Error("Код приложения в хранилище повреждён.");
+    const { chunks: _chunks, ...meta } = release;
+    return { release: meta, text };
+  }
+
+  /** Связь копии с оригиналом; null — узел не копия. */
+  async origin(): Promise<AppOrigin | null> { return this.#kv().get<AppOrigin>("origin") ?? null; }
+
+  async setOrigin(origin: AppOrigin): Promise<void> {
+    const text = (value: unknown, max = 300) => typeof value === "string" && value.length <= max;
+    if (!origin || ![origin.installation, origin.tenant, origin.project, origin.node, origin.version].every(v => text(v) && v) ||
+        !/^[a-f0-9]{64}$/.test(origin.sha256) || ![origin.title, origin.authorName, origin.copiedAt, origin.updatedAt, origin.dismissed].every(v => text(v))) throw new Error("Invalid origin.");
+    this.#requireKind("personal");
+    this.#kv().put("origin", {
+      installation: origin.installation, tenant: origin.tenant, project: origin.project, node: origin.node, version: origin.version, sha256: origin.sha256,
+      title: origin.title, authorName: origin.authorName, copiedAt: origin.copiedAt, updatedAt: origin.updatedAt, dismissed: origin.dismissed,
+    } satisfies AppOrigin);
+  }
+
+  /** «Не сейчас» для одной версии оригинала. */
+  async dismissUpdate(version: string): Promise<void> {
+    const origin = this.#kv().get<AppOrigin>("origin");
+    if (!origin || typeof version !== "string" || !version || version.length > 300) throw new Error("Invalid origin.");
+    this.#kv().put("origin", { ...origin, dismissed: version });
+  }
+
+  /** Копия человека, сделанная из этого оригинала; null — копии нет. */
+  async copyLink(): Promise<AppCopyLink | null> { return this.#kv().get<AppCopyLink>("copy") ?? null; }
+
+  async setCopyLink(link: AppCopyLink): Promise<void> {
+    if (!link || typeof link.project !== "string" || typeof link.node !== "string" || !link.project || !link.node || link.project.length > 255 || link.node.length > 255) throw new Error("Invalid copy.");
+    this.#requireKind("personal");
+    this.#kv().put("copy", { project: link.project, node: link.node } satisfies AppCopyLink);
   }
 
   /** Последние записи журнала, новые сверху. */

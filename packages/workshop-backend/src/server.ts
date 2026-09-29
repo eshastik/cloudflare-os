@@ -39,7 +39,8 @@ import type { NotificationKind, NotificationSettings, TelegramBotState, Telegram
 import { MNEMOS_NOTIFICATIONS_UNAVAILABLE } from "./user";
 import { MiniAppPublicApiImpl, type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort } from "./telegram/mini-app-api";
 import { MnemosAppDurableObject } from "./mnemos-app";
-import { openMnemosAppConnection, type AppObjectPort, type MnemosAppPorts } from "./mnemos-app-api";
+import { uploadAppText } from "./mnemos-app-upload";
+import { openMnemosAppConnection, type AppNodePorts, type AppObjectPort, type MnemosAppPorts } from "./mnemos-app-api";
 import { GADGET_APP_LIMITS, type MnemosAppConnection } from "@gadgets/workshop-shared/gadget-app";
 import { MINI_APP_EDITOR_FRAME_PATH, MINI_APP_RPC_PATH } from "@gadgets/workshop-shared/telegram-mini-app";
 import { handleMiniAppEditorFrame } from "./telegram/mini-app-frame";
@@ -144,11 +145,16 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
     return port;
   };
   let dispose = (value: unknown) => { try { (value as Partial<Disposable> | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ } };
-  return {
-    access: async opening => (await mnemos()).writes.appAccess(scope, resource, opening),
+  let published = async (project: string, node: string) => {
+    let page = await (await mnemos()).downloads.publications(project, node, "");
+    // Личные версии (private:) в общий экземпляр и в копии не идут: берётся только опубликованная.
+    return (page.publications as { id: string; format: string; recordedAt: string; actor: string }[]).find(p => p.format === "cloudflareos.app" && !p.id.startsWith("private:")) ?? null;
+  };
+  let nodePorts = (project: string, node: string): AppNodePorts => ({
+    access: async opening => (await mnemos()).writes.appAccess(project, node, opening),
     version: async version => {
       let downloads = (await mnemos()).downloads;
-      let download = await downloads.select(scope, resource, version);
+      let download = await downloads.select(project, node, version);
       try {
         let ticket = await download.issue();
         await download.validate();
@@ -157,7 +163,7 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
     },
     text: async version => {
       let current = await mnemos();
-      let download = await current.downloads.select(scope, resource, version);
+      let download = await current.downloads.select(project, node, version);
       try {
         let ticket = await download.issue();
         let text = await fetchAppText(current.storageOrigin, ticket);
@@ -165,10 +171,35 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
         return { text, sha256: ticket.sha256_hex, contentType: ticket.content_type };
       } finally { dispose(download); }
     },
-    latestPublished: async () => {
-      let page = await (await mnemos()).downloads.publications(scope, resource, "");
-      // Личные версии (private:) в общий экземпляр не запускаются: берётся только опубликованная.
-      return (page.publications as { id: string; format: string }[]).find(p => p.format === "cloudflareos.app" && !p.id.startsWith("private:"))?.id ?? null;
+    latestPublished: async () => (await published(project, node))?.id ?? null,
+    publishedHead: async () => {
+      let head = await published(project, node);
+      return head ? { id: head.id, recordedAt: head.recordedAt, actor: head.actor } : null;
+    },
+  });
+  return {
+    ...nodePorts(scope, resource),
+    node: nodePorts,
+    createApp: async (project, name, text) => {
+      let current = await mnemos();
+      let creator = await current.writes.create(project, name, "cloudflareos.app" as never);
+      try {
+        let head = await creator.head();
+        let upload = await uploadAppText(current.storageOrigin, text, (size, checksum) => creator.issue(head, size, checksum));
+        let saved = await creator.save(head, upload);
+        return { node: await creator.document(), head: saved };
+      } finally { dispose(creator); }
+    },
+    saveApp: async (project, node, text) => {
+      let current = await mnemos();
+      let writer = await current.writes.select(project, node, "cloudflareos.app" as never);
+      try {
+        // Только свой узел: по приглашению (даже с правкой) копия чужого узла не пишется.
+        if (await writer.access() !== "owner") throw new Error("Обновить копию может только её владелец.");
+        let head = await writer.head();
+        let upload = await uploadAppText(current.storageOrigin, text, (size, checksum) => writer.issue(head, size, checksum));
+        return await writer.save(head, upload);
+      } finally { dispose(writer); }
     },
     directory: async () => (await mnemos()).writes.appDirectory(),
     object: name => ctx.exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,

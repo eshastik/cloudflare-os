@@ -23,7 +23,9 @@ const RECORD = "workspaceTask:";
 /** Репозиторий в запросе на задачу; name — имя для человека, из него служба делает папку. */
 export interface WorkspaceRepositoryRef { connection_id: string; repository_id: string; name?: string }
 /** Ответ контрольного API службы mnemos-workspace. */
-export interface RemoteTask { task_id: string; binding_id: string; project_id: string; branch: string; title: string; kind?: "code" | "gadget"; state: WorkspaceState; reason?: string; cost_usd: number; created_at: string; session_id?: string; repositories?: { connection_id: string; repository_id: string; dir: string }[] }
+export interface RemoteTask { task_id: string; binding_id: string; project_id: string; branch: string; title: string; kind?: "code" | "gadget"; state: WorkspaceState; reason?: string; cost_usd: number; created_at: string; session_id?: string; repositories?: { connection_id: string; repository_id: string; dir: string }[];
+  /** Задача гаджета над сохранённым узлом: restored — исходники его последней версии восстановлены. */
+  gadget_resource?: string; gadget_restored?: boolean }
 /** Проверенная службой сборка задачи гаджета (dist/gadget.json и два модуля). */
 export interface WorkspaceGadgetBuild {
   manifest: { name: string; description: string; collaborative: boolean; permissions: string[] };
@@ -44,10 +46,12 @@ export interface WorkspaceTaskView {
   merges?: WorkspaceTaskMerge[];
   /** Задача гаджета (ADR 0028): без репозитория, результат — сборка в dist. */
   kind?: "gadget";
+  /** Узел гаджета, который правит задача; исходники пишутся только в него. */
+  gadget_resource?: string;
 }
 export interface WorkspaceTaskDetails extends WorkspaceProgress { task: WorkspaceTaskView }
 export class WorkspaceError extends Error {
-  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready" | "disabled" | "not_gadget" | "no_build" | "bad_build", message: string) { super(message); }
+  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready" | "disabled" | "not_gadget" | "no_build" | "bad_build" | "sources", message: string) { super(message); }
 }
 
 /** Файл контекста беседы в рабочем месте (путь от /workspace). */
@@ -68,6 +72,11 @@ export function validWorkspaceFilePath(path: unknown): path is string {
   // Одиночный суррогат не кодируется в UTF-8 без замены: служба такое имя не примет.
   if (!name.isWellFormed()) return false;
   return new TextEncoder().encode(name).length <= MAX_ATTACHMENT_NAME_BYTES;
+}
+
+/** Имя узла гаджета — как проверяет служба: без пробелов, «/» и управляющих знаков. */
+export function validGadgetResource(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 255 && !/[\s/\\\p{Cc}]/u.test(value);
 }
 
 function toBase64(data: Uint8Array): string {
@@ -129,7 +138,7 @@ function humanGitError(error: unknown): unknown {
 
 export interface WorkspaceControl {
   /** repositories — до пяти, пусто — задача без репозитория; agent_name — короткое имя агента для ветки. */
-  create(input: { binding_id: string; agent_credential: string; project_id: string; repositories: WorkspaceRepositoryRef[]; agent_name?: string; prompt: string; title: string; kind?: "gadget" }): Promise<RemoteTask>;
+  create(input: { binding_id: string; agent_credential: string; project_id: string; repositories: WorkspaceRepositoryRef[]; agent_name?: string; prompt: string; title: string; kind?: "gadget"; gadget_resource?: string }): Promise<RemoteTask>;
   status(id: string): Promise<RemoteTask>;
   credential(id: string, token: string): Promise<void>;
   events(id: string): Promise<WorkspaceEvent[]>;
@@ -148,6 +157,8 @@ export interface WorkspaceControl {
   putFile(id: string, path: string, content: Uint8Array): Promise<void>;
   /** Сборка задачи гаджета; bindingId — привязка агента человека: чужую задачу служба не отдаёт. */
   gadgetBuild(id: string, bindingId: string): Promise<WorkspaceGadgetBuild>;
+  /** Сохранить исходники последней прочитанной сборки к узлу гаджета (после записи узла правами человека). */
+  saveGadgetSources(id: string, bindingId: string, resource: string): Promise<void>;
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -243,6 +254,19 @@ export class WorkspaceClient implements WorkspaceControl {
         : new WorkspaceError("stopped", "Работа над гаджетом уже остановлена."),
       new WorkspaceError("unavailable", "Сборка гаджета не прочитана из рабочего места."));
     return gadgetBuildOf(await response.json());
+  }
+  async saveGadgetSources(id: string, bindingId: string, resource: string): Promise<void> {
+    try {
+      await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/gadget/sources`, "POST", { binding_id: bindingId, resource }, undefined,
+        (code, message) => code === "no_sources" || code === "sources_too_large" ? new WorkspaceError("sources", message || "Исходники гаджета не сохранены.")
+          : new WorkspaceError("stopped", "Работа над гаджетом уже остановлена."),
+        new WorkspaceError("sources", "Исходники гаджета не прочитаны из рабочего места."),
+        new WorkspaceError("sources", "Служба рабочих мест не приняла файл гаджета для исходников."));
+    } catch (error) {
+      // 503 у этого вызова — хранилище исходников, а не занятые рабочие места.
+      if (error instanceof WorkspaceError && error.code === "unavailable") throw new WorkspaceError("sources", "Хранилище исходников гаджетов недоступно.");
+      throw error;
+    }
   }
   async interrupt(id: string) {
     await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/interrupt`, "POST", undefined, undefined,
@@ -459,10 +483,12 @@ export class WorkspaceTasks {
 
   /** Задача гаджета (ADR 0028): рабочее место без репозитория с шаблоном гаджета; проект — куда потом
    * сохранится узел приложения. Права задачи — как у работы с кодом: человек ∩ область агента. */
-  async startGadget(project: string, prompt: string, options: { agentName?: string } = {}): Promise<{ task: WorkspaceTaskView; scopeExtended: boolean }> {
+  async startGadget(project: string, prompt: string, options: { agentName?: string; resource?: string } = {}): Promise<{ task: WorkspaceTaskView; scopeExtended: boolean; restored: boolean }> {
     const control = this.#control();
     const body = typeof prompt === "string" ? prompt.trim() : "";
     if (!body || body.length > MAX_PROMPT || typeof project !== "string" || !project || project.length > 255) throw new WorkspaceError("invalid", "Опишите гаджет для агента.");
+    const resource = options.resource;
+    if (resource !== undefined && !validGadgetResource(resource)) throw new WorkspaceError("invalid", "Неизвестный файл гаджета.");
     const agentName = typeof options.agentName === "string" ? options.agentName.trim().slice(0, 40) : "";
     const { bindingId } = await this.#deps.agent();
     const human = this.#deps.human();
@@ -471,11 +497,23 @@ export class WorkspaceTasks {
     finally { human.dispose(); }
     const token = await this.#credential(bindingId);
     const title = body.split("\n").find(line => line.trim())!.trim().slice(0, 120);
-    const remote = await control.create({ binding_id: bindingId, agent_credential: token, project_id: project, repositories: [], ...(agentName ? { agent_name: agentName } : {}), prompt: body, title, kind: "gadget" });
-    const task: WorkspaceTaskView = { task_id: remote.task_id, project_id: project, connection_id: "", repository_id: "", repository_name: "", title, prompt: body, branch: remote.branch, state: remote.state, reason: remote.reason ?? "", cost_usd: remote.cost_usd, created_at: remote.created_at, finished_at: "", repositories: [], kind: "gadget" };
+    const remote = await control.create({ binding_id: bindingId, agent_credential: token, project_id: project, repositories: [], ...(agentName ? { agent_name: agentName } : {}), prompt: body, title, kind: "gadget", ...(resource ? { gadget_resource: resource } : {}) });
+    const task: WorkspaceTaskView = { task_id: remote.task_id, project_id: project, connection_id: "", repository_id: "", repository_name: "", title, prompt: body, branch: remote.branch, state: remote.state, reason: remote.reason ?? "", cost_usd: remote.cost_usd, created_at: remote.created_at, finished_at: "", repositories: [], kind: "gadget", ...(resource ? { gadget_resource: resource } : {}) };
     this.#save(task);
     await this.#arm();
-    return { task, scopeExtended };
+    // Служба сама говорит, нашлись ли исходники: восстановить можно только свои.
+    return { task, scopeExtended, restored: !!resource && remote.gadget_resource === resource && remote.gadget_restored === true };
+  }
+
+  /** Исходники последней прочитанной сборки → хранилище службы рядом с узлом resource. Задача над
+   * сохранённым узлом пишет исходники только в него. */
+  async saveGadgetSources(project: string, id: string, resource: string): Promise<void> {
+    const task = this.#own(project, id);
+    if (task.kind !== "gadget") throw new WorkspaceError("not_gadget", "Эта работа не делает гаджет.");
+    if (!validGadgetResource(resource) || (task.gadget_resource && task.gadget_resource !== resource)) throw new WorkspaceError("invalid", "Неизвестный файл гаджета.");
+    const { bindingId } = await this.#deps.agent();
+    await this.#control().saveGadgetSources(id, bindingId, resource);
+    if (!task.gadget_resource) this.#save({ ...(this.#get(id) ?? task), gadget_resource: resource });
   }
 
   /** Сборка задачи гаджета этого человека: только своя задача гаджета в этом проекте. */

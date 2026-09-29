@@ -6,7 +6,7 @@ import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
 import {AccountAlarms} from './account-alarms.ts';
-import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceError,WorkspaceTasks} from './workspace-tasks.ts';
+import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceError,WorkspaceTasks,validGadgetResource} from './workspace-tasks.ts';
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
 import { menuInboxCount, sourceErrorsFor } from "./account-description.ts";
@@ -43,7 +43,7 @@ import {ResourceMapCreation,type ResourceMapSetup} from "./resource-map-creation
 import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.ts";
 import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
-import {saveGadgetBuild} from "./gadget-bridge.ts";
+import {checkGadgetEditable,gadgetReceipts,saveGadgetBuild,validGadgetRequest} from "./gadget-bridge.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
@@ -173,8 +173,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#account().codeWorkRevert(project,task,mergeRequest);}
   async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#account().codeWorkPutFile(project,task,path,contentBase64);}
   /** Гаджет через агента кода (ADR 0028, этап 5): задача opencode и сохранение сборки личной версией узла. */
-  async codeWorkStartGadget(project:string,prompt:string){return this.#account().codeWorkStartGadget(project,prompt);}
-  async codeWorkSaveGadget(project:string,task:string,resource?:string){return this.#account().codeWorkSaveGadget(project,task,resource);}
+  async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){return this.#account().codeWorkStartGadget(project,prompt,options);}
+  async codeWorkSaveGadget(project:string,task:string,resource?:string,options?:{request?:string}){return this.#account().codeWorkSaveGadget(project,task,resource,options);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
     const nonce = await this.#account().prepareReconnect();
@@ -287,16 +287,36 @@ export class UserAccount extends DurableObject<Env> {
  async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#workspace().revert(project,task,mergeRequest);}
  /** Файл в /workspace/.mnemos задачи: контекст беседы или приложенный файл; задача должна принадлежать проекту. */
  async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#workspace().putFile(project,task,path,contentBase64);}
- async codeWorkStartGadget(project:string,prompt:string){const out=await this.#workspace().startGadget(project,prompt,{agentName:'chat'});return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended};}
- /** Сборка задачи гаджета → личная версия узла приложения правами человека. Ничего не публикуется. */
- async codeWorkSaveGadget(project:string,task:string,resource?:string){
-  if(resource!==undefined&&(typeof resource!=='string'||!resource||resource.length>255))throw new WorkspaceError('invalid','Неизвестный файл гаджета.');
+ /** resource — правка сохранённого узла: право правки проверяется правами человека ДО запуска, иначе
+  *  исходники узла попали бы в рабочее место того, кто узел только читает. */
+ async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){
+  const resource=options?.resource;
+  if(resource!==undefined){
+   if(!validGadgetResource(resource))throw new WorkspaceError('invalid','Неизвестный файл гаджета.');
+   const session=this.#account().session();
+   try{await checkGadgetEditable(session,project,resource);}
+   catch{throw new WorkspaceError('invalid','Прежний файл гаджета удалён, в конфликте или недоступен для правки: продолжить его нельзя, можно начать новый гаджет.');}
+   finally{session.dispose();}
+  }
+  const out=await this.#workspace().startGadget(project,prompt,{agentName:'chat',...(resource?{resource}:{})});
+  return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended,...(resource?{sourcesRestored:out.restored}:{})};
+ }
+ /** Сборка задачи гаджета → личная версия узла приложения правами человека, затем исходники сборки —
+  *  в хранилище службы рядом с узлом. Ничего не публикуется. */
+ async codeWorkSaveGadget(project:string,task:string,resource?:string,options?:{request?:string}){
+  if(resource!==undefined&&!validGadgetResource(resource))throw new WorkspaceError('invalid','Неизвестный файл гаджета.');
+  const request=options?.request;
+  if(request!==undefined&&!validGadgetRequest(request))throw new WorkspaceError('invalid','Неверная квитанция создания гаджета.');
   const build=await this.#workspace().gadgetBuild(project,task);
   const storageOrigin=this.#origins().storageOrigin;
   if(!storageOrigin)throw new Error('Хранилище Mnemos не настроено: сохранить гаджет нельзя.');
   const session=this.#account().session();
-  try{return await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource);}
+  let saved;
+  try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined);}
   finally{session.dispose();}
+  // Узел уже записан: отказ исходников не отменяет сохранения, агент беседы узнаёт причину.
+  const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
+  return {...saved,...sources};
  }
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];

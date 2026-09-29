@@ -118,6 +118,86 @@ describe("гаджет через агента кода", () => {
     expect(meta().gadgetWork?.taskId).toBe("g1");
   });
 
+  it("«поправь» после истечения задачи: новая задача продолжает исходники того же узла и пишет новую версию", async () => {
+    const {user, calls, setPages} = fakeUser();
+    let tasks = 0;
+    const starts: unknown[] = [];
+    user.codeWorkStartGadget = async (_a, _p, _prompt, options) => { starts.push(options); return {taskId: `g${++tasks}`, state: "starting", scopeExtended: false, ...(options?.resource ? {sourcesRestored: true} : {})}; };
+    const {host: h, meta} = host(user, chat());
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "Учёт отпусков", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(meta().gadgetWork?.gadget?.resource).toBe("node-7");
+    // Ключ агента не обновлялся — служба остановила задачу.
+    h.putChatMeta({...meta(), gadgetWork: {...meta().gadgetWork!, state: "stopped"}});
+    const steps: string[] = [];
+    h.emit = (_id, event) => { if (event.type === "toolStep") steps.push(event.step.title); };
+    setPages([{events: [role(2, "b")], state: "idle"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "Добавь поле «замещающий»", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(starts).toEqual([undefined, {resource: "node-7"}]);
+    expect(calls.filter(c => c[0] === "save").at(-1)).toEqual(["save", 3, "hr", "g2", "node-7"]);
+    expect(out.gadget).toMatchObject({saved: true, resource: "node-7", created: false});
+    expect(meta().gadgetWork).toMatchObject({taskId: "g2", gadget: {resource: "node-7", head: HEAD2}});
+    expect(steps).toContain("Продолжил прошлую версию гаджета");
+    expect(formatCodeWorkPrompt({projects: [], mode: "auto", gadget: {projectTitle: "Кадры", alive: false, title: "Отпуска"}}))
+      .toContain("продолжит сохранённые исходники и запишет новую версию того же файла");
+
+    // Другой гаджет — только по явной просьбе: новая задача без узла и новый узел.
+    setPages([{events: [role(3, "c")], state: "idle"}]);
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c3", prompt: "Сделай ещё опросник", gadget: true, newGadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(starts.at(-1)).toBeUndefined();
+    expect(calls.filter(c => c[0] === "save").at(-1)).toEqual(["save", 3, "hr", "g3", undefined]);
+  });
+
+  it("повтор создания после потерянного ответа: квитанция в беседе до вызова, узел один", async () => {
+    const {user, setPages} = fakeUser();
+    const nodes = new Map<string, string>();
+    const saves: unknown[][] = [];
+    let lose = true;
+    user.codeWorkSaveGadget = async (_a, _p, task, resource, options) => {
+      saves.push([task, resource, options]);
+      if (resource) return {resource, head: HEAD2, title: "Отпуска", collaborative: true, session: true, created: false};
+      const request = options!.request!;
+      if (!nodes.has(request)) nodes.set(request, `node-${nodes.size + 1}`);
+      if (lose) { lose = false; throw new Error("Network connection lost."); }
+      return {resource: nodes.get(request)!, head: HEAD1, title: "Отпуска", collaborative: true, session: true, created: true};
+    };
+    const {host: h, meta} = host(user, chat());
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    const first = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "Учёт отпусков", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(first.gadget?.saved).toBe(false);
+    const request = meta().gadgetWork?.gadgetRequest;
+    expect(request).toMatch(/^[0-9a-f-]{36}$/);
+    expect(meta().gadgetWork?.gadget).toBeUndefined();
+    // Задача успела истечь: новая задача, но квитанция та же.
+    h.putChatMeta({...meta(), gadgetWork: {...meta().gadgetWork!, state: "stopped"}});
+    setPages([{events: [role(2, "b")], state: "idle"}]);
+    const second = await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "Учёт отпусков", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(saves.map(s => (s[2] as {request?: string} | undefined)?.request)).toEqual([request, request]);
+    expect(nodes.size).toBe(1);
+    expect(second.gadget).toMatchObject({saved: true, resource: "node-1"});
+    expect(meta().gadgetWork?.gadget?.resource).toBe("node-1");
+    expect(meta().gadgetWork?.gadgetRequest).toBeUndefined();
+    // Квитанция записана в беседу раньше, чем ушёл вызов сохранения.
+    let seenBeforeCall: string | undefined;
+    const {user: u2, setPages: pages2} = fakeUser();
+    const {host: h2, meta: meta2} = host(u2, chat());
+    u2.codeWorkSaveGadget = async (_a, _p, _t, _r, options) => { seenBeforeCall = meta2().gadgetWork?.gadgetRequest; expect(options?.request).toBe(seenBeforeCall); throw new Error("нет ответа"); };
+    pages2([{events: [role(1, "a")], state: "idle"}]);
+    await runChatCodeWork(h2, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(seenBeforeCall).toBeTruthy();
+  });
+
+  it("исходники не сохранились — агент беседы узнаёт, что следующая правка начнётся с шаблона", async () => {
+    const {user, setPages} = fakeUser();
+    user.codeWorkSaveGadget = async () => ({resource: "node-7", head: HEAD1, title: "Отпуска", collaborative: false, session: false, created: true,
+      sourcesKept: false, sourcesNote: "исходники гаджета больше 8 МиБ в архиве"});
+    const {host: h} = host(user, chat());
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.gadget).toMatchObject({saved: true, sourcesNote: "исходники гаджета больше 8 МиБ в архиве"});
+    expect(formatCodeWorkResult(out)).toContain("Следующая правка начнётся с чистого шаблона");
+  });
+
   it("подсказка агенту: когда звать агента кода и что спросить у человека", () => {
     const text = formatCodeWorkPrompt({projects: [], mode: "auto"});
     expect(text).toContain("gadgetWork");

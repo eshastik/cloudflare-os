@@ -3,6 +3,7 @@ import { CaretDown, CaretLeft, CaretRight, Check, MagnifyingGlass } from '@phosp
 import type { RpcStub } from 'capnweb'
 import type { GatekeeperNativeDocumentWriteSelector } from '@gadgets/workshop-shared/gatekeeper'
 import type { MnemosNodeFormat } from '@gadgets/workshop-shared/native-document'
+import type { MnemosAppRelease } from '@gadgets/workshop-shared/gadget-app'
 import type { DocumentBinding } from './DocumentStatus'
 import { plural } from './versionDiff'
 import { useAuthenticatedApi } from './AuthContext'
@@ -130,13 +131,22 @@ function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabl
   </div>
 }
 
+/** Подпись опубликованной версии для копий: «29 сентября, 14:05». */
+function publishedAt(release: MnemosAppRelease): string {
+  const at = Date.parse(release.publishedAt)
+  return Number.isFinite(at) ? new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(at) : ''
+}
+
 /**
  * «Поделиться» документом по макету Share: кто видит проект одной строкой (меняется на странице проекта), кто имеет доступ, список людей
  * организации для приглашения (недавние, свой отдел, остальные отделы свёрнуты) и одна кнопка «Пригласить N».
  * Всё сохраняется сразу и перечитывается само: без «Применить» и «Перечитать».
  */
-export default function DocumentSharePanel({ selector, binding, format, documentName, onClose }: {
+export default function DocumentSharePanel({ selector, binding, format, documentName, onClose, copies }: {
   selector: Selector | null; binding: DocumentBinding | null; format: MnemosNodeFormat; documentName: string | null; onClose(): void
+  /** Приложение без совместной работы (ADR 0028, этап 3): каждый получатель получает свою копию, право —
+   *  только чтение опубликованной версии. release — версия, которую получат копии; null — не опубликовано. */
+  copies?: { release: MnemosAppRelease | null }
 }) {
   const [people, setPeople] = useState<SharePerson[] | null>(null)
   const [units, setUnits] = useState<ShareUnit[]>([]), [me, setMe] = useState(''), [recent, setRecent] = useState<string[]>(() => readRecent())
@@ -145,7 +155,9 @@ export default function DocumentSharePanel({ selector, binding, format, document
   const [level, setLevel] = useState<{ name: string; level: Level; pending: Level | null; unit?: string } | null>(null)
   const [projectHref, setProjectHref] = useState('')
   const { authenticatedApi, currentUser } = useAuthenticatedApi()
-  const [query, setQuery] = useState(''), [right, setRight] = useState<Right>('write'), [picked, setPicked] = useState<string[]>([])
+  const [query, setQuery] = useState(''), [chosenRight, setRight] = useState<Right>('write'), [picked, setPicked] = useState<string[]>([])
+  // Копию получает читающий: код оригинала получатель не правит, у него свой узел.
+  const right: Right = copies ? 'read' : chosenRight
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const alive = useRef(true)
@@ -215,7 +227,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
     const names = chosen.map(p => p.name || 'Коллега')
     const who = names.length === 1 ? names[0]! : names.length === 2 ? `${names[0]} и ${names[1]}` : `${names[0]} и ещё ${plural(names.length - 1, 'человек', 'человека', 'человек')}`
     const ok = await change(chosen.map(person => ({ person, mode: right })),
-      `${who} ${chosen.length === 1 ? 'получит' : 'получат'} уведомление во «Входящих» и письмо.${only.length ? ` Только этот документ, без папки проекта: ${only.map(p => p.name || 'коллега').join(', ')}.` : ''}`)
+      `${who} ${chosen.length === 1 ? 'получит' : 'получат'} уведомление во «Входящих» и письмо.${copies ? ` Открыв приложение, ${chosen.length === 1 ? 'получит свою копию' : 'каждый получит свою копию'} с пустыми данными.` : ''}${!copies && only.length ? ` Только этот документ, без папки проекта: ${only.map(p => p.name || 'коллега').join(', ')}.` : ''}`)
     if (ok && alive.current) { rememberRecent(chosen.map(p => p.id)); setRecent(readRecent()); setPicked([]); setQuery('') }
   }
   // Ссылка на раздел «Кто видит» страницы проекта: уровень доступа проекта меняется там, осознанно.
@@ -274,15 +286,25 @@ export default function DocumentSharePanel({ selector, binding, format, document
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 pb-[26px] text-[14px] text-kumo-default sm:flex-initial sm:px-7">
       {!binding && <p className="m-0 text-kumo-subtle">Документ ещё не сохранён в проект. Поделиться можно, когда он сохранится.</p>}
-      {binding && owner === false && <p className="m-0 text-kumo-subtle">С вами поделились этим документом.{documentOnly ? ' Вам открыт только он, без папки проекта.' : ''} Приглашать других может его владелец.</p>}
+      {binding && owner === false && (copies
+        ? <p className="m-0 text-kumo-subtle">С вами поделились этим приложением. Делиться им может его автор; своей копией вы можете поделиться, открыв её.</p>
+        : <p className="m-0 text-kumo-subtle">С вами поделились этим документом.{documentOnly ? ' Вам открыт только он, без папки проекта.' : ''} Приглашать других может его владелец.</p>)}
       {binding && owner && <>
         {level && <p data-project-line="" className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-[18px] text-kumo-subtle">
           <span>{projectLine(level.level, level.name, units.find(u => u.id === level.unit)?.name ?? '', level.pending)}</span>
           {projectHref && <a href={projectHref} className="text-kumo-link hover:underline">Изменить доступ к проекту</a>}
         </p>}
 
+        {copies && <section data-share-copies="" aria-label="Как делится приложение" className="flex flex-col gap-1.5">
+          <p className="m-0 text-[14px] leading-5">Каждый получит свою копию: тот же код и свою пустую базу. Данные автора и получателей не смешиваются.</p>
+          <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle">{copies.release
+            ? `Копии получают версию, опубликованную ${publishedAt(copies.release)}. Следующие публикации придут получателям предложением обновиться — без их согласия копия не меняется.`
+            : 'Опубликованной версии пока нет: получатели смогут создать копию после публикации. Опубликуйте приложение кнопкой в шапке.'}</p>
+          <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle">Отделу или всей организации — через доступ к проекту: каждый, кто откроет приложение, получит свою копию.</p>
+        </section>}
+
         <section aria-label="Имеют доступ" className="flex flex-col">
-          <h3 className="m-0 pb-1 text-[15px] leading-5 font-semibold">Имеют доступ</h3>
+          <h3 className="m-0 pb-1 text-[15px] leading-5 font-semibold">{copies ? 'Поделились с' : 'Имеют доступ'}</h3>
           <div className="flex items-center gap-3 border-b border-kumo-fill py-2.5"><MnemosAvatar name={myName || 'Вы'} id={me || 'me'} /><span className="min-w-0 flex-1 text-[15px]">Вы</span><span className="px-2.5 text-[14px] text-kumo-subtle">владелец</span></div>
           {withAccess.map(p => <div key={p.id} data-share-person="" className="group flex items-center gap-3 border-b border-kumo-fill py-2.5 last:border-b-0">
             <MnemosAvatar name={p.name || 'Коллега'} id={p.id} />
@@ -290,14 +312,16 @@ export default function DocumentSharePanel({ selector, binding, format, document
               <span className="block truncate text-[15px]">{p.name || 'Коллега'}</span>
               {documentOnlyWith(p, p.mode === 'write' ? 'write' : 'read') && <span className="block truncate text-[13px] leading-[18px] text-kumo-subtle">только этот документ</span>}
             </span>
-            <button type="button" disabled={busy} onClick={() => { void change([{ person: p, mode: '' }], `${p.name || 'Коллега'} больше не видит документ.`) }}
+            <button type="button" disabled={busy} onClick={() => { void change([{ person: p, mode: '' }], copies ? `${p.name || 'Коллега'} больше не получит обновлений. Сделанная копия останется у него.` : `${p.name || 'Коллега'} больше не видит документ.`) }}
               className="h-10 cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[13px] text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-kumo-danger focus-visible:opacity-100 disabled:cursor-not-allowed sm:h-8 [@media(hover:none)]:opacity-100">Убрать</button>
-            <RightMenu person={p} disabled={busy} onChange={mode => { void change([{ person: p, mode }], `${p.name || 'Коллега'} теперь ${mode === 'write' ? 'может править' : 'может смотреть'}.`) }} />
+            {copies
+              ? <span className="px-2.5 text-[14px] text-kumo-subtle">{p.mode === 'write' ? 'может править код' : 'своя копия'}</span>
+              : <RightMenu person={p} disabled={busy} onChange={mode => { void change([{ person: p, mode }], `${p.name || 'Коллега'} теперь ${mode === 'write' ? 'может править' : 'может смотреть'}.`) }} />}
           </div>)}
         </section>
 
         <section aria-label="Пригласить" className="flex flex-col gap-2.5">
-          <h3 className="m-0 text-[15px] leading-5 font-semibold">Пригласить поработать вместе</h3>
+          <h3 className="m-0 text-[15px] leading-5 font-semibold">{copies ? 'Поделиться с коллегами' : 'Пригласить поработать вместе'}</h3>
           <label className="relative block">
             <span className="sr-only">Найти коллегу</span>
             <MagnifyingGlass size={16} aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-kumo-subtle" />
@@ -331,13 +355,13 @@ export default function DocumentSharePanel({ selector, binding, format, document
       {notice && <p role="status" className="m-0">{notice}</p>}
     </div>
     {pickedPeople.length > 0 && <footer className="flex shrink-0 flex-wrap items-center gap-3 border-t border-kumo-fill bg-kumo-overlay px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))] sm:rounded-b-[20px] sm:px-7 sm:py-3.5">
-      <div role="radiogroup" aria-label="Право приглашённых" className="flex w-full rounded-full bg-kumo-tint p-0.5 sm:inline-flex sm:w-auto">
+      {!copies && <div role="radiogroup" aria-label="Право приглашённых" className="flex w-full rounded-full bg-kumo-tint p-0.5 sm:inline-flex sm:w-auto">
         {RIGHTS.map(r => <button key={r.id} type="button" role="radio" aria-checked={right === r.id} disabled={busy} onClick={() => setRight(r.id)}
           className={`h-10 flex-1 cursor-pointer rounded-full border-0 px-3 text-[13px] sm:h-8 sm:flex-initial transition-colors ${right === r.id ? 'bg-kumo-overlay font-medium text-kumo-default shadow-[0_1px_3px_rgba(24,32,28,0.12)]' : 'bg-transparent text-kumo-subtle hover:text-kumo-default'}`}>{r.title}</button>)}
-      </div>
+      </div>}
       <button type="button" disabled={busy} onClick={() => setPicked([])} className="h-10 cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-kumo-subtle hover:text-kumo-default sm:h-8 sm:px-2">Сбросить</button>
       <button type="button" data-share-invite="" disabled={busy} onClick={() => { void invite() }}
-        className="ml-auto inline-flex h-10 flex-1 justify-center cursor-pointer sm:h-[38px] sm:flex-initial items-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] font-medium text-white hover:bg-kumo-brand-hover disabled:cursor-wait disabled:opacity-60">{busy ? 'Приглашаю…' : `Пригласить ${pickedPeople.length}`}</button>
+        className="ml-auto inline-flex h-10 flex-1 justify-center cursor-pointer sm:h-[38px] sm:flex-initial items-center rounded-full border-0 bg-kumo-brand px-5 text-[14px] font-medium text-white hover:bg-kumo-brand-hover disabled:cursor-wait disabled:opacity-60">{busy ? (copies ? 'Отправляю…' : 'Приглашаю…') : copies ? `Поделиться (${pickedPeople.length})` : `Пригласить ${pickedPeople.length}`}</button>
     </footer>}
   </aside>
 }

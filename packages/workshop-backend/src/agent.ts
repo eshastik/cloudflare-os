@@ -389,9 +389,9 @@ export interface AgentHooks {
   describeCodeWork?(chatId: number, initiator: AiChatAuthorInfo): Promise<CodeWorkInfo | null>;
   // Один ход работы с кодом: шаги идут через onStep, текст агента кода — через onText.
   // gadget — работа над гаджетом (ADR 0028): задача агента кода с шаблоном гаджета, сборка
-  // сохраняется личной версией узла приложения в проекте.
+  // сохраняется личной версией узла приложения в проекте. newGadget — новый гаджет вместо правки прежнего.
   runCodeWork?(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean; newGadget?: boolean;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput>;
 }
@@ -689,7 +689,9 @@ export function formatCodeWorkPrompt(info: CodeWorkInfo): string {
   if (info.gadget) {
     lines.push("", info.gadget.alive
       ? `Работа над гаджетом${info.gadget.title ? ` «${info.gadget.title}»` : ""} для проекта «${info.gadget.projectTitle}» идёт; gadgetWork продолжит её и сохранит новую версию того же файла.`
-      : `Работа над гаджетом${info.gadget.title ? ` «${info.gadget.title}»` : ""} завершена; новый вызов gadgetWork начнёт новую работу и новый файл.`);
+      : info.gadget.title
+        ? `Гаджет «${info.gadget.title}» для проекта «${info.gadget.projectTitle}» сохранён; просьба поправить его — снова gadgetWork: агент кода продолжит сохранённые исходники и запишет новую версию того же файла. Другой, новый гаджет — gadgetWork с newGadget: true.`
+        : `Работа над гаджетом для проекта «${info.gadget.projectTitle}» завершена, файл гаджета не сохранён; новый вызов gadgetWork начнёт работу заново.`);
   }
   if (info.active) {
     lines.push("", info.active.alive
@@ -3021,7 +3023,7 @@ export async function runAgent(
 
   if (codeWorkInfo && codeWorkToolsAvailable(codeWorkInfo) && hooks.runCodeWork) {
     let runCodeWork = hooks.runCodeWork.bind(hooks);
-    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean; gadget?: boolean}) => {
+    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean; gadget?: boolean; newGadget?: boolean}) => {
       try {
         let output = await runCodeWork(chatId, initiator, {
           toolCallId, ...request, signal: abortSignal,
@@ -3051,8 +3053,9 @@ export async function runAgent(
       parameters: Type.Object({
         task: Type.String({description: "Какое приложение сделать или что в нём поправить: назначение, экраны, данные, совместное ли оно и кто участники."}),
         projectId: Type.Optional(Type.String({description: "projectId проекта, куда сохранить гаджет; без него — первый проект беседы."})),
+        newGadget: Type.Optional(Type.Boolean({description: "true — человек просит ДРУГОЙ, новый гаджет. Без него gadgetWork правит гаджет, над которым уже работали в этой беседе."})),
       }),
-      execute: (toolCallId, {task, projectId}) => codeTurn(toolCallId, {prompt: task, ...(projectId ? {projectId} : {}), gadget: true}),
+      execute: (toolCallId, {task, projectId, newGadget}) => codeTurn(toolCallId, {prompt: task, ...(projectId ? {projectId} : {}), gadget: true, ...(newGadget === true ? {newGadget: true} : {})}),
     });
     tools.codeAsk = defineTool({
       name: "codeAsk",

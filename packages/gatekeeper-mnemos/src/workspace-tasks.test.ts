@@ -15,7 +15,12 @@ function remote(state: RemoteTask["state"], extra: Partial<RemoteTask> = {}): Re
 
 class FakeControl implements WorkspaceControl {
   calls: unknown[][] = []; state: RemoteTask["state"] = "running"; missing = false;
-  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })) }); }
+  /** Исходники каких узлов есть у службы (ответ gadget_restored). */
+  sources = new Set<string>();
+  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })),
+    ...(input.gadget_resource ? { gadget_resource: input.gadget_resource, gadget_restored: this.sources.has(input.gadget_resource) } : {}) }); }
+  sourcesError: WorkspaceError | null = null;
+  async saveGadgetSources(id: string, bindingId: string, resource: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
   interruptError: WorkspaceError | null = null;
   async interrupt(id: string) { this.calls.push(["interrupt", id]); if (this.interruptError) throw this.interruptError; }
   async accept(id: string) { this.calls.push(["markAccepted", id]); return { repositories: [] }; }
@@ -566,4 +571,42 @@ test("Сборку гаджета отдаёт только своя задач�
   await code.tasks.start("p", "c", "1", "задача");
   await assert.rejects(code.tasks.gadgetBuild("p", TASK), (e: WorkspaceError) => e.code === "not_gadget");
   assert.equal(code.control.calls.some(c => c[0] === "gadgetBuild"), false, "служба не спрашивается");
+});
+
+test("Задача гаджета над сохранённым узлом: служба восстанавливает исходники, пишутся они только в этот узел", async () => {
+  const { control, tasks } = setup();
+  const first = await tasks.startGadget("p", "гаджет");
+  assert.equal(first.restored, false);
+  assert.equal("gadget_resource" in (control.calls.find(c => c[0] === "create")![1] as object), false, "новый гаджет — без узла");
+  await tasks.saveGadgetSources("p", TASK, "node-7");
+  assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7"]);
+  await assert.rejects(tasks.saveGadgetSources("p", TASK, "node-8"), (e: WorkspaceError) => e.code === "invalid", "первый узел закрепляется за задачей");
+
+  const again = await tasks.startGadget("p", "поправь", { resource: "node-7" });
+  assert.equal(again.restored, true);
+  assert.equal((control.calls.filter(c => c[0] === "create").at(-1)![1] as Record<string, unknown>).gadget_resource, "node-7");
+  assert.equal(again.task.gadget_resource, "node-7");
+  const missing = await tasks.startGadget("p", "поправь", { resource: "node-9" });
+  assert.equal(missing.restored, false, "исходников нет — служба начала с шаблона");
+  for (const bad of ["", "a/b", "a b", "x".repeat(256)]) {
+    await assert.rejects(tasks.startGadget("p", "поправь", { resource: bad }), (e: WorkspaceError) => e.code === "invalid", bad);
+  }
+  const code = setup();
+  await code.tasks.start("p", "c", "1", "задача");
+  await assert.rejects(code.tasks.saveGadgetSources("p", TASK, "node-7"), (e: WorkspaceError) => e.code === "not_gadget");
+  await assert.rejects(code.tasks.saveGadgetSources("other", TASK, "node-7"), (e: WorkspaceError) => e.code === "not_found");
+});
+
+test("Клиент службы: исходники сохраняются с привязкой агента, отказы — словами", async () => {
+  const seen: { url: string; body: unknown }[] = [];
+  const make = (respond: () => Response) => new WorkspaceClient("https://ws.example", "service-token", (async (url: string, init: RequestInit) => {
+    seen.push({ url, body: JSON.parse(String(init.body)) }); return respond();
+  }) as unknown as typeof fetch);
+  await make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "bind/1", "node-7");
+  assert.deepEqual(seen[0], { url: `https://ws.example/v1/workspace/tasks/${TASK}/gadget/sources`, body: { binding_id: "bind/1", resource: "node-7" } });
+  await assert.rejects(make(() => Response.json({ error: "sources_too_large", message: "исходники гаджета больше 8 МиБ в архиве" }, { status: 409 })).saveGadgetSources(TASK, "b", "n"),
+    (e: WorkspaceError) => e.code === "sources" && e.message.includes("8 МиБ"));
+  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).saveGadgetSources(TASK, "b", "n"),
+    (e: WorkspaceError) => e.code === "sources" && e.message.includes("Хранилище исходников"));
+  await assert.rejects(make(() => new Response("", { status: 404 })).saveGadgetSources(TASK, "b", "n"), (e: WorkspaceError) => e.code === "not_found");
 });

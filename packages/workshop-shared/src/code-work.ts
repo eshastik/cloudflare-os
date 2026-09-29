@@ -40,15 +40,21 @@ export type ChatCodeWork = {
   review?: {outcome: "draft" | "awaiting_approval" | "accepted" | "rejected" | "no_approver" | "reverted"; note?: string; responsible?: string[];
     /** Номер запроса на слияние в Mnemos: нужен для «Вернуть как было». Человеку не показывается. */
     mergeRequest?: number};
-  /** Работа над гаджетом (ADR 0028): узел приложения, в который сохраняется сборка каждого хода. */
+  /** Работа над гаджетом (ADR 0028): узел приложения, в который сохраняется сборка каждого хода.
+   *  Переживает задачу: следующая работа над гаджетом продолжает этот узел и его исходники. */
   gadget?: {resource: string; title: string; head: string};
+  /** Квитанция создания узла гаджета: записана до вызова, пока узла ещё нет. Повтор с ней после
+   *  потерянного ответа отдаёт тот же узел, а не создаёт второй. */
+  gadgetRequest?: string;
 };
 
 /** Итог сохранения сборки гаджета на этом ходе: узел в проекте или почему не сохранён. */
 export type GadgetWorkResult =
   | {saved: true; accountId: number; projectId: string; resource: string; title: string; collaborative: boolean; created: boolean;
     /** Адрес «Открыть гаджет» в оболочке; нет — установка не знает свой публичный адрес. */
-    link?: string}
+    link?: string;
+    /** Исходники не сохранены рядом с узлом (почему): следующая правка начнётся с чистого шаблона. */
+    sourcesNote?: string}
   | {saved: false; error: string};
 
 export type AgentStepKind =
@@ -204,6 +210,9 @@ function gadgetResultLines(result: GadgetWorkResult, projectTitle: string): stri
       : `Скажи, что открыть гаджет можно из проекта «${projectTitle}» в Mnemos.`,
     "Скажи, что гаджет открывается в предпросмотре, а опубликовать его — кнопка «Опубликовать» в шапке файла. Сам ничего не публикуй. Правки — снова через gadgetWork: выйдет новая версия того же файла.",
   ];
+  if (result.sourcesNote) {
+    lines.push(`Исходники гаджета не сохранены: ${result.sourcesNote}. Следующая правка начнётся с чистого шаблона — скажи об этом человеку, если он попросит правку.`);
+  }
   return lines;
 }
 

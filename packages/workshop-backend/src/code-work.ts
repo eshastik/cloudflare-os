@@ -8,7 +8,9 @@ import {CodeWorkTimeline, type CodeWorkEvent} from "./code-work-timeline.js";
 /** Доступ к рабочему месту через подключённую память человека (Mnemos). */
 export interface CodeWorkBackend {
   /** target — репозиторий работы с кодом; у работы над гаджетом его нет. */
-  start(project: string, target: CodeWorkTarget | undefined, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;
+  start(project: string, target: CodeWorkTarget | undefined, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean;
+    /** Работа над сохранённым гаджетом: исходники прошлой версии восстановлены (false — не нашлись). */
+    sourcesRestored?: boolean}>;
   message(project: string, taskId: string, text: string): Promise<void>;
   events(project: string, taskId: string, after: number, waitMs: number): Promise<{events: CodeWorkEvent[]; next: number; state: CodeWorkState}>;
   abort(project: string, taskId: string): Promise<void>;
@@ -92,6 +94,13 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
     if (started.scopeExtended) {
       extra.push({id: "project-scope", kind: "project", status: "done", title: `Подключил проект «${turn.projectTitle}»`,
         detail: "Проект добавлен в область агента; права агента не шире ваших.", resource: {kind: "project", name: turn.projectTitle}});
+      turn.onStep(extra[extra.length - 1]);
+    }
+    if (turn.gadget && started.sourcesRestored !== undefined) {
+      extra.push(started.sourcesRestored
+        ? {id: "gadget-sources", kind: "project", status: "done", title: "Продолжил прошлую версию гаджета"}
+        : {id: "gadget-sources", kind: "project", status: "error", title: "Исходники прошлой версии гаджета не нашлись",
+          detail: "Агент кода собирает гаджет заново; он сохранится новой версией того же файла."});
       turn.onStep(extra[extra.length - 1]);
     }
   }

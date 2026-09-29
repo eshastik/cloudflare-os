@@ -1089,7 +1089,9 @@ export interface MailSendSource extends WorkerEntrypoint {
 export type CodeWorkReview = {outcome: "accepted" | "awaiting_approval" | "rejected" | "no_approver" | "reverted"; note: string; mergeRequest?: number};
 export type CodeWorkTarget = {connectionId: string; repositoryId: string; repositoryName: string};
 /** Сборка гаджета, сохранённая личной версией узла: head — голова личной ветки после записи. */
-export type CodeWorkSavedGadget = {resource: string; head: string; title: string; collaborative: boolean; session: boolean; created: boolean};
+export type CodeWorkSavedGadget = {resource: string; head: string; title: string; collaborative: boolean; session: boolean; created: boolean;
+  /** Исходники сборки сохранены рядом с узлом: следующая работа над ним продолжит их. false — почему нет, в sourcesNote. */
+  sourcesKept?: boolean; sourcesNote?: string};
 export type CodeWorkState = "starting" | "running" | "idle" | "stopped" | "failed";
 
 export interface GatekeeperUser extends WorkerEntrypoint {
@@ -1210,10 +1212,13 @@ export interface GatekeeperUser extends WorkerEntrypoint {
    * до 10 МиБ на файл. Отказ, если задача ещё запускается или уже остановлена. */
   codeWorkPutFile?(project: string, taskId: string, path: string, contentBase64: string): Promise<void>;
   /** Гаджет через агента кода (ADR 0028): рабочее место без репозитория с шаблоном гаджета. */
-  codeWorkStartGadget?(project: string, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;
+  /** options.resource — правка уже сохранённого узла гаджета: право правки проверяется правами человека,
+   * служба восстанавливает исходники его последней версии; sourcesRestored=false — их нет, задача начала с шаблона. */
+  codeWorkStartGadget?(project: string, prompt: string, options?: {resource?: string}): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean; sourcesRestored?: boolean}>;
   /** Сборка задачи гаджета → личная версия узла приложения в проекте правами человека. resource — узел,
-   * созданный прошлым сохранением этой работы: тогда новая версия того же узла. Ничего не публикуется. */
-  codeWorkSaveGadget?(project: string, taskId: string, resource?: string): Promise<CodeWorkSavedGadget>;
+   * созданный прошлым сохранением этой работы: тогда новая версия того же узла. Ничего не публикуется.
+   * options.request — квитанция создания: повтор с той же квитанцией после потерянного ответа не создаёт второй узел. */
+  codeWorkSaveGadget?(project: string, taskId: string, resource?: string, options?: {request?: string}): Promise<CodeWorkSavedGadget>;
 
   /** List safe identifiers for this human's enabled WebDAV connections. */
   listDriveImportAccounts?(): Promise<Array<{

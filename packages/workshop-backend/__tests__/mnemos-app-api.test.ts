@@ -8,8 +8,11 @@ import {
   type GadgetAppCaller, type GadgetAppDocument,
 } from "@gadgets/workshop-shared/gadget-app";
 import type { GatekeeperAppAccess } from "@gadgets/workshop-shared/gatekeeper";
-import { APP_ACCESS_CLOSED, APP_CHECK_MS, APP_CHECK_TIMEOUT_MS, APP_EDIT_REQUIRED, APP_VERSION_UNAVAILABLE, openMnemosAppConnection, type AppObjectPort, type MnemosAppPorts } from "../src/mnemos-app-api";
-import { APP_PUBLISHED_ONLY, intersectDirectory, mnemosAppObjectName, type DeployOptions } from "../src/mnemos-app";
+import {
+  APP_ACCESS_CLOSED, APP_CHECK_MS, APP_CHECK_TIMEOUT_MS, APP_COPY_REQUIRED, APP_EDIT_REQUIRED, APP_VERSION_UNAVAILABLE, copyNodeName, openMnemosAppConnection,
+  type AppObjectPort, type MnemosAppPorts,
+} from "../src/mnemos-app-api";
+import { APP_PUBLISHED_ONLY, intersectDirectory, mnemosAppObjectName, mnemosAppReleaseName, type DeployOptions } from "../src/mnemos-app";
 
 const DOC: GadgetAppDocument = {
   manifest: { title: "Список дел", description: "Общий список", collaborative: true, session: true, formatVersion: 1, permissions: ["directory"] },
@@ -94,7 +97,10 @@ async function harness(options: { access?: GatekeeperAppAccess["access"]; deploy
   let identity = { principal: "anna", installation: "https://mnemos.example", project: "project-canonical", node: "node-canonical" };
   const calls = { access: 0, abort: [] as string[], deploy: [] as { version: string; by: string; options: DeployOptions }[], sessions: [] as GadgetAppCaller[], methods: [] as string[], keys: [] as string[] };
   let deployed = options.deployed ? { version: options.deployed, sha256: sha, title: "Список дел", collaborative: doc.manifest.collaborative, session: doc.manifest.session, permissions: options.permissions ?? ["directory"], deployedAt: "", deployedBy: "owner" } : null;
-  const object: AppObjectPort = {
+  const releases: { version: string; author: string }[] = [];
+  const object = {
+    release: async () => null,
+    setRelease: async (version: string, sha256: string, _text: string, publishedAt: string, authorName: string) => { releases.push({ version, author: authorName }); return { version, sha256, title: "", publishedAt, authorName, recordedAt: "" }; },
     state: async () => ({ deployed }),
     deploy: async (version, sha256, _text, by, deployOptions) => {
       calls.deploy.push({ version, by, options: deployOptions });
@@ -106,7 +112,7 @@ async function harness(options: { access?: GatekeeperAppAccess["access"]; deploy
       calls.sessions.push(caller);
       return { add: async (x: string) => { calls.methods.push(`add:${x}`); return x; }, whoami: async () => caller.principal };
     },
-  };
+  } as unknown as AppObjectPort;
   const ports: MnemosAppPorts = {
     access: async () => {
       calls.access++;
@@ -117,6 +123,10 @@ async function harness(options: { access?: GatekeeperAppAccess["access"]; deploy
     version: async version => { if (!versionReadable) throw new Error("403"); return { sha256: version === "bad" ? "0".repeat(64) : sha, contentType: "application/vnd.cloudflareos.app+json" }; },
     text: async version => { if (!versionReadable) throw new Error("403"); return { text, sha256: version === "bad" ? "0".repeat(64) : sha, contentType: "application/vnd.cloudflareos.app+json" }; },
     latestPublished: async () => options.published === undefined ? "event-2" : options.published,
+    publishedHead: async () => { const id = options.published === undefined ? "event-2" : options.published; return id ? { id, recordedAt: "2026-09-29T10:00:00Z", actor: "anna" } : null; },
+    node: () => { throw new Error("не нужен"); },
+    createApp: async () => { throw new Error("не нужен"); },
+    saveApp: async () => { throw new Error("не нужен"); },
     directory: async () => ({ people: [{ id: "boris", name: "Борис" }], departments: [{ id: "u1", name: "Продажи", members: [{ id: "boris", name: "Борис" }] }] }),
     object: name => { calls.keys.push(name); return object; },
     profileName: async () => "Профиль",
@@ -130,7 +140,7 @@ async function harness(options: { access?: GatekeeperAppAccess["access"]; deploy
     for (const timer of timers.filter(t => !t.cancelled && t.at <= clock.now)) { timer.cancelled = true; timer.run(); }
     for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0));
   };
-  return { ports, calls, text, sha, clock, advance, setAccess: (value: typeof access) => { access = value; }, setVersionReadable: (value: boolean) => { versionReadable = value; },
+  return { ports, calls, text, sha, clock, advance, releases, setAccess: (value: typeof access) => { access = value; }, setVersionReadable: (value: boolean) => { versionReadable = value; },
     setIdentity: (change: Partial<typeof identity>) => { identity = { ...identity, ...change }; } };
 }
 
@@ -251,12 +261,45 @@ describe("связь с экземпляром", () => {
     await expect((await openMnemosAppConnection(onlyPrivate.ports, false)).deploy(PRIVATE)).rejects.toThrow(APP_PUBLISHED_ONLY);
   });
 
-  it("свой экземпляр: любая доступная версия личного приложения, совместное — отказ", async () => {
-    const solo = await harness({ doc: SOLO, access: "read" });
+  it("свой экземпляр: с правом правки — любая доступная версия личного приложения, совместное — отказ", async () => {
+    const solo = await harness({ doc: SOLO, access: "edit" });
     const mine = await openMnemosAppConnection(solo.ports, true);
     await mine.deploy(PRIVATE);
     expect(solo.calls.deploy).toEqual([{ version: PRIVATE, by: "anna", options: { kind: "personal", onlyIfEmpty: false, directoryScope: null } }]);
     const shared = await harness();
     await expect((await openMnemosAppConnection(shared.ports, true)).deploy("event-2")).rejects.toThrow(/общим экземпляром/);
+  });
+
+  it("свой экземпляр получателя без права правки: только последняя опубликованная версия, иначе — своя копия", async () => {
+    const solo = await harness({ doc: SOLO, access: "read", published: "event-2" });
+    const reader = await openMnemosAppConnection(solo.ports, true);
+    await expect(reader.deploy(PRIVATE)).rejects.toThrow(APP_COPY_REQUIRED);
+    await expect(reader.deploy("event-1")).rejects.toThrow(APP_COPY_REQUIRED);
+    expect(solo.calls.deploy).toEqual([]);
+    await reader.deploy("event-2");
+    expect(solo.calls.deploy.map(d => d.version)).toEqual(["event-2"]);
+  });
+
+  it("публикация автора в своём экземпляре становится версией для копий; личная версия — нет", async () => {
+    const solo = await harness({ doc: SOLO, access: "edit", published: "event-2" });
+    const author = await openMnemosAppConnection(solo.ports, true);
+    await author.deploy(PRIVATE);
+    expect(solo.releases).toEqual([]);
+    await author.deploy("event-2");
+    expect(solo.releases).toEqual([{ version: "event-2", author: "Анна" }]);
+    expect(solo.calls.keys).toContain(mnemosAppReleaseName("https://mnemos.example", "org", "project-canonical", "node-canonical"));
+  });
+
+  it("совместное приложение копий не даёт: «Поделиться» — доступ к общему экземпляру", async () => {
+    const h = await harness({ deployed: "event-1" });
+    const shared = await openMnemosAppConnection(h.ports, false);
+    await expect(shared.offer()).rejects.toThrow(/общему экземпляру/);
+    await expect(shared.makeCopy("p", false)).rejects.toThrow(/общему экземпляру/);
+    expect(await shared.copyState()).toBeNull();
+  });
+
+  it("имя копии: пометка «(копия)», без косых черт, не длиннее 255 байт", () => {
+    expect(copyNodeName("Учёт/задач")).toBe("Учёт задач (копия)");
+    expect(new TextEncoder().encode(copyNodeName("я".repeat(200))).length).toBeLessThanOrEqual(255);
   });
 });
