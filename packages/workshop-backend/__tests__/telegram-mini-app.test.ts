@@ -12,6 +12,7 @@ import {
   type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort,
 } from "../src/telegram/mini-app-api";
 import type { NativeMnemosBinding, NativeMnemosState } from "@gadgets/workshop-shared/native-document";
+import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
 
 const KEY = "k".repeat(16) + "-secrets-key-for-tests-only-0123";
 const TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawQ";
@@ -164,7 +165,7 @@ describe("сессия Mini App у объекта бота", () => {
 
 const BINDING: NativeMnemosBinding = { accountId: 5, scope: "p1", resource: "n1", savedRevision: 3, savedHead: "a".repeat(64) };
 
-function fakes(options: { binding?: NativeMnemosBinding | null; project?: boolean; access?: "owner" | "write" | "read"; saveError?: Error } = {}) {
+function fakes(options: { binding?: NativeMnemosBinding | null; project?: boolean; access?: "owner" | "write" | "read"; saveError?: Error; versionType?: string } = {}) {
   let clock = { now: START };
   let grant: MiniAppSessionGrant | null = { owner: OWNER, document: { workspace: WORKSPACE, gadget: 7 }, principal: "P", endsAt: START + APP_SESSION_MAX_MS };
   // Таймеры вручную: run(ms) сдвигает часы и выполняет наступившие.
@@ -231,7 +232,7 @@ function fakes(options: { binding?: NativeMnemosBinding | null; project?: boolea
       },
       select: async (scope, resource, publication) => {
         log.push(`version:${scope}:${resource}:${publication}`);
-        return { issue: async () => ({ url: "https://mnemos.example.ru/get", method: "GET", size_bytes: 2, sha256_hex: "0".repeat(64), content_type: "application/json" }), validate: async () => {} };
+        return { issue: async () => ({ url: "https://mnemos.example.ru/get", method: "GET", size_bytes: 2, sha256_hex: "0".repeat(64), content_type: options.versionType ?? "application/json" }), validate: async () => {} };
       },
     },
   };
@@ -348,6 +349,11 @@ describe("точка RPC Mini App: только один документ", () =
     await (await doc.version("ev2")).issue();
     expect(f.log).toContain("publications:p1:n1");
     expect(f.log).toContain("version:p1:n1:ev2");
+  });
+
+  it("служебный кадр сервера умеет выдать тело приложения, но странице Mini App билет на него не отдаётся", async () => {
+    let doc = await open(fakes({ versionType: GADGET_APP_MIME }));
+    await expect((await doc.version("ev2")).issue()).rejects.toThrow(APP_CODE_CLOSED);
   });
 
   it("первое сохранение — в проект беседы, выбранный сервером; квитанция до записи; брошенное создание снимает захват", async () => {

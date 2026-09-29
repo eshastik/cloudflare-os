@@ -20,7 +20,7 @@ import type { AiGatewayLogRoute } from "./ai-gateway";
 import { AgentTurnError, completeText, httpStatusFromError, zeroUsage } from "./ai-invoke";
 import { modelSpend, type ModelSpend } from "./spend-ledger.js";
 import { findMnemosBinding, formatMnemosWorkPrompt } from "./mnemos-agent-guide";
-import { nativeEditorCodeLock } from "./native-editor-guard";
+import { agentFileLock, appCodeLock } from "./native-editor-guard";
 import { nativeFormatForOutput } from "@gadgets/workshop-shared/native-document";
 import { guardToolRepeats, RepeatedFailureGuard, REPEATED_FAILURE_LIMIT } from "./tool-failure-guard";
 import {
@@ -167,6 +167,8 @@ export type AgentGadgetInfo = {
   bindings: {name: string, title: string, target: WorkpieceId}[];
   // What instantiating this gadget's blueprint produces, when it came from one that declares it.
   output?: BlueprintOutput;
+  // Гаджет привязан к узлу приложения Mnemos: код закрыт (ADR 0028, п. 4), файловые инструменты отказывают.
+  closedCode?: boolean;
 };
 
 // Resolves a `describeBinding` tool argument (a name in the chat's env) to its human-readable
@@ -627,12 +629,16 @@ let CODE_WORK_TOOL_DESCRIPTION = `
 Перейти к работе с кодом проекта: агент кода в отдельном рабочем месте с копией репозитория проекта выполняет задачу (читает и меняет файлы, запускает команды, ищет в памяти) и возвращает ответ, шаги и изменённые файлы. Человек видит шаги в ленте. Используй для любой задачи, которая требует прочитать или изменить код проекта. Если работа с кодом этого проекта уже идёт, вызов продолжает ту же сессию.
 
 Изменения не сохраняются в проект сами: человек видит «Что изменилось» и решает «Принять». Не говори, что изменения уже сохранены, и не проси человека создавать запросы на слияние или ветки.
+
+Не для гаджетов. Создать, поправить, пересобрать или повторно сохранить гаджет (веб-приложение внутри Mnemos) — только gadgetWork, даже если человек говорит «код», «исправил код», «пересобери». Гаджет никогда не кладётся в репозиторий проекта.
 `.trim();
 
 let GADGET_WORK_TOOL_DESCRIPTION = `
 Сделать или поправить гаджет — веб-приложение внутри Mnemos — руками агента кода. Агент кода в отдельном рабочем месте собирает приложение из шаблона гаджета (React, компоненты и оформление Mnemos), проверяет его и отдаёт сборку. Сборка сохраняется файлом приложения в проект личной версией: пока человек не опубликует, её видит только он. Первый вызов создаёт файл, следующие вызовы той же работы — новые версии того же файла.
 
 В task опиши приложение целиком: назначение, экраны, какие данные хранит, кто им пользуется. Обязательно скажи, совместное ли оно (одна общая база для всех, кому открыт файл) или у каждого своя копия данных; для совместного — кто участники и что каждый может делать; нужен ли справочник людей и отделов. При правке — что именно поменять.
+
+Если гаджет не сохранился или работа оборвалась, вызови gadgetWork снова с той же задачей (с newGadget, только если человек просит другой гаджет) — не переходи на codeWork и не отказывайся повторить: причина сбоя могла быть уже исправлена.
 
 Ничего не публикуй сам и не обещай, что гаджет уже работает у других.
 `.trim();
@@ -685,7 +691,7 @@ export function formatCodeWorkPrompt(info: CodeWorkInfo): string {
     "Гаджет — это веб-приложение внутри Mnemos: свои экраны, свои данные, иногда общие для нескольких людей. Когда человек просит сделать приложение, трекер, журнал, калькулятор, опросник с итогами, доску, учёт чего-либо — всё сложнее одной простой формы, — вызывай gadgetWork: приложение соберёт агент кода по правилам оформления Mnemos. Сам такой гаджет не пиши.",
     "Простую форму в одно действие можешь сделать сам, как раньше.",
     "Перед первым вызовом, если из беседы это не ясно, коротко спроси человека: 1) совместное ли приложение — одна общая база для всех, кому открыт файл, или у каждого своя копия данных; 2) если совместное — кто участники (люди, отдел, вся организация) и кто что может делать; 3) в какой проект сохранить, если проектов несколько. Остальное придумай сам по смыслу.",
-    "После вызова дай человеку ссылку «Открыть гаджет» из итога и скажи, что это личная версия: проверить её можно в предпросмотре, а опубликовать — кнопкой в шапке файла. Просьбы поправить гаджет — снова gadgetWork: выйдет новая версия того же файла.");
+    "После вызова ссылку на гаджет не давай: человек видит в беседе карточку гаджета с кнопкой «Открыть». Скажи «Гаджет — в карточке выше» и что это личная версия: проверить её можно в предпросмотре, а опубликовать — кнопкой в шапке файла. Просьбы поправить гаджет — снова gadgetWork: выйдет новая версия того же файла.");
   if (info.gadget) {
     lines.push("", info.gadget.alive
       ? `Работа над гаджетом${info.gadget.title ? ` «${info.gadget.title}»` : ""} для проекта «${info.gadget.projectTitle}» идёт; gadgetWork продолжит её и сохранит новую версию того же файла.`
@@ -2292,7 +2298,9 @@ export async function runAgent(
               `This is the workspace's default gadget: file tools operate on it when their ` +
               `\`workpiece\` parameter is omitted.`);
         }
-        if (files.length == 0) {
+        if (info.closedCode) {
+          lines.push(appCodeLock(envName !== undefined ? `env.${envName}` : JSON.stringify(info.title)));
+        } else if (files.length == 0) {
           lines.push(`As of the start of this session, this gadget had no code files.`);
         } else {
           lines.push(
@@ -2484,11 +2492,14 @@ export async function runAgent(
   // not describe it as optional here.
   // Код встроенных редакторов агент не меняет (см. native-editor-guard.ts). Проверка идёт по
   // живому реестру: гаджет, созданный из формата в этом же ходе, уже в нём.
-  let assertCodeEditable = (workpieceId: WorkpieceId, workpiece: string | undefined) => {
-    let output = hooks.listGadgetInfo(chatId).find(info => info.id === workpieceId)?.output;
-    let lock = nativeEditorCodeLock(output, workpiece ?? chatNameFor(workpieceId) ?? "GADGET");
+  // Код гаджета-узла Mnemos агент беседы не читает и не правит: правка — только агентом кода.
+  let assertFileAccess = (workpieceId: WorkpieceId, workpiece: string | undefined, write: boolean) => {
+    let info = hooks.listGadgetInfo(chatId).find(info => info.id === workpieceId);
+    let lock = agentFileLock(info, workpiece ?? chatNameFor(workpieceId) ?? "GADGET", write);
     if (lock) throw new Error(lock);
   };
+  let assertCodeReadable = (workpieceId: WorkpieceId, workpiece: string | undefined) => assertFileAccess(workpieceId, workpiece, false);
+  let assertCodeEditable = (workpieceId: WorkpieceId, workpiece: string | undefined) => assertFileAccess(workpieceId, workpiece, true);
 
   let workpieceParam = Type.String({
     description:
@@ -2517,6 +2528,7 @@ export async function runAgent(
         try {
           let resolved =
               hooks.resolveWorkpieceRoot(resolveToolWorkpieceId(workpiece), true, chatId);
+          assertCodeReadable(resolved.workpieceId, workpiece);
           let text = getSessionYDoc().getMap<Y.Text>(resolved.rootName).get(filename);
           if (!text) {
             throw new Error("File does not exist.");

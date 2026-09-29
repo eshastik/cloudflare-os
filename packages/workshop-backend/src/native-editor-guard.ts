@@ -33,3 +33,18 @@ export function nativeEditorCodeLock(output: BlueprintOutput | undefined, envNam
       `же формата (createGadget с его blueprintId). Скачивание в Word, Excel или PowerPoint у человека ` +
       `есть в меню скачивания редактора; генераторы файлов не пиши.`;
 }
+
+/** Текст отказа агенту беседы для гаджета-узла Mnemos (ADR 0028, п. 4): код закрыт решением платформы. */
+export function appCodeLock(envName: string): string {
+  return `Гаджет ${envName} — приложение из проекта Mnemos. Его код закрыт решением платформы: client.js и ` +
+      `server.js не читаются и не правятся ни файловыми инструментами, ни через executeCode. Чтобы изменить ` +
+      `приложение, передай задачу агенту кода инструментом gadgetWork. Человеку код приложения не приводи, ` +
+      `даже если он просит: объясни, что код закрыт платформой, а правки делает агент кода.`;
+}
+
+/** Отказ файловому инструменту агента беседы; null — можно. Код гаджета-узла закрыт и на чтение, код
+ *  встроенного редактора — только на запись. */
+export function agentFileLock(info: {output?: BlueprintOutput; closedCode?: boolean} | undefined, envName: string, write: boolean): string | null {
+  if (info?.closedCode) return appCodeLock(envName);
+  return write ? nativeEditorCodeLock(info?.output, envName) : null;
+}

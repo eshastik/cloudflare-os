@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GADGET_APP_MIME, parseGadgetAppText } from "@gadgets/workshop-shared/gadget-app";
+import { GADGET_APP_MIME, gadgetAppSha256, parseGadgetAppText } from "@gadgets/workshop-shared/gadget-app";
 import { GadgetBuildError, checkGadgetEditable, gadgetReceipts, saveGadgetBuild, validGadgetRequest, type GadgetSaveAPI } from "./gadget-bridge.ts";
 import { MnemosAPIError } from "./mnemos-api.ts";
 import { WorkspaceClient, WorkspaceError, type WorkspaceGadgetBuild } from "./workspace-tasks.ts";
@@ -50,7 +50,9 @@ function api(existing: { content_type: string } | null = null) {
 test("Сборка ложится новым узлом приложения личной версией; session — из кода сервера", async () => {
   const { api: session, calls, uploads, fetcher } = api();
   const saved = await saveGadgetBuild(session, STORAGE, fetcher, "p", build(), undefined, "request-1");
-  assert.deepEqual(saved, { resource: "node-1", head: NEW_HEAD, title: "Дела команды", collaborative: true, session: true, created: true });
+  // Сумма версии — от тех же байтов, что легли в узел: её же отдаёт app-code и сверяет экземпляр.
+  assert.deepEqual(saved, { resource: "node-1", head: NEW_HEAD, title: "Дела команды", description: "Общий список", collaborative: true, session: true, created: true, bodySha256: await gadgetAppSha256(new TextDecoder().decode(uploads[0])) });
+  assert.equal(saved.bodySha256, [...new Uint8Array(await crypto.subtle.digest("SHA-256", uploads[0]))].map(b => b.toString(16).padStart(2, "0")).join(""));
   const create = calls.find(c => c[0] === "createPrivateDocument")![2] as Record<string, unknown>;
   assert.equal(create.content_type, GADGET_APP_MIME);
   assert.equal(create.expected_head, HEAD);
@@ -221,4 +223,18 @@ test("Правка сохранённого гаджета: только сущ�
   await assert.rejects(checkGadgetEditable(conflicted.api, "p", "node-1"), /в конфликте/);
   const ok = api({ content_type: GADGET_APP_MIME });
   assert.equal((await checkGadgetEditable(ok.api, "p", "node-1")).head, HEAD);
+});
+
+test("Отказ Mnemos при сохранении называет этап и код ответа, а не «Mnemos request failed»", async () => {
+  const { api: session, fetcher } = api();
+  session.openDraft = async () => { throw new MnemosAPIError(401); };
+  await assert.rejects(saveGadgetBuild(session, STORAGE, fetcher, "p", build()), (error: Error) =>
+    /шаге «открытие личной ветки проекта»/.test(error.message) && /HTTP 401/.test(error.message) && /сохранить ещё раз/.test(error.message));
+  const second = api();
+  second.api.createPrivateDocument = async () => { throw new MnemosAPIError(503); };
+  await assert.rejects(saveGadgetBuild(second.api, STORAGE, second.fetcher, "p", build()), /шаге «создание файла в проекте».*HTTP 503/);
+  // Понятные отказы с кодом не переписываются.
+  const third = api();
+  third.api.openDraft = async () => { throw new MnemosAPIError(429, "request.rate_limit"); };
+  await assert.rejects(saveGadgetBuild(third.api, STORAGE, third.fetcher, "p", build()), (error: unknown) => error instanceof MnemosAPIError);
 });

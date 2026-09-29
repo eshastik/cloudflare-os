@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from "react";
 import {ArrowLeft} from "@phosphor-icons/react";
+import {APP_CODE_CLOSED} from "@gadgets/workshop-shared/gadget-app";
 import type {IntakeAlert} from "../src/intake.ts";
 import type {ProjectPage} from "../src/mnemos-api.ts";
 import {useHost,useUi} from "./host.ts";
@@ -34,7 +35,7 @@ export default function IntakeHistory({alerts,projects}:{alerts:IntakeAlert[];pr
  async function download(alert:IntakeAlert){
   if(downloading)return;const request=generation.current;setDownloading(true);setDownloadError("");
   try{await host.downloadFile(alert.result_project_id!,alert.result_node_id!,"private:"+alert.personal_head,name(alert));}
-  catch{if(request===generation.current)setDownloadError("Не удалось скачать файл. Повторите попытку.");}
+  catch(error){if(request===generation.current)setDownloadError(error instanceof Error&&error.message.includes(APP_CODE_CLOSED)?APP_CODE_CLOSED:"Не удалось скачать файл. Повторите попытку.");}
   finally{if(request===generation.current)setDownloading(false);}
  }
  if(opened){const alert=opened.alert;return <section aria-label="Принятый материал" className="space-y-4">

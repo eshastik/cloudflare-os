@@ -19,7 +19,7 @@ import {
 } from "@gadgets/workshop-shared/gadget-app";
 import type { GatekeeperAppAccess } from "@gadgets/workshop-shared/gatekeeper";
 import {
-  APP_PUBLISHED_ONLY, mnemosAppObjectName, mnemosAppReleaseName,
+  APP_PUBLISHED_ONLY, mnemosAppObjectName, mnemosAppPreviewName, mnemosAppReleaseName,
   type AppCopyLink, type AppOrigin, type AppReleaseMeta, type DeployedApp, type DeployOptions, type DirectoryScope,
 } from "./mnemos-app";
 
@@ -36,6 +36,8 @@ export const APP_ORIGIN_CLOSED = "Автор закрыл вам доступ к
 export const APP_ORIGIN_UNKNOWN = "Не удалось проверить доступ к оригиналу в Mnemos. Повторите позже.";
 export const APP_UPDATE_CHANGED = "Автор успел опубликовать другую версию. Откройте приложение заново и посмотрите обновление.";
 export const APP_COPY_OWNER_ONLY = "Обновить копию может только её владелец.";
+export const APP_PREVIEW_EDIT_ONLY = "Предпросмотр личной версии доступен только тем, у кого есть право правки файла.";
+export const APP_OWN_ORIGIN_CLOSED = "Автор закрыл вам доступ к оригиналу: исходники взять нельзя, копия остаётся как есть.";
 
 type Deployed = Omit<DeployedApp, "chunks">;
 
@@ -54,6 +56,7 @@ export type AppObjectPort = {
   dismissUpdate(version: string): Promise<void>;
   copyLink(): Promise<AppCopyLink | null>;
   setCopyLink(link: AppCopyLink): Promise<void>;
+  clearOrigin(at: string): Promise<void>;
 };
 
 /** Последняя опубликованная версия узла: id, время публикации и кто опубликовал (principal). */
@@ -82,6 +85,9 @@ export type MnemosAppPorts = AppNodePorts & {
   createApp(project: string, name: string, text: string): Promise<{ node: string; head: string }>;
   /** Новая личная версия своего узла приложения; только владелец узла. Возвращает голову. */
   saveApp(project: string, node: string, text: string): Promise<string>;
+  /** «Сделать своей»: исходники версии оригинала (сумма тела bodySha256) — к копии, правами получателя
+   *  (его агент, gatekeeper сам перепроверяет право чтения оригинала). */
+  forkSources(from: { project: string; node: string }, to: { project: string; node: string }, bodySha256: string): Promise<void>;
   /** Справочник людей и отделов с правами человека. */
   directory(): Promise<{ people: { id: string; name: string }[]; departments: { id: string; name: string; members: { id: string; name: string }[] }[] }>;
   /** Объект по ключу. */
@@ -188,16 +194,19 @@ function gatedSession(guard: AppGuard, session: unknown): unknown {
  * Открыть связь: первое право читается сразу; нет доступа — ошибка без связи. personal — свой экземпляр
  * открывшего (приложение без совместной работы). Ключ объекта — из ответа Mnemos, не из ввода страницы.
  */
-export async function openMnemosAppConnection(ports: MnemosAppPorts, personal: boolean): Promise<MnemosAppConnectionImpl> {
+export async function openMnemosAppConnection(ports: MnemosAppPorts, personal: boolean, preview = false): Promise<MnemosAppConnectionImpl> {
   let first: GatekeeperAppAccess;
   try { first = await ports.access(true); }
   catch (error) { ports.release(); throw error instanceof Error && /[А-Яа-яЁё]/.test(error.message) ? error : new Error("Приложение вам недоступно."); }
   if ((first.access !== "read" && first.access !== "edit") || !first.principal || !first.tenant || !first.project || !first.node || !first.installation) { ports.release(); throw new Error("Приложение вам недоступно."); }
+  // Предпросмотр — только с правом правки: читатель видит лишь то, что опубликовано.
+  if (preview && first.access !== "edit") { ports.release(); throw new Error(APP_PREVIEW_EDIT_ONLY); }
   const name = first.name || await ports.profileName().catch(() => "");
-  const key = mnemosAppObjectName(first.installation, first.tenant, first.project, first.node, personal ? first.principal : undefined);
+  const key = preview ? mnemosAppPreviewName(first.installation, first.tenant, first.project, first.node, first.principal)
+    : mnemosAppObjectName(first.installation, first.tenant, first.project, first.node, personal ? first.principal : undefined);
   const guard = new AppGuard(ports, first.access, { principal: first.principal, installation: first.installation, project: first.project, node: first.node });
-  return new MnemosAppConnectionImpl(ports, guard, ports.object(key), { principal: first.principal, name }, personal,
-    { installation: first.installation, tenant: first.tenant, project: first.project, node: first.node });
+  return new MnemosAppConnectionImpl(ports, guard, ports.object(key), { principal: first.principal, name }, personal && !preview,
+    { installation: first.installation, tenant: first.tenant, project: first.project, node: first.node }, preview);
 }
 
 /** Имя узла копии в проекте получателя. */
@@ -210,6 +219,11 @@ export function copyNodeName(title: string): string {
 const releaseInfo = (release: AppReleaseMeta): MnemosAppRelease => ({ version: release.version, title: release.title, publishedAt: release.publishedAt, authorName: release.authorName });
 /** Отказ Mnemos в доступе к узлу приложения (текст APP_ACCESS_DENIED моста) — отзыв, а не сбой связи. */
 const isAccessDenied = (error: unknown) => error instanceof Error && /нет доступа к этому файлу/.test(error.message);
+
+/** Запуск гаджетов не настроен (ключ оболочки): это не «версия недоступна», человеку нужен настоящий текст. */
+const isSetupFailure = (error: unknown): error is Error => error instanceof Error && /^Запуск гаджетов не настроен/.test(error.message);
+/** Mnemos отказал в праве на эту версию (текст gatekeeper-mnemos для 403 служебного пути). */
+const isVersionDenied = (error: unknown): error is Error => error instanceof Error && /^Приложение вам недоступно: нет доступа к этой версии/.test(error.message);
 
 /** Справочник только с именами и служебными ключами. */
 function cleanDirectory(directory: Awaited<ReturnType<MnemosAppPorts["directory"]>>): GadgetAppDirectory {
@@ -226,7 +240,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
   /** identity — установка, организация, проект и узел, как их назвал Mnemos при открытии. */
   constructor(private ports: MnemosAppPorts, private guard: AppGuard, private object: AppObjectPort,
       private caller: { principal: string; name: string }, private personal: boolean,
-      private identity: { installation: string; tenant: string; project: string; node: string }) { super(); }
+      private identity: { installation: string; tenant: string; project: string; node: string }, private preview = false) { super(); }
 
   [Symbol.dispose]() { this.guard.stop(); this.ports.release(); }
 
@@ -243,7 +257,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     const { deployed } = await this.object.state();
     if (!deployed) throw new Error("Приложение ещё не запущено: откройте его версию.");
     if (this.#readable !== deployed.sha256) {
-      const ticket = await this.ports.version(deployed.version).catch(() => null);
+      const ticket = await this.ports.version(deployed.version).catch((error: unknown) => { if (isSetupFailure(error)) throw error; return null; });
       if (!ticket || ticket.sha256 !== deployed.sha256 || ticket.contentType !== GADGET_APP_MIME) throw new Error(APP_VERSION_UNAVAILABLE);
       this.#readable = deployed.sha256;
     }
@@ -253,7 +267,8 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
   /** Текст версии, прочитанный оболочкой: тип, сумма и формат сверены. */
   async #text(version: string) {
     if (typeof version !== "string" || !version || version.length > 300) throw new Error("Неверная версия приложения.");
-    const read = await this.ports.text(version).catch(() => null);
+    // Отказ служебного пути (нет ключа оболочки, нет права) — своим текстом; прочие сбои — общим.
+    const read = await this.ports.text(version).catch((error: unknown) => { if (isSetupFailure(error) || isVersionDenied(error)) throw error; return null; });
     if (!read || read.contentType !== GADGET_APP_MIME || await gadgetAppSha256(read.text) !== read.sha256) throw new Error("Версия приложения недоступна или повреждена.");
     return { text: read.text, sha256: read.sha256, envelope: parseGadgetAppText(read.text) };
   }
@@ -293,7 +308,12 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     const access = await this.guard.check();
     const { text, sha256, envelope } = await this.#text(version);
     const manifest = envelope.document.manifest;
-    if (this.personal) {
+    if (this.preview) {
+      // Отдельный экземпляр со своей базой: любая версия, которую человек с правом правки может прочитать.
+      if (access !== "edit") throw new Error(APP_PREVIEW_EDIT_ONLY);
+      if (!manifest.collaborative) throw new Error("Своё приложение открывается своим экземпляром, предпросмотр ему не нужен.");
+      await this.object.deploy(version, sha256, text, this.caller.principal, { kind: "preview", onlyIfEmpty: false, directoryScope: null });
+    } else if (this.personal) {
       if (manifest.collaborative) throw new Error("Совместное приложение работает общим экземпляром.");
       // Получатель без права правки читает только опубликованную версию оригинала, и то — в своей копии.
       if (access !== "edit" && (version.startsWith("private:") || await this.ports.latestPublished() !== version)) throw new Error(APP_COPY_REQUIRED);
@@ -433,5 +453,17 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     await this.guard.check();
     if (!this.personal || !(await this.object.origin())) throw new Error(APP_COPY_OWNER_ONLY);
     await this.object.dismissUpdate(version);
+  }
+
+  async makeOwn(): Promise<void> {
+    const access = await this.guard.check();
+    const origin = this.personal ? await this.object.origin() : null;
+    if (!origin || access !== "edit") throw new Error(APP_COPY_OWNER_ONLY);
+    // Исходники оригинала берутся правами получателя: без чтения оригинала их не получить.
+    const reach = await this.#reachOrigin(origin);
+    if (reach.state === "closed") throw new Error(APP_OWN_ORIGIN_CLOSED);
+    if (reach.state !== "open") throw new Error(APP_ORIGIN_UNKNOWN);
+    await this.ports.forkSources({ project: origin.project, node: origin.node }, { project: this.identity.project, node: this.identity.node }, origin.sha256);
+    await this.object.clearOrigin(this.#now());
   }
 }

@@ -250,3 +250,42 @@ test("запросы на слияние: принять и вернуть ка�
   answer = Response.json({ code: "internal.secret" }, { status: 409 });
   await assert.rejects(api.acceptMergeRequest("p", "c", "1", 7, "abc"), (e: unknown) => e instanceof MnemosAPIError && e.code === undefined, "незнакомый код не передаётся");
 });
+
+// 29.09 гаджет «Трекер задач» дважды не сохранился: тип узла приложения не входил в
+// перечень createPrivateDocument, и отказ 400 рождался в клиенте, до запроса к Mnemos.
+test("createPrivateDocument пропускает узел гаджета до Mnemos", async () => {
+  const calls: string[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
+    calls.push(`${init?.method} ${String(url)} ${String(init?.body)}`);
+    return Response.json({ node_id: "node-1", head: "a".repeat(64) });
+  });
+  const created = await api.createPrivateDocument("p", { request_id: "r-1", expected_head: "b".repeat(64), parent_id: "", name: "Трекер задач",
+    content_type: "application/vnd.cloudflareos.app+json", upload_id: "up-1", message: "Гаджет от агента кода" });
+  assert.equal(created.node_id, "node-1");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^POST https:\/\/memory\.example\/v1\/projects\/p\/draft\/create .*vnd\.cloudflareos\.app\+json/);
+});
+
+test("app-code: ключ оболочки в заголовке, версия в запросе; чужой узел, не гаджет и отказы — ошибкой с кодом", async () => {
+  const seen: { url: string; key: string | null; auth: string | null }[] = [];
+  let reply: () => Response = () => Response.json({ content_type: "application/vnd.cloudflareos.app+json", node_id: "n", version: "private:" + "a".repeat(64), head: "a".repeat(64),
+    url: "https://objects.example/x", method: "GET", size_bytes: 3, sha256_hex: "c".repeat(64), expires_at: "2026-09-29T10:00:10Z" });
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
+    const headers = new Headers(init?.headers);
+    seen.push({ url: String(url), key: headers.get("X-Mnemos-Shell-Key"), auth: headers.get("Authorization") });
+    return reply();
+  });
+  const ticket = await api.appCode("p", "n", "private:" + "a".repeat(64), "shell-key");
+  assert.equal(ticket.sha256_hex, "c".repeat(64));
+  assert.deepEqual(seen, [{ url: `https://memory.example/v1/projects/p/nodes/n/app-code?version=private%3A${"a".repeat(64)}`, key: "shell-key", auth: "Bearer human" }]);
+  // Другая версия или узел в ответе — отказ, билет не принимается.
+  await assert.rejects(api.appCode("p", "n", "event-1", "shell-key"), (e: unknown) => e instanceof MnemosAPIError && e.status === 502);
+  await assert.rejects(api.appCode("p", "n", "", ""), (e: unknown) => e instanceof MnemosAPIError && e.code === "shell_key_rejected");
+  for (const [status, code] of [[403, "shell_key_rejected"], [409, "not_a_gadget"], [403, "gadget_code_closed"]] as const) {
+    reply = () => Response.json({ code, message: "отказ" }, { status });
+    await assert.rejects(api.appCode("p", "n", "", "shell-key"), (e: unknown) => e instanceof MnemosAPIError && e.status === status && e.code === code);
+  }
+  // Отказ в праве — 403 без кода, как у прочих выдач.
+  reply = () => Response.json({ code: "authz.access_denied", message: "нет" }, { status: 403 });
+  await assert.rejects(api.appCode("p", "n", "", "shell-key"), (e: unknown) => e instanceof MnemosAPIError && e.status === 403 && e.code === undefined);
+});

@@ -17,12 +17,11 @@ vi.mock('./accountCapabilities', () => ({
 }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: () => {} }))
 const texts = new Map<string, string>()
-vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperAppText: async (_origin: string, ticket: { url: string }) => texts.get(ticket.url)! }))
 vi.mock('./gatekeeperAppUpload', () => ({ uploadGatekeeperAppText: async () => 'upload-1' }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 import DocumentSharePanel from './DocumentSharePanel'
-import { APP_COPY_OFFER, deriveAppStatus, useMnemosApp, type MnemosAppHandle } from './MnemosAppStatus'
+import { APP_COPY_OFFER, MakeOwnDialog, deriveAppStatus, useMnemosApp, type MnemosAppHandle } from './MnemosAppStatus'
 
 const ORIGINAL_HEAD = 'a'.repeat(64), COPY_HEAD = 'c'.repeat(64), UPDATED_HEAD = 'e'.repeat(64)
 const SOLO: GadgetAppDocument = { manifest: { title: 'Мои задачи', description: '', collaborative: false, session: true, formatVersion: 1, permissions: [] }, modules: { 'client.js': 'ui()', 'server.js': 'export class Gadget { session(c) { return c } }' } }
@@ -31,16 +30,15 @@ const RELEASE = { version: 'event-1', title: 'Мои задачи', publishedAt:
 beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState(null, '', '/'); texts.clear() })
 
 /** Борис: оригинал Анны ('node') ему открыт на чтение, своя копия — 'copy-node' в проекте 'mine'. */
-function harness(options: { offer?: MnemosAppOffer; copy?: MnemosAppCopyState | null; legacy?: boolean } = {}) {
+function harness(options: { offer?: MnemosAppOffer; copy?: MnemosAppCopyState | null; legacy?: boolean; ownError?: string } = {}) {
   let state: MnemosAppState = { binding: null, codeVersion: 1, title: 'Приложение', notExportable: null }
-  const calls = { restore: 0, deploys: [] as [string, string][], makeCopy: [] as [string, boolean][], applyUpdate: [] as string[], dismiss: [] as string[], opens: [] as [string, boolean][] }
+  const calls = { downloads: [] as string[], deploys: [] as [string, string][], makeCopy: [] as [string, boolean][], applyUpdate: [] as string[], dismiss: [] as string[], own: 0, opens: [] as [string, boolean][] }
   let copyState = options.copy ?? null
   const deployed: Record<string, string | null> = options.copy ? { 'copy-node:true': `private:${COPY_HEAD}` } : options.legacy ? { 'node:true': `private:${ORIGINAL_HEAD}` } : {}
   const gadget = {
     getId: async () => 5,
     getMnemosApp: async () => state,
     setMnemosApp: async (binding: MnemosAppBinding | null) => { state = { ...state, binding } },
-    restoreAppModules: async (_modules: unknown, title: string, expected: number) => { calls.restore++; state = { ...state, codeVersion: expected + 1, title }; return expected + 1 },
     exportAppModules: async () => ({ codeVersion: state.codeVersion, title: state.title, modules: SOLO.modules }),
   }
   const connect = (resource: string, personal: boolean) => {
@@ -55,6 +53,7 @@ function harness(options: { offer?: MnemosAppOffer; copy?: MnemosAppCopyState | 
       makeCopy: async (scope: string, again: boolean) => { calls.makeCopy.push([scope, again]); texts.set(`private:${COPY_HEAD}`, gadgetAppText(SOLO)); return { scope: 'mine', resource: 'copy-node' } },
       applyUpdate: async (version: string) => { calls.applyUpdate.push(version); copyState = copyState && { ...copyState, update: null }; texts.set(`private:${UPDATED_HEAD}`, gadgetAppText(SOLO)); return { version: `private:${UPDATED_HEAD}` } },
       dismissUpdate: async (version: string) => { calls.dismiss.push(version) },
+      makeOwn: async () => { calls.own++; if (options.ownError) throw new Error(options.ownError); copyState = null },
       [Symbol.dispose]: () => {},
     }
     return connection
@@ -67,7 +66,8 @@ function harness(options: { offer?: MnemosAppOffer; copy?: MnemosAppCopyState | 
     scopes: async () => ({ scopes: [{ id: 'mine', name: 'Мой проект' }] }),
   }
   frames.downloads = {
-    select: async (_scope: string, _resource: string, version: string) => ({ issue: async () => ({ url: version, content_type: 'application/vnd.cloudflareos.app+json' }), validate: async () => {}, [Symbol.dispose]: () => {} }),
+    // Тело версии браузер не читает никогда (ADR 0028, п. 4): любой выбор версии здесь — ошибка теста.
+    select: async (_scope: string, _resource: string, version: string) => { calls.downloads.push(version); throw new Error('код приложения закрыт') },
     publications: async (_scope: string, resource: string) => ({ publications: resource === 'copy-node' ? [{ id: `private:${COPY_HEAD}`, format: 'cloudflareos.app', recordedAt: '', actor: '' }] : [], nextCursor: '' }),
   }
   texts.set(`private:${ORIGINAL_HEAD}`, gadgetAppText(SOLO))
@@ -93,7 +93,7 @@ test('получатель открывает чужое приложение б
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.offerMode).toBe(true)) })
   await act(async () => { await vi.waitFor(() => expect(out.current?.offer?.release?.version).toBe('event-1')) })
-  expect(h.calls.restore).toBe(0)
+  expect(h.calls.downloads).toEqual([])
   expect(h.calls.deploys).toEqual([])
   expect(out.current?.liveGadget).toBeNull()
   expect(out.current?.liveError).toBe(APP_COPY_OFFER)
@@ -101,9 +101,10 @@ test('получатель открывает чужое приложение б
 
   await act(async () => { await out.current!.makeCopy('mine', false) })
   expect(h.calls.makeCopy).toEqual([['mine', false]])
-  // Копия — свой узел: код встаёт в рабочее место владельца, работает её личная версия в своём экземпляре.
+  // Копия — свой узел: код в рабочее место не встаёт, работает её личная версия в своём экземпляре.
   expect(h.state().binding).toMatchObject({ scope: 'mine', resource: 'copy-node', collaborative: false, savedVersion: `private:${COPY_HEAD}` })
-  expect(h.calls.restore).toBe(1)
+  expect(h.state().binding?.savedCodeVersion).toBeUndefined()
+  expect(h.calls.downloads).toEqual([])
   expect(h.calls.deploys).toEqual([['copy-node', `private:${COPY_HEAD}`]])
   await act(async () => { await vi.waitFor(() => expect(out.current?.access).toBe('owner')) })
   expect(out.current?.offerMode).toBe(false)
@@ -139,18 +140,19 @@ test('обновление автора: предлагается в шапке,
   await act(async () => { await out.current!.applyUpdate() })
   expect(h.calls.applyUpdate).toEqual(['event-2'])
   expect(h.state().binding).toMatchObject({ resource: 'copy-node', savedVersion: `private:${UPDATED_HEAD}` })
-  expect(h.calls.restore).toBe(1)
+  expect(h.state().binding?.savedCodeVersion).toBeUndefined()
+  expect(h.calls.downloads).toEqual([])
   await unmount()
 })
 
-test('шапка копии: автор закрыл доступ — копия своя, обновлений не будет; правки сохраняются раньше обновления', () => {
-  const closed = deriveAppStatus({ access: 'owner', collaborative: false, unsaved: false, savedVersion: `private:${COPY_HEAD}`, copy: { author: 'Анна', origin: 'closed', update: null, dismissed: false } })
+test('шапка копии: автор закрыл доступ — копия своя, обновлений не будет; обновление — только владельцу копии', () => {
+  const closed = deriveAppStatus({ access: 'owner', collaborative: false, savedVersion: `private:${COPY_HEAD}`, copy: { author: 'Анна', origin: 'closed', update: null, dismissed: false } })
   expect(closed).toMatchObject({ version: 'Копия приложения Анна', audience: 'автор закрыл доступ к оригиналу, обновлений не будет' })
   const update = { version: 'event-2', title: 'x', publishedAt: '2026-09-30T08:00:00Z', authorName: 'Анна' }
-  expect(deriveAppStatus({ access: 'owner', collaborative: false, unsaved: true, copy: { author: 'Анна', origin: 'open', update, dismissed: false } }).primary?.kind).toBe('save')
+  expect(deriveAppStatus({ access: 'owner', collaborative: false, savedVersion: `private:${COPY_HEAD}`, copy: { author: 'Анна', origin: 'open', update, dismissed: false } }).primary?.kind).toBe('update')
   // Предложение обновиться — только владельцу копии.
-  expect(deriveAppStatus({ access: 'read', collaborative: false, unsaved: false, savedVersion: 'x', copy: { author: 'Анна', origin: 'open', update, dismissed: false } }).primary).toBeNull()
-  expect(deriveAppStatus({ access: 'read', collaborative: false, unsaved: false, offer: { ready: false } })).toMatchObject({ saved: 'автор ещё не опубликовал приложение', primary: null })
+  expect(deriveAppStatus({ access: 'read', collaborative: false, savedVersion: 'x', copy: { author: 'Анна', origin: 'open', update, dismissed: false } }).primary).toBeNull()
+  expect(deriveAppStatus({ access: 'read', collaborative: false, offer: { ready: false } })).toMatchObject({ saved: 'автор ещё не опубликовал приложение', primary: null })
 })
 
 function shareSelector() {
@@ -204,4 +206,58 @@ test('совместное приложение «Поделиться» — к�
   await view.invite()
   expect(view.calls).toEqual([['boris', 'write']])
   await view.unmount()
+})
+
+test('«Сделать своей»: кнопка в шапке своей копии; после успеха копия отвязана и обновлений автора нет', async () => {
+  const update = { version: 'event-2', title: 'Мои задачи', publishedAt: '2026-09-30T08:00:00Z', authorName: 'Анна' }
+  const h = harness({ copy: { author: 'Анна', title: 'Мои задачи', version: 'event-1', copiedAt: '2026-09-29T10:00:00Z', updatedAt: '2026-09-29T10:00:00Z', origin: 'open', update: null, dismissed: false } })
+  await h.gadget.setMnemosApp({ accountId: 7, scope: 'mine', resource: 'copy-node', description: '', collaborative: false, session: true, permissions: [], savedHead: COPY_HEAD, savedVersion: `private:${COPY_HEAD}` })
+  const { out, unmount } = await mount(h)
+  await act(async () => { await vi.waitFor(() => expect(out.current?.model?.secondary?.kind).toBe('own')) })
+  expect(out.current?.model?.secondary?.label).toBe('Сделать своей')
+  let refused: string | null = 'не вызвано'
+  await act(async () => { refused = await out.current!.makeOwn() })
+  expect(refused).toBeNull()
+  expect(h.calls.own).toBe(1)
+  await act(async () => { await vi.waitFor(() => expect(out.current?.copy).toBeNull()) })
+  expect(out.current?.model?.secondary).toBeNull()
+  expect(out.current?.model?.primary?.kind).not.toBe('update')
+  expect(out.current?.notice).toMatch(/агента кода/)
+  // У чужого оригинала, закрытого автором, и у копии с непрочитанным доступом кнопки нет.
+  expect(deriveAppStatus({ access: 'owner', collaborative: false, savedVersion: `private:${COPY_HEAD}`, copy: { author: 'Анна', origin: 'closed', update: null, dismissed: false } }).secondary).toBeNull()
+  expect(deriveAppStatus({ access: 'read', collaborative: false, savedVersion: 'x', copy: { author: 'Анна', origin: 'open', update: null, dismissed: false } }).secondary).toBeNull()
+  // Пока есть обновление, в шапке — «Не сейчас»; «Сделать своей» остаётся в «Версиях».
+  expect(deriveAppStatus({ access: 'owner', collaborative: false, savedVersion: `private:${COPY_HEAD}`, copy: { author: 'Анна', origin: 'open', update, dismissed: false } }).secondary?.kind).toBe('dismiss')
+  await unmount()
+})
+
+test('«Сделать своей»: исходники версии не сохранились — отказ понятным текстом, копия остаётся копией', async () => {
+  const NO_SOURCES = 'Исходники этой версии гаджета не сохранились: сделать копию своей нельзя. Попросите автора пересохранить гаджет через агента кода.'
+  const h = harness({ ownError: NO_SOURCES, copy: { author: 'Анна', title: 'Мои задачи', version: 'event-1', copiedAt: '2026-09-29T10:00:00Z', updatedAt: '2026-09-29T10:00:00Z', origin: 'open', update: null, dismissed: false } })
+  await h.gadget.setMnemosApp({ accountId: 7, scope: 'mine', resource: 'copy-node', description: '', collaborative: false, session: true, permissions: [], savedHead: COPY_HEAD, savedVersion: `private:${COPY_HEAD}` })
+  const { out, unmount } = await mount(h)
+  await act(async () => { await vi.waitFor(() => expect(out.current?.model?.secondary?.kind).toBe('own')) })
+  let refused: string | null = null
+  await act(async () => { refused = await out.current!.makeOwn() })
+  expect(refused).toBe(NO_SOURCES)
+  expect(out.current?.copy).not.toBeNull()
+  expect(out.current?.model?.secondary?.kind).toBe('own')
+  await unmount()
+})
+
+test('окно подтверждения «Сделать своей»: текст решения владельца, отказ — в окне, успех закрывает окно', async () => {
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  const makeOwn = vi.fn(async () => 'Хранилище исходников гаджетов недоступно. Повторите позже.')
+  const onOpenChange = vi.fn()
+  await act(async () => root.render(<MakeOwnDialog handle={{ makeOwn, busy: false, copy: null }} open onOpenChange={onOpenChange} />))
+  expect(document.body.textContent).toContain('Вы сможете менять гаджет через агента кода. Обновления от автора больше не будут приходить.')
+  const confirm = [...document.body.querySelectorAll('button')].find(b => b.textContent === 'Сделать своей')!
+  await act(async () => { confirm.click() })
+  await act(async () => { await vi.waitFor(() => expect(document.body.querySelector('[role="alert"]')?.textContent).toMatch(/недоступно/)) })
+  expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  makeOwn.mockResolvedValueOnce(null as never)
+  await act(async () => { confirm.click() })
+  await act(async () => { await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false)) })
+  await act(async () => root.unmount()); container.remove()
 })

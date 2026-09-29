@@ -3,10 +3,18 @@
 // участник проекта с правом записи) и общая версия проекта (отдел или организация читают
 // опубликованное). Каждый ответ — от Mnemos сессией самого человека; здесь только сведение.
 
+import { APP_CODE_CLOSED } from "@gadgets/workshop-shared/gadget-app";
 import { HISTORY_PREPARING } from "./history-preparing.ts";
 import { MnemosAPIError, type DraftDocument, type InvitedDocumentPage, type NodeHistoryPage, type OrgUnit, type SharedDocument, type WhoAmI } from "./mnemos-api.ts";
 
 export const APP_MIME = "application/vnd.cloudflareos.app+json";
+
+/** Билет на тело узла приложения — только служебному кадру сервера оболочки (ADR 0028, п. 4):
+ *  страница и агент беседы получают отказ. */
+export function refuseAppCode<T extends { content_type?: string }>(ticket: T, appCode: boolean): T {
+  if (!appCode && ticket.content_type === APP_MIME) throw new Error(APP_CODE_CLOSED);
+  return ticket;
+}
 /** Текст отказа, когда у человека нет доступа к узлу приложения. */
 export const APP_ACCESS_DENIED = "Приложение вам недоступно: нет доступа к этому файлу проекта.";
 

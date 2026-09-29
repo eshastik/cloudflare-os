@@ -9,7 +9,7 @@ import { validateRpc } from "capnweb-validate";
 import { ACCENT_PALETTE, isAccentChoice, isAccentHex, type AppearancePreference } from "@gadgets/workshop-shared/accent-theme";
 import type { GatekeeperDownloadTicket, GatekeeperUploadTicket } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeMnemosBinding, NativeMnemosState } from "@gadgets/workshop-shared/native-document";
-import type { MnemosAppBinding, MnemosAppConnection } from "@gadgets/workshop-shared/gadget-app";
+import { APP_CODE_CLOSED, GADGET_APP_MIME, type MnemosAppBinding, type MnemosAppConnection } from "@gadgets/workshop-shared/gadget-app";
 import {
   MINI_APP_SESSION, type MiniAppDocument, type MiniAppDocumentInfo, type MiniAppMnemosState, type MiniAppPublicApi,
   type MiniAppVersion,
@@ -428,6 +428,8 @@ class MiniAppVersionImpl extends RpcTarget {
   async issue(): Promise<GatekeeperDownloadTicket & { content_type: string }> {
     await this.guard.check();
     let ticket = await this.download.issue();
+    // Выдача служебная (кадр сервера, appCode): тело приложения странице Mini App не отдаётся.
+    if (ticket.content_type === GADGET_APP_MIME) throw new Error(APP_CODE_CLOSED);
     return { url: ticket.url, method: ticket.method, size_bytes: ticket.size_bytes, sha256_hex: ticket.sha256_hex, content_type: ticket.content_type };
   }
   async validate(): Promise<void> {

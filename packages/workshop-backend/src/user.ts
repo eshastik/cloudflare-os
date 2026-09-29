@@ -581,7 +581,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let found = this.#mnemosAccount();
     let principal = this.#notificationPrincipal();
     if (!found || !principal || (accountId !== null && accountId !== found.record.id)) throw new Error(MNEMOS_NOTIFICATIONS_UNAVAILABLE);
-    let frame = await this.startAccountAppUi(found.record.id, { isAdmin: false });
+    // appCode: это служебный путь сервера оболочки — только он получает тело узла приложения для
+    // запуска (ADR 0028, п. 4). Кадр для браузера (openUiApp) этого признака не несёт.
+    let frame = await this.startAccountAppUi(found.record.id, { isAdmin: false, appCode: true });
     let { nativeWrites, nativeDownloads } = frame;
     for (let capability of [frame.blueprintTemplates?.selector, frame.organizationMetrics, frame.calendarDraftCreator, frame.mailDraftSender, frame.agentConsent, frame.ui,
       frame.inboxUploads?.issuer, frame.textUploads?.issuer, frame.textDownloads?.issuer, frame.reviewDownloads?.issuer]) {
@@ -2422,6 +2424,12 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     const saved = await (options ? account.codeWorkSaveGadget(project, task, resource, options) : account.codeWorkSaveGadget(project, task, resource));
     // vendorId — для адреса «Открыть гаджет» в разделе проектов этого подключения.
     return {...saved, vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
+  }
+  /** «Сделать своей» у копии гаджета: исходники версии оригинала — к копии, агентом получателя. */
+  async codeWorkForkGadget(accountId: number, from: {project: string; node: string}, to: {project: string; node: string}, bodySha256: string) {
+    const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
+    if (!account.codeWorkForkGadget) throw new Error("Подключение Mnemos не умеет переносить исходники гаджета: обновите его.");
+    await account.codeWorkForkGadget(from.project, from.node, to.project, to.node, bodySha256);
   }
   async codeWorkPutFile(accountId: number, project: string, task: string, path: string, contentBase64: string) { return this.#codeWorkAccount(accountId).codeWorkPutFile(project, task, path, contentBase64); }
 

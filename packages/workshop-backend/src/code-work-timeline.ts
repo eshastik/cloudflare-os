@@ -1,6 +1,9 @@
 // Разбор событий рабочего места (OpenCode) в шаги для ленты беседы. Строка шага — для
 // нетехнического человека («Прочитал файл», «Выполнил команду»); команды, пути и выводы —
 // только в подробностях по раскрытию.
+//
+// В задаче гаджета код закрыт (ADR 0028, п. 4): в ленте только имя файла или короткая команда и итог
+// (успех или ошибка), без вывода инструментов и без полного текста команды.
 import {displayName, type AgentStep} from "@gadgets/workshop-shared/code-work";
 
 export type CodeWorkEvent = {seq: number; type: string; data: unknown};
@@ -125,8 +128,10 @@ export class CodeWorkTimeline {
   #lastAssistant = "";
   #state = "";
 
-  /** after — курсор предыдущего хода: события не новее него уже показаны. */
-  constructor(after: number) { this.#after = after; }
+  #closedCode: boolean;
+
+  /** after — курсор предыдущего хода: события не новее него уже показаны. closedCode — задача гаджета. */
+  constructor(after: number, options: {closedCode?: boolean} = {}) { this.#after = after; this.#closedCode = options.closedCode === true; }
 
   get cursor(): number { return this.#after; }
   get state(): string { return this.#state; }
@@ -194,9 +199,12 @@ export class CodeWorkTimeline {
     if (!described) return null;
     let s: AgentStep["status"] = status === "completed" ? "done" : status === "error" ? "error" : "running";
     let step: AgentStep = {id, kind: described.kind, status: s, title: described.verb[s === "done" ? "done" : s === "error" ? "error" : "running"]};
-    if (described.detail) step.detail = described.detail;
-    if (described.resource) step.resource = described.resource;
-    let output = s === "error" ? text(state.error) : text(state.output);
+    // Полная команда гаджета может нести код (heredoc): остаётся первая строка.
+    let closedCommand = this.#closedCode && tool === "bash" ? shortCommand(text(input.command)) : null;
+    let detail = closedCommand ?? described.detail;
+    if (detail) step.detail = detail;
+    if (described.resource) step.resource = closedCommand !== null ? {kind: "command", name: closedCommand || "команда"} : described.resource;
+    let output = this.#closedCode ? "" : s === "error" ? text(state.error) : text(state.output);
     if (output) step.output = clip(output);
     if (described.kind === "edit") {
       let removed = lineCount(input.oldString), added = lineCount(input.newString) || (tool === "write" ? lineCount(input.content) : 0);

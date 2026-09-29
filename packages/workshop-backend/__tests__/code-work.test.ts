@@ -55,6 +55,28 @@ describe("шаги рабочего места для человека", () => {
     expect(steps[2].title).toBe("Выполнил команду: Проверить окружение");
   });
 
+  it("задача гаджета: код закрыт — в ленте имя файла или короткая команда и итог, без вывода; у обычной задачи вывод остаётся", () => {
+    const events = [
+      role(1, "a1", "assistant"),
+      part(2, { id: "g1", messageID: "a1", type: "tool", tool: "read", callID: "r1", state: { status: "completed", input: { filePath: "/workspace/gadget/src/server/server.ts" }, output: "export class Gadget {}" } }),
+      part(3, { id: "g2", messageID: "a1", type: "tool", tool: "bash", callID: "r2", state: { status: "completed", input: { command: "cat > src/server.ts <<'EOF'\nexport class Gadget {}\nEOF", description: "Записать сервер" }, output: "секретный код" } }),
+      part(4, { id: "g3", messageID: "a1", type: "tool", tool: "grep", callID: "r3", state: { status: "completed", input: { pattern: "session" }, output: "server.ts:1: session(caller) {" } }),
+      part(5, { id: "g4", messageID: "a1", type: "tool", tool: "bash", callID: "r4", state: { status: "error", input: { command: "pnpm build" }, error: "server.ts:3 export class Gadget" } }),
+    ];
+    const gadget = new CodeWorkTimeline(0, { closedCode: true }).apply(events).steps;
+    expect(gadget.map(s => [s.title, s.status])).toEqual([
+      ["Прочитал файл gadget/src/server/server.ts", "done"],
+      ["Выполнил команду cat > src/server.ts <<'EOF' …", "done"],
+      ["Поискал в файлах «session»", "done"],
+      ["Команда завершилась с ошибкой pnpm build", "error"],
+    ]);
+    expect(gadget.every(s => s.output === undefined)).toBe(true);
+    expect(gadget[1].detail).toBe("cat > src/server.ts <<'EOF' …");
+    expect(JSON.stringify(gadget)).not.toMatch(/export class Gadget|секретный код|session\(caller\)/);
+    const project = new CodeWorkTimeline(0).apply(events).steps;
+    expect(project[0].output).toBe("export class Gadget {}");
+  });
+
   it("идентификаторы узлов и баз не попадают в строку шага", () => {
     const t = new CodeWorkTimeline(0);
     const node = "3fa85f6457174562b3fc2c963f66afa6";
@@ -346,6 +368,19 @@ describe("переключатель «Код» и маршрутизация с
       .toEqual({target: "chat", reason: "router"});
     expect((await routeChatMessage({mode: "auto", meta, message: "хм", ask: decided("code", 0.55)})).route)
       .toEqual({target: "chat", reason: "router_unsure"});
+  });
+
+  it("«Авто»: гаджет делает агент беседы, даже если Jev уверенно выбрал код (29.09)", async () => {
+    const meta = baseMeta({projectContext: PROJECTS});
+    expect((await routeChatMessage({mode: "auto", meta, message: "Собери гаджет «Трекер задач» заново", ask: decided("code")})).route)
+      .toEqual({target: "chat", reason: "gadget"});
+    const gadget = baseMeta({projectContext: PROJECTS, gadgetWork: liveWork({state: "stopped"})});
+    expect((await routeChatMessage({mode: "auto", meta: gadget, message: "я изменил код, пробуй ещё раз", ask: decided("code")})).route)
+      .toEqual({target: "chat", reason: "gadget"});
+    // Живая работа с кодом репозитория: решает Jev, как раньше.
+    const both = baseMeta({projectContext: PROJECTS, codeWork: liveWork(), gadgetWork: liveWork({state: "stopped"})});
+    expect((await routeChatMessage({mode: "auto", meta: both, message: "запусти тесты", ask: decided("code")})).route)
+      .toMatchObject({target: "code", reason: "router"});
   });
 
   it("«Авто»: сбой Jev — продолжает агент кода, если последний ответ был его; иначе агент беседы", async () => {

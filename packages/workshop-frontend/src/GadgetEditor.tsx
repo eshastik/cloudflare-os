@@ -44,6 +44,7 @@ import WorkpiecePicker, {
 } from './WorkpiecePicker'
 import ChatInterface, { type StreamingProposedChanges, type ActiveFileTarget } from './ChatInterface'
 import { formatOf } from './components/format/formats'
+import { rightTabs, type RightTab } from './gadgetEditorTabs'
 import { FormatGlyph } from './components/format/FormatVisuals'
 import ShareModal from './ShareModal'
 import { GadgetPresence } from './components/GadgetPresence'
@@ -152,7 +153,6 @@ function formatConsoleLogs(logs: BufferedLogEntry[]): string {
 
 // ─── right-panel tabs ─────────────────────────────────────────────────────────
 
-type RightTab = 'app' | 'code' | 'connections'
 
 type WorkspaceView =
   | { mode: 'chat' }
@@ -166,15 +166,6 @@ function formatHeaderCost(cost: number) {
   return `$${cost.toFixed(2)}`
 }
 
-// The first tab is named after what the selected workpiece is ("Document" for a gadget built from
-// a document blueprint), falling back to "App" when it declares no format.
-function rightTabs(output?: BlueprintOutput): { value: RightTab; label: string }[] {
-  return [
-    { value: 'app', label: formatOf(output).noun },
-    { value: 'code', label: 'Код' },
-    { value: 'connections', label: 'Подключения' },
-  ]
-}
 
 const ACTIVITY_TABS: { value: ActivityView; label: string }[] = [
   { value: 'review', label: 'На проверку' },
@@ -775,9 +766,10 @@ export default function GadgetEditor() {
 
   // Whether the *selected* gadget has code. When no gadget is selected, the code interface is
   // unmounted and raw `hasCode` can't update, but a gadget-less workspace has no code to show.
+  // Гаджет без filesRoot — приложение из проекта Mnemos: код закрыт, но экран у него есть.
   const effectiveHasCode = selectedFilesRoot !== undefined
     ? hasCode
-    : workpiecesReady ? false : null
+    : selectedGadgetSummary ? true : workpiecesReady ? false : null
 
   const codeStateReady = effectiveHasCode !== null
   const hasCodeRelatedState = effectiveHasCode === true
@@ -1308,6 +1300,8 @@ export default function GadgetEditor() {
   const appBound = !!appGadget && !!app.binding
   // Совместное приложение без правок показывает общий экземпляр; недоступный экземпляр — причину вместо экрана.
   const appUnavailable = appBound && !app.showWorkspace && !app.liveGadget ? (app.liveError || 'связываюсь с приложением…') : null
+  // Вкладка «Код» у гаджета-узла скрыта; открытая до привязки — сменяется экраном приложения.
+  useEffect(() => { if (appBound && activeTab === 'code') setActiveTab('app') }, [appBound, activeTab])
 
   // ── error / loading states ────────────────────────────────────────────────────
   if (error?.kind === 'open') {
@@ -1722,7 +1716,7 @@ export default function GadgetEditor() {
                       onClick={() => setActivityView(tab.value)}
                     />
                   ))
-                  : rightTabs(selectedGadgetSummary?.output).map(tab => (
+                  : rightTabs(selectedGadgetSummary?.output, appBound).map(tab => (
                     <PaneTab
                       key={tab.value}
                       active={activeTab === tab.value}
@@ -1771,7 +1765,7 @@ export default function GadgetEditor() {
                       )}
                       <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_VERSIONS_EVENT))} className={MENU_ITEM}>Версии</DropdownMenu.Item>
                     </>
-                  ) : rightTabs(selectedGadgetSummary?.output).map(tab => (
+                  ) : rightTabs(selectedGadgetSummary?.output, appBound).map(tab => (
                     <DropdownMenu.Item key={tab.value} onClick={() => handleTabSelect(tab.value)} className={MENU_ITEM}>
                       {tab.label}{activeTab === tab.value ? ' ✓' : ''}
                     </DropdownMenu.Item>
@@ -1870,7 +1864,7 @@ export default function GadgetEditor() {
             </div>
 
             <div className={activeTab === 'code' ? 'h-full' : 'hidden'}>
-              {overseer && selectedFilesRoot !== undefined ? (
+              {overseer && selectedFilesRoot !== undefined && !appBound ? (
                 <GadgetCodeInterface
                   overseer={overseer.stub}
                   filesRoot={selectedFilesRoot}

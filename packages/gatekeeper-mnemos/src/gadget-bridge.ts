@@ -4,7 +4,7 @@
 // модуля. Здесь сборка ещё раз проверяется строгим форматом приложения (gadget-app.ts) и сохраняется
 // ЛИЧНОЙ версией узла правами человека: новый узел в проекте или новая версия уже созданного.
 // Ничего не публикуется и не запускается в общем экземпляре: это делает человек из шапки файла.
-import { GADGET_APP_MIME, gadgetAppText, parseGadgetAppText, type GadgetAppDocument } from "@gadgets/workshop-shared/gadget-app";
+import { GADGET_APP_MIME, gadgetAppSha256, gadgetAppText, parseGadgetAppText, type GadgetAppDocument } from "@gadgets/workshop-shared/gadget-app";
 import type { AccountStorage, MnemosAccountSession } from "./account-session.ts";
 import { MnemosAPIError, type PrivateDocumentCreate } from "./mnemos-api.ts";
 import type { WorkspaceGadgetBuild } from "./workspace-tasks.ts";
@@ -12,7 +12,9 @@ import type { WorkspaceGadgetBuild } from "./workspace-tasks.ts";
 export type GadgetSaveAPI = Pick<MnemosAccountSession, "openDraft" | "beginNativeUpload" | "createPrivateDocument" | "readDraftDocument" | "saveDraftDocument">;
 
 /** Итог сохранения: узел, голова личной ветки после записи и манифест, как он лёг в узел. */
-export interface SavedGadget { resource: string; head: string; title: string; collaborative: boolean; session: boolean; created: boolean }
+/** bodySha256 — hex SHA-256 всех байтов тела узла: та же величина, что sha256_hex у app-code и сумма версии
+ *  у экземпляра (gadgetAppSha256); по ней служба привязывает исходники к версии. */
+export interface SavedGadget { resource: string; head: string; title: string; description: string; collaborative: boolean; session: boolean; created: boolean; bodySha256: string }
 
 export class GadgetBuildError extends Error {
   constructor(message: string) { super(message); this.name = "GadgetBuildError"; }
@@ -91,7 +93,27 @@ export function validGadgetRequest(value: unknown): value is string {
  * receipts — квитанции создания по ключу request: повтор создания после потерянного ответа даёт
  * тот же узел (и новую версию в нём, если сборка другая), а не второй узел.
  */
+/** Отказ Mnemos при сохранении с этапом и кодом ответа: «Mnemos request failed» не говорит,
+ *  что делать, а 29.09 по нему и по журналам нельзя было понять, где упало сохранение. */
+function describeSaveFailure(stage: string, error: unknown): unknown {
+  if (!(error instanceof MnemosAPIError) || error.message !== "Mnemos request failed") return error;
+  const why = error.status === 401 ? "вход в Mnemos устарел или не подтверждён — попросите сохранить ещё раз; если повторится, войдите заново"
+    : error.status === 403 ? "нет права записи в этот проект"
+    : error.status === 503 || error.status === 502 ? "Mnemos не ответил — попросите сохранить ещё раз"
+    : "попросите сохранить ещё раз";
+  return new Error(`Гаджет не сохранён: Mnemos отказал на шаге «${stage}» (HTTP ${error.status}${error.code ? `, ${error.code}` : ""}); ${why}.`);
+}
+
 export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts): Promise<SavedGadget> {
+  const stage = { name: "проверка сборки" };
+  try {
+    return await saveGadgetBuildSteps(api, storageOrigin, fetcher, project, build, stage, resource, request, receipts);
+  } catch (error) {
+    throw describeSaveFailure(stage.name, error);
+  }
+}
+
+async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, stage: { name: string }, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts): Promise<SavedGadget> {
   let text: string, manifest: GadgetAppDocument["manifest"];
   try {
     text = gadgetAppText(gadgetDocumentFromBuild(build));
@@ -101,11 +123,14 @@ export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string,
     throw error instanceof GadgetBuildError ? error : new GadgetBuildError((error as Error)?.message || "Сборка гаджета не подходит формату приложения.");
   }
   const bytes = new TextEncoder().encode(text);
-  const summary = { title: manifest.title, collaborative: manifest.collaborative, session: manifest.session };
+  const summary = { title: manifest.title, description: manifest.description, collaborative: manifest.collaborative, session: manifest.session, bodySha256: await gadgetAppSha256(text) };
   const newVersion = async (node: string) => {
     // Не заменять чужой файл: только существующий узел приложения.
+    stage.name = "чтение прежней версии";
     const doc = await checkGadgetEditable(api, project, node);
+    stage.name = "выгрузка файла";
     const uploadId = await upload(api, storageOrigin, fetcher, project, bytes);
+    stage.name = "запись новой версии";
     return (await api.saveDraftDocument(project, node, uploadId, doc.head)).head;
   };
   if (resource) return { resource, head: await newVersion(resource), ...summary, created: false };
@@ -115,6 +140,7 @@ export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string,
   if (known && known.project === project) {
     let node = known.node, head = "";
     if (!node) {
+      stage.name = "повтор создания файла";
       try {
         const replay = await api.createPrivateDocument(project, known.body);
         node = replay.node_id; head = replay.head;
@@ -132,11 +158,14 @@ export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string,
       return { resource: node, head: await newVersion(node), ...summary, created: true };
     }
   }
+  stage.name = "открытие личной ветки проекта";
   const { head } = await api.openDraft(project);
+  stage.name = "выгрузка файла";
   const uploadId = await upload(api, storageOrigin, fetcher, project, bytes);
   const body: PrivateDocumentCreate = { request_id: fresh, expected_head: head, parent_id: "", name: manifest.title.replace(/[/\\]/g, "-"),
     content_type: GADGET_APP_MIME, upload_id: uploadId, message: "Гаджет от агента кода" };
   receipts?.put(request, { project, body, sha });
+  stage.name = "создание файла в проекте";
   const created = await api.createPrivateDocument(project, body);
   receipts?.put(request, { project, body, sha, node: created.node_id });
   return { resource: created.node_id, head: created.head, ...summary, created: true };

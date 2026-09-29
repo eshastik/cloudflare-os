@@ -20,7 +20,9 @@ class FakeControl implements WorkspaceControl {
   async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })),
     ...(input.gadget_resource ? { gadget_resource: input.gadget_resource, gadget_restored: this.sources.has(input.gadget_resource) } : {}) }); }
   sourcesError: WorkspaceError | null = null;
-  async saveGadgetSources(id: string, bindingId: string, resource: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
+  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource, bodySha256]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
+  forkError: WorkspaceError | null = null;
+  async forkGadgetSources(input: Parameters<WorkspaceControl["forkGadgetSources"]>[0]) { this.calls.push(["forkGadgetSources", input]); if (this.forkError) throw this.forkError; }
   interruptError: WorkspaceError | null = null;
   async interrupt(id: string) { this.calls.push(["interrupt", id]); if (this.interruptError) throw this.interruptError; }
   async accept(id: string) { this.calls.push(["markAccepted", id]); return { repositories: [] }; }
@@ -578,9 +580,9 @@ test("Задача гаджета над сохранённым узлом: сл
   const first = await tasks.startGadget("p", "гаджет");
   assert.equal(first.restored, false);
   assert.equal("gadget_resource" in (control.calls.find(c => c[0] === "create")![1] as object), false, "новый гаджет — без узла");
-  await tasks.saveGadgetSources("p", TASK, "node-7");
-  assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7"]);
-  await assert.rejects(tasks.saveGadgetSources("p", TASK, "node-8"), (e: WorkspaceError) => e.code === "invalid", "первый узел закрепляется за задачей");
+  await tasks.saveGadgetSources("p", TASK, "node-7", "e".repeat(64));
+  assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7", "e".repeat(64)]);
+  await assert.rejects(tasks.saveGadgetSources("p", TASK, "node-8", "e".repeat(64)), (e: WorkspaceError) => e.code === "invalid", "первый узел закрепляется за задачей");
 
   const again = await tasks.startGadget("p", "поправь", { resource: "node-7" });
   assert.equal(again.restored, true);
@@ -593,20 +595,53 @@ test("Задача гаджета над сохранённым узлом: сл
   }
   const code = setup();
   await code.tasks.start("p", "c", "1", "задача");
-  await assert.rejects(code.tasks.saveGadgetSources("p", TASK, "node-7"), (e: WorkspaceError) => e.code === "not_gadget");
-  await assert.rejects(code.tasks.saveGadgetSources("other", TASK, "node-7"), (e: WorkspaceError) => e.code === "not_found");
+  await assert.rejects(code.tasks.saveGadgetSources("p", TASK, "node-7", "e".repeat(64)), (e: WorkspaceError) => e.code === "not_gadget");
+  await assert.rejects(code.tasks.saveGadgetSources("other", TASK, "node-7", "e".repeat(64)), (e: WorkspaceError) => e.code === "not_found");
 });
 
-test("Клиент службы: исходники сохраняются с привязкой агента, отказы — словами", async () => {
+test("Клиент службы: исходники сохраняются с привязкой агента и суммой версии, отказы — словами", async () => {
+  const SUM = "e".repeat(64);
   const seen: { url: string; body: unknown }[] = [];
   const make = (respond: () => Response) => new WorkspaceClient("https://ws.example", "service-token", (async (url: string, init: RequestInit) => {
     seen.push({ url, body: JSON.parse(String(init.body)) }); return respond();
   }) as unknown as typeof fetch);
-  await make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "bind/1", "node-7");
-  assert.deepEqual(seen[0], { url: `https://ws.example/v1/workspace/tasks/${TASK}/gadget/sources`, body: { binding_id: "bind/1", resource: "node-7" } });
-  await assert.rejects(make(() => Response.json({ error: "sources_too_large", message: "исходники гаджета больше 8 МиБ в архиве" }, { status: 409 })).saveGadgetSources(TASK, "b", "n"),
+  await make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "bind/1", "node-7", SUM);
+  assert.deepEqual(seen[0], { url: `https://ws.example/v1/workspace/tasks/${TASK}/gadget/sources`, body: { binding_id: "bind/1", resource: "node-7", body_sha256: SUM } });
+  await assert.rejects(make(() => Response.json({ error: "sources_too_large", message: "исходники гаджета больше 8 МиБ в архиве" }, { status: 409 })).saveGadgetSources(TASK, "b", "n", SUM),
     (e: WorkspaceError) => e.code === "sources" && e.message.includes("8 МиБ"));
-  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).saveGadgetSources(TASK, "b", "n"),
+  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).saveGadgetSources(TASK, "b", "n", SUM),
     (e: WorkspaceError) => e.code === "sources" && e.message.includes("Хранилище исходников"));
-  await assert.rejects(make(() => new Response("", { status: 404 })).saveGadgetSources(TASK, "b", "n"), (e: WorkspaceError) => e.code === "not_found");
+  // Сумма версии — ровно 64 строчных hex, иначе запрос не уходит.
+  const before = seen.length;
+  await assert.rejects(make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "b", "n", "ABC"), (e: WorkspaceError) => e.code === "invalid");
+  assert.equal(seen.length, before);
+  await assert.rejects(make(() => new Response("", { status: 404 })).saveGadgetSources(TASK, "b", "n", SUM), (e: WorkspaceError) => e.code === "not_found");
+});
+
+test("Клиент службы: «Сделать своей» переносит исходники версии оригинала к копии; no_sources и 503 — словами", async () => {
+  const seen: { url: string; auth: string; body: unknown }[] = [];
+  const make = (respond: () => Response) => new WorkspaceClient("https://ws.example", "service-token", (async (url: string, init: RequestInit) => {
+    seen.push({ url, auth: new Headers(init.headers).get("Authorization") ?? "", body: JSON.parse(String(init.body)) }); return respond();
+  }) as unknown as typeof fetch);
+  const input = { agent_token: "agent", binding_id: "bind", from_project: "p1", from_resource: "orig", body_sha256: "f".repeat(64), to_project: "p2", to_resource: "copy" };
+  await make(() => new Response(null, { status: 204 })).forkGadgetSources(input);
+  assert.deepEqual(seen[0], { url: "https://ws.example/v1/workspace/gadget-sources/fork", auth: "Bearer service-token", body: input });
+  await assert.rejects(make(() => Response.json({ error: "no_sources", message: "нет" }, { status: 409 })).forkGadgetSources(input),
+    (e: WorkspaceError) => e.code === "no_sources" && /не сохранились/.test(e.message));
+  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).forkGadgetSources(input),
+    (e: WorkspaceError) => e.code === "sources_unavailable" && /недоступно/.test(e.message));
+  await assert.rejects(make(() => new Response("", { status: 400 })).forkGadgetSources(input), (e: WorkspaceError) => e.code === "invalid");
+  await assert.rejects(make(() => new Response(null, { status: 204 })).forkGadgetSources({ ...input, body_sha256: "x" }), (e: WorkspaceError) => e.code === "invalid");
+});
+
+test("«Сделать своей»: служба получает ключ агента и привязку получателя, оригинал и копию, сумму версии; отказ службы — как есть", async () => {
+  const { control, tasks } = setup();
+  const sum = "d".repeat(64);
+  await tasks.forkGadgetSources({ project: "author-p", resource: "orig-node" }, { project: "mine", resource: "copy-node" }, sum);
+  const [kind, input] = control.calls.at(-1)! as [string, Record<string, string>];
+  assert.equal(kind, "forkGadgetSources");
+  assert.match(input.agent_token, /^token-\d+$/);
+  assert.deepEqual({ ...input, agent_token: "" }, { agent_token: "", binding_id: "binding", from_project: "author-p", from_resource: "orig-node", body_sha256: sum, to_project: "mine", to_resource: "copy-node" });
+  control.forkError = new WorkspaceError("no_sources", "Исходники этой версии гаджета не сохранились.");
+  await assert.rejects(tasks.forkGadgetSources({ project: "author-p", resource: "orig-node" }, { project: "mine", resource: "copy-node" }, sum), (e: WorkspaceError) => e.code === "no_sources");
 });

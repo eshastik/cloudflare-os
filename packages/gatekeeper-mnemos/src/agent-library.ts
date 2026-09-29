@@ -15,6 +15,7 @@ import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
 import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
 import type { MnemosVerifierApi } from "./mnemos.ts";
 import type { ActionDescription, ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
+import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
 import { ACTION_LABELS, AUTO_APPROVABLE_KINDS, READ_TITLES, checkedAgentAction, checkedAgentRead, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction, type ShareMode, type ConnectionType } from "./agent-actions.ts";
 import type { ProjectVisibility } from "./project-sharing.ts";
 import type { ScreenTarget, SourceType } from "./agent-actions-extra.ts";
@@ -730,6 +731,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return reader.readProjectDocumentWindow(project, located.id, window.ordinal, window.radius, window.maxBytes ?? CONTENT_LIMIT);
     });
     if (!content) throw new Error(UNAVAILABLE);
+    // Код приложения агенту беседы не выдаётся (ADR 0028, п. 4): правка — через агента кода.
+    if (content.media_type === GADGET_APP_MIME) throw new Error(APP_CODE_CLOSED);
     const shownName = located.name !== located.id ? located.name : undefined;
     await this.#recordWorkContext(queue, reader, project, {resourceName: shownName, publication, projectName, result: {ref,
       items: [{name: shownName ?? "Документ", documentId: located.id, projectId: project, ...(projectName ? {projectName} : {})}],

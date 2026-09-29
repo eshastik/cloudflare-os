@@ -36,7 +36,8 @@ export const AUDIT_KEEP = 500;
 export const APP_PUBLISHED_ONLY = "В общем экземпляре работает только опубликованная версия приложения. Опубликуйте её, как документ.";
 export const APP_ALREADY_RUNNING = "Приложение уже запущено: сменить версию может только тот, у кого есть право правки файла.";
 
-export type AppObjectKind = "shared" | "personal";
+/** preview — предпросмотр совместного приложения у того, кто правит файл: своя пустая база, любая версия. */
+export type AppObjectKind = "shared" | "personal" | "preview";
 
 /** Работающая версия: какой узел, какая версия, кто и когда запустил. */
 export type DeployedApp = {
@@ -72,6 +73,13 @@ export function mnemosAppObjectName(installation: string, tenant: string, projec
   const parts = owner === undefined ? [installation, tenant, project, node] : [installation, tenant, project, node, owner];
   if (!parts.every(part => typeof part === "string" && part && part.length <= 255)) throw new Error("Invalid app node.");
   return JSON.stringify(owner === undefined ? ["mnemos-app", ...parts] : ["mnemos-app-personal", ...parts]);
+}
+
+/** Ключ экземпляра предпросмотра: отдельный вид, данные не пересекаются ни с общим, ни со своим экземпляром. */
+export function mnemosAppPreviewName(installation: string, tenant: string, project: string, node: string, owner: string): string {
+  const parts = [installation, tenant, project, node, owner];
+  if (!parts.every(part => typeof part === "string" && part && part.length <= 255)) throw new Error("Invalid app node.");
+  return JSON.stringify(["mnemos-app-preview", ...parts]);
 }
 
 /** Ключ объекта, где лежит опубликованная версия оригинала для копий (этап 3). Считается, как и ключ
@@ -130,13 +138,15 @@ export class MnemosAppDurableObject extends DurableObject<Cloudflare.Env> {
    */
   async deploy(version: string, sha256: string, text: string, by: string, options: DeployOptions): Promise<Meta> {
     if (typeof version !== "string" || !version || version.length > 300 || !/^[a-f0-9]{64}$/.test(sha256) || typeof by !== "string" || !by) throw new Error("Invalid deployment.");
-    if (options.kind !== "shared" && options.kind !== "personal") throw new Error("Invalid deployment.");
+    if (options.kind !== "shared" && options.kind !== "personal" && options.kind !== "preview") throw new Error("Invalid deployment.");
     const envelope = parseGadgetAppText(text);
     if (await gadgetAppSha256(text) !== sha256) throw new Error("Код приложения не совпадает с версией в Mnemos.");
     const manifest = envelope.document.manifest;
     if (options.kind === "shared") {
       if (version.startsWith("private:")) throw new Error(APP_PUBLISHED_ONLY);
       if (!manifest.collaborative || !manifest.session) throw new Error("Приложение не совместное: общий экземпляр ему не нужен.");
+    } else if (options.kind === "preview") {
+      if (!manifest.collaborative || !manifest.session) throw new Error("Предпросмотр нужен только совместному приложению.");
     } else if (manifest.collaborative) throw new Error("Совместное приложение работает общим экземпляром.");
     // Ниже нет ожиданий: проверки и запись идут одним шагом объекта.
     const kv = this.#kv();
@@ -261,6 +271,15 @@ export class MnemosAppDurableObject extends DurableObject<Cloudflare.Env> {
       installation: origin.installation, tenant: origin.tenant, project: origin.project, node: origin.node, version: origin.version, sha256: origin.sha256,
       title: origin.title, authorName: origin.authorName, copiedAt: origin.copiedAt, updatedAt: origin.updatedAt, dismissed: origin.dismissed,
     } satisfies AppOrigin);
+  }
+
+  /** «Сделать своей»: связь с оригиналом снимается, обновления автора больше не предлагаются. Откуда
+   *  копия была сделана, остаётся записью «owned» (только для разбора, шапка её не читает). */
+  async clearOrigin(at: string): Promise<void> {
+    const origin = this.#kv().get<AppOrigin>("origin");
+    if (!origin || typeof at !== "string" || at.length > 64) throw new Error("Invalid origin.");
+    this.#kv().put("owned", { project: origin.project, node: origin.node, version: origin.version, sha256: origin.sha256, at });
+    this.#kv().delete("origin");
   }
 
   /** «Не сейчас» для одной версии оригинала. */

@@ -4,6 +4,7 @@ import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptRes
 import {MAX_CHAT_PROJECTS, chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput, type GadgetWorkResult} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkSavedGadget, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend, type CodeWorkFiles} from "./code-work.js";
+import {hideGadgetCode} from "./gadget-answer.js";
 import {JEV_CONFIDENCE_THRESHOLD, MAX_PROJECT_CANDIDATES, type CodeRouteContext, type JevProjectDecision, type JevResult} from "./code-router.js";
 import {
   ATTACHMENT_MAX_BYTES, ATTACHMENTS_DIR, CONTEXT_FILE, CONTEXT_FILE_MAX_BYTES, buildCodeContextPack, bytesToBase64, codeWorkBrief,
@@ -156,7 +157,9 @@ export type ChatRouteReason =
   /** Jev недоступен (нет ключа, ошибка, срок): продолжает тот, кто отвечал последним. */
   | "router_failed"
   /** У человека нет права «Агент кода». */
-  | "code_disabled";
+  | "code_disabled"
+  /** Сообщение про гаджет: его делает агент беседы через gadgetWork, а не агент кода в репозитории. */
+  | "gadget";
 
 export type ChatRoute =
   | {target: "code"; projectId: string; continuing: boolean; reason: ChatRouteReason}
@@ -241,6 +244,14 @@ export function applyChatProjectChanges(host: ChatCodeWorkHost, chatId: number, 
   host.putChatMeta(withProjectChanges(metaOrThrow(host, chatId), changes, userId, profileId));
 }
 
+/** Сообщение про гаджет: названо словом или беседа уже работает над гаджетом, а живой работы
+ *  с кодом репозитория нет. */
+export function gadgetMessage(message: string, meta: AiChatMetadata): boolean {
+  if (/гаджет|gadget/i.test(message)) return true;
+  let code = meta.codeWork;
+  return !!meta.gadgetWork && !(code && codeWorkAlive(code.state));
+}
+
 /** Кому отвечать на сообщение человека: агенту кода или агенту беседы. Тем же вопросом Jev
  *  решает, какие проекты человека нужны беседе; маршрут выбирается уже по новому набору. */
 export async function routeChatMessage(input: ChatRouteInput): Promise<{route: ChatRoute; jev?: JevResult; projects?: ChatProjectChanges}> {
@@ -271,6 +282,9 @@ export async function routeChatMessage(input: ChatRouteInput): Promise<{route: C
   if (!target) return done({target: "chat", reason: "no_code_project"});
   let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
   if (input.mode === "on") return done(toCode("on"));
+  // Jev видит только «код или разговор»: «собери гаджет заново» он отдавал агенту кода в репозиторий,
+  // и гаджет оказывался файлами репозитория, а не приложением в проекте (29.09).
+  if (gadgetMessage(input.message, meta)) return done({target: "chat", reason: "gadget"});
 
   let answer: JevResult = jev ?? {ok: false, error: "no_key"};
   if (!answer.ok) {
@@ -419,7 +433,8 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
     backend, projectId, projectTitle, target, files, gadget,
     taskId: continuing ? work!.taskId : undefined, cursor, prompt, signal: request.signal,
     onStep: emitStep,
-    onText: delta => host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta}),
+    // Ответ агента кода в задаче гаджета не течёт по кусочкам: он уходит один раз, когда из него вырезан код.
+    onText: delta => { if (!gadget) host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta}); },
     onStarted: taskId => {
       let current = metaOrThrow(host, request.chatId);
       let previous = current[slot];
@@ -443,8 +458,11 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
       let current = metaOrThrow(host, request.chatId);
       if (current[slot]) { current[slot] = {...current[slot]!, gadgetRequest}; host.putChatMeta(current); }
     }
-    let {result, head} = await saveGadget(host, user, accountId, projectId, output, previous, gadgetRequest);
+    let {result, head, codeText} = await saveGadget(host, user, accountId, projectId, output, previous, gadgetRequest);
     output.gadget = result;
+    // До человека и агента беседы — ответ без кода гаджета (ADR 0028, п. 4).
+    output.answer = hideGadgetCode(output.answer, codeText);
+    if (output.answer) host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta: output.answer});
     savedGadget = result.saved ? {resource: result.resource, title: result.title, head} : previous;
     // Узел получен — квитанция исполнена; иначе она ждёт повтора.
     if (result.saved) gadgetRequest = undefined;
@@ -476,7 +494,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
 /** Забрать сборку хода и сохранить её личной версией узла. Отказ (нет сборки, битая сборка, нет права)
  *  не роняет ход: агент беседы узнаёт причину и может попросить агента кода исправить. */
 async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId: number, projectId: string, output: CodeWorkOutput,
-    previous: ChatCodeWork["gadget"], request?: string): Promise<{result: GadgetWorkResult; head: string}> {
+    previous: ChatCodeWork["gadget"], request?: string): Promise<{result: GadgetWorkResult; head: string; codeText?: string}> {
   let refused = (error: string) => ({result: {saved: false as const, error}, head: ""});
   if (output.state === "failed" || output.state === "stopped") return refused("работа над гаджетом остановлена, сборка не забрана");
   if (output.interrupted) return refused("ход остановлен человеком, сборка не забрана");
@@ -488,7 +506,7 @@ async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId:
     return refused((error as Error)?.message || "сборка не сохранена");
   }
   let link = gadgetLink(host.publicBase, saved.vendorId, accountId, projectId, saved.resource);
-  return {head: saved.head, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, collaborative: saved.collaborative,
+  return {head: saved.head, codeText: saved.codeText, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, ...(saved.description?.trim() ? {description: saved.description.trim().slice(0, 300)} : {}), collaborative: saved.collaborative,
     created: saved.created, ...(link ? {link} : {}),
     ...(saved.sourcesKept === false ? {sourcesNote: saved.sourcesNote || "исходники не сохранены"} : {})}};
 }

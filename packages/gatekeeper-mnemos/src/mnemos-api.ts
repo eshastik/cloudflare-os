@@ -87,7 +87,7 @@ export class MnemosAPI {
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Invalid Mnemos origin");
     this.#origin = url.origin; this.#credential = credential; this.#fetch = fetcher.bind(globalThis);
   }
-  async #request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE", signal?: AbortSignal, body?: object, allowNoContent = false, timeoutMs = 20_000): Promise<T> {
+  async #request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE", signal?: AbortSignal, body?: object, allowNoContent = false, timeoutMs = 20_000, extraHeaders: Record<string, string> = {}): Promise<T> {
     let token: string;
     try { token = await this.#credential(); } catch { throw new MnemosAPIError(401); }
     if (!token || /\s/.test(token)) throw new MnemosAPIError(401);
@@ -95,7 +95,7 @@ export class MnemosAPI {
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: Response;
     try {
-      response = await this.#fetch(this.#origin + path, { method, redirect: "manual", cache: "no-store", signal: combined, headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      response = await this.#fetch(this.#origin + path, { method, redirect: "manual", cache: "no-store", signal: combined, headers: { ...extraHeaders, Authorization: `Bearer ${token}`, Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     } catch { throw new MnemosAPIError(503); }
     if (!response.ok) { const failure=await safeFailureCode(response); throw new MnemosAPIError(response.status,failure?.code,failure?.refusal,failure?.progress,failure?.removedFolder,failure?.removedFolderMore,failure?.folderDrafts); }
     if (response.status === 204 && allowNoContent) return undefined as T;
@@ -150,6 +150,18 @@ export class MnemosAPI {
   checkPrivateVersionRead(project: string, node: string, version: string, signal?: AbortSignal): Promise<{node_id: string; head: string}> {
     head(version);
     return this.#request(`/v1/projects/${segment(project)}/nodes/${segment(node)}/private-versions/${version}/access`, "GET", signal);
+  }
+  /** Служебное чтение тела гаджета для запуска (ADR 0028 п. 4, docs/seams.md Mnemos): только оболочка, с ключом
+   *  установки и токеном человека. version: пусто — текущая опубликованная, id события или private:<head>. */
+  async appCode(project: string, node: string, version: string, shellKey: string, signal?: AbortSignal): Promise<AppCodeTicket> {
+    if (typeof version !== "string" || version.length > 300 || (version.startsWith("private:") && !/^private:[0-9a-f]{64}$/.test(version))) throw new MnemosAPIError(400);
+    if (!shellKey || /[\s]/.test(shellKey)) throw new MnemosAPIError(403, "shell_key_rejected");
+    const query = version ? `?version=${encodeURIComponent(version)}` : "";
+    const t = await this.#request<AppCodeTicket>(`/v1/projects/${segment(project)}/nodes/${segment(node)}/app-code${query}`, "GET", signal, undefined, false, 20_000, { "X-Mnemos-Shell-Key": shellKey });
+    if (!t || t.content_type !== "application/vnd.cloudflareos.app+json" || t.node_id !== node || t.method !== "GET" || typeof t.url !== "string" ||
+        !Number.isSafeInteger(t.size_bytes) || t.size_bytes < 0 || typeof t.sha256_hex !== "string" || !/^[0-9a-f]{64}$/.test(t.sha256_hex) ||
+        typeof t.version !== "string" || (version && t.version !== version)) throw new MnemosAPIError(502);
+    return t;
   }
   downloadPrivateVersion(project: string, node: string, version: string, signal?: AbortSignal): Promise<DraftDownloadTicket & {content_type: string}> {
     head(version);
@@ -571,7 +583,7 @@ export class MnemosAPI {
     head(request.expected_head); segment(request.request_id); segment(request.upload_id);
     if (request.parent_id) segment(request.parent_id);
     if (!request.name || /[/\\\0]/.test(request.name) || new TextEncoder().encode(request.name).length > 255 ||
-        !["application/pdf", "text/plain", "text/markdown", "text/csv", "application/octet-stream", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/json", "application/vnd.cloudflareos.document+json", "application/vnd.cloudflareos.spreadsheet+json", "application/vnd.cloudflareos.presentation+json", "application/vnd.mnemos.task-tracker+json", "application/vnd.mnemos.resource-map+json", "application/vnd.mnemos.blueprint-template+json"].includes(request.content_type)) throw new MnemosAPIError(400);
+        !["application/pdf", "text/plain", "text/markdown", "text/csv", "application/octet-stream", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/json", "application/vnd.cloudflareos.document+json", "application/vnd.cloudflareos.spreadsheet+json", "application/vnd.cloudflareos.presentation+json", "application/vnd.cloudflareos.app+json", "application/vnd.mnemos.task-tracker+json", "application/vnd.mnemos.resource-map+json", "application/vnd.mnemos.blueprint-template+json"].includes(request.content_type)) throw new MnemosAPIError(400);
     const result = await this.#request<{ node_id: string; head: string }>(`/v1/projects/${segment(projectId)}/draft/create`, "POST", signal, request);
     try { segment(result.node_id); head(result.head); } catch { throw new MnemosAPIError(502); }
     return result;
@@ -1198,7 +1210,10 @@ function folderDrafts(value:unknown):FolderDrafts{
  const authors=Array.isArray(f.authors)?f.authors.slice(0,100).flatMap(item=>{if(!item||typeof item!=='object')return [];const a=item as Record<string,unknown>;const id=publicText(a.principal_id);return id?[{principal_id:id,name:publicText(a.name)}]:[];}):[];
  return {folder_path:publicText(f.folder_path),people,own,...(more?{own_more:more}:{}),...(authors.length?{authors}:{})};
 }
-type FailureCode='agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|typeof FOLDER_REMOVED|typeof FOLDER_HAS_DRAFTS|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
+/** Отказы служебного пути кода гаджета (app-code) и закрытых выдач тела гаджета (ADR 0028 п. 4). */
+// authz.access_denied сюда не входит: прочие 403 по-прежнему без кода, отказ app-code в праве — просто 403.
+const APP_CODE_FAILURE_CODES=['shell_key_rejected','gadget_code_closed','not_a_gadget'] as const;
+type FailureCode=typeof APP_CODE_FAILURE_CODES[number]|'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|typeof FOLDER_REMOVED|typeof FOLDER_HAS_DRAFTS|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
 /** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
 export interface IngestRefusal {reason:string;detail:string}
 /** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
@@ -1231,6 +1246,7 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
   // История проекта ещё переносится в граф ядра: ход — в progress, опрос ведёт оболочка.
   if(response.status===429&&fields.code===HISTORY_PREPARING)return {code:HISTORY_PREPARING,progress:historyProgress(fields.progress)};
   if(typeof fields.code==='string'&&(REPOSITORY_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as RepositoryFailureCode};
+  if((response.status===403||response.status===409)&&typeof fields.code==='string'&&(APP_CODE_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as typeof APP_CODE_FAILURE_CODES[number]};
   if(response.status===403||response.status===404||response.status===501)return undefined;
   if(response.status!==400&&typeof fields.code==='string'&&(GIT_FAILURE_CODES as readonly string[]).includes(fields.code))return {code:fields.code as GitFailureCode};
  }catch{return undefined;}finally{reader.releaseLock();}
@@ -1298,6 +1314,8 @@ export interface DraftDocument {
   head: string; node_id: string; exists: boolean; content_type?: string; conflicted: boolean;
   terms: { present: boolean; negative: boolean; manifest?: string; manifest_size?: number; metadata?: { name: string; parent_id: string; content_type: string } }[];
 }
+/** Билет служебного пути app-code: ссылка живёт 10 с, тело скачивает и сверяет сама оболочка. */
+export interface AppCodeTicket { content_type: string; node_id: string; version: string; head?: string; revision?: number; url: string; method: string; size_bytes: number; sha256_hex: string; expires_at: string }
 export interface DraftDownloadTicket {
   head: string; node_id: string; term_index: number; url: string; method: string;
   size_bytes: number; sha256_hex: string; expires_at: string;

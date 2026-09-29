@@ -11,6 +11,10 @@ export const GADGET_APP_FORMAT = "cloudflareos.app" as const;
 /** Тип содержимого узла Mnemos. */
 export const GADGET_APP_MIME = "application/vnd.cloudflareos.app+json" as const;
 
+/** Отказ в выдаче тела узла приложения (ADR 0028, п. 4): код не получает ни страница, ни агент беседы.
+ *  Тело читает только сервер оболочки для запуска; правка — через агента кода. */
+export const APP_CODE_CLOSED = "Код приложения закрыт: платформа не выдаёт его ни странице, ни агенту беседы. Изменить приложение можно через агента кода в беседе." as const;
+
 /** Разрешения, которые гаджет может запросить в манифесте. `directory` — справочник людей и отделов. */
 export const GADGET_APP_PERMISSIONS = ["directory"] as const;
 export type GadgetAppPermission = typeof GADGET_APP_PERMISSIONS[number];
@@ -316,4 +320,7 @@ export interface MnemosAppCopies {
   applyUpdate(version: string): Promise<{ version: string }>;
   /** «Не сейчас»: не предлагать это обновление в шапке. */
   dismissUpdate(version: string): Promise<void>;
+  /** «Сделать своей»: исходники версии, из которой сделана копия, переносятся к копии, связь с оригиналом
+   *  снимается. Дальше копию правит агент кода, обновлений от автора нет. Только владелец копии. */
+  makeOwn(): Promise<void>;
 }

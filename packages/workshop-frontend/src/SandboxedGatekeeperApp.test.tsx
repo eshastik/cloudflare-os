@@ -14,6 +14,7 @@ import { newMessagePortRpcSession, RpcStub, RpcTarget } from "capnweb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document";
+import { APP_CODE_CLOSED } from "@gadgets/workshop-shared/gadget-app";
 import SandboxedGatekeeperApp, { CONTENT_READY_MAX_MS, gitHubNavigation } from "./SandboxedGatekeeperApp";
 import UploadDock from "./UploadDock";
 import { uploadCenter } from "./uploadCenter";
@@ -701,6 +702,8 @@ describe("SandboxedGatekeeperApp navigation", () => {
     }
     class DownloadIssuer extends RpcTarget {
       async issue(scope: string, resource: string, version: string, side: number) {
+        // Узел приложения: шлюз отказывает странице (ADR 0028, п. 4), текст отказа доходит до фрейма.
+        if (resource === "app") throw new Error(APP_CODE_CLOSED);
         expect([scope, resource, version, side]).toEqual(["project", "doc", "version", 0]);
         const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("draft")));
         return { url: "https://objects.example/file?signed=secret", method: "GET", size_bytes: 5,
@@ -752,6 +755,7 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await expect(host.uploadText("project", "Привет")).resolves.toBe("receipt");
       expect(new TextDecoder().decode(request.mock.calls[0][1].body as Uint8Array)).toBe("Привет");
       await expect(host.downloadText("project", "doc", "version", 0)).resolves.toBe("draft");
+      await expect(host.downloadText("project", "app", "version", 0)).rejects.toThrow(APP_CODE_CLOSED);
       await expect(host.downloadNativeDocument("project", "doc", "publication", "cloudflareos.document")).resolves.toEqual(snapshot);
       await vi.waitFor(() => expect(nativeDisposed).toBe(1));
       await expect(host.downloadReviewText("review", "doc", 3, "after")).resolves.toBe("draft");

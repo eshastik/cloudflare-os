@@ -14,6 +14,7 @@ function fakeUser() {
   let pages: {events: CodeWorkEvent[]; state: "running" | "idle" | "stopped" | "failed"}[] = [];
   let saveError: Error | null = null;
   let heads = [HEAD1, HEAD2];
+  let codeText: string | undefined;
   const user: Partial<CodeWorkUser> = {
     async listChatProjects() { return [{accountId: 3, projectId: "hr", title: "Кадры"}]; },
     async codeWorkTarget() { throw new Error("гаджету код проекта не нужен"); },
@@ -30,23 +31,24 @@ function fakeUser() {
     async codeWorkSaveGadget(accountId, project, task, resource) {
       calls.push(["save", accountId, project, task, resource]);
       if (saveError) throw saveError;
-      return {resource: resource ?? "node-7", head: heads.shift()!, title: "Отпуска", collaborative: true, session: true, created: !resource, vendorId: "mnemos"};
+      return {resource: resource ?? "node-7", head: heads.shift()!, title: "Отпуска", collaborative: true, session: true, created: !resource, vendorId: "mnemos", ...(codeText ? {codeText} : {})};
     },
   };
-  return {user, calls, setPages: (p: typeof pages) => { pages = p; }, failSave: (e: Error | null) => { saveError = e; }};
+  return {user, calls, setPages: (p: typeof pages) => { pages = p; }, failSave: (e: Error | null) => { saveError = e; }, setCode: (text: string) => { codeText = text; }};
 }
 
 function host(user: Partial<CodeWorkUser>, meta: AiChatMetadata, publicBase?: string) {
   let current = structuredClone(meta);
+  const emitted: unknown[] = [];
   const value: ChatCodeWorkHost = {
     chatMeta: () => structuredClone(current),
     putChatMeta: m => { current = structuredClone(m); },
     user: () => user as CodeWorkUser,
-    emit: () => {},
+    emit: (_chat, event) => { emitted.push(event); },
     chatMessages: () => [],
     ...(publicBase ? {publicBase} : {}),
   };
-  return {host: value, meta: () => current};
+  return {host: value, meta: () => current, emitted};
 }
 
 const chat = (): AiChatMetadata => ({id: 1, title: "t", started: new Date(0), lastActive: new Date(0),
@@ -54,7 +56,7 @@ const chat = (): AiChatMetadata => ({id: 1, title: "t", started: new Date(0), la
 const signal = () => new AbortController().signal;
 
 describe("гаджет через агента кода", () => {
-  it("первый ход создаёт узел гаджета, правка — новая версия того же узла; ссылка «Открыть гаджет»", async () => {
+  it("первый ход создаёт узел гаджета, правка — новая версия того же узла; вместо ссылки — карточка", async () => {
     const {user, calls, setPages} = fakeUser();
     const {host: h, meta} = host(user, chat(), "https://os.example/");
     setPages([{events: [role(1, "a")], state: "idle"}]);
@@ -66,7 +68,9 @@ describe("гаджет через агента кода", () => {
     expect(meta().gadgetWork).toMatchObject({taskId: "g1", foreground: false, gadget: {resource: "node-7", title: "Отпуска", head: HEAD1}});
     expect(meta().codeWork).toBeUndefined();
     const text = formatCodeWorkResult(first);
-    expect(text).toContain("[Открыть гаджет](https://os.example/gatekeepers/mnemos?account=3&section=projects&project=hr&document=node-7)");
+    // Гаджет открывается карточкой в ленте: агенту беседы адрес не передаётся, чтобы он не вставил ссылку.
+    expect(text).not.toContain("gatekeepers/mnemos");
+    expect(text).toContain("Гаджет — в карточке выше");
     expect(text).toContain("личной версией");
     expect(text).not.toContain("Что изменилось");
 
@@ -205,5 +209,33 @@ describe("гаджет через агента кода", () => {
     expect(text).toMatch(/совместное ли приложение/);
     expect(text).toMatch(/кто участники/);
     expect(formatCodeWorkPrompt({projects: [], mode: "off"})).not.toContain("gadgetWork");
+  });
+});
+
+const text = (seq: number, id: string, message: string, value: string): CodeWorkEvent => ({seq, type: "message.part.updated", data: {part: {id, messageID: message, type: "text", text: value}}});
+const SERVER_LINE = "export class Gadget extends DurableObject { session(caller) { return new Session(this, caller); } }";
+
+describe("ответ агента кода в задаче гаджета без кода", () => {
+  it("длинный блок кода и строки из сборки скрываются и в ответе, и в ленте; куски по ходу не текут", async () => {
+    const {user, setPages, setCode} = fakeUser();
+    setCode(`${SERVER_LINE}\nconst ui = () => render(document.body);`);
+    const {host: h, meta, emitted} = host(user, chat());
+    const answer = ["Готово: список отпусков с согласованием.", "```ts", "a", "b", "c", "d", "e", "f", "```",
+      `Главное в сервере: \`${SERVER_LINE}\``, SERVER_LINE, "Короткий пример:", "```", "x = 1", "```"].join("\n");
+    setPages([{events: [role(1, "a"), text(2, "t1", "a", answer)], state: "idle"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.answer).toBe(["Готово: список отпусков с согласованием.", "(код гаджета не показывается)",
+      "Главное в сервере: (код гаджета не показывается)", "(код гаджета не показывается)", "Короткий пример:", "```", "x = 1", "```"].join("\n"));
+    expect(formatCodeWorkResult(out)).not.toContain("session(caller)");
+    expect(meta().gadgetWork?.summary).not.toContain("session(caller)");
+    // В ленту человека уходит только отфильтрованный ответ, одним куском.
+    const deltas = emitted.filter((e): e is {type: string; delta: string} => (e as {type: string}).type === "toolOutputDelta");
+    expect(deltas.map(d => d.delta)).toEqual([out.answer]);
+  });
+
+  it("фильтр: короткий блок остаётся, оборванный длинный скрывается", async () => {
+    const {hideGadgetCode} = await import("../src/gadget-answer");
+    expect(hideGadgetCode("Итог\n```\n1\n2\n3\n```", SERVER_LINE)).toBe("Итог\n```\n1\n2\n3\n```");
+    expect(hideGadgetCode("Незакрытый блок\n```js\n1\n2\n3\n4\n5\n6")).toBe("Незакрытый блок\n(код гаджета не показывается)");
   });
 });

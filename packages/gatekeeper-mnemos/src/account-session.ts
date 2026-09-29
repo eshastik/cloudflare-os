@@ -253,6 +253,13 @@ export class MnemosAccountSession {
     this.#check();
     if (result.node_id !== node || result.head !== version) throw new MnemosAPIError(502);
   }
+  /** Служебный билет на тело гаджета (app-code): только с ключом оболочки, правами этого человека. */
+  async appCode(project: string, node: string, version: string, shellKey: string) {
+    this.#check();
+    const result = await this.#client.appCode(project, node, version, shellKey, this.#lifetime.signal);
+    this.#check();
+    return result;
+  }
   async downloadPrivateVersion(project: string, node: string, version: string) {
     this.#check();
     const result = await this.#client.downloadPrivateVersion(project, node, version, this.#lifetime.signal);

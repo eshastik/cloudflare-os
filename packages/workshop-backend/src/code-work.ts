@@ -66,7 +66,7 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
   let maxDuration = turn.maxDurationMs ?? 45 * 60_000;
   let quietLimit = turn.idleWithoutWorkPolls ?? 4;
   let startedAt = clock();
-  let timeline = new CodeWorkTimeline(turn.cursor);
+  let timeline = new CodeWorkTimeline(turn.cursor, {closedCode: turn.gadget === true});
   let taskId = turn.taskId;
   let state: CodeWorkState = "starting";
   let extra: AgentStep[] = [];

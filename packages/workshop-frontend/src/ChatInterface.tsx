@@ -123,6 +123,7 @@ import type { AgentStep } from "@gadgets/workshop-shared/code-work";
 import { chatListState, codeAnsweredMessageSeqs, upsertAgentStep } from "./codeWorkSteps";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
+import { GadgetWorkCard, hideGadgetLinks, savedGadgetResources } from "./components/chat/GadgetWorkCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
 import { CodeModeSwitch, useCodeWorkAllowed } from "./components/chat/CodeModeSwitch";
 import { StepLimitNotice } from "./components/chat/StepLimitNotice";
@@ -1726,10 +1727,11 @@ const ToolGroupRow = memo(function ToolGroupRow({
   onFooterRevert?: (sequence: number) => void;
   outputOf?: ToolOutputResolver;
 }) {
+  const { openDocument } = useContext(WorkRunContext);
   const codeCall = group.calls.length === 1 && group.observations.length === 0 && isCodeWorkCall(group.calls[0])
     ? group.calls[0] : null;
   if (codeCall) {
-    return (
+    const row = (
       <CodeWorkRow
         title={group.label}
         steps={codeCall.output?.steps ?? []}
@@ -1738,6 +1740,19 @@ const ToolGroupRow = memo(function ToolGroupRow({
         changedFiles={codeCall.output?.changedFiles}
         error={codeCall.error}
       />
+    );
+    // Сохранённый гаджет — отдельной карточкой под ходом агента кода.
+    const gadget = codeCall.toolName === "gadgetWork" && codeCall.output?.gadget?.saved ? codeCall.output.gadget : null;
+    if (!gadget) return row;
+    return (
+      <div className="space-y-2">
+        {row}
+        <GadgetWorkCard
+          gadget={gadget}
+          projectTitle={displayName(codeCall.output?.projectTitle, "Проект")}
+          onOpen={openDocument?.({ project: gadget.projectId, document: gadget.resource })}
+        />
+      </div>
     );
   }
   const footerLabel = footerChangeSequence !== undefined
@@ -5455,6 +5470,8 @@ function ChatInterface({
     workspaceGadgets: (workspaceGadgets ?? []).map((g) => ({ title: g.title, ...(g.output?.id ? { outputId: g.output.id } : {}) })),
     openDocument: openMnemosDocument,
   }), [chatProjectList, currentMessages, workspaceGadgets, openMnemosDocument]);
+  // Гаджеты с карточкой в ленте: их ссылки из ответа агента убираются, кнопка «Открыть» — в карточке.
+  const gadgetCardResources = useMemo(() => savedGadgetResources(currentMessages), [currentMessages]);
   useActionEntries(overseer, (record) => {
     if (applyActionLogUpdateToCachedMessages(record)) scheduleUpdate();
   });
@@ -7295,7 +7312,8 @@ function ChatInterface({
                             </div>
                           ) : (() => {
                             const messageToolGroups = entry.toolCallGroups;
-                            const hasMessageText = msg.message.trim().length > 0;
+                            const shownMessageText = hideGadgetLinks(msg.message, gadgetCardResources);
+                            const hasMessageText = shownMessageText.trim().length > 0;
                             const showReasoning = showThinkingTraces && !!msg.reasoning;
                             const actionMessageSeq = entry.lastMessageSequence ?? msg.sequence;
                             const pendingChange = pendingChangeByTurnItemSeq.get(
@@ -7326,7 +7344,7 @@ function ChatInterface({
                               {hasMessageText && (
                                 <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
                                   <MarkdownMessage
-                                    message={msg.message}
+                                    message={shownMessageText}
                                     capsules={msg.capsules}
                                     formats={msg.formats}
                                   />
@@ -7706,7 +7724,7 @@ function ChatInterface({
 
                           {currentProvisionalState?.text && (
                             <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
-                              <MarkdownMessage message={currentProvisionalState.text} />
+                              <MarkdownMessage message={hideGadgetLinks(currentProvisionalState.text, gadgetCardResources)} />
                             </div>
                           )}
 

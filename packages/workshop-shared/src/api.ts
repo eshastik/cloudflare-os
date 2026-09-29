@@ -630,6 +630,9 @@ export interface AuthenticatedApi extends RpcTarget {
    *  scope и resource — проект и узел. Права Mnemos проверяются при открытии и на каждом вызове. */
   /** personal — свой экземпляр открывшего (приложение без совместной работы); иначе общий экземпляр узла. */
   openMnemosApp(accountId: number, scope: string, resource: string, personal: boolean): Promise<RpcStub<import('./gadget-app.js').MnemosAppConnection>>;
+  /** Предпросмотр совместного приложения (ADR 0028 п. 2): отдельный экземпляр со своей пустой базой; версию
+   *  (личную private:<head> или из истории) оболочка читает служебным путём правами человека. Только с правом правки. */
+  openMnemosAppPreview(accountId: number, scope: string, resource: string): Promise<RpcStub<import('./gadget-app.js').MnemosAppConnection>>;
 
   /** Проекты из подключённой памяти человека для набора проектов беседы. */
   listChatProjects(): Promise<ChatProjectChoice[]>;
@@ -3047,11 +3050,10 @@ export interface GadgetClient extends WorkpieceClient {
   getMnemosApp(): Promise<import('./gadget-app.js').MnemosAppState>;
   /** Записать привязку к узлу приложения (null — снять). */
   setMnemosApp(binding: import('./gadget-app.js').MnemosAppBinding | null): Promise<void>;
-  /** Модули гаджета для сохранения в проект: только client.js и server.js принятой версии кода. */
+  /** Модули гаджета беседы для «Сохранить в проект»: client.js и server.js принятой версии кода. Гаджету,
+   *  привязанному к узлу приложения, отказ: код узла не выдаётся никому (ADR 0028, п. 4). Обратной записи
+   *  кода узла в рабочее место нет. */
   exportAppModules(): Promise<{ codeVersion: number; title: string; modules: import('./gadget-app.js').GadgetAppModules }>;
-  /** Поставить модули версии узла в код гаджета; отказ, если код изменился или в беседах есть предложенные правки.
-   *  Возвращает новую версию кода рабочего места. */
-  restoreAppModules(modules: import('./gadget-app.js').GadgetAppModules, title: string, expectedCodeVersion: number): Promise<number>;
 
   /** Prepare a code update for a native editor. Returns null for unsupported formats or use-only access. */
   getNativeEditorUpdate(): Promise<NativeEditorUpdate | null>;

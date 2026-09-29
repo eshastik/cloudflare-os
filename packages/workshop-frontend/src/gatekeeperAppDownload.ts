@@ -1,4 +1,3 @@
-import { GADGET_APP_LIMITS, GADGET_APP_MIME, parseGadgetAppText } from '@gadgets/workshop-shared/gadget-app'
 import {MAX_BLUEPRINT_TEMPLATE_BYTES} from '@gadgets/workshop-shared/blueprint-template'
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from "@gadgets/workshop-shared/native-document"
@@ -131,13 +130,4 @@ export async function downloadGatekeeperNativeReview(
   const snapshot = await downloadGatekeeperNativeDocument(storageOrigin, ticket, format, signal, () => download.validate())
   onMetadata?.(ticket.metadata)
   return snapshot
-}
-
-/** Текст узла приложения ровно в том виде, как он лежит в Mnemos: сумму версии потом сверяет оболочка. */
-export async function downloadGatekeeperAppText(storageOrigin: string, ticket: GatekeeperDownloadTicket & { content_type: string }, signal: AbortSignal, validateAccess: () => Promise<void>): Promise<string> {
-  if (ticket.content_type !== GADGET_APP_MIME) throw new Error('Файл не является приложением.')
-  const text = await downloadVerifiedText(storageOrigin, ticket, signal, GADGET_APP_LIMITS.totalBytes)
-  parseGadgetAppText(text)
-  await validateAccess(); signal.throwIfAborted()
-  return text
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText } from "@phosphor-icons/react";
+import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
 import type { AdminPerson } from "../src/admin-people.ts";
 import type { PrivateDocumentPage } from "../src/mnemos-api.ts";
 import type { MemoryData } from "./data.ts";
@@ -43,17 +44,19 @@ export default function AdministrativeDocuments({data, initialProject}: {data:Me
   setOpened({document,text:null,error:""});
   try {
    if(document.conflicted)throw new Error("В документе конфликт версий. Для его разбора откройте проект вместе с автором.");
+   // Код приложения закрыт для всех, включая администратора (ADR 0028, п. 4).
+   if(document.content_type===GADGET_APP_MIME)throw new Error(APP_CODE_CLOSED);
    if(!/^(text\/|application\/(json|xml|javascript|x-yaml|yaml)(;|$))/.test(document.content_type))throw new Error("Предпросмотр этого формата пока недоступен. Скачайте файл, чтобы открыть его в подходящем приложении.");
    const text=await host.downloadText(project,document.node_id,"private:"+page.head,0);
    if(alive.current&&current===generation.current)setOpened({document,text,error:""});
-  }catch(reason){if(alive.current&&current===generation.current)setOpened({document,text:null,error:reason instanceof Error&&/^(В документе конфликт|Предпросмотр)/.test(reason.message)?reason.message:"Не удалось загрузить документ. Повторите попытку."});}
+  }catch(reason){if(alive.current&&current===generation.current)setOpened({document,text:null,error:reason instanceof Error&&/^(В документе конфликт|Предпросмотр|Код приложения закрыт)/.test(reason.message)?reason.message:"Не удалось загрузить документ. Повторите попытку."});}
  }
  async function download(document:Document) {
   if(!page||document.conflicted)return;
   const current=generation.current;
   setDownloading(true);setDownloadError("");
   try{await host.downloadFile(project,document.node_id,"private:"+page.head,document.name);}
-  catch{if(alive.current&&generation.current===current)setDownloadError("Не удалось скачать файл. Проверьте подключение и повторите попытку.");}
+  catch(reason){if(alive.current&&generation.current===current)setDownloadError(reason instanceof Error&&reason.message.includes(APP_CODE_CLOSED)?APP_CODE_CLOSED:"Не удалось скачать файл. Проверьте подключение и повторите попытку.");}
   finally{if(alive.current)setDownloading(false);}
  }
  const name=people.find(person=>person.userName===owner)?.displayName || "сотрудник";
@@ -69,7 +72,7 @@ export default function AdministrativeDocuments({data, initialProject}: {data:Me
   {loading&&<Notice>Загрузка личных версий…</Notice>}
   {opened&&<section aria-label="Просмотр личной версии" className="grid gap-2 rounded-2xl border border-kumo-fill bg-kumo-overlay p-5">
    <div className="flex flex-wrap items-center gap-2"><div className="min-w-0 flex-1"><h3 className="m-0 text-[17px] font-semibold text-kumo-default">{opened.document.name}</h3><p className="m-0 text-[13px] text-kumo-subtle">Автор: {name} · {data.projects.find(item=>item.id===project)?.name}</p></div>
-   <Pill disabled={downloading||opened.document.conflicted} onClick={()=>void download(opened.document)}>{downloading?"Скачивание…":"Скачать файл"}</Pill><Pill tone="ghost" onClick={()=>{generation.current++;setOpened(null);}}>Свернуть</Pill></div>
+   {opened.document.content_type!==GADGET_APP_MIME&&<Pill disabled={downloading||opened.document.conflicted} onClick={()=>void download(opened.document)}>{downloading?"Скачивание…":"Скачать файл"}</Pill>}<Pill tone="ghost" onClick={()=>{generation.current++;setOpened(null);}}>Свернуть</Pill></div>
    {downloadError&&<Notice tone="danger">{downloadError}</Notice>}
    {opened.error?<><Notice tone="danger">{opened.error}</Notice><div><Pill onClick={()=>void open(opened.document)}>Повторить загрузку</Pill></div></>:opened.text===null?<Notice>Загрузка документа…</Notice>:<pre className="m-0 whitespace-pre-wrap break-words font-serif text-[15px] leading-relaxed text-kumo-default">{opened.text||"(Пустой файл)"}</pre>}
   </section>}

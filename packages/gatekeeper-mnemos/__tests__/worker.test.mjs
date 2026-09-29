@@ -135,7 +135,8 @@ test("real Worker RPC keeps account credentials private and revokes issued sessi
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { page: { connections: [{ binding_id: "fixture-agent" }] }, oldRejected: true, newRejected: true, safeHtml: true, credentialMethodRejected: true, contextOK: true, documentOK: true, uploadOK: true, uploadRevoked: true, downloadOK: true, downloadRevoked: true, editOK: true, writeRevoked: true, nativeOK: true, nativeRevoked: true, nativeIssueRevoked: true });
     // Selection, issuance and post-transfer check add three calls. Revoked and malformed calls add none.
-    assert.equal(upstreamCalls, 20);
+    // Билет личной ветки читает узел до выдачи: тело приложения странице не выдаётся (ADR 0028, п. 4).
+    assert.equal(upstreamCalls, 21);
     assert.equal(saves, 1); assert.equal(publications, 1);
     const publicWorker = await mf.getWorker("mnemos");
     assert.equal((await publicWorker.fetch("https://worker.example/")).status, 404);

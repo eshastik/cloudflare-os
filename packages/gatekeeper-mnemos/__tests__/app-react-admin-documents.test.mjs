@@ -28,3 +28,23 @@ test("администратор выбирает автора и читает �
   assert.deepEqual(app.calls.find(c=>c[0]==="downloadFile"),["downloadFile","one","private-doc","private:"+"c".repeat(64),"Черновик Бориса"]);
  }finally{app.dispose();}
 });
+
+test("личная версия-приложение: код закрыт и для администратора — ни предпросмотра, ни «Скачать файл»",async()=>{
+ const app=await mountMemoryApp({
+  async readPrincipalMembership(){return {enabled:true};},
+  async listPeople(){return {users:[{userName:"bob",displayName:"Борис",active:true}]};},
+  async listPrivateDocumentsForOwner(){return {documents:[{node_id:"app-node",name:"Список дел",content_type:"application/vnd.cloudflareos.app+json",conflicted:false}],head:"c".repeat(64),next_cursor:""};},
+ },{section:"documents"});
+ try {
+  const block=()=>app.document.querySelector('#root details[aria-label="Личные версии сотрудников"]');
+  await app.until(()=>block(),"административный просмотр");
+  block().open=true;block().dispatchEvent(new app.dom.window.Event("toggle"));
+  await app.until(()=>app.document.querySelector('[aria-label="Автор личных версий"] option[value="bob"]'),"выбор автора");
+  app.type(app.document.querySelector('[aria-label="Автор личных версий"]'),"bob");
+  await app.until(()=>app.button("Список дел"),"приложение в списке");
+  app.button("Список дел").click();
+  await app.until(()=>app.text().includes("Код приложения закрыт"),"понятный отказ");
+  assert.equal(app.button("Скачать файл"),undefined);
+  assert.equal(app.calls.some(c=>c[0]==="downloadText"||c[0]==="downloadFile"),false);
+ }finally{app.dispose();}
+});

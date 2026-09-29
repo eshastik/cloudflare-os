@@ -1,14 +1,16 @@
 // Экземпляр приложения узла Mnemos (ADR 0028, этап 2) на настоящем Durable Object с facet'ом: два
 // человека видят одно состояние, сервер гаджета знает вызывающего, узлы и свои экземпляры не видят друг
 // друга, у сервера нет сети, общий экземпляр — только опубликованные версии и только через session(),
-// справочник — пересечение с видимым запустившему, отзыв доступа закрывает связь, предпросмотр в рабочем
-// месте не сбрасывает общий экземпляр, смена версии сохраняет данные, журнал пишет открытия и смены кода.
+// справочник — пересечение с видимым запустившему, отзыв доступа закрывает связь, код узла в рабочее
+// место не попадает (ADR 0028, п. 4), смена версии сохраняет данные, журнал пишет открытия и смены кода.
 import { exports } from "cloudflare:workers";
-import { newWebSocketRpcSession, type RpcStub } from "capnweb";
-import type { PublicApi } from "@gadgets/workshop-shared/api";
-import { gadgetAppSha256, gadgetAppText, type GadgetAppDocument } from "@gadgets/workshop-shared/gadget-app";
+import { runInDurableObject } from "cloudflare:test";
+import { newWebSocketRpcSession, RpcTarget, type RpcStub } from "capnweb";
+import type { PublicApi, WorkpieceSummary } from "@gadgets/workshop-shared/api";
+import { APP_CODE_CLOSED, gadgetAppSha256, gadgetAppText, type GadgetAppDocument } from "@gadgets/workshop-shared/gadget-app";
+import * as Y from "yjs";
 import { expect, it } from "vitest";
-import { APP_ACCESS_CLOSED, APP_CHECK_MS, openMnemosAppConnection, type AppObjectPort, type MnemosAppPorts } from "../src/mnemos-app-api";
+import { APP_ACCESS_CLOSED, APP_CHECK_MS, APP_PREVIEW_EDIT_ONLY, openMnemosAppConnection, type AppObjectPort, type MnemosAppPorts } from "../src/mnemos-app-api";
 import { APP_ALREADY_RUNNING, APP_PUBLISHED_ONLY, mnemosAppObjectName, type AppAuditEntry } from "../src/mnemos-app";
 
 const SERVER = `
@@ -51,19 +53,20 @@ type Directory = Awaited<ReturnType<MnemosAppPorts["directory"]>>;
 const EVERYONE: Directory = { people: [{ id: "anna", name: "Анна" }, { id: "boris", name: "Борис" }], departments: [] };
 
 /** Связь человека с узлом: Mnemos подделан (право, версии, справочник), объект узла — настоящий. */
-async function connectAs(principal: string, node: string, texts: Map<string, string>, options: { access?: "read" | "edit"; personal?: boolean; directory?: Directory } = {}) {
+async function connectAs(principal: string, node: string, texts: Map<string, string>, options: { access?: "read" | "edit"; personal?: boolean; directory?: Directory; textError?: Error; preview?: boolean; reads?: string[] } = {}) {
   const clock = { now: Date.now() };
   let access: "read" | "edit" | "none" = options.access ?? "edit";
   const aborted: string[] = [];
   const ports: MnemosAppPorts = {
     access: async () => { if (access === "none") throw new Error("403"); return { access, principal, tenant: "org-1", name: principal === "anna" ? "Анна" : "Борис", project: "project-1", node, installation: INSTALLATION }; },
     version: async version => { const text = texts.get(version); if (!text) throw new Error("404"); return { sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" }; },
-    text: async version => { const text = texts.get(version); if (!text) throw new Error("404"); return { text, sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" }; },
+    text: async version => { options.reads?.push(version); if (options.textError) throw options.textError; const text = texts.get(version); if (!text) throw new Error("404"); return { text, sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" }; },
     latestPublished: async () => [...texts.keys()].filter(v => !v.startsWith("private:")).at(-1) ?? null,
     publishedHead: async () => { const id = [...texts.keys()].filter(v => !v.startsWith("private:")).at(-1); return id ? { id, recordedAt: "2026-09-29T10:00:00Z", actor: principal } : null; },
     node: () => { throw new Error("не нужен"); },
     createApp: async () => { throw new Error("не нужен"); },
     saveApp: async () => { throw new Error("не нужен"); },
+    forkSources: async () => {},
     directory: async () => options.directory ?? EVERYONE,
     object: name => exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,
     profileName: async () => principal,
@@ -72,7 +75,7 @@ async function connectAs(principal: string, node: string, texts: Map<string, str
     abort: reason => { aborted.push(reason.message); },
     release: () => {},
   };
-  const connection = await openMnemosAppConnection(ports, options.personal ?? false);
+  const connection = await openMnemosAppConnection(ports, options.personal ?? false, options.preview ?? false);
   return { connection, aborted, revoke: () => { access = "none"; }, later: () => { clock.now += APP_CHECK_MS; } };
 }
 const refused = (promise: Promise<unknown>) => promise.then(() => "принято", (error: Error) => error.message);
@@ -196,7 +199,7 @@ it("новая версия перезапускает экземпляр и с�
   ]);
 });
 
-it("предпросмотр правок в рабочем месте — отдельный экземпляр: общий не перезапускается и не видит данных предпросмотра", async () => {
+it("код узла в рабочее место не попадает: гаджет беседы отдаёт свой код для «Сохранить в проект», после привязки код закрыт", async () => {
   const node = "node-" + crypto.randomUUID();
   const texts = new Map([["event-1", gadgetAppText(doc("v1"))]]);
   const anna = await connectAs("anna", node, texts);
@@ -208,30 +211,91 @@ it("предпросмотр правок в рабочем месте — от�
   response.webSocket!.accept();
   const api = newWebSocketRpcSession<PublicApi>(response.webSocket!) as RpcStub<PublicApi>;
   const name = "app" + crypto.randomUUID().replaceAll("-", "");
-  const session = api.authenticate((await api.createAccount(name, name, new Uint8Array([1, 2, 3])))!);
-  const overseer = session.newGadget();
-  const gadget = overseer.createGadget("Приложение");
-  const state = await gadget.getMnemosApp();
-  expect(state.notExportable).toMatch(/client\.js/);
-  const version = await gadget.restoreAppModules(doc("v1").modules, "Общий список", state.codeVersion);
+  const session = await api.authenticate((await api.createAccount(name, name, new Uint8Array([1, 2, 3])))!);
+  const overseer = await session.newGadget();
+  const gadget = await overseer.createGadget("Приложение");
+  expect((await gadget.getMnemosApp()).notExportable).toMatch(/client\.js/);
+  // Код гаджета беседы пишется в рабочее место, как его пишет беседа.
+  const code = new Y.Doc();
+  const files = code.getMap<Y.Text>(String(await gadget.getId()));
+  for (const [file, text] of Object.entries(doc("v1").modules)) files.set(file, new Y.Text(text));
+  await overseer.updateCode(Y.encodeStateAsUpdateV2(code));
+  code.destroy();
   expect((await gadget.getMnemosApp()).notExportable).toBeNull();
   expect((await gadget.exportAppModules()).modules).toEqual(doc("v1").modules);
-  // Договор session(caller) в предпросмотре — только по явному признаку из привязки к узлу.
-  await gadget.setMnemosApp({ accountId: 1, scope: "project-1", resource: node, description: "", collaborative: true, session: true, permissions: [], savedCodeVersion: version, savedVersion: "event-1" });
-  const preview = await gadget.connectToGadget() as unknown as Session;
-  expect(await preview.add("предпросмотр")).toBe(1);
-  expect(await preview.whoami()).toMatchObject({ access: "edit", directory: false });
-  expect((await preview.whoami()).principal).toMatch(/^workspace:/);
-  // Правка кода в рабочем месте перезапускает только предпросмотр.
-  await gadget.restoreAppModules(doc("v1-edit").modules, "Общий список", version);
-  const edited = await gadget.connectToGadget() as unknown as { version(): Promise<string> };
-  expect(await edited.version()).toBe("v1-edit");
+  // После привязки к узлу код закрыт: выгрузки нет (обратной записи кода узла, restoreAppModules, больше нет).
+  await gadget.setMnemosApp({ accountId: 1, scope: "project-1", resource: node, description: "", collaborative: true, session: true, permissions: [], savedVersion: "event-1" });
+  // exportAppModules отказывает той же причиной (#appBlocker), её и видит шапка.
+  expect((await gadget.getMnemosApp()).notExportable).toBe(APP_CODE_CLOSED);
+  // Список гаджетов не отдаёт странице filesRoot гаджета-узла: вкладки «Код» и синхронизации его файлов нет.
+  const summaries = new Map<number, WorkpieceSummary>();
+  let ready!: () => void;
+  const listed = new Promise<void>(resolve => { ready = resolve; });
+  class Subscriber extends RpcTarget { entry(summary: WorkpieceSummary) { summaries.set(summary.id, summary); } removed() {} ready() { ready(); } }
+  using subscription = await overseer.subscribeToWorkpieces(new Subscriber() as never);
+  await listed;
+  const id = await gadget.getId();
+  expect(summaries.get(id)).toMatchObject({ id, title: "Приложение" });
+  expect(summaries.get(id)?.filesRoot).toBeUndefined();
+  void subscription;
+  // Код в рабочем месте вычищен при привязке; подписка с нуля не проигрывает историю, где он был.
+  const secret = 'ctx.storage.kv.put("starts"';
+  const updates: Uint8Array[] = [];
+  let synced!: () => void;
+  const caughtUp = new Promise<void>(resolve => { synced = resolve; });
+  class CodeSub extends RpcTarget { update(up: { update: Uint8Array }) { updates.push(up.update); } ready() { synced(); } }
+  using codeSubscription = await overseer.subscribeToCode(new CodeSub() as never, 0);
+  await caughtUp;
+  void codeSubscription;
+  const replayed = new Y.Doc();
+  for (const update of updates) Y.applyUpdateV2(replayed, update);
+  expect([...replayed.getMap(String(id)).keys()]).toEqual([]);
+  expect(updates.some(update => new TextDecoder().decode(update).includes(secret))).toBe(false);
+  replayed.destroy();
+  // Записать код гаджету-узла снова нельзя, шаблон из него не делается.
+  const again = new Y.Doc();
+  again.getMap<Y.Text>(String(id)).set("server.js", new Y.Text("export class Gadget {}"));
+  // Проверка — внутри объекта: отказ через Cap'n Web из объекта рабочего места стенд считает необработанным.
+  const workspace = exports.OverseerDurableObject.get(exports.OverseerDurableObject.idFromString((await overseer.getMetadata()).id));
+  await runInDurableObject(workspace, async instance => {
+    const impl = (instance as unknown as { impl: { updateTouchesClosedCode(u: Uint8Array): boolean; purgeClosedCode(): number | null } }).impl;
+    expect(impl.updateTouchesClosedCode(Y.encodeStateAsUpdateV2(again))).toBe(true);
+    // Правка другого гаджета не задета; повторная чистка ничего не пишет.
+    const other = new Y.Doc(); other.getMap<Y.Text>("999").set("client.js", new Y.Text("ui()"));
+    expect(impl.updateTouchesClosedCode(Y.encodeStateAsUpdateV2(other))).toBe(false);
+    other.destroy();
+    expect(impl.purgeClosedCode()).toBeNull();
+  });
+  again.destroy();
+
+  // Старое рабочее место: код узла уже лежит в гаджете, привязка записана раньше чистки. Первая же
+  // подписка вычищает его и не проигрывает историю.
+  const legacy = await overseer.createGadget("Старое приложение");
+  const legacyId = await legacy.getId();
+  const legacyCode = new Y.Doc();
+  for (const [file, text] of Object.entries(doc("v1").modules)) legacyCode.getMap<Y.Text>(String(legacyId)).set(file, new Y.Text(text));
+  await overseer.updateCode(Y.encodeStateAsUpdateV2(legacyCode));
+  legacyCode.destroy();
+  await runInDurableObject(workspace, async instance => {
+    const impl = (instance as unknown as { impl: { storage: { gadgets: { get(id: number): Record<string, unknown>; put(r: unknown): void } } } }).impl;
+    const record = impl.storage.gadgets.get(legacyId);
+    impl.storage.gadgets.put({ ...record, mnemosApps: { someone: { accountId: 1, scope: "project-1", resource: node, description: "", collaborative: true, session: true, permissions: [] } } });
+  });
+  const legacyUpdates: Uint8Array[] = [];
+  let legacySynced!: () => void;
+  const legacyCaughtUp = new Promise<void>(resolve => { legacySynced = resolve; });
+  class LegacySub extends RpcTarget { update(up: { update: Uint8Array }) { legacyUpdates.push(up.update); } ready() { legacySynced(); } }
+  using legacySubscription = await overseer.subscribeToCode(new LegacySub() as never, 0);
+  await legacyCaughtUp;
+  void legacySubscription;
+  const legacyReplay = new Y.Doc();
+  for (const update of legacyUpdates) Y.applyUpdateV2(legacyReplay, update);
+  expect([...legacyReplay.getMap(String(legacyId)).keys()]).toEqual([]);
+  expect(legacyUpdates.some(update => new TextDecoder().decode(update).includes(secret))).toBe(false);
+  legacyReplay.destroy();
+  // Общий экземпляр узла это не трогает.
   expect(await live.list()).toEqual([{ by: "anna", text: "живое" }]);
   expect(await live.starts()).toBe(1);
-  expect(await live.version()).toBe("v1");
-  // Устаревшая версия кода — отказ, код рабочего места не меняется.
-  const stale = await Promise.resolve(gadget.restoreAppModules(doc("v3").modules, "Общий список", version)).then(() => "принято", (error: Error) => error.message);
-  expect(stale).toMatch(/изменился/);
 });
 
 it("объект узла сам сверяет сумму кода и отказывает несовместному приложению", async () => {
@@ -242,4 +306,48 @@ it("объект узла сам сверяет сумму кода и отка�
   const solo = gadgetAppText(doc("v1", { collaborative: false }));
   expect(await refused(object.deploy("event-1", await gadgetAppSha256(solo), solo, "anna", shared))).toMatch(/не совместное/);
   expect(await object.state()).toEqual({ deployed: null });
+});
+
+it("служебный путь кода не настроен или отказал: человек видит причину, а не «версия повреждена»", async () => {
+  const node = "node-" + crypto.randomUUID();
+  const texts = new Map([["event-1", gadgetAppText(doc("v1"))]]);
+  const missing = await connectAs("anna", node, texts, { textError: new Error("Запуск гаджетов не настроен: нет ключа оболочки.") });
+  expect(await refused(missing.connection.deploy("event-1"))).toBe("Запуск гаджетов не настроен: нет ключа оболочки.");
+  expect(await refused(missing.connection.manifest("event-1"))).toBe("Запуск гаджетов не настроен: нет ключа оболочки.");
+  const denied = await connectAs("anna", node, texts, { textError: new Error("Приложение вам недоступно: нет доступа к этой версии файла.") });
+  expect(await refused(denied.connection.deploy("event-1"))).toBe("Приложение вам недоступно: нет доступа к этой версии файла.");
+  // Прочие сбои (сеть, повреждение) — прежним общим текстом без подробностей.
+  const other = await connectAs("anna", node, texts, { textError: new Error("Mnemos request failed") });
+  expect(await refused(other.connection.deploy("event-1"))).toBe("Версия приложения недоступна или повреждена.");
+});
+
+it("предпросмотр личной версии: отдельный экземпляр со своей базой, общий не трогается; версия — private: правами человека; читателю нельзя", async () => {
+  const node = "node-" + crypto.randomUUID();
+  const head = "f".repeat(64);
+  const texts = new Map([["event-1", gadgetAppText(doc("v1"))], [`private:${head}`, gadgetAppText(doc("v2-личная"))]]);
+  const anna = await connectAs("anna", node, texts);
+  await anna.connection.deploy("event-1");
+  await (await anna.connection.connectToGadget() as Session).add("общее");
+
+  const reads: string[] = [];
+  const preview = await connectAs("anna", node, texts, { preview: true, reads });
+  await preview.connection.deploy(`private:${head}`);
+  expect(reads).toContain(`private:${head}`);
+  const screen = await preview.connection.connectToGadget() as Session;
+  expect(await screen.version()).toBe("v2-личная");
+  expect(await screen.list()).toEqual([]);
+  await screen.add("проба");
+  // Общий экземпляр — прежняя версия и прежние данные.
+  const shared = await anna.connection.connectToGadget() as Session;
+  expect(await shared.version()).toBe("v1");
+  expect((await shared.list()).map(i => i.text)).toEqual(["общее"]);
+  expect((await preview.connection.describe()).deployed?.version).toBe(`private:${head}`);
+  expect((await anna.connection.describe()).deployed?.version).toBe("event-1");
+
+  // Читатель: предпросмотр не открывается вовсе.
+  expect(await refused(connectAs("boris", node, texts, { access: "read", preview: true }))).toBe(APP_PREVIEW_EDIT_ONLY);
+  // Своё приложение в предпросмотр не идёт.
+  const solo = new Map([["event-1", gadgetAppText(doc("v1", { collaborative: false }))]]);
+  const soloPreview = await connectAs("anna", "node-" + crypto.randomUUID(), solo, { preview: true });
+  expect(await refused(soloPreview.connection.deploy("event-1"))).toMatch(/предпросмотр ему не нужен/);
 });

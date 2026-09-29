@@ -51,7 +51,7 @@ export interface WorkspaceTaskView {
 }
 export interface WorkspaceTaskDetails extends WorkspaceProgress { task: WorkspaceTaskView }
 export class WorkspaceError extends Error {
-  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready" | "disabled" | "not_gadget" | "no_build" | "bad_build" | "sources", message: string) { super(message); }
+  constructor(readonly code: "unconfigured" | "scope" | "repository" | "unavailable" | "not_found" | "invalid" | "no_changes" | "no_repository" | "stopped" | "not_ready" | "disabled" | "not_gadget" | "no_build" | "bad_build" | "sources" | "no_sources" | "sources_unavailable", message: string) { super(message); }
 }
 
 /** Файл контекста беседы в рабочем месте (путь от /workspace). */
@@ -158,8 +158,13 @@ export interface WorkspaceControl {
   /** Сборка задачи гаджета; bindingId — привязка агента человека: чужую задачу служба не отдаёт. */
   gadgetBuild(id: string, bindingId: string): Promise<WorkspaceGadgetBuild>;
   /** Сохранить исходники последней прочитанной сборки к узлу гаджета (после записи узла правами человека). */
-  saveGadgetSources(id: string, bindingId: string, resource: string): Promise<void>;
+  saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string): Promise<void>;
+  /** Исходники версии оригинала — к копии получателя («Сделать своей»). */
+  forkGadgetSources(input: GadgetSourcesFork): Promise<void>;
 }
+
+/** Тело POST /v1/workspace/gadget-sources/fork: ключ агента и привязка — получателя копии. */
+export interface GadgetSourcesFork { agent_token: string; binding_id: string; from_project: string; from_resource: string; body_sha256: string; to_project: string; to_resource: string }
 
 async function sha256Hex(text: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
@@ -255,9 +260,10 @@ export class WorkspaceClient implements WorkspaceControl {
       new WorkspaceError("unavailable", "Сборка гаджета не прочитана из рабочего места."));
     return gadgetBuildOf(await response.json());
   }
-  async saveGadgetSources(id: string, bindingId: string, resource: string): Promise<void> {
+  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string): Promise<void> {
+    if (!/^[0-9a-f]{64}$/.test(bodySha256)) throw new WorkspaceError("invalid", "Неверная сумма версии гаджета.");
     try {
-      await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/gadget/sources`, "POST", { binding_id: bindingId, resource }, undefined,
+      await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/gadget/sources`, "POST", { binding_id: bindingId, resource, body_sha256: bodySha256 }, undefined,
         (code, message) => code === "no_sources" || code === "sources_too_large" ? new WorkspaceError("sources", message || "Исходники гаджета не сохранены.")
           : new WorkspaceError("stopped", "Работа над гаджетом уже остановлена."),
         new WorkspaceError("sources", "Исходники гаджета не прочитаны из рабочего места."),
@@ -265,6 +271,21 @@ export class WorkspaceClient implements WorkspaceControl {
     } catch (error) {
       // 503 у этого вызова — хранилище исходников, а не занятые рабочие места.
       if (error instanceof WorkspaceError && error.code === "unavailable") throw new WorkspaceError("sources", "Хранилище исходников гаджетов недоступно.");
+      throw error;
+    }
+  }
+  async forkGadgetSources(input: GadgetSourcesFork): Promise<void> {
+    if (!/^[0-9a-f]{64}$/.test(input.body_sha256) || [input.binding_id, input.from_project, input.from_resource, input.to_project, input.to_resource].some(v => typeof v !== "string" || !v || v.length > 255) || !input.agent_token) {
+      throw new WorkspaceError("invalid", "Копия гаджета указана неверно.");
+    }
+    try {
+      await this.#call("/v1/workspace/gadget-sources/fork", "POST", input, undefined,
+        code => code === "no_sources" ? new WorkspaceError("no_sources", "Исходники этой версии гаджета не сохранились: сделать копию своей нельзя. Попросите автора пересохранить гаджет через агента кода.")
+          : new WorkspaceError("sources", "Служба не перенесла исходники гаджета."),
+        undefined,
+        new WorkspaceError("invalid", "Служба рабочих мест не приняла запрос: копия указана неверно."));
+    } catch (error) {
+      if (error instanceof WorkspaceError && error.code === "unavailable") throw new WorkspaceError("sources_unavailable", "Хранилище исходников гаджетов недоступно. Повторите позже.");
       throw error;
     }
   }
@@ -507,13 +528,22 @@ export class WorkspaceTasks {
 
   /** Исходники последней прочитанной сборки → хранилище службы рядом с узлом resource. Задача над
    * сохранённым узлом пишет исходники только в него. */
-  async saveGadgetSources(project: string, id: string, resource: string): Promise<void> {
+  async saveGadgetSources(project: string, id: string, resource: string, bodySha256: string): Promise<void> {
     const task = this.#own(project, id);
     if (task.kind !== "gadget") throw new WorkspaceError("not_gadget", "Эта работа не делает гаджет.");
     if (!validGadgetResource(resource) || (task.gadget_resource && task.gadget_resource !== resource)) throw new WorkspaceError("invalid", "Неизвестный файл гаджета.");
     const { bindingId } = await this.#deps.agent();
-    await this.#control().saveGadgetSources(id, bindingId, resource);
+    await this.#control().saveGadgetSources(id, bindingId, resource, bodySha256);
     if (!task.gadget_resource) this.#save({ ...(this.#get(id) ?? task), gadget_resource: resource });
+  }
+
+  /** «Сделать своей» (решение владельца): исходники версии оригинала from_* с суммой bodySha256 → копия to_*.
+   *  Ключ агента — получателя, как при запуске задачи гаджета; право чтения оригинала проверяет вызывающий. */
+  async forkGadgetSources(from: { project: string; resource: string }, to: { project: string; resource: string }, bodySha256: string): Promise<void> {
+    const control = this.#control();
+    const { bindingId } = await this.#deps.agent();
+    const token = await this.#credential(bindingId);
+    await control.forkGadgetSources({ agent_token: token, binding_id: bindingId, from_project: from.project, from_resource: from.resource, body_sha256: bodySha256, to_project: to.project, to_resource: to.resource });
   }
 
   /** Сборка задачи гаджета этого человека: только своя задача гаджета в этом проекте. */

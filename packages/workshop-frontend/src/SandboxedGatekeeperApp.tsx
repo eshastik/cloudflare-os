@@ -22,6 +22,7 @@ import { uploadGatekeeperText } from './gatekeeperAppUpload'
 import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
 import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
+import { APP_CODE_CLOSED } from '@gadgets/workshop-shared/gadget-app'
 import { useAuthenticatedApi } from './AuthContext'
 import { FramePersonPhotos, framePhotos, type FramePhoto } from './framePersonPhotos'
 import { isGitHubAppPage, readGitHubReturn, type GitHubReturn } from './gitHubAppLink'
@@ -119,9 +120,15 @@ function iframeStyleForOverlay(overlay: OverlayState): CSSProperties {
   }
 }
 
+/** Отказ в коде приложения (ADR 0028, п. 4) доходит до страницы своим текстом; прочие сбои — общим. */
+function downloadFailure(error: unknown): Error {
+  return new Error(error instanceof Error && error.message.includes(APP_CODE_CLOSED) ? APP_CODE_CLOSED : 'Не удалось скачать документ.')
+}
+
 // The host capability exposed to the sandboxed app (the gatekeeper's iframe UI) over the MessagePort
 // RPC session. The app uses `ui` to reach the gatekeeper's own capability, which Workshop relays and
 // rate-limits. `setPresenting` stays in Workshop and only grows/restores the iframe's layout.
+
 class GatekeeperAppHostImpl extends RpcTarget {
   readonly #calendarDraftCreator:RpcStub<NonNullable<GatekeeperUiFrame['calendarDraftCreator']>>|undefined
   readonly #mailDraftSender:RpcStub<NonNullable<GatekeeperUiFrame['mailDraftSender']>>|undefined
@@ -440,7 +447,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       const ticket=await downloads.issuer.issue(scope,resource,version,0)
       const bytes=await downloadGatekeeperFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
       saveDocumentFile(bytes,filename)
-    }catch{throw new Error('Не удалось скачать документ.')}
+    }catch(error){throw downloadFailure(error)}
     finally{this.#downloadBusy=false}
   }
 
@@ -457,7 +464,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       await downloads.issuer.validate(scope, resource, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text
-    } catch { throw new Error('Не удалось скачать документ.') }
+    } catch (error) { throw downloadFailure(error) }
     finally { this.#downloadBusy = false }
   }
 
@@ -475,7 +482,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
         return await downloadGatekeeperNativeDocument(downloads.storageOrigin, await selected.issue(),
           format, this.#uploadLifetime.signal, () => selected.validate())
       } finally { selected[Symbol.dispose]() }
-    } catch { throw new Error('Не удалось скачать документ.') }
+    } catch (error) { throw downloadFailure(error) }
     finally { this.#downloadBusy = false }
   }
 
@@ -491,7 +498,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       await downloads.issuer.validate(review, node, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text
-    } catch { throw new Error('Не удалось скачать документ.') }
+    } catch (error) { throw downloadFailure(error) }
     finally { this.#downloadBusy = false }
   }
 

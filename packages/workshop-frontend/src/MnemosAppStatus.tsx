@@ -1,10 +1,11 @@
 // Приложение как файл проекта Mnemos (ADR 0028 Mnemos, этапы 1–3): шапка гаджета рабочего места.
 //
-// Открывается так же, как документ: код версии узла встаёт в гаджет своего рабочего места, шапка
-// показывает состояние, «Поделиться» и «Версии». Совместное приложение (collaborative) работает одним
-// общим экземпляром на узел: экран подключается к нему, пока код рабочего места совпадает с
-// сохранённой версией. Правки кода (в беседе или принятые, но не сохранённые) показываются
-// предпросмотром — отдельным экземпляром рабочего места, живой экземпляр их не видит и не сбрасывается.
+// Открывается так же, как документ: шапка показывает состояние, «Поделиться» и «Версии», экран — экземпляр
+// узла. Совместное приложение (collaborative) работает одним общим экземпляром на узел, остальные — своим.
+//
+// Код узла платформа не выдаёт никому, даже человеку с правом правки (ADR 0028, п. 4): в браузер и в
+// рабочее место он не попадает, версию запускает и читает сама оболочка. Править приложение можно только
+// через агента кода в беседе; «Вернуть версию» делает Mnemos, текст версии при этом через браузер не идёт.
 //
 // Приложение без совместной работы (этап 3): получатель без права правки открывает не оригинал, а свою
 // копию — узел в своём проекте с опубликованной версией автора и своей пустой базой. Когда автор
@@ -13,6 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretLeft } from '@phosphor-icons/react'
+import { Dialog } from '@cloudflare/kumo'
+import { WorkshopButton } from './components/WorkshopControls'
 import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi, GadgetClient } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentSelector, GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
@@ -26,16 +29,14 @@ import DocumentSharePanel from './DocumentSharePanel'
 import { PANEL_CLASS, PANEL_HEADER_CLASS, pillButton, primaryButton } from './DocumentVersionPanel'
 import { listAccounts, openNativeWritesFrame, storesDocuments } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
-import { downloadGatekeeperAppText } from './gatekeeperAppDownload'
 import { uploadGatekeeperAppText } from './gatekeeperAppUpload'
 import { clearMnemosAppLaunch, readMnemosAppLaunch } from './mnemosAppLaunch'
-import { isDocumentChanged } from './nativeMnemosDocument'
 import { useAuthenticatedApi } from './AuthContext'
 
 type Writes = RpcStub<GatekeeperNativeDocumentWriteSelector>
 type Downloads = RpcStub<GatekeeperNativeDocumentSelector>
-type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp' | 'openMnemosApp'>
-type Gadget = Pick<RpcStub<GadgetClient>, 'getId' | 'getMnemosApp' | 'setMnemosApp' | 'exportAppModules' | 'restoreAppModules'>
+type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp' | 'openMnemosApp' | 'openMnemosAppPreview'>
+type Gadget = Pick<RpcStub<GadgetClient>, 'getId' | 'getMnemosApp' | 'setMnemosApp' | 'exportAppModules'>
 type Source = { accountId: number; writes: Writes; downloads: Downloads; origin: string; frame: GatekeeperUiFrame }
 type Connection = RpcStub<MnemosAppConnection & MnemosAppCopies>
 type Live = { connection: Connection; info: MnemosAppInfo }
@@ -64,14 +65,16 @@ const authorOf = (name: string) => name.trim() || 'автора'
 
 /** Три факта шапки и одно главное действие для приложения; порядок — от блокирующего к обычному. */
 export function deriveAppStatus(input: {
-  access: AppAccess | null; collaborative: boolean; unsaved: boolean; savedVersion?: string
+  access: AppAccess | null; collaborative: boolean; savedVersion?: string
   liveVersion?: string | null; liveError?: string; savedAt?: string | null; now?: number
   /** Получатель открыл чужое приложение без совместной работы: ready — у автора есть опубликованная версия. */
   offer?: { ready: boolean } | null
   /** Это своя копия чужого приложения. */
   copy?: Pick<MnemosAppCopyState, 'author' | 'origin' | 'update' | 'dismissed'> | null
+  /** Личная версия совместного приложения у того, кто правит: active — экран предпросмотра, published — есть опубликованная. */
+  preview?: { active: boolean; published: boolean } | null
 }): DocumentStatusModel {
-  const { access, collaborative, unsaved, savedVersion, liveVersion, liveError, savedAt, offer, copy, now = Date.now() } = input
+  const { access, collaborative, savedVersion, liveVersion, liveError, savedAt, offer, copy, preview, now = Date.now() } = input
   const version = copy ? `Копия приложения ${authorOf(copy.author)}` : collaborative ? 'Общее приложение' : 'Приложение'
   const audience = copy ? (copy.origin === 'closed' ? 'автор закрыл доступ к оригиналу, обновлений не будет' : 'данные только ваши')
     : access === 'read' ? 'только просмотр' : collaborative ? 'одна база на всех, кому открыт файл' : 'данные у каждого свои'
@@ -80,13 +83,8 @@ export function deriveAppStatus(input: {
   if (offer) {
     return offer.ready
       ? { kind: 'readonly', version, audience: 'у вас будет своя копия с пустыми данными', saved: 'откройте свою копию', tone: 'info',
-          primary: { kind: 'copy', label: 'Создать копию', hint: 'Тот же код, своя пустая база, файл в вашем проекте. Данные автора вам не видны.' }, secondary: null }
+          primary: { kind: 'copy', label: 'Создать копию', hint: 'То же приложение, своя пустая база, файл в вашем проекте. Код приложения вам не показывается, данные автора не видны.' }, secondary: null }
       : { kind: 'readonly', version, audience: 'у вас будет своя копия с пустыми данными', saved: 'автор ещё не опубликовал приложение', tone: 'warning', primary: null, secondary: null }
-  }
-  if (unsaved) {
-    if (!editor) return { kind: 'readonly', version, audience, saved: 'правки не сохранятся: файл открыт только для просмотра', tone: 'warning', primary: null, secondary: null }
-    return { kind: 'unsaved', version, audience, saved: 'не сохранено · это предпросмотр со своими данными', tone: 'warning',
-      primary: { kind: 'save', label: 'Сохранить', hint: collaborative ? 'Сохранится личная версия файла. У всех она заработает после публикации.' : 'Новая версия файла появится в проекте.' }, secondary: null }
   }
   if (liveError && !(collaborative && editor && !isPublishedVersion(savedVersion))) return { kind: 'unread', version, audience, saved: liveError, tone: 'danger', primary: null, secondary: null }
   const when = savedAt ? `сохранено ${formatAgo(savedAt, now)}` : 'сохранено'
@@ -95,6 +93,23 @@ export function deriveAppStatus(input: {
       primary: { kind: 'update', label: 'Обновить', hint: 'Код копии заменится опубликованной версией автора. Данные приложения сохранятся, прежний код останется в «Версиях».' },
       secondary: { kind: 'dismiss', label: 'Не сейчас' } }
   }
+  if (preview && collaborative && editor && !isPublishedVersion(savedVersion)) {
+    const publish = access === 'owner' ? { kind: 'submit' as const, label: 'Опубликовать', hint: 'У всех заработает эта версия; данные общего экземпляра сохранятся.' } : null
+    return preview.active
+      ? { kind: 'saved', version, audience: 'своя пустая база', saved: 'Предпросмотр личной версии — данные не сохраняются для других', tone: 'info',
+          primary: publish, secondary: preview.published ? { kind: 'published', label: 'Показать опубликованную' } : null }
+      : { kind: 'saved', version, audience, saved: 'показана опубликованная версия · ваша личная версия не опубликована', tone: 'neutral',
+          primary: publish, secondary: { kind: 'preview', label: 'Предпросмотр личной версии' } }
+  }
+  const status = appVersionStatus({ access, collaborative, editor, savedVersion, liveVersion, version, audience, when })
+  // Своя копия с открытым оригиналом: её можно «сделать своей» — дальше её правит агент кода.
+  if (copy && access === 'owner' && copy.origin === 'open' && !status.secondary) return { ...status, secondary: { kind: 'own', label: 'Сделать своей' } }
+  return status
+}
+
+function appVersionStatus({ access, collaborative, editor, savedVersion, liveVersion, version, audience, when }: {
+  access: AppAccess; collaborative: boolean; editor: boolean; savedVersion?: string; liveVersion?: string | null; version: string; audience: string; when: string
+}): DocumentStatusModel {
   if (collaborative && !isPublishedVersion(savedVersion) && editor) {
     // Личная версия: у всех работает опубликованная, эта — только в предпросмотре автора.
     return { kind: 'saved', version, audience, saved: `${when} · личная версия, у всех — опубликованная`, tone: 'neutral',
@@ -123,13 +138,6 @@ async function openSource(api: Api, accountId?: number): Promise<Source> {
   return { accountId: account.id, writes: frame.nativeWrites.selector as unknown as Writes, downloads: frame.nativeDownloads.selector as unknown as Downloads, origin: frame.nativeWrites.storageOrigin, frame }
 }
 
-/** Точный текст версии узла: сумму и тип сверяет браузер, доступ к версии — Mnemos. */
-async function downloadVersion(source: Source, scope: string, resource: string, version: string, signal: AbortSignal): Promise<string> {
-  using download = await source.downloads.select(scope, resource, version)
-  const ticket = await download.issue(); signal.throwIfAborted()
-  return await downloadGatekeeperAppText(source.origin, ticket as never, signal, () => download.validate())
-}
-
 async function readAccess(source: Source, scope: string, resource: string): Promise<AppAccess> {
   const app = await source.writes.appAccess(scope, resource, false)
   if (app.access === 'read') return 'read'
@@ -146,7 +154,8 @@ export type MnemosAppHandle = ReturnType<typeof useMnemosApp>
 
 /**
  * Всё о приложении текущего гаджета: привязка к узлу, право, общий экземпляр и действия шапки.
- * previewChatId — беседа с предложенными правками: пока она открыта, экран показывает предпросмотр.
+ * previewChatId — беседа с предложенными правками гаджета беседы; у гаджета-узла кода в рабочем месте нет,
+ * и предпросмотра у него не бывает.
  */
 export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS }: { api: Api; gadget: Gadget | null; previewChatId?: number; pollMs?: number }) {
   const [app, setApp] = useState<MnemosAppState | null>(null)
@@ -173,7 +182,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     return next
   }, [gadget])
 
-  // Состояние рабочего места и опрос версии кода: принятая правка делает приложение несохранённым.
+  // Привязка гаджета рабочего места к узлу: читается сразу и опросом (её меняют и другие вкладки).
   useEffect(() => {
     setApp(null); setAccess(null); setLive(null); setLiveError(''); setError(''); setNotice(''); setVersions(null); setOffer(null); setCopy(null)
     if (!gadget) return
@@ -193,6 +202,8 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
         if (cancelled) { disposeGatekeeperFrame(opened.frame); return }
         source.current = opened
         setAccess(await readAccess(opened, binding.scope, binding.resource))
+        const known = await readVersions(opened, binding.scope, binding.resource).catch(() => [])
+        if (!cancelled) setPublished(known.some(v => !v.personal))
       } catch (caught) { if (!cancelled) setError(errorText(caught, 'Права на файл приложения не прочитаны. Проверьте подключение Mnemos.')) }
     })()
     return () => { cancelled = true; if (source.current === opened) source.current = null; if (opened) disposeGatekeeperFrame(opened.frame) }
@@ -201,14 +212,24 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
 
   // Экземпляр приложения: общий у совместного, свой у остальных; связь и работающая версия, опрос смены версии.
   const collaborative = !!binding?.collaborative
+  /** Есть ли у узла опубликованная версия (для переключателя предпросмотр ↔ опубликованная). */
+  const [published, setPublished] = useState(false)
+  const [showPublished, setShowPublished] = useState(false)
+  useEffect(() => { setShowPublished(false) }, [identity, binding?.savedVersion])
+  // Предпросмотр: у того, кто правит, открыта личная версия совместного приложения — она идёт в отдельный
+  // экземпляр со своей базой (ADR 0028 п. 2), общий экземпляр не трогается.
+  const previewMode = collaborative && (access === 'owner' || access === 'edit') && !isPublishedVersion(binding?.savedVersion) && !showPublished
   useEffect(() => {
     if (!identity || !binding) { setLive(null); setLiveError(''); setOffer(null); setCopy(null); return }
     let cancelled = false, connection: Connection | null = null
     let timer: ReturnType<typeof setInterval> | undefined
     void (async () => {
       try {
-        connection = await api.openMnemosApp(binding.accountId, binding.scope, binding.resource, !binding.collaborative) as unknown as Connection
-        const info = await connection.describe()
+        connection = (previewMode
+          ? await api.openMnemosAppPreview(binding.accountId, binding.scope, binding.resource)
+          : await api.openMnemosApp(binding.accountId, binding.scope, binding.resource, !binding.collaborative)) as unknown as Connection
+        let info = await connection.describe()
+        if (previewMode && binding.savedVersion && info.deployed?.version !== binding.savedVersion) info = await connection.deploy(binding.savedVersion)
         if (cancelled) { dispose(connection); return }
         setLive({ connection, info }); setLiveError(info.deployed ? '' : binding.collaborative ? 'приложение ещё не опубликовано' : 'приложение ещё не запущено')
         if (!binding.collaborative) {
@@ -227,7 +248,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     })()
     return () => { cancelled = true; clearInterval(timer); dispose(connection) }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- перечитывается при смене узла
-  }, [api, identity, collaborative, tick])
+  }, [api, identity, collaborative, previewMode, previewMode ? binding?.savedVersion : '', tick])
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     if (busy) return
@@ -239,9 +260,8 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   }
 
   /**
-   * Открыть версию узла. С правом правки код версии встаёт в гаджет рабочего места (для правки и
-   * предпросмотра). Без права правки код в рабочее место не кладётся и в браузер не скачивается: манифест
-   * и запуск читает сама оболочка, страница получает только экран экземпляра.
+   * Открыть версию узла. Код не скачивается и в рабочее место не кладётся ни при каком праве: манифест и
+   * запуск читает сама оболочка, страница получает только экран экземпляра (ADR 0028, п. 4).
    */
   async function openVersion(accountId: number, scope: string, resource: string, publication: string, signal: AbortSignal) {
     if (!gadget) return
@@ -249,17 +269,14 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     try {
       const rights = await readAccess(opened, scope, resource); signal.throwIfAborted()
       const editor = rights !== 'read'
-      const state = await gadget.getMnemosApp()
-      const same = state.binding && state.binding.scope === scope && state.binding.resource === resource
-      if (same && state.binding!.savedCodeVersion !== undefined && state.binding!.savedCodeVersion !== state.codeVersion) {
-        setNotice('В этом рабочем месте есть несохранённые правки приложения: открыта ваша копия. Сохраните её или верните версию в «Версиях».')
-        return
-      }
-      let manifest, codeVersion: number | undefined
-      if (!editor) {
+      let manifest
+      {
         using connection = await api.openMnemosApp(accountId, scope, resource, false) as unknown as Connection
-        const read = await connection.manifest(publication)
-        manifest = read
+        manifest = await connection.manifest(publication)
+      }
+      signal.throwIfAborted()
+      if (!editor) {
+        const read = manifest
         if (!read.collaborative) {
           // Чужое приложение без совместной работы: своя копия вместо оригинала.
           await gadget.setMnemosApp({ accountId, scope, resource, description: read.description, collaborative: false, session: read.session, permissions: read.permissions, savedVersion: publication })
@@ -273,16 +290,10 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
           await reload(); setTick(t => t + 1)
           return
         }
-      } else {
-        const text = await downloadVersion(opened, scope, resource, publication, signal)
-        const { document } = parseGadgetAppText(text)
-        manifest = document.manifest
-        codeVersion = same && state.binding!.savedVersion === publication && state.binding!.savedCodeVersion !== undefined
-          ? state.binding!.savedCodeVersion : await gadget.restoreAppModules(document.modules, document.manifest.title, state.codeVersion)
       }
       const next: MnemosAppBinding = {
         accountId, scope, resource, description: manifest.description, collaborative: manifest.collaborative, session: manifest.session,
-        permissions: manifest.permissions, savedVersion: publication, ...(codeVersion !== undefined ? { savedCodeVersion: codeVersion } : {}),
+        permissions: manifest.permissions, savedVersion: publication,
         ...(editor && publication.startsWith('private:') && /^[a-f0-9]{64}$/.test(publication.slice(8)) ? { savedHead: publication.slice(8) } : {}),
       }
       await gadget.setMnemosApp(next)
@@ -326,17 +337,18 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз на гаджет
   }, [gadget, app])
 
-  /** Текст новой версии из принятого кода рабочего места. */
-  async function currentText(current: MnemosAppBinding | null, choice?: { collaborative: boolean; description: string; permissions: GadgetAppPermission[] }) {
+  /** Текст файла из кода гаджета беседы: только для «Сохранить в проект». Гаджет-узел кода в рабочем месте
+   *  не держит, и оболочка выгрузку ему не отдаёт. */
+  async function chatGadgetText(choice: { collaborative: boolean; description: string; permissions: GadgetAppPermission[] }) {
     if (!gadget) throw new Error('Гаджет не выбран.')
     const exported = await gadget.exportAppModules()
-    const collaborative = choice?.collaborative ?? current?.collaborative ?? false
+    const collaborative = choice.collaborative
     // Признак session — из кода: сервер объявил метод session(caller). Общим данным он обязателен.
     const session = /\bsession\s*\(/.test(exported.modules['server.js'])
     if (collaborative && !session) throw new Error('Для общих данных в server.js нужен метод session(caller): по нему приложение знает, кто вызывает.')
-    const manifest = { title: exported.title.trim().slice(0, 120) || 'Приложение', description: choice?.description ?? current?.description ?? '',
-      collaborative, session, formatVersion: 1 as const, permissions: choice?.permissions ?? current?.permissions ?? [] }
-    return { text: gadgetAppText({ manifest, modules: exported.modules }), codeVersion: exported.codeVersion, session }
+    const manifest = { title: exported.title.trim().slice(0, 120) || 'Приложение', description: choice.description,
+      collaborative, session, formatVersion: 1 as const, permissions: choice.permissions }
+    return { text: gadgetAppText({ manifest, modules: exported.modules }), session }
   }
 
   /** Запуск версии: код читает сама оболочка. Общий экземпляр — только опубликованные версии. */
@@ -345,30 +357,12 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     await connection.deploy(version)
   }
 
-  /** «Сохранить»: новая личная версия узла. У совместного приложения общий экземпляр не меняется до публикации. */
-  const save = () => run(async signal => {
-    const current = binding, way = source.current
-    if (!current || !way || !gadget) return
-    const { text, codeVersion, session } = await currentText(current)
-    using writer = await way.writes.select(current.scope, current.resource, GADGET_APP_FORMAT)
-    const base = current.savedHead ?? await writer.head(); signal.throwIfAborted()
-    const upload = await uploadGatekeeperAppText(text, way.origin, (size, checksum) => writer.issue(base, size, checksum), signal)
-    let head: string
-    try { head = await writer.save(base, upload) }
-    catch (caught) { if (isDocumentChanged(caught)) throw new Error('Файл приложения изменил другой участник после вашего открытия. Откройте новую версию в «Версиях».'); throw caught }
-    const next: MnemosAppBinding = { ...current, session, savedCodeVersion: codeVersion, savedHead: head, savedVersion: `private:${head}` }
-    await gadget.setMnemosApp(next)
-    if (!current.collaborative) await deploy(next, `private:${head}`)
-    setNotice(current.collaborative ? 'Личная версия сохранена. У всех она заработает после публикации.' : 'Версия сохранена в проект.')
-    await reload(); setTick(t => t + 1)
-  })
-
-  /** «Сохранить в проект»: новый файл приложения в проекте. */
+  /** «Сохранить в проект»: гаджет беседы становится новым файлом приложения в проекте. */
   const saveToProject = (choice: { accountId: number; scope: string; collaborative: boolean; description: string; permissions: GadgetAppPermission[] }) => run(async signal => {
     if (!gadget) return
     const way = await openSource(api, choice.accountId)
     try {
-      const { text, codeVersion, session } = await currentText(null, choice)
+      const { text, session } = await chatGadgetText(choice)
       const name = parseGadgetAppText(text).document.manifest.title
       using creator = await way.writes.create(choice.scope, name, GADGET_APP_FORMAT)
       const head = await creator.head(); signal.throwIfAborted()
@@ -376,7 +370,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
       const saved = await creator.save(head, upload)
       const resource = await creator.document()
       const next: MnemosAppBinding = { accountId: way.accountId, scope: choice.scope, resource, description: choice.description, collaborative: choice.collaborative, session,
-        permissions: choice.permissions, savedCodeVersion: codeVersion, ...(/^[a-f0-9]{64}$/.test(saved) ? { savedHead: saved, savedVersion: `private:${saved}` } : {}) }
+        permissions: choice.permissions, ...(/^[a-f0-9]{64}$/.test(saved) ? { savedHead: saved, savedVersion: `private:${saved}` } : {}) }
       await gadget.setMnemosApp(next)
       if (!choice.collaborative && next.savedVersion) await deploy(next, next.savedVersion)
       setNotice(choice.collaborative ? 'Приложение сохранено в проект личной версией. У всех оно заработает после публикации.' : 'Приложение сохранено в проект. Поделиться им можно кнопкой «Поделиться».')
@@ -431,7 +425,6 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   const applyUpdate = () => run(async signal => {
     const current = binding, update = copy?.update
     if (!current || !update) return
-    if (binding!.savedCodeVersion !== undefined && app && binding!.savedCodeVersion !== app.codeVersion) throw new Error('Сначала сохраните правки кода: обновление заменит код копии.')
     let version: string
     {
       using connection = await api.openMnemosApp(current.accountId, current.scope, current.resource, true) as unknown as Connection
@@ -453,34 +446,62 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     setNotice('Обновление можно поставить позже в «Версиях».')
   })
 
+  /** «Сделать своей»: исходники версии автора переносятся к копии, связь с оригиналом снимается.
+   *  Возвращает текст отказа (для окна подтверждения) или null при успехе. */
+  const makeOwn = async (): Promise<string | null> => {
+    const current = binding
+    if (!current || !copy || busy) return 'Копия приложения не выбрана.'
+    const signal = lifetime.current.signal
+    setBusy(true); setError(''); setNotice('')
+    try {
+      {
+        using connection = await api.openMnemosApp(current.accountId, current.scope, current.resource, true) as unknown as Connection
+        await connection.makeOwn()
+      }
+      if (signal.aborted) return null
+      setCopy(null)
+      setNotice('Гаджет теперь ваш: меняйте его через агента кода в беседе. Обновления от автора больше не придут.')
+      setTick(t => t + 1)
+      return null
+    } catch (caught) {
+      return errorText(caught, 'Не получилось сделать копию своей: Mnemos или служба исходников не ответили. Повторите позже.')
+    } finally { if (!signal.aborted) setBusy(false) }
+  }
+
   const loadVersions = () => run(async () => {
     const way = source.current
     if (!binding || !way) return
     setVersions(await readVersions(way, binding.scope, binding.resource))
   })
 
-  /** «Вернуть версию»: код версии встаёт в рабочее место несохранённым; «Сохранить» сделает его новой версией. */
+  /**
+   * «Вернуть версию»: Mnemos сам делает выбранную версию новой личной версией узла (как у документа),
+   * текст версии через браузер не идёт. Своё приложение сразу запускает её в своём экземпляре.
+   */
   const restoreVersion = (version: AppVersion) => run(async signal => {
-    const way = source.current
-    if (!binding || !way || !gadget) return
-    const text = await downloadVersion(way, binding.scope, binding.resource, version.id, signal)
-    const { document } = parseGadgetAppText(text)
-    const state = await gadget.getMnemosApp()
-    await gadget.restoreAppModules(document.modules, document.manifest.title, state.codeVersion)
-    setNotice('Код версии открыт в рабочем месте. Сохраните его, чтобы он стал новой версией.')
-    await reload()
+    const current = binding, way = source.current
+    if (!current || !way || !gadget) return
+    const state = await way.writes.restorationState(current.scope, current.resource, GADGET_APP_FORMAT); signal.throwIfAborted()
+    if (state.deleted) throw new Error('Файл приложения удалён из проекта: вернуть версию нельзя.')
+    let head: string
+    try { head = (await way.writes.restorePublication(current.scope, current.resource, version.id, state.head, GADGET_APP_FORMAT)).head }
+    catch (caught) { throw new Error(errorText(caught, 'Версия не вернулась: файл изменили или прав на правку нет. Откройте «Версии» заново и повторите.')) }
+    signal.throwIfAborted()
+    const { savedCodeVersion: _code, ...rest } = current
+    const next: MnemosAppBinding = { ...rest, savedHead: head, savedVersion: `private:${head}` }
+    await gadget.setMnemosApp(next)
+    if (!current.collaborative) await deploy(next, next.savedVersion!)
+    setNotice(current.collaborative ? 'Версия возвращена личной версией файла. У всех она заработает после публикации.' : 'Версия возвращена и уже работает.')
+    setVersions(await readVersions(way, current.scope, current.resource))
+    await reload(); setTick(t => t + 1)
   })
 
-  /** Код приложения лежит в рабочем месте (открывший с правом правки или сохранивший из беседы). */
-  const hasCode = !!binding && binding.savedCodeVersion !== undefined
-  const unsaved = hasCode && app !== null && binding!.savedCodeVersion !== app.codeVersion
-  const preview = previewChatId !== undefined
-  /** Экран общего экземпляра: только для сохранённого кода и без предпросмотра беседы. */
-  // Рабочее место (предпросмотр со своими данными): правки, беседа с правками или своя версия автора,
-  // которая не совпадает с работающей. Иначе — экран экземпляра узла; у читателя кода в рабочем месте нет.
-  const showWorkspace = !binding || preview || unsaved || (hasCode && live?.info.deployed?.version !== binding.savedVersion)
+  /** Предпросмотр беседы — только у гаджета беседы: у гаджета-узла кода в рабочем месте нет. */
+  const preview = previewChatId !== undefined && !binding
+  /** Рабочее место показывается только гаджету беседы; гаджет-узел — всегда экраном экземпляра узла. */
+  const showWorkspace = !binding
   /** Получатель открыл чужое приложение без совместной работы: вместо экрана — предложение своей копии. */
-  const offerMode = !!binding && !binding.collaborative && access === 'read' && !hasCode
+  const offerMode = !!binding && !binding.collaborative && access === 'read'
   const liveGadget = useMemo(() => {
     if (!live?.info.deployed || showWorkspace || offerMode) return null
     const connection = live.connection
@@ -489,13 +510,14 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
 
   const model = useMemo(() => {
     if (!binding) return null
-    return deriveAppStatus({ access, collaborative, unsaved: unsaved || preview, savedVersion: binding.savedVersion, liveVersion: live?.info.deployed?.version ?? null,
-      liveError: offerMode ? '' : liveError, savedAt: null, offer: offerMode ? { ready: !!offer?.release } : null, copy })
-  }, [binding, access, collaborative, unsaved, preview, live, liveError, offerMode, offer, copy])
+    return deriveAppStatus({ access, collaborative, savedVersion: binding.savedVersion, liveVersion: live?.info.deployed?.version ?? null,
+      liveError: offerMode || previewMode ? '' : liveError, savedAt: null, offer: offerMode ? { ready: !!offer?.release } : null, copy,
+      preview: collaborative ? { active: previewMode, published } : null })
+  }, [binding, access, collaborative, live, liveError, offerMode, offer, copy, previewMode, published])
 
-  return { app, binding, access, live, liveError: offerMode ? APP_COPY_OFFER : liveError, liveGadget, showWorkspace, hasCode, unsaved, preview, model, busy, error, notice, versions,
-    offer, copy, offerMode, makeCopy, applyUpdate, dismissUpdate,
-    save, saveToProject, publish, start, loadVersions, restoreVersion, writes: () => source.current?.writes ?? null, refresh: () => setTick(t => t + 1) }
+  return { app, binding, access, live, liveError: offerMode ? APP_COPY_OFFER : liveError, liveGadget, showWorkspace, preview, model, busy, error, notice, versions,
+    offer, copy, offerMode, makeCopy, applyUpdate, dismissUpdate, makeOwn, previewMode, setShowPublished,
+    saveToProject, publish, start, loadVersions, restoreVersion, writes: () => source.current?.writes ?? null, refresh: () => setTick(t => t + 1) }
 }
 
 type PanelSection = 'share' | 'versions' | 'save' | 'copy'
@@ -522,13 +544,18 @@ export default function MnemosAppStatus({ handle, compact, panelHost, onShareSho
   }, [handle.offerMode, handle.offer])
   useEffect(() => { if (panel === 'versions') handle.loadVersions() }, [panel, handle.binding?.resource])
   const onPrimary = (kind: PrimaryKind) => {
-    if (kind === 'save') void handle.save()
-    else if (kind === 'submit') void handle.publish()
+    if (kind === 'submit') void handle.publish()
     else if (kind === 'start') void handle.start()
     else if (kind === 'copy') setPanel('copy')
     else if (kind === 'update') void handle.applyUpdate()
   }
-  const onSecondary = () => { if (handle.model?.secondary?.kind === 'dismiss') void handle.dismissUpdate() }
+  const [owning, setOwning] = useState(false)
+  const onSecondary = () => {
+    if (handle.model?.secondary?.kind === 'dismiss') void handle.dismissUpdate()
+    else if (handle.model?.secondary?.kind === 'published') handle.setShowPublished(true)
+    else if (handle.model?.secondary?.kind === 'preview') handle.setShowPublished(false)
+    else if (handle.model?.secondary?.kind === 'own') setOwning(true)
+  }
   // Привязанный к узлу гаджет в другой проект не сохраняется: чужое приложение не уносится копией.
   const exportable = handle.app?.notExportable === null && !handle.binding
   const node = panel === 'share'
@@ -546,7 +573,34 @@ export default function MnemosAppStatus({ handle, compact, panelHost, onShareSho
       onPrimary={onPrimary} onSecondary={onSecondary} onOpenVersion={() => setPanel(old => old === 'versions' ? null : 'versions')}
       onSaveToProject={exportable ? () => setPanel('save') : undefined} />
     {panelHost ? createPortal(node, panelHost) : node}
+    <MakeOwnDialog handle={handle} open={owning} onOpenChange={setOwning} />
   </>
+}
+
+/** Подтверждение «Сделать своей»: после него копию правит агент кода, обновлений от автора нет. */
+export function MakeOwnDialog({ handle, open, onOpenChange }: { handle: Pick<MnemosAppHandle, 'makeOwn' | 'busy' | 'copy'>; open: boolean; onOpenChange(open: boolean): void }) {
+  const [failure, setFailure] = useState('')
+  useEffect(() => { if (open) setFailure('') }, [open])
+  const confirm = async () => {
+    const refused = await handle.makeOwn()
+    if (refused) setFailure(refused)
+    else onOpenChange(false)
+  }
+  return <Dialog.Root open={open} onOpenChange={next => { if (!handle.busy) onOpenChange(next) }}>
+    <Dialog className="!z-[1000] !w-[min(440px,calc(100vw-32px))] overflow-hidden bg-kumo-base p-0 !top-[20%] !-translate-y-0" size="sm">
+      <div className="border-b border-kumo-line px-5 py-4">
+        <Dialog.Title className="text-[15px] leading-5 font-medium tracking-[-0.3px] text-kumo-default">Сделать копию своей?</Dialog.Title>
+        <Dialog.Description className="mt-1.5 text-[13px] leading-[18px] text-kumo-subtle">
+          Вы сможете менять гаджет через агента кода. Обновления от автора больше не будут приходить.
+        </Dialog.Description>
+        {failure && <p role="alert" className="mt-3 mb-0 text-[13px] leading-[18px] text-kumo-danger">{failure}</p>}
+      </div>
+      <div className="flex flex-col-reverse items-stretch gap-2 bg-kumo-base px-5 py-3 sm:flex-row sm:items-center sm:justify-end">
+        <Dialog.Close render={props => <WorkshopButton {...props} className="!h-10 sm:!h-9" disabled={handle.busy}>Отмена</WorkshopButton>} />
+        <WorkshopButton tone="primary" className="!h-10 sm:!h-9" disabled={handle.busy} onClick={() => { void confirm() }}>{handle.busy ? 'Переношу…' : 'Сделать своей'}</WorkshopButton>
+      </div>
+    </Dialog>
+  </Dialog.Root>
 }
 
 function PanelHeader({ title, subtitle, onClose }: { title: string; subtitle?: string | null; onClose(): void }) {
@@ -564,7 +618,7 @@ const rowText = 'text-[14px] leading-5 text-kumo-default'
 const subText = 'text-[13px] leading-[18px] text-kumo-subtle'
 const ACTIONS = 'flex flex-col items-stretch gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center'
 
-/** «Версии» приложения: список версий узла, «Вернуть версию» ставит код в рабочее место. */
+/** «Версии» приложения: список версий узла; «Вернуть» делает версию новой версией файла на стороне Mnemos. */
 function AppVersionsPanel({ handle, onClose }: { handle: MnemosAppHandle; onClose(): void }) {
   const rows = handle.versions ?? []
   const canEdit = handle.access === 'owner' || handle.access === 'edit'
@@ -593,7 +647,8 @@ function AppVersionsPanel({ handle, onClose }: { handle: MnemosAppHandle; onClos
         })}
       </ol>}
       {handle.binding && handle.versions !== null && rows.length === 0 && <p className={`m-0 ${subText}`}>Версий пока нет.</p>}
-      {rows.length > 0 && <p className={`m-0 ${subText}`}>Ни одна версия не пропадает. Возвращённый код становится новой версией после сохранения; данные приложения при этом не меняются.</p>}
+      {rows.length > 0 && <p className={`m-0 ${subText}`}>Ни одна версия не пропадает. «Вернуть» делает выбранную версию новой версией файла; данные приложения при этом не меняются.</p>}
+      {canEdit && <p className={`m-0 ${subText}`}>Код приложения закрыт: платформа его не показывает. Изменить приложение можно через агента кода в беседе.</p>}
     </div>
   </aside>
 }
@@ -609,6 +664,7 @@ function CopyOriginNote({ handle }: { handle: MnemosAppHandle }) {
     {copy.origin === 'closed' && <p className={`m-0 ${subText}`}>Автор закрыл вам доступ к оригиналу. Копия остаётся вашей вместе с данными, но обновления от автора больше не придут.</p>}
     {copy.origin === 'unknown' && <p className={`m-0 ${subText}`}>Доступ к оригиналу сейчас не проверить. Копия работает как обычно; обновления проверятся при следующем открытии.</p>}
     {copy.origin === 'open' && !copy.update && <p className={`m-0 ${subText}`}>У вас последняя опубликованная версия автора.</p>}
+    {copy.origin === 'open' && owner && <OwnCopyAction handle={handle} />}
     {copy.update && <>
       <p className={`m-0 ${rowText}`}>Доступно обновление от {authorOf(copy.author)}: {releaseLabel(copy.update)}.</p>
       <p className={`m-0 ${subText}`}>Код копии заменится версией автора, данные сохранятся. Прежний код останется в списке версий ниже.</p>
@@ -618,6 +674,16 @@ function CopyOriginNote({ handle }: { handle: MnemosAppHandle }) {
       </div>}
     </>}
   </section>
+}
+
+/** «Сделать своей» в «Версиях»: на телефоне второй кнопки в шапке нет. */
+function OwnCopyAction({ handle }: { handle: MnemosAppHandle }) {
+  const [open, setOpen] = useState(false)
+  return <div className="flex flex-col gap-2 pt-1">
+    <p className={`m-0 ${subText}`}>Хотите менять гаджет сами? Сделайте копию своей: правки — через агента кода, обновления от автора больше не придут.</p>
+    <div className={ACTIONS}><button type="button" className={pillButton} disabled={handle.busy} onClick={() => setOpen(true)}>Сделать своей</button></div>
+    <MakeOwnDialog handle={handle} open={open} onOpenChange={setOpen} />
+  </div>
 }
 
 /** Последний проект, куда человек клал копию: удобство одного браузера. */
@@ -654,7 +720,7 @@ function CopyAppPanel({ handle, onClose }: { handle: MnemosAppHandle; onClose():
       // Панель закроется сама, когда копия откроется в этом рабочем месте.
       void handle.makeCopy(scope, again)
     }}>
-      <p className={`m-0 ${rowText}`}>С вами поделились приложением без общих данных. У вас будет своя копия: тот же код и своя пустая база, файл в вашем проекте.</p>
+      <p className={`m-0 ${rowText}`}>С вами поделились приложением без общих данных. У вас будет своя копия: то же приложение и своя пустая база, файл в вашем проекте. Код приложения вам не показывается.</p>
       {release && <p className={`m-0 ${subText}`}>{release.authorName ? `Автор: ${release.authorName}, ` : 'Опубликована '}{release.authorName ? releaseLabel(release) : releaseLabel(release).replace(/^версия /, '')}</p>}
       <div className="flex flex-col gap-1.5">
         <p className={`m-0 ${subText}`}>Данные автора и других получателей вам не видны, а ваши — им.</p>
@@ -743,7 +809,7 @@ export function MnemosAppUnavailable({ height, reason }: { height: string; reaso
   if (reason === APP_COPY_OFFER) return <div data-app-copy-offer className="flex items-center justify-center px-6 text-center" style={{ height }}>
     <div className="flex max-w-[380px] flex-col items-center gap-3">
       <p className="m-0 text-[15px] leading-[22px] font-semibold text-kumo-default">Приложение откроется вашей копией</p>
-      <p className="m-0 text-[13px] leading-[19px] text-kumo-subtle">Тот же код, своя пустая база. Данные автора вам не видны, ваши — ему.</p>
+      <p className="m-0 text-[13px] leading-[19px] text-kumo-subtle">То же приложение, своя пустая база. Данные автора вам не видны, ваши — ему.</p>
       <button type="button" className={primaryButton} onClick={() => window.dispatchEvent(new CustomEvent(APP_COPY_EVENT))}>Создать копию…</button>
     </div>
   </div>

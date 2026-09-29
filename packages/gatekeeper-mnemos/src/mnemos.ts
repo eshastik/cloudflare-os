@@ -57,6 +57,8 @@ import { NativeCreationRecovery } from "./native-creation-recovery.ts";
 import { acknowledgeNotificationPage, decideNotification, prepareNotificationDecision, readNotificationPage, readNotificationSettings, saveNotificationSettings, type NotificationSession } from "./telegram-notifications.ts";
 import { NativeWriteSelector, listNativeDocuments } from "./native-writer.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
+import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
+import { appAccess, refuseAppCode } from "./app-access.ts";
 
 import { LoginFlow, type LoginConfig } from "./login-flow.ts";
 import type { ExtraActionSession } from "./agent-actions-extra.ts";
@@ -69,7 +71,7 @@ import type { NativeDocumentSource, ObservationAuthorizer, AccountDescription, A
 
 import APP_HTML from "./generated/app.txt";
 
-interface Env { MNEMOS_WORKSPACE_ORIGIN?:string; MNEMOS_WORKSPACE_TOKEN?:string; MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string }
+interface Env { MNEMOS_WORKSPACE_ORIGIN?:string; MNEMOS_WORKSPACE_TOKEN?:string; MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string; /** Ключ оболочки для служебного чтения кода гаджета (app-code, ADR 0028 п. 4); в браузер не уходит. */ MNEMOS_SHELL_KEY?: string }
 
 function callbackUrl(env: Env): string {
   try {
@@ -126,7 +128,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async recordUIReadiness(sample: UIReadinessSample): Promise<void> { await this.#account().recordUIReadiness(sample); }
   /** Траты оболочки на модели — в единый учёт через подключение человека. */
   async recordSpending(entries: SpendingEntry[]): Promise<void> { await this.#account().recordSpending(entries); }
-  async startAppUi(_context: AppUiContext) { return this.#account().startAppUi(); }
+  async startAppUi(context: AppUiContext) { return this.#account().startAppUi(context?.appCode === true); }
   /** Trusted host receiver; not exposed by the human management iframe. */
   async captureDriveImport(project:string,request:string,sourceKey:string,fileId:string,source:Fetcher<DriveImportSource>) {
     return this.#account().captureDriveImport(project,request,sourceKey,fileId,source);
@@ -175,6 +177,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   /** Гаджет через агента кода (ADR 0028, этап 5): задача opencode и сохранение сборки личной версией узла. */
   async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){return this.#account().codeWorkStartGadget(project,prompt,options);}
   async codeWorkSaveGadget(project:string,task:string,resource?:string,options?:{request?:string}){return this.#account().codeWorkSaveGadget(project,task,resource,options);}
+  async codeWorkForkGadget(fromProject:string,fromResource:string,toProject:string,toResource:string,bodySha256:string){return this.#account().codeWorkForkGadget(fromProject,fromResource,toProject,toResource,bodySha256);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
     const nonce = await this.#account().prepareReconnect();
@@ -315,8 +318,21 @@ export class UserAccount extends DurableObject<Env> {
   try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined);}
   finally{session.dispose();}
   // Узел уже записан: отказ исходников не отменяет сохранения, агент беседы узнаёт причину.
-  const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
-  return {...saved,...sources};
+  const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource,saved.bodySha256).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
+  const {bodySha256:_sum,...shown}=saved;
+  return {...shown,...sources,codeText:build.modules["server.js"]+"\n"+build.modules["client.js"]};
+ }
+ /** «Сделать своей»: право чтения оригинала и правки копии — правами человека, затем служба переносит
+  *  исходники версии оригинала (сумма тела) к копии; ключ агента — этого же человека. */
+ async codeWorkForkGadget(fromProject:string,fromResource:string,toProject:string,toResource:string,bodySha256:string){
+  if(![fromProject,fromResource,toProject,toResource].every(v=>typeof v==='string'&&v&&v.length<=255)||!validGadgetResource(fromResource)||!validGadgetResource(toResource)||typeof bodySha256!=='string'||!/^[0-9a-f]{64}$/.test(bodySha256))throw new WorkspaceError('invalid','Копия гаджета указана неверно.');
+  const session=this.#account().session();
+  try{
+   const source=await appAccess(session,fromProject,fromResource,false).catch(()=>null);
+   if(!source||(source.access!=='read'&&source.access!=='edit'))throw new WorkspaceError('invalid','Оригинал гаджета вам недоступен: исходники взять нельзя.');
+   await checkGadgetEditable(session,toProject,toResource).catch(()=>{throw new WorkspaceError('invalid','Копия гаджета удалена, в конфликте или не ваша: сделать её своей нельзя.');});
+  }finally{session.dispose();}
+  await this.#workspace().forkGadgetSources({project:fromProject,resource:fromResource},{project:toProject,resource:toResource},bodySha256);
  }
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];
@@ -401,9 +417,9 @@ export class UserAccount extends DurableObject<Env> {
     try {
       if (publication.startsWith("private:")) {
         await session.checkPrivateVersionRead(resource.projectId, resource.nodeId, publication.slice(8));
-        return new RpcStub(new MnemosPrivateVersionDownload(session, resource.projectId, resource.nodeId, publication.slice(8), true));
+        return new RpcStub(new MnemosPrivateVersionDownload(session, resource.projectId, resource.nodeId, publication.slice(8), false, true));
       }
-      return new RpcStub(new MnemosNativeDocumentDownload(await session.selectedDocument(resource), publication, session));
+      return new RpcStub(new MnemosNativeDocumentDownload(await session.selectedDocument(resource), publication, false, session));
     } catch (error) { session.dispose(); throw error; }
   }
   /** Use verified account credentials for diagnostics and release the temporary session. */
@@ -920,7 +936,8 @@ export class UserAccount extends DurableObject<Env> {
   async openManagementSession(): Promise<RpcStub<MnemosManagementSession>> {
     return new RpcStub(new MnemosManagementSession(this.#account().session(),this.#teamDocuments??=new TeamDocumentCreation(this.#operationStorage(),this.#origins().storageOrigin||""),this.#trackers??=new TrackerCreation(this.#operationStorage(),this.#origins().storageOrigin||""),new TrackerEdits(this.#operationStorage()),this.#resourceMaps??=new ResourceMapCreation(this.#operationStorage(),this.#origins().storageOrigin||""),new ResourceMapEdits(this.#operationStorage()),this.#corporateTasks??=new CorporateTaskCreation(this.#operationStorage(),this.#origins().storageOrigin||""),this.ctx.exports.UserAccount.get(this.ctx.id),this.#voiceTransfer??=new VoiceTransfer(this.#operationStorage(),this.#origins().storageOrigin||"")));
   }
-  async startAppUi() {
+  /** appCode — тело узла приложения выдаётся (только служебный кадр сервера оболочки, AppUiContext.appCode). */
+  async startAppUi(appCode = false) {
     const storageOrigin = this.#origins().storageOrigin;
     if (storageOrigin) {
       const url = new URL(storageOrigin);
@@ -930,7 +947,7 @@ export class UserAccount extends DurableObject<Env> {
       organizationMetrics: new RpcStub(new MnemosOrganizationMetrics(this.#account().session(),this.#origins().apiOrigin)),
       agentConsent: new RpcStub(new MnemosAgentConsent(this.#account().session())),
       ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin),this.#origins().apiOrigin)) } } : {}),
-      ...(storageOrigin ? { nativeDownloads: { storageOrigin, selector: new RpcStub(new MnemosNativeDocumentSelector(this.#account().session(), this.#origins().apiOrigin)) } } : {}),
+      ...(storageOrigin ? { nativeDownloads: { storageOrigin, selector: new RpcStub(new MnemosNativeDocumentSelector(this.#account().session(), this.#origins().apiOrigin, appCode === true ? (this.env.MNEMOS_SHELL_KEY ?? "") : null)) } } : {}),
       ...(storageOrigin ? { inboxUploads: {storageOrigin,issuer:new RpcStub(new MnemosInboxUploadIssuer(this.#account().session()))}, reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
 
   }
@@ -1074,7 +1091,22 @@ class ObservedNativeDownload extends RpcTarget {
 class MnemosNativeDocumentSelector extends RpcTarget {
   #session: MnemosAccountSession;
   #origin: string;
-  constructor(session: MnemosAccountSession, origin: string) { super(); this.#session = session; this.#origin = origin; }
+  /** Ключ оболочки: null — кадр страницы (тела гаджета нет), "" — служебный кадр без настроенного ключа. */
+  #shellKey: string | null;
+  constructor(session: MnemosAccountSession, origin: string, shellKey: string | null) { super(); this.#session = session; this.#origin = origin; this.#shellKey = shellKey; }
+  /** Тело гаджета для запуска: служебный путь app-code с ключом оболочки; проверка после скачивания —
+   *  повторный запрос того же билета правами того же человека. */
+  async appCode(projectId: string, nodeId: string, version: string) {
+    if (this.#shellKey === null) throw new Error(APP_CODE_CLOSED);
+    if (!this.#shellKey) throw new Error(SHELL_KEY_MISSING);
+    const session = this.#session, key = this.#shellKey;
+    const read = async () => { try { return await session.appCode(projectId, nodeId, version, key); } catch (error) { throw appCodeFailure(error); } };
+    await read();
+    return new RpcStub(new class extends RpcTarget {
+      async issue() { const t = await read(); return { url: t.url, method: t.method, size_bytes: t.size_bytes, sha256_hex: t.sha256_hex, content_type: t.content_type }; }
+      async validate() { await read(); }
+    }());
+  }
   async selectReview(review: string, node: string, version: number, side: "before" | "after", format: NativeDocumentFormat) {
     if ((side !== "before" && side !== "after") || (!isNativeDocumentFormat(format))) throw new MnemosAPIError(400);
     await this.#session.validateReviewDownload(review, node, version);
@@ -1135,10 +1167,11 @@ class MnemosNativeDocumentSelector extends RpcTarget {
         publication === "." || publication === ".." || /[\\/\u0000-\u0020\u007f]/u.test(publication)) throw new Error("Invalid publication");
     if (publication.startsWith("private:")) {
       await this.#session.checkPrivateVersionRead(projectId, nodeId, publication.slice(8));
-      return new RpcStub(new MnemosPrivateVersionDownload(this.#session, projectId, nodeId, publication.slice(8)));
+      return new RpcStub(new MnemosPrivateVersionDownload(this.#session, projectId, nodeId, publication.slice(8), false));
     }
     const reader = await this.#session.selectedDocument({ projectId, nodeId });
-    return new RpcStub(new MnemosNativeDocumentDownload(reader, publication));
+    // Тело гаджета отсюда не выдаётся никому: для запуска — appCode().
+    return new RpcStub(new MnemosNativeDocumentDownload(reader, publication, false));
   }
   [Symbol.dispose](): void { this.#session.dispose(); }
 }
@@ -1147,17 +1180,37 @@ class MnemosNativeDocumentSelector extends RpcTarget {
 class MnemosNativeDocumentDownload extends RpcTarget {
   #reader: SelectedDocumentReader;
   #publication: string;
+  #appCode: boolean;
   #ownedSession?: MnemosAccountSession;
-  constructor(reader: SelectedDocumentReader, publication: string, ownedSession?: MnemosAccountSession) {
-    super(); this.#reader = reader; this.#publication = publication; this.#ownedSession = ownedSession;
+  constructor(reader: SelectedDocumentReader, publication: string, appCode: boolean, ownedSession?: MnemosAccountSession) {
+    super(); this.#reader = reader; this.#publication = publication; this.#appCode = appCode; this.#ownedSession = ownedSession;
   }
   [Symbol.dispose](): void { this.#ownedSession?.dispose(); }
   async issue() {
-    const ticket = await this.#reader.publicationTicket(this.#publication);
+    const ticket = refuseAppCode(await this.#reader.publicationTicket(this.#publication).catch(closedCode), this.#appCode);
     return { url: ticket.url, method: ticket.method, size_bytes: ticket.size_bytes,
       sha256_hex: ticket.sha256_hex, content_type: ticket.content_type };
   }
   async validate(): Promise<void> { await this.#reader.validateRead(); }
+}
+
+/** Mnemos сам закрыл тело гаджета (403 gadget_code_closed): тот же понятный текст, что у своей проверки. */
+function closedCode(error: unknown): never {
+  if (error instanceof MnemosAPIError && error.code === "gadget_code_closed") throw new Error(APP_CODE_CLOSED);
+  throw error;
+}
+/** Служебный путь app-code без ключа оболочки у gatekeeper. */
+const SHELL_KEY_MISSING = "Запуск гаджетов не настроен: нет ключа оболочки.";
+/** Отказ Mnemos на app-code — словами для человека, открывшего гаджет. */
+function appCodeFailure(error: unknown): Error {
+  if (!(error instanceof MnemosAPIError)) return error instanceof Error ? error : new Error("Версия приложения недоступна.");
+  if (error.code === "shell_key_rejected") return new Error("Запуск гаджетов не настроен: Mnemos не принял ключ оболочки.");
+  if (error.code === "authz.access_denied" || error.status === 403 && error.code !== "gadget_code_closed") return new Error("Приложение вам недоступно: нет доступа к этой версии файла.");
+  if (error.code === "gadget_code_closed") return new Error(APP_CODE_CLOSED);
+  if (error.code === "not_a_gadget") return new Error("Этот файл или версия — не приложение.");
+  if (error.status === 401) return new Error("Вход в Mnemos устарел: войдите заново, чтобы открыть приложение.");
+  if (error.status === 404) return new Error("Такой версии приложения нет.");
+  return new Error("Mnemos не выдал версию приложения. Повторите попытку.");
 }
 
 /** Имя связи агента: под ним запись видна в авторстве личного черновика (S14). */
@@ -1225,10 +1278,14 @@ class MnemosTextUploadIssuer extends RpcTarget {
 class MnemosTextDownloadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) { super(); this.#session = session; }
+  // Выдача страницы и агента: тела узла приложения здесь нет никогда (ADR 0028, п. 4).
   async issue(projectId: string, nodeId: string, version: string, side: number) {
+    return this.#issue(projectId, nodeId, version, side).catch(closedCode);
+  }
+  async #issue(projectId: string, nodeId: string, version: string, side: number) {
     if(version.startsWith("private:")){
       if(side!==0)throw new Error("Invalid private version side");
-      return this.#session.downloadPrivateVersion(projectId,nodeId,version.slice(8));
+      return refuseAppCode(await this.#session.downloadPrivateVersion(projectId,nodeId,version.slice(8)),false);
     }
     if(version.startsWith("tracker-invitation:")){
       if(side!==0)throw new Error("Invalid tracker side");
@@ -1238,19 +1295,23 @@ class MnemosTextDownloadIssuer extends RpcTarget {
       if(side!==0)throw new Error("Invalid template side");
       const {source,ticket}=await this.#session.beginTemplateProposalBaselineDownload(version.slice(18));
       if(source.project_id!==projectId||source.node_id!==nodeId)throw new Error("Template source mismatch");
-      return ticket;
+      return refuseAppCode(ticket,false);
     }
     if(version.startsWith("template-proposal:")){
       if(side!==0)throw new Error("Invalid template source side");
       const {source,ticket}=await this.#session.beginTemplateProposalDownload(version.slice(18));
       if(source.source.project_id!==projectId||source.source.node_id!==nodeId)throw new Error("Template source mismatch");
-      return ticket;
+      return refuseAppCode(ticket,false);
     }
 
     if (version.startsWith("publication:")) {
       if (side !== 0) throw new Error("Invalid publication side");
       return this.#session.beginPublicationTextDownload(projectId, nodeId, version.slice(12));
     }
+    // Билет личной ветки типа не несёт: тип берётся из узла той же головы до выдачи.
+    const document = await this.#session.readDraftDocument(projectId, nodeId);
+    if (document.content_type === GADGET_APP_MIME) throw new Error(APP_CODE_CLOSED);
+    if (document.head !== version) throw new Error("Document version changed");
     return this.#session.beginDraftDownload(projectId, nodeId, version, side);
   }
   async validate(projectId: string, nodeId: string, version: string): Promise<void> {
@@ -1702,12 +1763,13 @@ class MnemosPrivateVersionDownload extends RpcTarget {
   #project: string;
   #node: string;
   #version: string;
+  #appCode: boolean;
   #ownsSession: boolean;
-  constructor(session: MnemosAccountSession, project: string, node: string, version: string, ownsSession = false) {
-    super(); this.#session = session; this.#project = project; this.#node = node; this.#version = version; this.#ownsSession = ownsSession;
+  constructor(session: MnemosAccountSession, project: string, node: string, version: string, appCode: boolean, ownsSession = false) {
+    super(); this.#session = session; this.#project = project; this.#node = node; this.#version = version; this.#appCode = appCode; this.#ownsSession = ownsSession;
   }
   async issue() {
-    const ticket = await this.#session.downloadPrivateVersion(this.#project, this.#node, this.#version);
+    const ticket = refuseAppCode(await this.#session.downloadPrivateVersion(this.#project, this.#node, this.#version).catch(closedCode), this.#appCode);
     return {url: ticket.url, method: ticket.method, size_bytes: ticket.size_bytes, sha256_hex: ticket.sha256_hex, content_type: ticket.content_type};
   }
   async validate() { await this.#session.checkPrivateVersionRead(this.#project, this.#node, this.#version); }

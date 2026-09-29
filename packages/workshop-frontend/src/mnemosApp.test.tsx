@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Приложение как файл проекта Mnemos (ADR 0028): открытие как у документа, шапка, общий экземпляр и предпросмотр.
+// Приложение как файл проекта Mnemos (ADR 0028): открытие как у документа, шапка, общий экземпляр; код закрыт (п. 4).
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -13,8 +13,6 @@ vi.mock('./accountCapabilities', () => ({
   openNativeWritesFrame: async () => ({ iframeHtml: '', ui: {}, nativeWrites: { storageOrigin: 'https://objects.example', selector: frames.writes }, nativeDownloads: { storageOrigin: 'https://objects.example', selector: frames.downloads } }),
 }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: () => {} }))
-const texts = new Map<string, string>()
-vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperAppText: async (_origin: string, ticket: { url: string }) => texts.get(ticket.url)! }))
 const uploads: string[] = []
 vi.mock('./gatekeeperAppUpload', () => ({ uploadGatekeeperAppText: async (text: string) => { uploads.push(text); return 'upload-1' } }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -28,7 +26,7 @@ const HEAD = 'a'.repeat(64), NEXT = 'b'.repeat(64)
 const DOC: GadgetAppDocument = { manifest: { title: 'Общий список', description: 'Дела отдела', collaborative: true, session: true, formatVersion: 1, permissions: [] }, modules: { 'client.js': 'ui()', 'server.js': 'export class Gadget { session(caller) { return caller } }' } }
 const SOLO: GadgetAppDocument = { ...DOC, manifest: { ...DOC.manifest, collaborative: false } }
 
-beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState(null, '', '/'); texts.clear(); uploads.length = 0 })
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState(null, '', '/'); uploads.length = 0 })
 
 test('узел приложения открывается как документ: своё рабочее место с гаджетом, заявка на версию, повтор — то же место', async () => {
   const dispose = vi.fn()
@@ -49,48 +47,63 @@ test('узел приложения открывается как докумен
 })
 
 test('шапка: в общем экземпляре — только опубликованное; личная версия — «Опубликовать» у владельца, «Запустить» — только опубликованной и с правкой', () => {
-  expect(deriveAppStatus({ access: 'edit', collaborative: true, unsaved: true }).primary?.kind).toBe('save')
-  expect(deriveAppStatus({ access: 'read', collaborative: true, unsaved: true })).toMatchObject({ kind: 'readonly', primary: null })
-  expect(deriveAppStatus({ access: 'owner', collaborative: true, unsaved: false, savedVersion: `private:${HEAD}`, liveVersion: PUBLISHED }).primary?.kind).toBe('submit')
-  expect(deriveAppStatus({ access: 'edit', collaborative: true, unsaved: false, savedVersion: `private:${HEAD}`, liveVersion: PUBLISHED }).primary).toBeNull()
-  expect(deriveAppStatus({ access: 'edit', collaborative: true, unsaved: false, savedVersion: 'event-2', liveVersion: PUBLISHED }).primary?.kind).toBe('start')
-  expect(deriveAppStatus({ access: 'read', collaborative: true, unsaved: false, savedVersion: 'event-2', liveVersion: PUBLISHED }).primary).toBeNull()
-  expect(deriveAppStatus({ access: 'read', collaborative: true, unsaved: false, savedVersion: PUBLISHED, liveError: 'доступ закрыт' })).toMatchObject({ tone: 'danger', saved: 'доступ закрыт' })
-  expect(deriveAppStatus({ access: null, collaborative: true, unsaved: false }).kind).toBe('unread')
+  expect(deriveAppStatus({ access: 'owner', collaborative: true, savedVersion: `private:${HEAD}`, liveVersion: PUBLISHED }).primary?.kind).toBe('submit')
+  expect(deriveAppStatus({ access: 'edit', collaborative: true, savedVersion: `private:${HEAD}`, liveVersion: PUBLISHED }).primary).toBeNull()
+  expect(deriveAppStatus({ access: 'edit', collaborative: true, savedVersion: 'event-2', liveVersion: PUBLISHED }).primary?.kind).toBe('start')
+  expect(deriveAppStatus({ access: 'read', collaborative: true, savedVersion: 'event-2', liveVersion: PUBLISHED }).primary).toBeNull()
+  expect(deriveAppStatus({ access: 'read', collaborative: true, savedVersion: PUBLISHED, liveError: 'доступ закрыт' })).toMatchObject({ tone: 'danger', saved: 'доступ закрыт' })
+  expect(deriveAppStatus({ access: null, collaborative: true }).kind).toBe('unread')
+  // Подсказка копии не обещает код: получатель получает то же приложение, код ему не показывается.
+  const offer = deriveAppStatus({ access: 'read', collaborative: false, offer: { ready: true } })
+  expect(offer.primary?.hint).toMatch(/То же приложение/)
+  expect(offer.primary?.hint).toMatch(/Код приложения вам не показывается/)
+  expect(offer.primary?.hint).not.toMatch(/Тот же код/)
 })
 
 type Deployed = { version: string; sha256: string; title: string; collaborative: boolean } | null
-function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?: GadgetAppDocument } = {}) {
+function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?: GadgetAppDocument; restoreFails?: boolean; unpublished?: boolean } = {}) {
   const doc = options.doc ?? DOC
   let state: MnemosAppState = { binding: null, codeVersion: 1, title: 'Приложение', notExportable: null }
-  const calls = { restore: [] as unknown[][], bindings: [] as (MnemosAppBinding | null)[], deploys: [] as [boolean, string][], saves: [] as string[][], downloads: [] as string[], opens: [] as boolean[] }
+  const calls = { bindings: [] as (MnemosAppBinding | null)[], deploys: [] as [boolean, string][], downloads: [] as string[], exports: 0, restores: [] as unknown[][], creates: [] as string[], opens: [] as boolean[], previews: 0, previewDeploys: [] as string[] }
   const gadget = {
     getId: async () => 5,
     getMnemosApp: async () => state,
     setMnemosApp: async (binding: MnemosAppBinding | null) => { calls.bindings.push(binding); state = { ...state, binding } },
-    restoreAppModules: async (modules: unknown, title: string, expected: number) => { calls.restore.push([modules, title, expected]); state = { ...state, codeVersion: expected + 1, title }; return expected + 1 },
-    exportAppModules: async () => ({ codeVersion: state.codeVersion, title: state.title, modules: doc.modules }),
-    edit: () => { state = { ...state, codeVersion: state.codeVersion + 1 } },
+    exportAppModules: async () => { calls.exports++; if (state.binding) throw new Error('код приложения закрыт'); return { codeVersion: state.codeVersion, title: state.title, modules: doc.modules } },
   }
-  const instances: Record<'shared' | 'personal', Deployed> = { shared: options.deployed ?? null, personal: null }
-  const connect = (personal: boolean) => {
-    const kind = personal ? 'personal' : 'shared'
+  const instances: Record<'shared' | 'personal' | 'preview', Deployed> = { shared: options.deployed ?? null, personal: null, preview: null }
+  const connect = (personal: boolean, preview = false) => {
+    const kind = preview ? 'preview' : personal ? 'personal' : 'shared'
     const connection = {
       describe: async () => ({ access: options.access ?? 'edit', caller: { principal: 'anna', name: 'Анна' }, deployed: instances[kind] }),
       manifest: async () => doc.manifest,
       deploy: async (version: string) => {
-        if (!personal && version.startsWith('private:')) throw new Error('только опубликованная')
-        calls.deploys.push([personal, version]); instances[kind] = { version, sha256: 'd'.repeat(64), title: 'Общий список', collaborative: !personal }; return connection.describe()
+        if (kind === 'shared' && version.startsWith('private:')) throw new Error('только опубликованная')
+        if (kind === 'preview') calls.previewDeploys.push(version); else calls.deploys.push([personal, version])
+        instances[kind] = { version, sha256: kind === 'preview' ? 'e'.repeat(64) : 'd'.repeat(64), title: 'Общий список', collaborative: !personal }; return connection.describe()
       },
       getUiBundle: async () => ({ jsCode: 'ui()' }), connectToGadget: async () => ({}), [Symbol.dispose]: () => {},
     }
     return connection
   }
-  const api = { openMnemosApp: vi.fn(async (_a: number, _s: string, _r: string, personal: boolean) => { calls.opens.push(personal); return connect(personal) }), subscribeConnectedAccounts: vi.fn(), getGatekeeperApp: vi.fn() }
-  const writer = { head: async () => HEAD, access: async () => 'owner', issue: async () => ({}), save: async (base: string, upload: string) => { calls.saves.push([base, upload]); return NEXT }, [Symbol.dispose]: () => {} }
-  frames.writes = { appAccess: async () => ({ access: options.access ?? 'edit', principal: 'anna', tenant: 'org', name: 'Анна', project: 'project', node: 'node' }), select: async () => writer }
-  frames.downloads = { select: async (_scope: string, _resource: string, version: string) => { calls.downloads.push(version); return { issue: async () => ({ url: version, content_type: 'application/vnd.cloudflareos.app+json' }), validate: async () => {}, [Symbol.dispose]: () => {} } } }
-  texts.set(PUBLISHED, gadgetAppText(doc)); texts.set(`private:${HEAD}`, gadgetAppText(doc))
+  const api = { openMnemosApp: vi.fn(async (_a: number, _s: string, _r: string, personal: boolean) => { calls.opens.push(personal); return connect(personal) }),
+    openMnemosAppPreview: vi.fn(async () => { calls.previews++; if ((options.access ?? 'edit') === 'read') throw new Error('Предпросмотр личной версии доступен только тем, у кого есть право правки файла.'); return connect(false, true) }),
+    subscribeConnectedAccounts: vi.fn(), getGatekeeperApp: vi.fn() }
+  const writer = { head: async () => HEAD, access: async () => 'owner', [Symbol.dispose]: () => {} }
+  const creator = { head: async () => HEAD, issue: async () => ({}), save: async () => NEXT, document: async () => 'new-node', [Symbol.dispose]: () => {} }
+  frames.writes = {
+    appAccess: async () => ({ access: options.access ?? 'edit', principal: 'anna', tenant: 'org', name: 'Анна', project: 'project', node: 'node' }),
+    select: async () => writer,
+    create: async (scope: string) => { calls.creates.push(scope); return creator },
+    scopes: async () => ({ scopes: [{ id: 'project', name: 'Проект' }] }),
+    restorationState: async () => ({ head: HEAD, deleted: false }),
+    restorePublication: async (...args: unknown[]) => { calls.restores.push(args); if (options.restoreFails) throw new Error('Draft changed; prepare restoration again'); return { head: NEXT } },
+  }
+  // Тело версии браузер не читает никогда (ADR 0028, п. 4): выбор версии для скачивания — ошибка теста.
+  frames.downloads = {
+    select: async (_scope: string, _resource: string, version: string) => { calls.downloads.push(version); throw new Error('код приложения закрыт') },
+    publications: async () => ({ publications: [{ id: `private:${NEXT}`, format: 'cloudflareos.app', recordedAt: '', actor: '' }, ...(options.unpublished ? [] : [{ id: PUBLISHED, format: 'cloudflareos.app', recordedAt: '', actor: '' }])], nextCursor: '' }),
+  }
   return { gadget, api, calls, instances }
 }
 
@@ -105,29 +118,61 @@ const launch = (publication: string) => {
   history.replaceState(null, '', '/workspace/ws-app')
   sessionStorage.setItem('mnemos-app-launch:/workspace/ws-app', JSON.stringify({ accountId: 7, scope: 'project', resource: 'node', publication, gadgetId: 5, at: Date.now() }))
 }
+const bound = (extra: Partial<MnemosAppBinding> = {}): MnemosAppBinding => ({ accountId: 7, scope: 'project', resource: 'node', description: 'Дела отдела', collaborative: true, session: true, permissions: [], savedHead: HEAD, savedVersion: PUBLISHED, ...extra })
 
-test('с правом правки: код опубликованной версии встаёт в гаджет, пустой общий экземпляр поднимается этой версией (код читает оболочка)', async () => {
+test('с правом правки: код не скачивается и в рабочее место не встаёт; манифест читает оболочка, пустой общий экземпляр поднимается этой версией', async () => {
   launch(PUBLISHED)
   const h = harness()
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget).not.toBeNull()) })
-  expect(h.calls.restore).toEqual([[DOC.modules, 'Общий список', 1]])
-  expect(h.calls.bindings.at(-1)).toMatchObject({ accountId: 7, collaborative: true, session: true, description: 'Дела отдела', savedCodeVersion: 2, savedVersion: PUBLISHED })
+  expect(h.calls.downloads).toEqual([])
+  expect(h.calls.exports).toBe(0)
+  expect(h.calls.bindings.at(-1)).toMatchObject({ accountId: 7, collaborative: true, session: true, description: 'Дела отдела', savedVersion: PUBLISHED })
+  expect(h.calls.bindings.at(-1)?.savedCodeVersion).toBeUndefined()
   expect(h.calls.deploys).toEqual([[false, PUBLISHED]])
+  expect(out.current?.showWorkspace).toBe(false)
   expect(readMnemosAppLaunch()).toBeNull()
   await unmount()
 })
 
-test('личную версию открытие в общий экземпляр не запускает: у автора — предпросмотр', async () => {
+test('личная версия совместного приложения у автора — предпросмотр отдельным экземпляром; общий не трогается; переключатель на опубликованную', async () => {
   launch(`private:${HEAD}`)
   const h = harness({ deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
   const { out, unmount } = await mount(h)
-  await act(async () => { await vi.waitFor(() => expect(h.calls.bindings.length).toBeGreaterThan(0)) })
-  await act(async () => { await vi.waitFor(() => expect(out.current?.live).not.toBeNull()) })
+  await act(async () => { await vi.waitFor(() => expect(h.calls.previewDeploys).toEqual([`private:${HEAD}`])) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('e'.repeat(64))) })
   expect(h.calls.deploys).toEqual([])
-  expect(out.current?.showWorkspace).toBe(true)
-  expect(out.current?.liveGadget).toBeNull()
+  expect(h.instances.shared?.version).toBe(PUBLISHED)
+  expect(h.calls.downloads).toEqual([])
+  expect(out.current?.previewMode).toBe(true)
+  expect(out.current?.model).toMatchObject({ saved: 'Предпросмотр личной версии — данные не сохраняются для других', primary: { kind: 'submit', label: 'Опубликовать' }, secondary: { kind: 'published', label: 'Показать опубликованную' } })
+  // Переключатель: экран — общий экземпляр с опубликованной версией; обратно — предпросмотр.
+  await act(async () => { out.current!.setShowPublished(true) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('c'.repeat(64))) })
+  expect(out.current?.model?.secondary).toMatchObject({ kind: 'preview', label: 'Предпросмотр личной версии' })
+  await act(async () => { out.current!.setShowPublished(false) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('e'.repeat(64))) })
   await unmount()
+})
+
+test('без опубликованной версии предпросмотр без переключателя; читатель предпросмотр не открывает', async () => {
+  launch(`private:${HEAD}`)
+  const h = harness({ unpublished: true })
+  const { out, unmount } = await mount(h)
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget).not.toBeNull()) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.model?.saved).toMatch(/^Предпросмотр личной версии/)) })
+  expect(out.current?.model?.secondary).toBeNull()
+  expect(h.calls.deploys).toEqual([])
+  await unmount()
+
+  const reader = harness({ access: 'read', deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
+  await reader.gadget.setMnemosApp({ accountId: 7, scope: 'project', resource: 'node', description: '', collaborative: true, session: true, permissions: [], savedVersion: `private:${HEAD}` })
+  const second = await mount(reader)
+  await act(async () => { await vi.waitFor(() => expect(second.out.current?.access).toBe('read')) })
+  await act(async () => { await vi.waitFor(() => expect(second.out.current?.liveGadget?.key).toBe('c'.repeat(64))) })
+  expect(reader.calls.previews).toBe(0)
+  expect(second.out.current?.previewMode).toBe(false)
+  await second.unmount()
 })
 
 test('без права правки: код не скачивается и не кладётся в рабочее место, виден только экран общего экземпляра', async () => {
@@ -135,48 +180,72 @@ test('без права правки: код не скачивается и не
   const h = harness({ access: 'read', deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget).not.toBeNull()) })
-  expect(h.calls.restore).toEqual([])
   expect(h.calls.downloads).toEqual([])
   expect(h.calls.bindings.at(-1)?.savedCodeVersion).toBeUndefined()
-  expect(out.current?.hasCode).toBe(false)
   await unmount()
 })
 
-test('правки и беседа с предложенными изменениями — предпросмотр: общий экземпляр не подключается', async () => {
+test('у гаджета-узла нет предпросмотра и кнопки «Сохранить»: беседа с правками не подменяет экран экземпляра', async () => {
   const h = harness({ deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
-  await h.gadget.setMnemosApp({ accountId: 7, scope: 'project', resource: 'node', description: '', collaborative: true, session: true, permissions: [], savedCodeVersion: 1, savedVersion: PUBLISHED })
+  // Привязка из прежней версии оболочки с кодом в рабочем месте: код больше не показывается.
+  await h.gadget.setMnemosApp(bound({ savedCodeVersion: 1 }))
   const { out, rerender, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget).not.toBeNull()) })
   await rerender(3)
-  expect(out.current?.liveGadget).toBeNull()
-  expect(out.current?.model?.primary?.kind).toBe('save')
-  await rerender(undefined)
+  expect(out.current?.preview).toBe(false)
   expect(out.current?.liveGadget).not.toBeNull()
+  expect(out.current?.model?.primary?.kind).not.toBe('save')
+  expect(h.calls.exports).toBe(0)
   await unmount()
 })
 
-test('«Сохранить» совместное приложение: личная версия в Mnemos, общий экземпляр не меняется', async () => {
+test('«Вернуть» совместного приложения: Mnemos сам делает версию новой личной, общий экземпляр не меняется', async () => {
   const h = harness({ deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
-  await h.gadget.setMnemosApp({ accountId: 7, scope: 'project', resource: 'node', description: 'Дела отдела', collaborative: true, session: true, permissions: [], savedCodeVersion: 1, savedHead: HEAD, savedVersion: PUBLISHED })
-  h.gadget.edit()
+  await h.gadget.setMnemosApp(bound({ savedCodeVersion: 1 }))
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.access).toBe('owner')) })
-  await act(async () => { await out.current!.save() })
-  expect(h.calls.saves).toEqual([[HEAD, 'upload-1']])
-  expect(uploads).toEqual([gadgetAppText({ ...DOC, manifest: { ...DOC.manifest, title: 'Приложение' } })])
-  expect(h.calls.bindings.at(-1)).toMatchObject({ savedCodeVersion: 2, savedHead: NEXT, savedVersion: `private:${NEXT}` })
+  await act(async () => { await out.current!.restoreVersion({ id: 'event-0', recordedAt: '', author: '', personal: false }) })
+  expect(h.calls.restores).toEqual([['project', 'node', 'event-0', HEAD, 'cloudflareos.app']])
+  expect(h.calls.downloads).toEqual([])
+  expect(h.calls.bindings.at(-1)).toMatchObject({ savedHead: NEXT, savedVersion: `private:${NEXT}` })
+  expect(h.calls.bindings.at(-1)?.savedCodeVersion).toBeUndefined()
   expect(h.calls.deploys).toEqual([])
-  expect(out.current?.model?.primary?.kind).toBe('submit')
+  expect(out.current?.notice).toMatch(/после публикации/)
   await unmount()
 })
 
-test('«Сохранить» личное приложение: новая версия работает в своём экземпляре', async () => {
+test('«Вернуть» своего приложения: новая версия сразу работает в своём экземпляре; отказ Mnemos — понятным текстом', async () => {
   const h = harness({ doc: SOLO })
-  await h.gadget.setMnemosApp({ accountId: 7, scope: 'project', resource: 'node', description: '', collaborative: false, session: true, permissions: [], savedCodeVersion: 1, savedHead: HEAD, savedVersion: `private:${HEAD}` })
-  h.gadget.edit()
+  await h.gadget.setMnemosApp(bound({ collaborative: false, savedVersion: `private:${HEAD}` }))
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(out.current?.access).toBe('owner')) })
-  await act(async () => { await out.current!.save() })
+  await act(async () => { await out.current!.restoreVersion({ id: PUBLISHED, recordedAt: '', author: '', personal: false }) })
   expect(h.calls.deploys).toEqual([[true, `private:${NEXT}`]])
+  await unmount()
+
+  const failing = harness({ doc: SOLO, restoreFails: true })
+  await failing.gadget.setMnemosApp(bound({ collaborative: false, savedVersion: `private:${HEAD}` }))
+  const second = await mount(failing)
+  await act(async () => { await vi.waitFor(() => expect(second.out.current?.access).toBe('owner')) })
+  await act(async () => { await second.out.current!.restoreVersion({ id: PUBLISHED, recordedAt: '', author: '', personal: false }) })
+  expect(second.out.current?.error).toMatch(/^Версия не вернулась/)
+  expect(failing.calls.deploys).toEqual([])
+  await second.unmount()
+})
+
+test('гаджет беседы «Сохранить в проект»: код берётся из рабочего места беседы один раз, после привязки он закрыт', async () => {
+  const h = harness({ doc: SOLO })
+  const { out, unmount } = await mount(h)
+  await act(async () => { await vi.waitFor(() => expect(out.current?.app).not.toBeNull()) })
+  expect(out.current?.showWorkspace).toBe(true)
+  await act(async () => { await out.current!.saveToProject({ accountId: 7, scope: 'project', collaborative: false, description: '', permissions: [] }) })
+  expect(h.calls.exports).toBe(1)
+  expect(h.calls.creates).toEqual(['project'])
+  expect(uploads).toEqual([gadgetAppText({ ...SOLO, manifest: { ...SOLO.manifest, title: 'Приложение', description: '' } })])
+  expect(h.calls.bindings.at(-1)).toMatchObject({ resource: 'new-node', savedVersion: `private:${NEXT}` })
+  expect(h.calls.bindings.at(-1)?.savedCodeVersion).toBeUndefined()
+  expect(h.calls.deploys).toEqual([[true, `private:${NEXT}`]])
+  expect(out.current?.showWorkspace).toBe(false)
+  await expect(h.gadget.exportAppModules()).rejects.toThrow()
   await unmount()
 })

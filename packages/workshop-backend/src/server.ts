@@ -152,9 +152,10 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
   };
   let nodePorts = (project: string, node: string): AppNodePorts => ({
     access: async opening => (await mnemos()).writes.appAccess(project, node, opening),
+    // Тело гаджета — только служебным путём Mnemos app-code с ключом оболочки (ADR 0028 п. 4); ключ
+    // живёт в gatekeeper-mnemos, сюда приходит лишь билет на 10 с.
     version: async version => {
-      let downloads = (await mnemos()).downloads;
-      let download = await downloads.select(project, node, version);
+      let download = await appCode(await mnemos(), project, node, version);
       try {
         let ticket = await download.issue();
         await download.validate();
@@ -163,7 +164,7 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
     },
     text: async version => {
       let current = await mnemos();
-      let download = await current.downloads.select(project, node, version);
+      let download = await appCode(current, project, node, version);
       try {
         let ticket = await download.issue();
         let text = await fetchAppText(current.storageOrigin, ticket);
@@ -201,6 +202,10 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
         return await writer.save(head, upload);
       } finally { dispose(writer); }
     },
+    forkSources: async (from, to, bodySha256) => {
+      let current = await mnemos();
+      await user.codeWorkForkGadget(current.accountId, from, to, bodySha256);
+    },
     directory: async () => (await mnemos()).writes.appDirectory(),
     object: name => ctx.exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,
     profileName: async () => (await user.whoami()).name,
@@ -209,6 +214,13 @@ function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurab
     abort,
     release: () => { let current = port; port = null; void current?.then(value => { dispose(value.writes); dispose(value.downloads); }, () => {}); },
   };
+}
+
+/** Билет на тело гаджета: метод appCode есть только у служебного кадра gatekeeper-mnemos (AppUiContext.appCode),
+ *  в общем описании селектора его нет — браузерному кадру он не положен. */
+async function appCode(port: MnemosPort, project: string, node: string, version: string) {
+  let downloads = port.downloads as unknown as { appCode(scope: string, resource: string, version: string): ReturnType<typeof port.downloads.select> };
+  return await downloads.appCode(project, node, version);
 }
 
 /** Текст версии приложения прямо из хранилища Mnemos по билету: только доверенный источник, размер и
@@ -874,6 +886,14 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     const opened = await this.user.openUiApp(id, accountId, { isAdmin: this.#isAdmin() });
     if (!opened) return null;
     return frameForBrowser(opened.frame, opened.accountId, known);
+  }
+
+  /** Предпросмотр совместного приложения: отдельный экземпляр с пустой базой, только с правом правки. */
+  async openMnemosAppPreview(accountId: number, scope: string, resource: string) {
+    if (!Number.isSafeInteger(accountId) || !scope || !resource || scope.length > 255 || resource.length > 255) throw new Error("Не выбран файл приложения.");
+    let connection = await openMnemosAppConnection(mnemosAppPorts(this.ctx, this.user, accountId, scope, resource, this.abortSession), false, true);
+    // @ts-expect-error Связь — RpcTarget Cap'n Web, в браузере она заглушка того же интерфейса.
+    return connection as RpcStub<MnemosAppConnection>;
   }
 
   async openMnemosApp(accountId: number, scope: string, resource: string, personal: boolean) {

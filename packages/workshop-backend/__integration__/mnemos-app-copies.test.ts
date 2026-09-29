@@ -44,6 +44,8 @@ function world() {
   const nodes = new Map<string, Node>();
   let counter = 0;
   const writes: { principal: string; project: string; node: string }[] = [];
+  const forks: { principal: string; from: { project: string; node: string }; to: { project: string; node: string }; sha: string }[] = [];
+  let forkError: Error | null = null;
   const key = (project: string, node: string) => `${project}/${node}`;
   const addNode = (project: string, node: string, owner: string) => { nodes.set(key(project, node), { project, owner, heads: [], texts: new Map(), published: [], readers: new Set(), history: new Set() }); return node; };
   const save = (project: string, node: string, text: string) => {
@@ -100,6 +102,7 @@ function world() {
       writes.push({ principal, project: p, node: n });
       return save(p, n, text);
     },
+    forkSources: async (from, to, sha) => { if (forkError) throw forkError; forks.push({ principal, from, to, sha }); },
     directory: async () => ({ people: [{ id: "anna", name: "Анна" }, { id: "boris", name: "Борис" }], departments: [] }),
     object: name => exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,
     profileName: async () => principal,
@@ -109,7 +112,7 @@ function world() {
     release: () => {},
   });
   const open = (principal: string, project: string, node: string, personal = true) => openMnemosAppConnection(ports(principal, project, node), personal);
-  return { nodes, writes, addNode, save, publish, open, share: (project: string, node: string, who: string) => nodes.get(key(project, node))!.readers.add(who),
+  return { nodes, writes, forks, failFork: (error: Error | null) => { forkError = error; }, addNode, save, publish, open, share: (project: string, node: string, who: string) => nodes.get(key(project, node))!.readers.add(who),
     revoke: (project: string, node: string, who: string) => { const n = nodes.get(key(project, node))!; n.readers.delete(who); n.history.delete(who); } };
 }
 
@@ -241,4 +244,40 @@ it("совместное приложение — как раньше: «Под�
   await (await author.connectToGadget() as Session).add("общее");
   expect((await (await reader.connectToGadget() as Session).list()).map(i => i.text)).toEqual(["общее"]);
   expect(await refused(reader.offer())).toMatch(/общему экземпляру/);
+});
+
+it("«Сделать своей»: исходники версии, из которой сделана копия, — к копии; связь с оригиналом снята, обновлений нет", async () => {
+  const { w, project, node, v1, author, borisProject } = await authored();
+  const copy = await (await w.open("boris", project, node)).makeCopy(borisProject, false);
+  const mine = await w.open("boris", copy.scope, copy.resource);
+  await (await mine.connectToGadget() as Session).add("моё");
+  // Сумма версии — сумма тела файла, та же, что у версии для копий и у билета app-code.
+  const sha = await gadgetAppSha256(w.nodes.get(`${project}/${node}`)!.texts.get(v1)!);
+  // Чужой человек и гость копии своей её не сделают.
+  w.share(copy.scope, copy.resource, "anna");
+  expect(await refused((await w.open("anna", copy.scope, copy.resource)).makeOwn())).toMatch(/только её владелец/);
+
+  // Исходников нет — отказ словами службы, связь с оригиналом остаётся.
+  w.failFork(new Error("Исходники этой версии гаджета не сохранились: сделать копию своей нельзя."));
+  expect(await refused(mine.makeOwn())).toMatch(/не сохранились/);
+  expect(await mine.copyState()).toMatchObject({ origin: "open" });
+  w.failFork(null);
+
+  await mine.makeOwn();
+  expect(w.forks).toEqual([{ principal: "boris", from: { project, node }, to: { project: copy.scope, node: copy.resource }, sha }]);
+  // Копия своя: связи нет, новые публикации автора не предлагаются, данные на месте.
+  const v2 = w.publish(project, node, gadgetAppText(doc("v2")), "anna");
+  await author.deploy(v2);
+  expect(await mine.copyState()).toBeNull();
+  expect(await refused(mine.applyUpdate(v2))).toMatch(/только её владелец/);
+  expect((await (await mine.connectToGadget() as Session).list()).map(i => i.text)).toEqual(["моё"]);
+});
+
+it("«Сделать своей» без доступа к оригиналу: исходники не берутся", async () => {
+  const { w, project, node, borisProject } = await authored();
+  const copy = await (await w.open("boris", project, node)).makeCopy(borisProject, false);
+  const mine = await w.open("boris", copy.scope, copy.resource);
+  w.revoke(project, node, "boris");
+  expect(await refused(mine.makeOwn())).toMatch(/закрыл вам доступ к оригиналу/);
+  expect(w.forks).toEqual([]);
 });

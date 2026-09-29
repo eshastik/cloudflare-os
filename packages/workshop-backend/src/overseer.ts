@@ -12,10 +12,11 @@ import { DEFAULT_WORKSPACE_TITLE, isDefaultWorkspaceTitle, russianTitle, display
 import { maintainAccessLease } from './access-lease.js';
 import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
 import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "./native-editor-update.js";
+import { appCodeLock } from "./native-editor-guard.js";
 import { claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat, recordMnemosReceipt, releaseMnemosCreation, setMnemosBinding, type MnemosDocumentEntry } from "./native-mnemos-binding.js";
 import { ensureNativeTitle, titlePrompt, type NativeTitleEditor } from "./native-document-title.js";
 import { nativeFormatForOutput, type NativeDocumentFormat, type NativeMnemosBinding } from "@gadgets/workshop-shared/native-document";
-import { parseGadgetAppModules, parseMnemosAppBinding, type GadgetAppCaller, type GadgetAppModules, type MnemosAppBinding, type MnemosAppState } from "@gadgets/workshop-shared/gadget-app";
+import { APP_CODE_CLOSED, parseGadgetAppModules, parseMnemosAppBinding, type GadgetAppCaller, type GadgetAppModules, type MnemosAppBinding, type MnemosAppState } from "@gadgets/workshop-shared/gadget-app";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -300,6 +301,12 @@ type GadgetRecord = {
   // Узел приложения Mnemos (ADR 0028), к которому гаджет привязан у каждого человека: ключ — id пользователя.
   mnemosApps?: Record<string, MnemosAppBinding>;
 };
+
+/** Гаджет привязан к узлу приложения Mnemos хотя бы у одного человека. Код такого гаджета закрыт
+ *  (ADR 0028, п. 4): ни страница, ни агент беседы его не читают и не правят, правка — агентом кода. */
+export function closedAppCode(record: Pick<GadgetRecord, "mnemosApps">): boolean {
+  return Object.keys(record.mnemosApps ?? {}).length > 0;
+}
 
 // Produce a valid, unused binding name from a suggested base name: sanitized to identifier
 // characters (uppercased, in keeping with the ALL_CAPS convention), then suffixed _2/_3/...
@@ -2101,7 +2108,8 @@ class OverseerImpl implements AgentHooks {
         id: record.id,
         type: "gadget",
         title: record.title,
-        filesRoot: this.gadgetRootName(record.id),
+        // Гаджет-узел Mnemos файлов странице не показывает: код приложения закрыт (ADR 0028, п. 4).
+        ...(closedAppCode(record) ? {} : {filesRoot: this.gadgetRootName(record.id)}),
       };
       if (record.output) {
         summary.output = record.output;
@@ -2273,6 +2281,63 @@ class OverseerImpl implements AgentHooks {
       }
     }
 
+    return version;
+  }
+
+  // Корни кода гаджетов, привязанных к узлу Mnemos: их код закрыт (ADR 0028, п. 4). rootName → id.
+  closedCodeRoots(): Map<string, WorkpieceId> {
+    let roots = new Map<string, WorkpieceId>();
+    for (let record of this.storage.gadgets.list()) {
+      if (closedAppCode(record)) roots.set(this.gadgetRootName(record.id), record.id);
+    }
+    return roots;
+  }
+
+  // Правка задевает корень закрытого кода? Проверка на копии текущего кода: обновление Yjs несёт
+  // вложенные элементы по id родителя, корень виден только после встраивания.
+  updateTouchesClosedCode(update: Uint8Array): boolean {
+    let roots = this.closedCodeRoots();
+    if (!roots.size) return false;
+    let {ydoc} = this.buildYDoc("current");
+    try {
+      let touched = false;
+      for (let root of roots.keys()) ydoc.getMap(root).observeDeep(() => { touched = true; });
+      Y.applyUpdateV2(ydoc, update);
+      return touched;
+    } finally { ydoc.destroy(); }
+  }
+
+  // Разовая чистка: файлы закрытых гаджетов удаляются из кода рабочего места, сразу пишется снимок.
+  // Снимок собран из документа со сборкой мусора Yjs: текста удалённых файлов в нём нет, и все
+  // подписки с версии до чистки получают снимок, а не прежнюю историю (см. replayUpdates).
+  // Возвращает версию чистки; null — чистить нечего.
+  purgeClosedCode(): number | null {
+    let roots = this.closedCodeRoots();
+    if (!roots.size) return null;
+    let {ydoc} = this.buildYDoc("current");
+    let affected: WorkpieceId[] = [];
+    let update: Uint8Array;
+    try {
+      let before = Y.encodeStateVector(ydoc);
+      ydoc.transact(() => {
+        for (let [root, id] of roots) {
+          let files = ydoc.getMap(root);
+          if (!files.size) continue;
+          affected.push(id);
+          for (let name of [...files.keys()]) files.delete(name);
+        }
+      });
+      if (!affected.length) return null;
+      update = Y.encodeStateAsUpdateV2(ydoc, before);
+    } finally { ydoc.destroy(); }
+    let version = this.updateCode(update, affected);
+    let {ydoc: clean} = this.buildYDoc("current");
+    try {
+      let snapshotUpdate = Y.encodeStateAsUpdateV2(clean);
+      this.storage.snapshots.put({version, timestamp: new Date(), update: snapshotUpdate});
+      this.#snapshotMetrics = {snapshotSize: snapshotUpdate.length, logSize: 0};
+    } finally { clean.destroy(); }
+    this.logger.info("purged closed gadget code", {event: "code.closed.purged", sequence: version});
     return version;
   }
 
@@ -3065,6 +3130,11 @@ class OverseerImpl implements AgentHooks {
     switch (target.type) {
       case "gadget": {
         if (caller.from === "agent") {
+          // Экземпляр рабочего места гаджета-узла агенту беседы закрыт: код узла не для него (ADR 0028, п. 4).
+          let closed = this.storage.gadgets.get(target.id);
+          if (closed && closedAppCode(closed)) {
+            return Promise.reject(new Error(appCodeLock(closed.bindingName ? `env.${closed.bindingName}` : JSON.stringify(closed.title))));
+          }
           let captured = this.#getOrCreateCapturedActions(caller.chatId);
           captured.accessedGadget = true;
           // Заголовок и формат гаджета — для подписи шага в ходе работы беседы.
@@ -5028,6 +5098,7 @@ class OverseerImpl implements AgentHooks {
       rootName: this.gadgetRootName(gadget.id),
       isDefault: gadget.id === this.defaultGadgetId,
       output: gadget.output,
+      ...(closedAppCode(gadget) ? {closedCode: true} : {}),
       bindings: this.visibleBindings(gadget, forChatId).map(([name, edge]) => ({
         name,
         title: this.storage.gatekeepers.get(edge.target)?.resourceTitle || "(title unavailable)",
@@ -8621,6 +8692,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async subscribeToCode(subscriber: RpcStub<CodeSubscriber>, fromVersion: number = 0)
       : Promise<RpcStub<{}>> {
+    // Старое рабочее место могло хранить код узла (прежний restoreAppModules, гаджет беседы после
+    // «Сохранить в проект»): вычистить до первой отдачи. Дальше история до чистки не проигрывается.
+    this.impl.purgeClosedCode();
     let codeVersions = this.impl.storage.code;
 
     subscriber = subscriber.dup();  // keep stub after return
@@ -8661,6 +8735,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async updateCode(update: Uint8Array, chatId?: number): Promise<void> {
+    if (this.impl.updateTouchesClosedCode(update)) throw new Error(APP_CODE_CLOSED);
     if (chatId === undefined) {
       this.impl.updateCode(update);
       return;
@@ -10393,6 +10468,7 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
 
   /** Почему гаджет нельзя сохранить в проект приложением; null — можно. */
   #appBlocker(record: GadgetRecord): string | null {
+    if (closedAppCode(record)) return APP_CODE_CLOSED;
     if (nativeFormatForOutput(record.output?.id)) return "Это документ, таблица или презентация: он сохраняется в проект своим способом.";
     if (record.pending) return "Сначала примите изменения беседы, в которой создан гаджет.";
     if (this.impl.visibleBindings(record, undefined).length) return "У гаджета есть подключения: в приложении проекта их нет, уберите их перед сохранением.";
@@ -10422,10 +10498,13 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
     if (checked) apps[userId] = checked; else delete apps[userId];
     record.mnemosApps = apps;
     this.impl.storage.gadgets.put(record);
+    // Привязанный к узлу гаджет не держит код в рабочем месте: файлы вычищаются сразу.
+    if (checked) this.impl.purgeClosedCode();
   }
 
   async exportAppModules(): Promise<{codeVersion: number; title: string; modules: GadgetAppModules}> {
     const record = this.impl.getGadgetRecord(this.id);
+    // Для гаджета-узла #appBlocker отдаёт APP_CODE_CLOSED: код узла не выгружается никому.
     const blocker = this.#appBlocker(record);
     if (blocker) throw new Error(blocker);
     const {ydoc, version} = this.impl.buildYDoc("current");
@@ -10433,30 +10512,6 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
       const root = ydoc.getMap<Y.Text>(this.impl.gadgetRootName(this.id));
       const modules = parseGadgetAppModules({"client.js": root.get("client.js")?.toString(), "server.js": root.get("server.js")?.toString()});
       return {codeVersion: version, title: record.title, modules};
-    } finally { ydoc.destroy(); }
-  }
-
-  async restoreAppModules(modules: GadgetAppModules, title: string, expectedCodeVersion: number): Promise<number> {
-    const checked = parseGadgetAppModules(modules);
-    if (typeof title !== "string" || !title.trim() || title.length > 120) throw new Error("Invalid app title.");
-    const record = this.impl.getGadgetRecord(this.id);
-    if (nativeFormatForOutput(record.output?.id)) throw new Error("This gadget is a document, spreadsheet or presentation.");
-    // Без ожиданий ниже: проверка и запись кода идут одним шагом.
-    if (record.pending || [...this.impl.storage.chatMeta.list()].some(meta => meta.activeAgent || meta.hasProposedChanges)) {
-      throw new Error("Сначала примите или отмените предложенные правки кода в беседах.");
-    }
-    const {ydoc, version} = this.impl.buildYDoc("current");
-    try {
-      if (version !== expectedCodeVersion) throw Object.assign(new Error("Код гаджета изменился. Откройте версию ещё раз."), {code: "APP_CODE_CHANGED"});
-      const files = new Map([["client.js", checked["client.js"]], ["server.js", checked["server.js"]]]);
-      let next = version;
-      if (nativeEditorChanges(ydoc, this.impl.gadgetRootName(this.id), files).length) {
-        next = this.impl.updateCode(replaceNativeEditorCode(ydoc, this.impl.gadgetRootName(this.id), files), [this.id]);
-      }
-      const current = this.impl.getGadgetRecord(this.id);
-      current.title = title.trim();
-      this.impl.storage.gadgets.put(current);
-      return next;
     } finally { ydoc.destroy(); }
   }
 
@@ -10672,6 +10727,8 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
     //   need an auth check here and the following methods.
 
     let gadget = this.impl.getGadgetRecord(this.id);
+    // Шаблон несёт код гаджета: у гаджета-узла Mnemos код закрыт (ADR 0028, п. 4).
+    if (closedAppCode(gadget)) throw new Error(APP_CODE_CLOSED);
     if (gadget.pending) {
       // A provisional gadget's files live only in its chat's proposed changes; snapshotting its
       // (empty) mainline code would produce a useless blueprint.
@@ -10775,7 +10832,6 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
   async getMnemosApp(): Promise<never> { this.#deny(); }
   async setMnemosApp(_binding: MnemosAppBinding | null): Promise<void> { this.#deny(); }
   async exportAppModules(): Promise<never> { this.#deny(); }
-  async restoreAppModules(_modules: GadgetAppModules, _title: string, _expectedCodeVersion: number): Promise<never> { this.#deny(); }
 
   async getId(): Promise<WorkpieceId> {
     return this.id;
