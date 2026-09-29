@@ -1,24 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
+import { MINI_APP_SESSION } from '@gadgets/workshop-shared/telegram-mini-app'
+import DocumentScreen from './DocumentScreen'
+import type { TelegramWebApp } from './telegram'
 
 // Экран Mini App в Telegram (ADR 0027 Mnemos, этап 6). Страница отдельная от приложения: без входа
 // и без сессии человека. Она отправляет на сервер подписанные Telegram данные запуска (initData) и
 // одноразовый токен экрана из адреса кнопки; сервер проверяет подпись, владельца бота и токен.
 //
-// Сессии, ограниченной одним документом, в оболочке пока нет, поэтому редактор здесь не
-// открывается: экран называет документ и ведёт на сайт.
+// Документ, таблица или презентация из беседы открываются в настоящем редакторе по сессии Mini App,
+// ограниченной этим документом (DocumentScreen). Остальное (уведомления, приложения) — на сайте.
 
-/** Часть Telegram.WebApp, которой пользуется экран. */
-export type TelegramWebApp = {
-  initData: string;
-  colorScheme?: 'light' | 'dark';
-  ready(): void;
-  expand?(): void;
-  close(): void;
-  openLink?(url: string): void;
-};
+export type { TelegramWebApp }
 
 export type OpenResult =
-  | { status: 'ok'; title: string; siteUrl: string | null }
+  | { status: 'ok'; title: string; siteUrl: string | null; session?: string }
   | { status: 'expired'; siteUrl: string | null }
   | { status: 'denied' };
 
@@ -27,10 +22,12 @@ type View =
   | { kind: 'outside' }
   | { kind: 'failed' }
   | { kind: 'ok'; title: string; siteUrl: string | null }
+  | { kind: 'document'; title: string; siteUrl: string | null; session: string }
   | { kind: 'expired'; siteUrl: string | null }
   | { kind: 'denied' };
 
 function viewOf(result: OpenResult): View {
+  if (result.status === 'ok' && result.session) return { kind: 'document', title: result.title, siteUrl: result.siteUrl, session: result.session }
   if (result.status === 'ok') return { kind: 'ok', title: result.title, siteUrl: result.siteUrl }
   if (result.status === 'expired') return { kind: 'expired', siteUrl: result.siteUrl }
   return { kind: 'denied' }
@@ -46,7 +43,10 @@ export async function openScreen(token: string, initData: string, fetcher: typeo
     body: JSON.stringify({ token, initData }),
   })
   const body = await response.json().catch(() => null) as Partial<OpenResult> | null
-  if (body?.status === 'ok' && typeof body.title === 'string') return { status: 'ok', title: body.title, siteUrl: safeUrl(body.siteUrl) }
+  if (body?.status === 'ok' && typeof body.title === 'string') {
+    const session = typeof body.session === 'string' && MINI_APP_SESSION.test(body.session) ? body.session : undefined
+    return { status: 'ok', title: body.title, siteUrl: safeUrl(body.siteUrl), ...(session ? { session } : {}) }
+  }
   if (body?.status === 'expired') return { status: 'expired', siteUrl: safeUrl(body.siteUrl) }
   return { status: 'denied' }
 }
@@ -60,7 +60,7 @@ function safeUrl(value: unknown): string | null {
   } catch { return null }
 }
 
-export default function MiniApp({ webApp, token, fetcher }: { webApp: TelegramWebApp | null; token: string | null; fetcher?: typeof fetch }) {
+export default function MiniApp({ webApp, token, fetcher, documentScreen = DocumentScreen }: { webApp: TelegramWebApp | null; token: string | null; fetcher?: typeof fetch; documentScreen?: typeof DocumentScreen }) {
   const [view, setView] = useState<View>({ kind: 'checking' })
   const started = useRef(false)
 
@@ -70,6 +70,8 @@ export default function MiniApp({ webApp, token, fetcher }: { webApp: TelegramWe
     if (!webApp || !webApp.initData || !token || !TOKEN.test(token)) { setView({ kind: 'outside' }); return }
     webApp.ready()
     webApp.expand?.()
+    // Прокрутка редактора не должна сворачивать окно Mini App.
+    try { webApp.disableVerticalSwipes?.() } catch { /* старый клиент */ }
     openScreen(token, webApp.initData, fetcher).then(result => setView(viewOf(result)), () => setView({ kind: 'failed' }))
   }, [webApp, token, fetcher])
 
@@ -79,6 +81,11 @@ export default function MiniApp({ webApp, token, fetcher }: { webApp: TelegramWe
   }
   const close = () => webApp?.close()
 
+  if (view.kind === 'document') {
+    const Screen = documentScreen
+    return <Screen session={view.session} webApp={webApp} siteUrl={view.siteUrl} title={view.title} />
+  }
+
   return (
     <main className="ma" aria-busy={view.kind === 'checking'}>
       <p className="ma-mark">Mnemos</p>
@@ -87,7 +94,7 @@ export default function MiniApp({ webApp, token, fetcher }: { webApp: TelegramWe
         <>
           <article className="ma-doc">
             <h1 className="ma-title">{view.title}</h1>
-            <p className="ma-note">Редактор в Telegram пока не открывается: документ откроется на сайте, там же сохранение и версии.</p>
+            <p className="ma-note">Это открывается на сайте.</p>
           </article>
           <Actions site={view.siteUrl} label="Открыть на сайте" onSite={openSite} onClose={close} />
         </>

@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => {
         '/api/login': `http://${backendHost}`,
         // Подключение внешнего аккаунта на той же странице.
         '/api/connect': `http://${backendHost}`,
-        '/api/telegram-app': `http://${backendHost}`,
+        '/api/telegram-app': { target: `http://${backendHost}`, ws: true },
       },
     },
     build: {

@@ -89,15 +89,51 @@ const KEPT_SCREENS = 256;
 export const NOTIFY_FIRST_MS = 1000;
 export const NOTICE_THREAD_PREFIX = "По уведомлению: ";
 
-/** Что открывает экран Mini App: название и адрес на сайте. Тред — откуда открыт. */
-export type ScreenTarget = { title: string; path: string };
+/** Документ беседы, который открывает редактор Mini App: рабочее место и номер вывода в нём. */
+export type AppDocumentRef = { workspace: string; gadget: number };
+/** Что открывает экран Mini App: название и адрес на сайте; document — редактор документа.
+ *  Тред — откуда открыт. */
+export type ScreenTarget = { title: string; path: string; document?: AppDocumentRef };
 type ScreenRecord = { target: ScreenTarget; thread: number | null; expiresAt: number; used: boolean };
 
-/** Ответ экрана Mini App. denied — без подробностей: чужие данные, подделка, не тот бот. */
+/** Сессия Mini App без действий живёт 30 минут и продлевается действиями, но не дольше 8 часов. */
+export const APP_SESSION_IDLE_MS = 30 * 60 * 1000;
+export const APP_SESSION_MAX_MS = 8 * 60 * 60 * 1000;
+/** Продление пишется в хранилище не чаще раза в минуту. */
+const APP_SESSION_TOUCH_MS = 60 * 1000;
+const APP_SESSION_PREFIX = "appsession:";
+const APP_SESSIONS = "appsessions";
+const KEPT_APP_SESSIONS = 32;
+
+/** Сессия Mini App: хранится хэш секрета. Действует, пока подключён тот же бот (секрет вебхука),
+ *  у того же владельца и того же пользователя Telegram. principal — аккаунт Mnemos при выдаче. */
+type AppSessionRecord = {
+  owner: string; botSecret: string; telegramUser: number; document: AppDocumentRef; principal: string | null;
+  createdAt: number; expiresAt: number;
+};
+
+/** Что разрешает действующая сессия Mini App: один документ владельца. */
+export type MiniAppSessionGrant = { owner: string; document: AppDocumentRef; principal: string | null;
+  /** Предельный срок сессии (выдача + APP_SESSION_MAX_MS): в этот момент сервер закрывает связь. */
+  endsAt: number };
+
+/** Ответ экрана Mini App. denied — без подробностей: чужие данные, подделка, не тот бот.
+ *  session — сессия редактора этого документа; нет — документ открывается только на сайте. */
 export type MiniAppOpenResult =
-  | { status: "ok"; title: string; siteUrl: string | null }
+  | { status: "ok"; title: string; siteUrl: string | null; session?: string }
   | { status: "expired"; siteUrl: string | null }
   | { status: "denied" };
+
+type AppDocument = { name: string; gadget: number | null };
+
+/** Документы хода для кнопок «Открыть»: редактор — у созданных документов, таблиц и презентаций. */
+function appDocuments(response: GadgetResponse): AppDocument[] {
+  let editable = (response.editable ?? []).filter(e => Number.isSafeInteger(e?.gadgetId) && e.gadgetId >= 0 && typeof e.title === "string");
+  let names = (response.documents ?? []).filter(name => typeof name === "string");
+  let out: AppDocument[] = editable.map(e => ({ name: e.title, gadget: e.gadgetId }));
+  for (let name of names) if (!out.some(d => d.name === name)) out.push({ name, gadget: null });
+  return out.slice(0, 5);
+}
 
 export type BotRecord = {
   owner: string;
@@ -223,6 +259,8 @@ export interface PersonalBotDeps {
   setAlarm(at: number | null): void;
   /** Открытый ключ Telegram для initData Mini App; тесты подают свой. */
   webAppPublicKey?: string;
+  /** Аккаунт Mnemos владельца сейчас (для сессии Mini App); null — не подключён. */
+  mnemosPrincipal?(owner: string): Promise<string | null>;
 }
 
 /** Ошибка для человека: текст показывается на экране как есть. */
@@ -415,10 +453,10 @@ export class PersonalTelegramBot {
     // Запись удаляется до сетевых вызовов: даже если Telegram не ответит, вебхук сюда уже не пройдёт.
     // Связи тредов уходят вместе с ботом; беседы на сайте остаются.
     this.deps.storage.delete(RECORD);
-    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX, SCREEN_PREFIX, ...NOTIFY_KEY_PREFIXES]) {
+    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX, SCREEN_PREFIX, APP_SESSION_PREFIX, ...NOTIFY_KEY_PREFIXES]) {
       for (let [key] of [...this.deps.storage.list({ prefix })]) this.deps.storage.delete(key);
     }
-    for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, ...NOTIFY_KEYS]) this.deps.storage.delete(key);
+    for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, APP_SESSIONS, ...NOTIFY_KEYS]) this.deps.storage.delete(key);
     this.deps.setAlarm(null);
     return { webhookRemoved: await this.#teardown(record) };
   }
@@ -718,7 +756,7 @@ export class PersonalTelegramBot {
     this.#putLink(link);
   }
 
-  #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision } | { kind: "apps"; documents: string[] })[] {
+  #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision } | { kind: "apps"; documents: AppDocument[] })[] {
     let decisions = (response.decisions ?? []).filter(decision => Number.isSafeInteger(decision.action) && decision.action >= 0);
     // Карточка, которая целиком не помещается в сообщение, решается только на сайте.
     let fits = decisions.filter(decision => cardHtml(decision) !== null);
@@ -739,7 +777,7 @@ export class PersonalTelegramBot {
       text += `\n\n${response.waitingFor.replace(/[[\]()*_`~]/g, "").trim()} ждёт решения — ${open("на сайте")}.`;
     }
     // Документы беседы открываются в Telegram (Mini App) кнопками отдельным сообщением.
-    let apps = url && response.documents?.length ? [{ kind: "apps" as const, documents: response.documents.slice(0, 5) }] : [];
+    let apps = url && response.documents?.length ? [{ kind: "apps" as const, documents: appDocuments(response) }] : [];
     return [
       ...(text.trim() ? telegramChunks(text).map(chunk => ({ kind: "chunk" as const, chunk })) : []),
       ...apps,
@@ -768,13 +806,16 @@ export class PersonalTelegramBot {
     await api.send(chat, ((lead?.plain ?? "") + chunk.plain).slice(0, 4096), options);
   }
 
-  /** Кнопки «Открыть» (Mini App) для документов беседы. Без адреса Mini App сообщение не шлётся. */
-  async #sendApps(api: TelegramBotApi, chat: number, documents: string[], link: ThreadLink, thread: number | undefined): Promise<void> {
+  /** Кнопки «Открыть» (Mini App) для документов беседы. Без адреса Mini App сообщение не шлётся.
+   *  Документ, таблица и презентация открываются в редакторе: экран помнит беседу и вывод. */
+  async #sendApps(api: TelegramBotApi, chat: number, documents: AppDocument[], link: ThreadLink, thread: number | undefined): Promise<void> {
     if (!link.chatPath) return;
+    let workspace = /^\/workspace\/([0-9a-f]{64})(?:\?|$)/.exec(link.chatPath)?.[1] ?? null;
     let rows: InlineButton[][] = [];
-    for (let name of documents) {
+    for (let { name, gadget } of documents) {
       let title = name.replace(/\s+/g, " ").trim().slice(0, 200);
-      let app = title ? await this.#screenUrl({ title, path: link.chatPath }, link.thread) : null;
+      let document = workspace && gadget !== null ? { workspace, gadget } : undefined;
+      let app = title ? await this.#screenUrl({ title, path: link.chatPath, ...(document ? { document } : {}) }, link.thread) : null;
       if (app) rows.push([{ text: `Открыть «${title.slice(0, 40)}»`, webApp: app }]);
     }
     if (!rows.length) return;
@@ -985,9 +1026,12 @@ export class PersonalTelegramBot {
     }
     let identity = await verifyWebAppData(initData, record.bot.id, this.deps.now(), this.deps.webAppPublicKey);
     let key = SCREEN_PREFIX + await sha256(secret);
-    // Дальше без ожиданий: проверка и расход токена одним куском.
+    // Секрет сессии и аккаунт Mnemos готовятся заранее: проверка и расход токена идут без ожиданий.
+    let session = randomSecret();
+    let sessionKey = APP_SESSION_PREFIX + await sha256(session);
+    let principal = identity && this.deps.mnemosPrincipal ? await this.deps.mnemosPrincipal(record.owner).catch(() => null) : null;
     let current = this.#record();
-    if (!identity || !current?.telegramOwner || current.secretSha256 !== record.secretSha256 || identity.userId !== current.telegramOwner.id) {
+    if (!identity || !current?.telegramOwner || current.connectedAt === null || current.secretSha256 !== record.secretSha256 || identity.userId !== current.telegramOwner.id) {
       return { status: "denied" };
     }
     let screen = this.deps.storage.get<ScreenRecord>(key);
@@ -996,7 +1040,47 @@ export class PersonalTelegramBot {
     if (screen.used || screen.expiresAt <= this.deps.now()) return { status: "expired", siteUrl: site };
     screen.used = true;
     this.deps.storage.put(key, screen);
-    return { status: "ok", title: screen.target.title, siteUrl: site };
+    let document = screen.target.document;
+    if (!document) return { status: "ok", title: screen.target.title, siteUrl: site };
+    let now = this.deps.now();
+    this.deps.storage.put(sessionKey, {
+      owner: current.owner, botSecret: current.secretSha256, telegramUser: current.telegramOwner.id, document, principal,
+      createdAt: now, expiresAt: now + APP_SESSION_IDLE_MS,
+    } satisfies AppSessionRecord);
+    let sessions = [...(this.deps.storage.get<string[]>(APP_SESSIONS) ?? []), sessionKey];
+    for (let old of sessions.splice(0, Math.max(0, sessions.length - KEPT_APP_SESSIONS))) this.deps.storage.delete(old);
+    this.deps.storage.put(APP_SESSIONS, sessions);
+    return { status: "ok", title: screen.target.title, siteUrl: site, session: `${this.deps.routeId}.${session}` };
+  }
+
+  /** Действующая сессия Mini App и что она разрешает; null — истекла, отозвана или чужая. Каждый
+   *  успешный вызов продлевает её (не дольше APP_SESSION_MAX_MS от выдачи). */
+  async miniAppSession(secret: unknown): Promise<MiniAppSessionGrant | null> {
+    if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) return null;
+    let key = APP_SESSION_PREFIX + await sha256(secret);
+    let session = this.deps.storage.get<AppSessionRecord>(key);
+    if (!session) return null;
+    let record = this.#record();
+    let now = this.deps.now();
+    if (!record?.telegramOwner || record.connectedAt === null || record.secretSha256 !== session.botSecret ||
+        record.owner !== session.owner || record.telegramOwner.id !== session.telegramUser ||
+        session.expiresAt <= now || now - session.createdAt >= APP_SESSION_MAX_MS) {
+      this.deps.storage.delete(key);
+      return null;
+    }
+    let next = Math.min(now + APP_SESSION_IDLE_MS, session.createdAt + APP_SESSION_MAX_MS);
+    if (next - session.expiresAt >= APP_SESSION_TOUCH_MS) {
+      session.expiresAt = next;
+      this.deps.storage.put(key, session);
+    }
+    return { owner: session.owner, document: session.document, principal: session.principal, endsAt: session.createdAt + APP_SESSION_MAX_MS };
+  }
+
+  /** Удалить сессию Mini App: зовёт сервер Mini App, когда страница закрыта (close() или обрыв
+   *  связи), сессия отказала по сроку или сменился аккаунт Mnemos. */
+  async endMiniAppSession(secret: unknown): Promise<void> {
+    if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) return;
+    this.deps.storage.delete(APP_SESSION_PREFIX + await sha256(secret));
   }
 
   #siteUrlFor(path: string): string | null {

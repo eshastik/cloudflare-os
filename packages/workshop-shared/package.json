@@ -57,6 +57,10 @@
       "types": "./src/telegram-bot.ts",
       "import": "./src/telegram-bot.ts"
     },
+    "./telegram-mini-app": {
+      "types": "./src/telegram-mini-app.ts",
+      "import": "./src/telegram-mini-app.ts"
+    },
     "./external-message-gateway": {
       "types": "./src/external-message-gateway.ts",
       "import": "./src/external-message-gateway.ts"

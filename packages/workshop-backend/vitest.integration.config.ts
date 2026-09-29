@@ -10,6 +10,8 @@ const EXPECTED_OPEN_ERROR_CODES = new Set([
   "CONNECT_CODE_REJECTED",
   // Отказ подключения личного бота Telegram (нет ключа шифрования, неверный токен).
   "TELEGRAM_SETUP_REJECTED",
+  // Отказ точки Mini App без действующей сессии.
+  "MINI_APP_SESSION_ENDED",
 ]);
 
 export default defineConfig({

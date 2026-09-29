@@ -562,6 +562,40 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     return this.#notificationAccount().decideNotification(object, version, decision);
   }
 
+  // ---- Telegram Mini App (ADR 0027, раздел 6) ----
+
+  /** Принципал действующего подключения Mnemos; null — подключения нет. Сессия Mini App помнит его
+   *  при выдаче и сверяет на каждом вызове: смена аккаунта Mnemos её отзывает. */
+  async mnemosPrincipal(): Promise<string | null> {
+    return this.#notificationPrincipal();
+  }
+
+  /** Сохранение и версии документа для сервера Mini App: только из действующего подключения Mnemos
+   *  (accountId привязки должен быть им, null — берётся оно же). Остальные возможности экрана
+   *  управления сюда не попадают и закрываются сразу. */
+  async miniAppMnemos(accountId: number | null): Promise<{
+    accountId: number; principal: string; storageOrigin: string;
+    writes: NonNullable<GatekeeperUiFrame["nativeWrites"]>["selector"];
+    downloads: NonNullable<GatekeeperUiFrame["nativeDownloads"]>["selector"];
+  }> {
+    let found = this.#mnemosAccount();
+    let principal = this.#notificationPrincipal();
+    if (!found || !principal || (accountId !== null && accountId !== found.record.id)) throw new Error(MNEMOS_NOTIFICATIONS_UNAVAILABLE);
+    let frame = await this.startAccountAppUi(found.record.id, { isAdmin: false });
+    let { nativeWrites, nativeDownloads } = frame;
+    for (let capability of [frame.blueprintTemplates?.selector, frame.organizationMetrics, frame.calendarDraftCreator, frame.mailDraftSender, frame.agentConsent, frame.ui,
+      frame.inboxUploads?.issuer, frame.textUploads?.issuer, frame.textDownloads?.issuer, frame.reviewDownloads?.issuer]) {
+      try { (capability as Partial<Disposable> | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ }
+    }
+    if (!nativeWrites || !nativeDownloads || nativeWrites.storageOrigin !== nativeDownloads.storageOrigin) {
+      for (let capability of [nativeWrites?.selector, nativeDownloads?.selector]) {
+        try { (capability as Partial<Disposable> | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ }
+      }
+      throw new Error(MNEMOS_NOTIFICATIONS_UNAVAILABLE);
+    }
+    return { accountId: found.record.id, principal, storageOrigin: nativeWrites.storageOrigin, writes: nativeWrites.selector, downloads: nativeDownloads.selector };
+  }
+
   async #readMnemosPeople(): Promise<MnemosPeople | null> {
     let found = this.#mnemosAccount();
     if (!found) return null;

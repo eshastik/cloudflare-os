@@ -6,7 +6,7 @@ import type { RpcStub } from "cloudflare:workers";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "../chat-voice";
 import { spendingEntry, type ModelSpend } from "../spend-ledger.js";
 import { createWorkshopLogger } from "../observability";
-import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, NOTIFY_FIRST_MS, type MiniAppOpenResult, type PersonalBotDeps, type SiteChatInput, type SiteEvent, type TelegramTurnRef } from "./personal-bot";
+import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, NOTIFY_FIRST_MS, type MiniAppOpenResult, type MiniAppSessionGrant, type PersonalBotDeps, type SiteChatInput, type SiteEvent, type TelegramTurnRef } from "./personal-bot";
 import { DraftLimiter } from "./progress";
 
 const logger = createWorkshopLogger("workshop.telegram");
@@ -63,6 +63,7 @@ export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: Draft
       prepare: (owner, object) => exports.UserDurableObject.getByName(owner).prepareMnemosNotificationDecision(object),
       decide: (owner, object, version, decision) => exports.UserDurableObject.getByName(owner).decideMnemosNotification(object, version, decision),
     },
+    mnemosPrincipal: owner => exports.UserDurableObject.getByName(owner).mnemosPrincipal(),
     setAlarm: at => {
       ctx.waitUntil((at === null ? ctx.storage.deleteAlarm() : ctx.storage.setAlarm(at)).catch(() => {}));
     },
@@ -131,6 +132,16 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   async openMiniApp(secret: string, initData: string): Promise<MiniAppOpenResult> {
     try { return await this.#core().openMiniApp(secret, initData); }
     catch { return { status: "denied" }; }
+  }
+
+  /** Сессия редактора Mini App: что она разрешает сейчас; null — отказ. Зовёт только сервер Mini App. */
+  async miniAppSession(secret: string): Promise<MiniAppSessionGrant | null> {
+    try { return await this.#core().miniAppSession(secret); }
+    catch { return null; }
+  }
+
+  async endMiniAppSession(secret: string): Promise<void> {
+    await this.#core().endMiniAppSession(secret);
   }
 
   async getState(owner: string): Promise<TelegramBotState> {

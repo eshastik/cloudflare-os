@@ -37,6 +37,8 @@ import { ExternalMessageGateway } from "./external-message-gateway";
 import { handleTelegramAppOpen, handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramChatTarget, TelegramPersonalBot, TELEGRAM_APP_OPEN_PATH } from "./telegram/durable";
 import type { NotificationKind, NotificationSettings, TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import { MNEMOS_NOTIFICATIONS_UNAVAILABLE } from "./user";
+import { MiniAppPublicApiImpl, type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort } from "./telegram/mini-app-api";
+import { MINI_APP_RPC_PATH } from "@gadgets/workshop-shared/telegram-mini-app";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
 import { handleClientErrorRequest } from "./client-errors.js";
@@ -98,6 +100,44 @@ async function notificationSettingsCall(operation: () => Promise<NotificationSet
     if (error instanceof Error && error.message.includes(MNEMOS_NOTIFICATIONS_UNAVAILABLE)) return null;
     throw new Error("Не получилось прочитать или сохранить настройки уведомлений. Обновите страницу и повторите.");
   }
+}
+
+// Сервер Telegram Mini App: объект бота (сессия), объект пользователя (аккаунт Mnemos, оформление)
+// и беседа (документ). Сессия сайта здесь не участвует.
+function miniAppPorts(ctx: ExecutionContext, env: Env): MiniAppPorts {
+  let exports = ctx.exports;
+  let bot = (route: string) => exports.TelegramPersonalBot.get(exports.TelegramPersonalBot.idFromString(route));
+  let user = (owner: string) => exports.UserDurableObject.getByName(owner);
+  return {
+    session: (route, secret) => bot(route).miniAppSession(secret),
+    endSession: (route, secret) => bot(route).endMiniAppSession(secret),
+    principal: owner => user(owner).mnemosPrincipal(),
+    openDocument: async (owner, document) => {
+      let id = exports.UserDurableObject.idFromName(owner);
+      let overseer = exports.OverseerDurableObject.get(exports.OverseerDurableObject.idFromString(document.workspace));
+      return await overseer.openMiniAppDocument(id.toString(), owner, document.gadget) as unknown as MiniAppDocumentPort;
+    },
+    mnemos: async (owner, accountId) => await user(owner).miniAppMnemos(accountId) as unknown as MnemosPort,
+    appearance: async owner => ({ preference: await user(owner).getAppearance(), deployment: (await readAdminConfig(env)).accentColor }),
+    now: () => Date.now(),
+    schedule: (ms, run) => { let timer = setTimeout(run, ms); return () => clearTimeout(timer); },
+  };
+}
+
+// WebSocket точки Mini App. Только своя страница (Origin), без cookie: сессия приходит первым вызовом.
+async function handleMiniAppRpc(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  let url = new URL(req.url);
+  if (req.headers.get("Upgrade")?.toLowerCase() !== "websocket") return new Response("WebSocket required.", { status: 426 });
+  let origin = req.headers.get("Origin");
+  let sameSite = false;
+  try { sameSite = !!origin && new URL(origin).hostname === url.hostname; } catch { /* не адрес */ }
+  if (!sameSite) return new Response("Cross-origin Mini App access not allowed.", { status: 403 });
+  let resp: Response | undefined;
+  let aborted = false;
+  let abort = () => { aborted = true; resp?.webSocket?.close(); };
+  resp = await newWorkersRpcResponse(req, new MiniAppPublicApiImpl(miniAppPorts(ctx, env), abort));
+  if (aborted) resp?.webSocket?.close();
+  return resp;
 }
 
 // =======================================================================================
@@ -996,6 +1036,9 @@ export default {
     // Вебхук личного бота Telegram: подлинность проверяет объект бота по secret_token.
     if (url.pathname === TELEGRAM_APP_OPEN_PATH) {
       return handleTelegramAppOpen(req, ctx.exports.TelegramPersonalBot);
+    }
+    if (url.pathname === MINI_APP_RPC_PATH) {
+      return handleMiniAppRpc(req, env, ctx);
     }
     if (url.pathname.startsWith("/api/telegram/")) {
       return handleTelegramWebhook(req, ctx.exports.TelegramPersonalBot);

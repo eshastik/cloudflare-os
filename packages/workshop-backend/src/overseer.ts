@@ -14,7 +14,7 @@ import type { NativeDocumentSource } from "@gadgets/workshop-shared/gatekeeper";
 import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "./native-editor-update.js";
 import { claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat, recordMnemosReceipt, releaseMnemosCreation, setMnemosBinding, type MnemosDocumentEntry } from "./native-mnemos-binding.js";
 import { ensureNativeTitle, titlePrompt, type NativeTitleEditor } from "./native-document-title.js";
-import { nativeFormatForOutput, type NativeMnemosBinding } from "@gadgets/workshop-shared/native-document";
+import { nativeFormatForOutput, type NativeDocumentFormat, type NativeMnemosBinding } from "@gadgets/workshop-shared/native-document";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -586,6 +586,8 @@ type ExternalResponseExtras = {
   // Ход начат соавтором: его решения владелец в канале не принимает, видит строку с именем.
   waitingFor?: string;
   documents?: string[];
+  // Созданные документы, таблицы и презентации: канал открывает их редактор (Mini App).
+  editable?: {gadgetId: WorkpieceId; title: string}[];
   noReply?: true;
 };
 
@@ -4128,6 +4130,7 @@ class OverseerImpl implements AgentHooks {
   #externalResponseExtras(messages: AiChatMessage[]): ExternalResponseExtras {
     let extras: ExternalResponseExtras = {};
     let documents: string[] = [];
+    let editable: NonNullable<ExternalResponseExtras["editable"]> = [];
     let decisions: ExternalDecision[] = [];
     for (let message of messages) {
       if (message.type === "action") {
@@ -4146,10 +4149,15 @@ class OverseerImpl implements AgentHooks {
       } else if (message.type === "changes") {
         for (let created of message.createdGadgets ?? []) {
           if (created.title && !documents.includes(created.title)) documents.push(created.title);
+          let record = this.storage.gadgets.get(created.gadgetId);
+          if (record && nativeFormatForOutput(record.output?.id) && !editable.some(e => e.gadgetId === created.gadgetId)) {
+            editable.push({gadgetId: created.gadgetId, title: record.title || created.title});
+          }
         }
       }
     }
     if (documents.length) extras.documents = documents.slice(0, 10);
+    if (editable.length) extras.editable = editable.slice(0, 10);
     if (decisions.length) extras.decisions = decisions.slice(0, 10);
     return extras;
   }
@@ -4299,6 +4307,7 @@ class OverseerImpl implements AgentHooks {
         ...(extras.decisions?.length ? {decisions: extras.decisions} : {}),
         ...(extras.waitingFor ? {waitingFor: extras.waitingFor} : {}),
         ...(extras.documents?.length ? {documents: extras.documents} : {}),
+        ...(extras.editable?.length ? {editable: extras.editable} : {}),
         ...(extras.noReply ? {noReply: true} : {}),
       });
     } catch (err) {
@@ -7415,6 +7424,30 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     return new OverseerClientInterface(
         this.impl, owner, clientUser, profileId, userId, isOwner, notifyClosed.dup(),
         ensureCapsules);
+  }
+
+  // Telegram Mini App (ADR 0027 Mnemos, раздел 6): один документ беседы для владельца или соавтора
+  // с правом правки. Проверки те же, что у open(): роль и наблюдение за источниками рабочего места.
+  // Объект держит только сервер Mini App (telegram/mini-app-api.ts), странице он не передаётся.
+  async openMiniAppDocument(userId: string, profileId: string, gadgetId: WorkpieceId): Promise<MiniAppDocumentTarget> {
+    if (!this.impl.ownerId) throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceNotFound);
+    let isOwner = userId === this.impl.ownerId;
+    let locked = () => this.impl.storage.prohibitAllSharing.get() || this.impl.storage.ownerOnlyObservations.get();
+    if (!isOwner && (locked() || (await this.impl.getSharingManager()).getEffectiveRole(profileId) !== "build")) {
+      throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceAccessDenied);
+    }
+    let clientUser = this.impl.users.get(this.impl.users.idFromString(userId));
+    await this.impl.ensureAmbientCapsules().catch(() => {});
+    await this.impl.ensureObserver(profileId, clientUser, "build");
+    if (!isOwner && locked()) throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceAccessDenied);
+    let record = this.impl.getGadgetRecord(gadgetId);
+    let format = nativeFormatForOutput(record.output?.id);
+    if (!format) throw new Error("This output is not a document, spreadsheet or presentation.");
+    let chatId = record.pending?.chatId;
+    let origin = record.originChatId ?? chatId;
+    return new MiniAppDocumentTarget(new GadgetClientImpl(this.impl, gadgetId, clientUser), format, chatId,
+        `/workspace/${this.ctx.id.toString()}${origin !== undefined ? `?chat=${origin}` : ""}`,
+        this.impl.maintainNativeAccess(profileId, clientUser, "build"));
   }
 
   #getExternalChat(externalChatKey: string): ExternalChatRecord | undefined {
@@ -10628,6 +10661,29 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
                         _screenshot?: BlueprintScreenshotUpload): Promise<BlueprintGadgetSummary> {
     this.#deny();
   }
+}
+
+// Один документ беседы для сервера Telegram Mini App. Беседа (chatId) — та, где документ ещё
+// предложен; выбирает её сервер по записи документа, а не вызывающий.
+class MiniAppDocumentTarget extends RpcTarget {
+  #gadget: GadgetClientImpl;
+  #format: NativeDocumentFormat;
+  #chatId: number | undefined;
+  #sitePath: string;
+  #stopLease: () => void;
+  constructor(gadget: GadgetClientImpl, format: NativeDocumentFormat, chatId: number | undefined, sitePath: string, stopLease: () => void) {
+    super();
+    this.#gadget = gadget; this.#format = format; this.#chatId = chatId; this.#sitePath = sitePath; this.#stopLease = stopLease;
+  }
+  async info() { return {title: await this.#gadget.getTitle(), format: this.#format, sitePath: this.#sitePath}; }
+  async uiBundle() { return this.#gadget.getUiBundle(this.#chatId); }
+  async editor(): Promise<RpcStub<any>> { return this.#gadget.connectToGadget(this.#chatId); }
+  async mnemosState() { return this.#gadget.getMnemosDocument(this.#chatId); }
+  async setMnemosDocument(binding: NativeMnemosBinding) { return this.#gadget.setMnemosDocument(binding); }
+  async claimMnemosDocument(accountId: number, scope: string, name: string, holder: string) { return this.#gadget.claimMnemosDocument(accountId, scope, name, holder); }
+  async releaseMnemosDocument(claim: string) { return this.#gadget.releaseMnemosDocument(claim); }
+  async recordMnemosDocumentReceipt(claim: string, receipt: string) { return this.#gadget.recordMnemosDocumentReceipt(claim, receipt); }
+  [Symbol.dispose]() { this.#stopLease(); }
 }
 
 @validateRpc()
