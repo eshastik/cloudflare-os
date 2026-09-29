@@ -31,7 +31,7 @@ it("в CSP страницы Mini App нет data: для скриптов, фр�
 it("фрейм грузится своим адресом в песочнице и получает редактор только от себя и после «готов»", async () => {
   const api = { getUiBundle: vi.fn(async () => ({ jsCode: "console.log('редактор')" })) } as unknown as DocumentApi;
   const el = document.createElement("div"); document.body.append(el); const root = createRoot(el);
-  await React.act(async () => root.render(<EditorFrame api={api} accent="#176b9a" onSnapshotSource={() => {}} onFailed={() => {}} />));
+  await React.act(async () => root.render(<EditorFrame api={api} accent="#176b9a" mode="light" onSnapshotSource={() => {}} onFailed={() => {}} />));
   await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
   try {
     const frame = el.querySelector("iframe")!;
@@ -49,6 +49,31 @@ it("фрейм грузится своим адресом в песочнице 
     expect(message.type).toBe("editor-frame-html");
     expect(decodeURIComponent(message.html)).toContain("console.log('редактор')");
     expect(target).toBe("*");
+  } finally {
+    await React.act(async () => root.unmount()); el.remove();
+  }
+});
+
+it("тёмная тема Telegram и акцент — в первой разметке фрейма и сообщением host-theme при смене", async () => {
+  const api = { getUiBundle: vi.fn(async () => ({ jsCode: "console.log('приложение')" })) } as unknown as DocumentApi;
+  const el = document.createElement("div"); document.body.append(el); const root = createRoot(el);
+  const view = (mode: "light" | "dark", accent: string) => <EditorFrame api={api} accent={accent} mode={mode} onSnapshotSource={() => {}} onFailed={() => {}} />;
+  await React.act(async () => root.render(view("light", "#176b9a")));
+  await React.act(async () => { await new Promise(r => setTimeout(r, 0)); });
+  try {
+    const frame = el.querySelector("iframe")!;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    // Тема сменилась до того, как фрейм сказал «готов»: разметка собирается с темой на момент «готов».
+    await React.act(async () => root.render(view("dark", "#ae4b14")));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ type: "host-theme", mode: "dark", vars: expect.objectContaining({ "--host-accent": "#ae4b14" }) }), "*");
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "editor-frame-ready" }, origin: "null", source: frame.contentWindow }));
+    const [message] = post.mock.calls.at(-1) as [{ type: string; html: string }];
+    expect(message.type).toBe("editor-frame-html");
+    expect(message.html).toMatch(/<html data-mode="dark" style="--host-accent:#ae4b14;/);
+    expect(message.html).toContain('<style id="mnemos-host-tokens">');
+    await React.act(async () => root.render(view("light", "#ae4b14")));
+    expect(post).toHaveBeenLastCalledWith(expect.objectContaining({ type: "host-theme", mode: "light" }), "*");
+    expect(el.querySelector("iframe")).toBe(frame);
   } finally {
     await React.act(async () => root.unmount()); el.remove();
   }

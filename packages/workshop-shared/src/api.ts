@@ -1931,6 +1931,8 @@ export type AiChatMetadata = {
   projectContext?: ChatProjectContext & {creatorId: string;creatorProfileId:string};
   /** Работа с кодом этой беседы, если агент к ней переходил. */
   codeWork?: ChatCodeWork;
+  /** Работа над гаджетом этой беседы (ADR 0028): отдельная от работы с кодом, у неё свой узел. */
+  gadgetWork?: ChatCodeWork;
   /** Переключатель «Код»; не задан — «Авто». */
   codeMode?: ChatCodeMode;
   id: number,
@@ -2427,6 +2429,12 @@ export type AiToolCall = {
   // Вопрос агента беседы к той же сессии работы с кодом («почему так сделал»).
   toolName: "codeAsk";
   input: {question: string};
+  output?: CodeWorkOutput;
+} | {
+  // Гаджет руками агента кода (ADR 0028): шаги рабочего места — как у codeWork, в output.gadget —
+  // узел, куда легла сборка, или почему она не сохранена.
+  toolName: "gadgetWork";
+  input: {task: string; projectId?: string};
   output?: CodeWorkOutput;
 });
 

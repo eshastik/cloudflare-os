@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { RpcTarget, newMessagePortRpcSession, type RpcStub } from 'capnweb'
-import { gadgetAccentVariables, isAccentHex } from '@gadgets/workshop-shared/accent-theme'
+import { hostThemeMessage, type HostThemeMode } from '../gadgetHostTheme'
 import { createSandboxedHtml } from '../gadgetSandbox'
 import { queueNativeSnapshots, requestNativeSnapshot, type NativeSnapshotSource } from '../nativeSnapshotSource'
 import { MINI_APP_EDITOR_FRAME_PATH } from '@gadgets/workshop-shared/telegram-mini-app'
@@ -14,16 +14,19 @@ import type { DocumentApi } from './miniAppDocument'
 type Props = {
   api: DocumentApi
   accent: string
+  /** Тема Mini App: тёмная, если в Telegram тёмная тема. */
+  mode: HostThemeMode
   /** Появился (или пропал) источник снимка — фрейм готов отдавать документ. */
   onSnapshotSource(read: NativeSnapshotSource | null): void
   onFailed(): void
 }
 
-export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }: Props) {
-  const [html, setHtml] = useState<string | null>(null)
+export default function EditorFrame({ api, accent, mode, onSnapshotSource, onFailed }: Props) {
+  // Код экрана; разметку фрейма собирает «готов» с темой на этот момент — первый кадр без мигания.
+  const [code, setCode] = useState<string | null>(null)
   const frame = useRef<HTMLIFrameElement>(null)
-  const accentRef = useRef(accent)
-  accentRef.current = accent
+  const themeRef = useRef({ mode, accent })
+  themeRef.current = { mode, accent }
   const callbacks = useRef({ onSnapshotSource, onFailed })
   callbacks.current = { onSnapshotSource, onFailed }
 
@@ -32,19 +35,18 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
     api.getUiBundle().then(bundle => {
       if (cancelled) return
       if (!bundle) { callbacks.current.onFailed(); return }
-      setHtml(createSandboxedHtml(bundle.jsCode, undefined, accentRef.current))
+      setCode(bundle.jsCode)
     }, () => { if (!cancelled) callbacks.current.onFailed() })
     return () => { cancelled = true }
   }, [api])
 
+  // Смена темы Telegram или акцента — сообщением host-theme, без перезагрузки фрейма.
   useEffect(() => {
-    const target = frame.current?.contentWindow
-    if (!target || !isAccentHex(accent)) return
-    target.postMessage({ type: 'host-accent', vars: gadgetAccentVariables(accent) }, '*')
-  }, [accent, html])
+    frame.current?.contentWindow?.postMessage(hostThemeMessage(themeRef.current), '*')
+  }, [accent, mode, code])
 
   useEffect(() => {
-    if (!html) return
+    if (code === null) return
     let session: { [Symbol.dispose](): void } | null = null
     let editor: RpcStub<RpcTarget> | null = null
     let alive = true
@@ -53,7 +55,7 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
       // Только наш фрейм и только непрозрачный источник: фрейм не мог уйти на другой адрес.
       if (!window || event.source !== window || event.origin !== 'null') return
       // Фрейм загружен отдельным адресом со своим CSP; разметку редактора он получает отсюда.
-      if (event.data?.type === 'editor-frame-ready') { window.postMessage({ type: 'editor-frame-html', html }, '*'); return }
+      if (event.data?.type === 'editor-frame-ready') { window.postMessage({ type: 'editor-frame-html', html: createSandboxedHtml(code, undefined, themeRef.current) }, '*'); return }
       if (event.data !== 'handshake' || !event.ports?.[0]) return
       const port = event.ports[0]
       session?.[Symbol.dispose](); editor?.[Symbol.dispose]()
@@ -67,7 +69,7 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
           get: (base, property, receiver) => typeof property === 'symbol' || property in base ? Reflect.get(base, property, receiver) : stub[property],
         })
         session = newMessagePortRpcSession(port, forward as unknown as RpcTarget) as unknown as { [Symbol.dispose](): void }
-        if (isAccentHex(accentRef.current)) window.postMessage({ type: 'host-accent', vars: gadgetAccentVariables(accentRef.current) }, '*')
+        window.postMessage(hostThemeMessage(themeRef.current), '*')
         callbacks.current.onSnapshotSource(queueNativeSnapshots((format, signal) => requestNativeSnapshot(window, format, signal)))
       } catch {
         port.close()
@@ -81,9 +83,9 @@ export default function EditorFrame({ api, accent, onSnapshotSource, onFailed }:
       callbacks.current.onSnapshotSource(null)
       session?.[Symbol.dispose](); editor?.[Symbol.dispose]()
     }
-  }, [api, html])
+  }, [api, code])
 
-  if (!html) return <div className="ma-editor ma-editor-wait" role="status">Открываю редактор…</div>
+  if (code === null) return <div className="ma-editor ma-editor-wait" role="status">Открываю редактор…</div>
   // Без allow-popups и allow-same-origin: фрейм не открывает окон и не видит страницу Mini App.
   return <iframe ref={frame} className="ma-editor" src={MINI_APP_EDITOR_FRAME_PATH} sandbox="allow-scripts" title="Редактор документа" />
 }

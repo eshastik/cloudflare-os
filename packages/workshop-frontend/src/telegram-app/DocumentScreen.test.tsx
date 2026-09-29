@@ -164,6 +164,21 @@ it("документ не в Mnemos и без проекта — главной 
   } finally { await r.done() }
 })
 
+it("фрейм редактора или приложения получает тему Telegram и её смену на лету", async () => {
+  const t = telegram(), f = fakeApi({ format: "cloudflareos.app" })
+  let changed: (() => void) | null = null
+  const app = { ...t.app, onEvent: (_: string, cb: () => void) => { changed = cb }, offEvent: vi.fn() } as TelegramWebApp
+  const modes: string[] = []
+  const Frame = (({ mode }: { mode: string }) => { modes.push(mode); return <div /> }) as never
+  const r = await render(<DocumentScreen session={SESSION} webApp={app} siteUrl={null} title="План" connect={f.connect} pollMs={0} Frame={Frame} />)
+  try {
+    expect(modes.at(-1)).toBe("dark")
+    ;(app as { colorScheme?: string }).colorScheme = "light"
+    await React.act(async () => { changed!() })
+    expect(modes.at(-1)).toBe("light")
+  } finally { await r.done() }
+})
+
 it("тема Telegram и акцент — только HEX; тёмная тема переносится", () => {
   const t = telegram()
   applyTelegramTheme({ ...t.app, themeParams: { bg_color: "#17212b", text_color: "red;x:url(y)" } }, "#176b9a")

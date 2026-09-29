@@ -50,6 +50,7 @@ export const AGENT_TOOL_DISPLAY: Record<AiToolCall["toolName"], DisplaySpec> = {
   requestConnection: spec("Попросил подключить", "Прошу подключить", "попросить подключение", ["запрос подключения", "запроса подключения", "запросов подключения"], "connection"),
   codeWork: spec("Поручил агенту кода", "Поручаю агенту кода", "поручить работу агенту кода", ["поручение агенту кода", "поручения агенту кода", "поручений агенту кода"], "code"),
   codeAsk: spec("Спросил агента кода", "Спрашиваю агента кода", "спросить агента кода", ["вопрос агенту кода", "вопроса агенту кода", "вопросов агенту кода"], "code"),
+  gadgetWork: spec("Построил гаджет", "Строю гаджет", "построить гаджет", ["гаджет", "гаджета", "гаджетов"], "app"),
 };
 
 // ---- чтения сведений Mnemos (gatekeeper-mnemos READ_TITLES и EXTRA_READ_TITLES) ----
@@ -566,10 +567,20 @@ export function callStep(call: AiToolCall): WorkStep {
       break;
     case "codeWork": target = call.output?.projectTitle; break;
     case "codeAsk": target = call.output?.projectTitle; break;
+    case "gadgetWork": {
+      const gadget = call.output?.gadget;
+      if (gadget?.saved) {
+        target = gadget.title;
+        detail = { type: "found", items: [{ name: `Открыть гаджет «${clip(gadget.title, 60)}»`, link: { project: gadget.projectId, document: gadget.resource } }] };
+      } else if (gadget) {
+        detail = { type: "text", text: `Гаджет не сохранён: ${gadget.error}` };
+      }
+      break;
+    }
   }
   const shownTarget = target && !looksLikeId(target) ? target : undefined;
   const separator = call.toolName === "executeCode" ? ": " : " ";
-  const quotedTarget = shownTarget && (call.toolName === "createGadget" || call.toolName === "codeWork" || call.toolName === "codeAsk") ? `«${shownTarget}»` : shownTarget;
+  const quotedTarget = shownTarget && (call.toolName === "createGadget" || call.toolName === "codeWork" || call.toolName === "codeAsk" || call.toolName === "gadgetWork") ? `«${shownTarget}»` : shownTarget;
   const label = call.error
     ? `Не удалось ${spec.failed}${shownTarget ? ` ${quotedTarget}` : ""}`
     : `${spec.past}${quotedTarget ? `${separator}${quotedTarget}` : ""}`;

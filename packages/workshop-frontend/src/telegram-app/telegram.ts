@@ -42,6 +42,11 @@ const VARS: [keyof TelegramThemeParams, string][] = [
   ['secondary_bg_color', '--tint'], ['section_separator_color', '--line'],
 ]
 
+/** Тема Telegram человека; без Telegram или без сведений — светлая. */
+export function telegramThemeMode(webApp: TelegramWebApp | null): 'light' | 'dark' {
+  return webApp?.colorScheme === 'dark' ? 'dark' : 'light'
+}
+
 /** Цвета Telegram (светлая или тёмная тема человека) и его акцент — на корень страницы. В цвета
  *  идут только HEX: значение из themeParams не может подставить в страницу произвольный CSS. */
 export function applyTelegramTheme(webApp: TelegramWebApp | null, accent: string | null, root: HTMLElement = document.documentElement): void {

@@ -388,8 +388,10 @@ export interface AgentHooks {
   // mode — переключатель «Код»: при «off» инструменты кода не даются.
   describeCodeWork?(chatId: number, initiator: AiChatAuthorInfo): Promise<CodeWorkInfo | null>;
   // Один ход работы с кодом: шаги идут через onStep, текст агента кода — через onText.
+  // gadget — работа над гаджетом (ADR 0028): задача агента кода с шаблоном гаджета, сборка
+  // сохраняется личной версией узла приложения в проекте.
   runCodeWork?(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput>;
 }
@@ -627,12 +629,22 @@ let CODE_WORK_TOOL_DESCRIPTION = `
 Изменения не сохраняются в проект сами: человек видит «Что изменилось» и решает «Принять». Не говори, что изменения уже сохранены, и не проси человека создавать запросы на слияние или ветки.
 `.trim();
 
+let GADGET_WORK_TOOL_DESCRIPTION = `
+Сделать или поправить гаджет — веб-приложение внутри Mnemos — руками агента кода. Агент кода в отдельном рабочем месте собирает приложение из шаблона гаджета (React, компоненты и оформление Mnemos), проверяет его и отдаёт сборку. Сборка сохраняется файлом приложения в проект личной версией: пока человек не опубликует, её видит только он. Первый вызов создаёт файл, следующие вызовы той же работы — новые версии того же файла.
+
+В task опиши приложение целиком: назначение, экраны, какие данные хранит, кто им пользуется. Обязательно скажи, совместное ли оно (одна общая база для всех, кому открыт файл) или у каждого своя копия данных; для совместного — кто участники и что каждый может делать; нужен ли справочник людей и отделов. При правке — что именно поменять.
+
+Ничего не публикуй сам и не обещай, что гаджет уже работает у других.
+`.trim();
+
 let CODE_ASK_TOOL_DESCRIPTION = `
 Спросить агента кода той же живой сессии, что и почему он сделал. Используй, только если ответа нет в сохранённом итоге работы с кодом; если сессия завершена, ответь по сохранённой истории.
 `.trim();
 
 export type CodeWorkInfo = {
   projects: ChatProject[];
+  /** Работа над гаджетом этой беседы; title — название сохранённого гаджета. */
+  gadget?: {projectTitle: string; alive: boolean; title?: string};
   /** brief — живая сводка работы с кодом (только пока работа жива). */
   active?: {projectTitle: string; alive: boolean; brief?: string};
   /** Переключатель «Код»; не задан — «Авто». */
@@ -669,6 +681,16 @@ export function formatCodeWorkPrompt(info: CodeWorkInfo): string {
     lines.push("Проекты к беседе не подключены: проект определится по задаче. Если задача про код конкретного проекта, передай его projectId или название в codeWork — проект подключится к беседе сам.");
   }
   lines.push("", "Для задач про код проекта вызывай codeWork. Отвечай человеку простым языком, без слов «ветка», «коммит», «запрос на слияние».");
+  lines.push("", "## Гаджеты через агента кода",
+    "Гаджет — это веб-приложение внутри Mnemos: свои экраны, свои данные, иногда общие для нескольких людей. Когда человек просит сделать приложение, трекер, журнал, калькулятор, опросник с итогами, доску, учёт чего-либо — всё сложнее одной простой формы, — вызывай gadgetWork: приложение соберёт агент кода по правилам оформления Mnemos. Сам такой гаджет не пиши.",
+    "Простую форму в одно действие можешь сделать сам, как раньше.",
+    "Перед первым вызовом, если из беседы это не ясно, коротко спроси человека: 1) совместное ли приложение — одна общая база для всех, кому открыт файл, или у каждого своя копия данных; 2) если совместное — кто участники (люди, отдел, вся организация) и кто что может делать; 3) в какой проект сохранить, если проектов несколько. Остальное придумай сам по смыслу.",
+    "После вызова дай человеку ссылку «Открыть гаджет» из итога и скажи, что это личная версия: проверить её можно в предпросмотре, а опубликовать — кнопкой в шапке файла. Просьбы поправить гаджет — снова gadgetWork: выйдет новая версия того же файла.");
+  if (info.gadget) {
+    lines.push("", info.gadget.alive
+      ? `Работа над гаджетом${info.gadget.title ? ` «${info.gadget.title}»` : ""} для проекта «${info.gadget.projectTitle}» идёт; gadgetWork продолжит её и сохранит новую версию того же файла.`
+      : `Работа над гаджетом${info.gadget.title ? ` «${info.gadget.title}»` : ""} завершена; новый вызов gadgetWork начнёт новую работу и новый файл.`);
+  }
   if (info.active) {
     lines.push("", info.active.alive
       ? `Работа с кодом проекта «${info.active.projectTitle}» идёт; codeWork продолжит её, codeAsk задаст вопрос агенту кода.`
@@ -1823,6 +1845,7 @@ export async function runAgent(
                   break;
                 case "codeWork":
                 case "codeAsk":
+                case "gadgetWork":
                   // Ход работы с кодом не переигрывается: его итог записан при вызове.
                   if (toolCall.output === undefined) {
                     throw new Error(`${toolCall.toolName} tool call in log is missing its result`);
@@ -2998,7 +3021,7 @@ export async function runAgent(
 
   if (codeWorkInfo && codeWorkToolsAvailable(codeWorkInfo) && hooks.runCodeWork) {
     let runCodeWork = hooks.runCodeWork.bind(hooks);
-    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean}) => {
+    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean; gadget?: boolean}) => {
       try {
         let output = await runCodeWork(chatId, initiator, {
           toolCallId, ...request, signal: abortSignal,
@@ -3020,6 +3043,16 @@ export async function runAgent(
         projectId: Type.String({description: "projectId проекта из списка в системной подсказке."}),
       }),
       execute: (toolCallId, {task, projectId}) => codeTurn(toolCallId, {prompt: task, projectId}),
+    });
+    tools.gadgetWork = defineTool({
+      name: "gadgetWork",
+      label: "Гаджет",
+      description: GADGET_WORK_TOOL_DESCRIPTION,
+      parameters: Type.Object({
+        task: Type.String({description: "Какое приложение сделать или что в нём поправить: назначение, экраны, данные, совместное ли оно и кто участники."}),
+        projectId: Type.Optional(Type.String({description: "projectId проекта, куда сохранить гаджет; без него — первый проект беседы."})),
+      }),
+      execute: (toolCallId, {task, projectId}) => codeTurn(toolCallId, {prompt: task, ...(projectId ? {projectId} : {}), gadget: true}),
     });
     tools.codeAsk = defineTool({
       name: "codeAsk",

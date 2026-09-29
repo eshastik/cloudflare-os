@@ -1,8 +1,8 @@
 // Работа с кодом в беседе: набор проектов, переключатель «Код», выбор, кому отвечать на сообщение
 // человека, ход агента кода, «Что изменилось» и «Принять». Хранится в метаданных беседы.
 import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptResult, ChatCodeChanges, ChatProjectChoice} from "@gadgets/workshop-shared/api";
-import {MAX_CHAT_PROJECTS, chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
-import type {CodeWorkReview, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
+import {MAX_CHAT_PROJECTS, chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput, type GadgetWorkResult} from "@gadgets/workshop-shared/code-work";
+import type {CodeWorkReview, CodeWorkSavedGadget, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend, type CodeWorkFiles} from "./code-work.js";
 import {JEV_CONFIDENCE_THRESHOLD, MAX_PROJECT_CANDIDATES, type CodeRouteContext, type JevProjectDecision, type JevResult} from "./code-router.js";
 import {
@@ -26,6 +26,10 @@ export interface CodeWorkUser {
   codeWorkPutFile?(accountId: number, project: string, task: string, path: string, contentBase64: string): Promise<void>;
   /** Право «Агент кода» человека; нет метода — подключения права не знают. */
   codeWorkAllowed?(): Promise<boolean>;
+  /** Гаджет через агента кода (ADR 0028); нет методов — подключение гаджеты не делает. */
+  codeWorkStartGadget?(accountId: number, project: string, prompt: string): ReturnType<CodeWorkBackend["start"]>;
+  /** Сохранить сборку личной версией узла; vendorId — подключение Mnemos для адреса «Открыть гаджет». */
+  codeWorkSaveGadget?(accountId: number, project: string, task: string, resource?: string): Promise<CodeWorkSavedGadget & {vendorId?: string}>;
 }
 
 /** Отказ человеку без права «Агент кода». */
@@ -42,15 +46,19 @@ export interface ChatCodeWorkHost {
   chatMessages(chatId: number, afterSequence: number): AiChatMessage[];
   /** Байты файла, приложенного к сообщению беседы; нет — файлы в рабочее место не копируются. */
   attachmentContent?(chatId: number, attachmentId: string): Promise<Uint8Array>;
+  /** Публичный адрес оболочки (https) для ссылки «Открыть гаджет»; нет — ссылка не даётся. */
+  publicBase?: string;
 }
 
 const MAX_SUMMARY = 4000;
 const MAX_STORED_FILES = 50;
 const MAX_STORED_ATTACHMENT_NAMES = 200;
 
-function backendFor(user: CodeWorkUser, accountId: number): CodeWorkBackend {
+function backendFor(user: CodeWorkUser, accountId: number, gadget = false): CodeWorkBackend {
   return {
-    start: (project, target, prompt) => user.codeWorkStart(accountId, project, target, prompt),
+    start: gadget
+      ? (project, _target, prompt) => user.codeWorkStartGadget!(accountId, project, prompt)
+      : (project, target, prompt) => user.codeWorkStart(accountId, project, target!, prompt),
     message: (project, task, text) => user.codeWorkMessage(accountId, project, task, text),
     events: (project, task, after, waitMs) => user.codeWorkEvents(accountId, project, task, after, waitMs),
     abort: (project, task) => user.codeWorkAbort(accountId, project, task),
@@ -290,6 +298,9 @@ export type CodeWorkRequest = {
   continueOnly?: boolean;
   /** Номер сообщения человека, текст которого и есть prompt: в пакет контекста не повторяется. */
   promptSequence?: number;
+  /** Работа над гаджетом (ADR 0028): задача opencode с шаблоном гаджета, сборка каждого хода
+   *  сохраняется личной версией узла приложения в проекте. Своя работа, отдельная от работы с кодом. */
+  gadget?: boolean;
   /** Кто ведёт беседу сейчас: чьи подключения использовать, если у беседы ещё нет создателя. */
   userId: string;
   profileId: string;
@@ -303,11 +314,16 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let user = host.user(ownerId);
   // Окончательно право проверяет служба рабочих мест по Mnemos; здесь отказ до запуска и понятными словами.
   if (user.codeWorkAllowed && !await user.codeWorkAllowed()) throw new Error(CODE_AGENT_DISABLED_MESSAGE);
+  let gadget = request.gadget === true;
+  if (gadget && (!user.codeWorkStartGadget || !user.codeWorkSaveGadget)) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
+  // Работа над гаджетом хранится отдельно: живая работа с кодом и её непринятые изменения не теряются.
+  let slot: "codeWork" | "gadgetWork" = gadget ? "gadgetWork" : "codeWork";
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
-  let work = meta.codeWork;
+  let work = meta[slot];
   let continuing = !!work && codeWorkAlive(work.state) && (!request.projectId || request.projectId === work.projectId);
   if (request.continueOnly && !continuing) {
-    throw new Error("Работа с кодом уже завершена. Ответь по сохранённому ходу работы или начни новую работу с кодом.");
+    throw new Error(gadget ? "Работа над гаджетом уже завершена. Начни новую через gadgetWork."
+      : "Работа с кодом уже завершена. Ответь по сохранённому ходу работы или начни новую работу с кодом.");
   }
 
   let accountId: number, projectId: string, projectTitle: string, target: CodeWorkTarget | undefined;
@@ -319,7 +335,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
     let pinned = chatProjects(meta.projectContext);
     let chosen: ChatProject | undefined = wanted
       ? pinned.find(p => p.projectId === wanted || p.title.toLowerCase() === wanted.toLowerCase())
-      : pinned.find(p => p.hasCode) ?? pinned[0];
+      : gadget ? pinned[0] : pinned.find(p => p.hasCode) ?? pinned[0];
     if (!chosen) {
       // Агент сам подключает проект, о котором идёт речь: права агента не шире прав человека.
       let choices = await user.listChatProjects();
@@ -336,11 +352,14 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
       pinStep = {id: `pin:${chosen.projectId}`, kind: "project", status: "done", title: `Подключил проект «${displayName(chosen.title, "без названия")}»`, resource: {kind: "project", name: displayName(chosen.title, "проект")}};
       emitStep(pinStep);
     }
-    let found = await user.codeWorkTarget(chosen.accountId, chosen.projectId);
-    if (!found?.code) throw new Error(`У проекта «${chosen.title}» нет подключённого кода. Работай с его документами обычными инструментами.`);
     ({accountId, projectId} = chosen);
     projectTitle = chosen.title;
-    target = found.code;
+    // Гаджету репозиторий не нужен: проект — только место, куда ляжет файл гаджета.
+    if (!gadget) {
+      let found = await user.codeWorkTarget(chosen.accountId, chosen.projectId);
+      if (!found?.code) throw new Error(`У проекта «${chosen.title}» нет подключённого кода. Работай с его документами обычными инструментами.`);
+      target = found.code;
+    }
   }
 
   // Пакет «Контекст беседы»: при продолжении — только новое с прошлого хода, для новой работы —
@@ -354,7 +373,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let usedNames = continuing ? work!.attachmentNames ?? [] : [];
   let usedBytes = continuing ? work!.attachmentBytes ?? 0 : 0;
   let attachments = planAttachments(seen, {names: usedNames, bytes: usedBytes});
-  let backend = backendFor(user, accountId);
+  let backend = backendFor(user, accountId, gadget);
   let textPack = (pendingAsFailed: boolean) => buildCodeContextPack({messages, projects,
     attachments: pendingAsFailed ? attachments.map(f => f.status === "pending" ? {...f, status: "failed" as const} : f) : attachments});
   let putContext = async (taskId: string) => {
@@ -381,19 +400,28 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
 
   let cursor = continuing ? work!.cursor : 0;
   let {output, cursor: next} = await runCodeWorkTurn({
-    backend, projectId, projectTitle, target, files,
+    backend, projectId, projectTitle, target, files, gadget,
     taskId: continuing ? work!.taskId : undefined, cursor, prompt, signal: request.signal,
     onStep: emitStep,
     onText: delta => host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta}),
     onStarted: taskId => {
       let current = metaOrThrow(host, request.chatId);
-      let same = continuing && current.codeWork?.taskId === taskId;
-      current.codeWork = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor, contextSeq,
-        ...(same ? {summary: current.codeWork!.summary, review: current.codeWork!.review, changedFiles: current.codeWork!.changedFiles,
-          attachmentNames: current.codeWork!.attachmentNames, attachmentBytes: current.codeWork!.attachmentBytes} : {})};
+      let previous = current[slot];
+      let same = continuing && previous?.taskId === taskId;
+      current[slot] = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor, contextSeq,
+        ...(same ? {summary: previous!.summary, review: previous!.review, changedFiles: previous!.changedFiles,
+          attachmentNames: previous!.attachmentNames, attachmentBytes: previous!.attachmentBytes, gadget: previous!.gadget} : {})};
       host.putChatMeta(current);
     },
   });
+  // Ход над гаджетом кончается сборкой: она сохраняется новой версией того же узла (или новым узлом).
+  let savedGadget: ChatCodeWork["gadget"];
+  if (gadget) {
+    let previous = continuing && work!.taskId === output.taskId ? work!.gadget : undefined;
+    let {result, head} = await saveGadget(host, user, accountId, projectId, output, previous);
+    output.gadget = result;
+    savedGadget = result.saved ? {resource: result.resource, title: result.title, head} : previous;
+  }
 
   if (pinStep) output.steps.unshift(pinStep);
   let copied = attachments.filter(f => f.status === "copied");
@@ -402,16 +430,51 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let attachmentNames = [...(sameTask ? usedNames : []), ...copied.map(f => f.fileName)].slice(-MAX_STORED_ATTACHMENT_NAMES);
   let attachmentBytes = (sameTask ? usedBytes : 0) + copied.reduce((sum, f) => sum + f.size, 0);
   let current = metaOrThrow(host, request.chatId);
-  let review: ChatCodeWork["review"] = output.changedFiles.length ? {outcome: "draft"} : current.codeWork?.review;
-  current.codeWork = {accountId, projectId, projectTitle, taskId: output.taskId, state: output.state,
-    foreground: codeWorkAlive(output.state), cursor: next,
-    summary: (output.answer || current.codeWork?.summary || "").slice(0, MAX_SUMMARY),
+  let before = current[slot];
+  let review: ChatCodeWork["review"] = gadget ? undefined : output.changedFiles.length ? {outcome: "draft"} : before?.review;
+  current[slot] = {accountId, projectId, projectTitle, taskId: output.taskId, state: output.state,
+    // Продолжение разговора с агентом кода по маршрутизатору — только у работы с кодом.
+    foreground: !gadget && codeWorkAlive(output.state), cursor: next,
+    summary: (output.answer || before?.summary || "").slice(0, MAX_SUMMARY),
     contextSeq,
     ...(attachmentNames.length ? {attachmentNames, attachmentBytes} : {}),
-    changedFiles: output.changedFiles.slice(0, MAX_STORED_FILES).map(f => ({path: f.path, status: f.status})),
-    ...(review ? {review} : {})};
+    changedFiles: gadget ? [] : output.changedFiles.slice(0, MAX_STORED_FILES).map(f => ({path: f.path, status: f.status})),
+    ...(review ? {review} : {}),
+    ...(savedGadget ? {gadget: savedGadget} : {})};
   host.putChatMeta(current);
   return output;
+}
+
+/** Забрать сборку хода и сохранить её личной версией узла. Отказ (нет сборки, битая сборка, нет права)
+ *  не роняет ход: агент беседы узнаёт причину и может попросить агента кода исправить. */
+async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId: number, projectId: string, output: CodeWorkOutput,
+    previous: ChatCodeWork["gadget"]): Promise<{result: GadgetWorkResult; head: string}> {
+  let refused = (error: string) => ({result: {saved: false as const, error}, head: ""});
+  if (output.state === "failed" || output.state === "stopped") return refused("работа над гаджетом остановлена, сборка не забрана");
+  if (output.interrupted) return refused("ход остановлен человеком, сборка не забрана");
+  let saved: CodeWorkSavedGadget & {vendorId?: string};
+  try {
+    saved = await user.codeWorkSaveGadget!(accountId, projectId, output.taskId, previous?.resource);
+  } catch (error) {
+    return refused((error as Error)?.message || "сборка не сохранена");
+  }
+  let link = gadgetLink(host.publicBase, saved.vendorId, accountId, projectId, saved.resource);
+  return {head: saved.head, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, collaborative: saved.collaborative,
+    created: saved.created, ...(link ? {link} : {})}};
+}
+
+/** Адрес раздела проектов Mnemos с открытием файла, как у ссылок на документы в ленте. */
+export function gadgetLink(base: string | undefined, vendorId: string | undefined, accountId: number, project: string, resource: string): string | undefined {
+  if (!base || !vendorId) return undefined;
+  let origin: URL;
+  try { origin = new URL(base); } catch { return undefined; }
+  if (origin.protocol !== "https:") return undefined;
+  let url = new URL(`/gatekeepers/${encodeURIComponent(vendorId)}`, origin.origin);
+  url.searchParams.set("account", String(accountId));
+  url.searchParams.set("section", "projects");
+  url.searchParams.set("project", project);
+  url.searchParams.set("document", resource);
+  return url.toString();
 }
 
 export async function readChatCodeChanges(host: ChatCodeWorkHost, chatId: number): Promise<ChatCodeChanges | null> {

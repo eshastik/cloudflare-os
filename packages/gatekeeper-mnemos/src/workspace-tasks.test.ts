@@ -32,6 +32,8 @@ class FakeControl implements WorkspaceControl {
   published: Awaited<ReturnType<WorkspaceControl["publish"]>> = { branch: "agents/binding/" + TASK, head_sha: "abc123" };
   async publish(id: string, message: string) { this.calls.push(["publish", id, message]); if (this.noChanges) throw new WorkspaceError("no_changes", "Изменений нет."); return this.published; }
   async putFile(id: string, path: string, content: Uint8Array) { this.calls.push(["putFile", id, path, new TextDecoder().decode(content)]); }
+  build: Awaited<ReturnType<WorkspaceControl["gadgetBuild"]>> = { manifest: { name: "Дела", description: "", collaborative: false, permissions: [] }, modules: { "client.js": "(()=>{})();", "server.js": "export class Gadget {}" } };
+  async gadgetBuild(id: string, bindingId: string) { this.calls.push(["gadgetBuild", id, bindingId]); return this.build; }
 }
 function human(log: string[], overrides: Partial<WorkspaceHuman> = {}): () => WorkspaceHuman {
   let n = 0;
@@ -531,4 +533,37 @@ test("Без права «Агент кода» служба отказывае�
   assert.equal(task.state, "stopped");
   assert.equal(task.reason, "агент кода выключен администратором");
   assert.equal(control.calls.some(c => c[0] === "message"), false, "сообщение без права не отправляется");
+});
+
+test("Задача гаджета: без репозитория, вид gadget, проект подключается агенту правами человека", async () => {
+  const updates: unknown[][] = [];
+  const { control, log, tasks } = setup({
+    async readWorkshopAgentScope(b) { return { binding_id: b, agent_principal_id: "a", runtime_id: "", runtime_agent_id: "", revoked: false, connection_name: "", project_ids: ["other"] }; },
+    async updateWorkshopAgentScope(b, expected, projects) { updates.push([b, expected, projects]); return { binding_id: b, agent_principal_id: "a", runtime_id: "", runtime_agent_id: "", revoked: false, connection_name: "", project_ids: projects }; },
+    async listProjectGitRepositories() { throw new Error("гаджету репозиторий не нужен"); },
+  });
+  const { task, scopeExtended } = await tasks.startGadget("p", "  Учёт отпусков\nдля отдела ", { agentName: "chat" });
+  assert.equal(scopeExtended, true);
+  assert.deepEqual(updates, [["binding", ["other"], ["other", "p"]]]);
+  const create = control.calls.find(c => c[0] === "create")![1] as Record<string, unknown>;
+  assert.equal(create.kind, "gadget");
+  assert.deepEqual(create.repositories, []);
+  assert.equal(create.agent_credential, "token-1");
+  assert.equal(task.kind, "gadget");
+  assert.equal(task.title, "Учёт отпусков");
+  assert.ok(log.includes("dispose"));
+});
+
+test("Сборку гаджета отдаёт только своя задача гаджета в этом проекте, с привязкой агента человека", async () => {
+  const { control, tasks } = setup();
+  await tasks.startGadget("p", "гаджет");
+  const build = await tasks.gadgetBuild("p", TASK);
+  assert.equal(build.manifest.name, "Дела");
+  assert.deepEqual(control.calls.find(c => c[0] === "gadgetBuild"), ["gadgetBuild", TASK, "binding"]);
+  await assert.rejects(tasks.gadgetBuild("other", TASK), (e: WorkspaceError) => e.code === "not_found", "чужой проект");
+  await assert.rejects(tasks.gadgetBuild("p", "ffffffffffffffff"), (e: WorkspaceError) => e.code === "not_found", "чужая задача");
+  const code = setup();
+  await code.tasks.start("p", "c", "1", "задача");
+  await assert.rejects(code.tasks.gadgetBuild("p", TASK), (e: WorkspaceError) => e.code === "not_gadget");
+  assert.equal(code.control.calls.some(c => c[0] === "gadgetBuild"), false, "служба не спрашивается");
 });

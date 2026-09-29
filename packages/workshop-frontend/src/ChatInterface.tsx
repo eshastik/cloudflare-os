@@ -727,6 +727,8 @@ function rawToolCallSummary(
       return { verb: "Перешёл к работе с кодом проекта", target: tc.output?.projectTitle };
     case "codeAsk":
       return { verb: "Спросил агента кода", target: tc.output?.projectTitle };
+    case "gadgetWork":
+      return { verb: "Построил гаджет", target: tc.output?.gadget?.saved ? tc.output.gadget.title : undefined };
   }
   // Compile-time exhaustiveness check.
   const _exhaustive: never = tc;
@@ -833,6 +835,8 @@ function describeToolCallCount(toolName: AiToolCall["toolName"], count: number):
       return "Работал с кодом проекта";
     case "codeAsk":
       return "Спросил агента кода";
+    case "gadgetWork":
+      return "Построил гаджет";
   }
   const _exhaustive: never = toolName;
   return _exhaustive;
@@ -870,6 +874,7 @@ function getToolIcon(
       return Question;
     case "codeWork":
     case "codeAsk":
+    case "gadgetWork":
       return Code;
     default:
       return Question;
@@ -880,10 +885,10 @@ function getToolTarget(tc: AiToolCall): string | undefined {
   return getToolCallSummary(tc).target;
 }
 
-type CodeWorkToolCall = Extract<AiToolCall, { toolName: "codeWork" | "codeAsk" }>;
+type CodeWorkToolCall = Extract<AiToolCall, { toolName: "codeWork" | "codeAsk" | "gadgetWork" }>;
 
 function isCodeWorkCall(tc: AiToolCall): tc is CodeWorkToolCall {
-  return tc.toolName === "codeWork" || tc.toolName === "codeAsk";
+  return tc.toolName === "codeWork" || tc.toolName === "codeAsk" || tc.toolName === "gadgetWork";
 }
 
 // Работа с кодом — отдельная строка со своими шагами, не смешивается с остальными действиями.
@@ -7710,7 +7715,7 @@ function ChatInterface({
                             .map((t) => (
                               <CodeWorkRow
                                 key={`stream-code-${t.toolCallId}`}
-                                title={t.toolName === "codeAsk" ? "Спрашиваю агента кода" : "Работаю с кодом проекта"}
+                                title={t.toolName === "codeAsk" ? "Спрашиваю агента кода" : t.toolName === "gadgetWork" ? "Строю гаджет" : "Работаю с кодом проекта"}
                                 steps={t.steps ?? []}
                                 running
                                 onStop={handleStop}

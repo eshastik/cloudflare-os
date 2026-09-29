@@ -7,7 +7,8 @@ import {CodeWorkTimeline, type CodeWorkEvent} from "./code-work-timeline.js";
 
 /** Доступ к рабочему месту через подключённую память человека (Mnemos). */
 export interface CodeWorkBackend {
-  start(project: string, target: CodeWorkTarget, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;
+  /** target — репозиторий работы с кодом; у работы над гаджетом его нет. */
+  start(project: string, target: CodeWorkTarget | undefined, prompt: string): Promise<{taskId: string; state: CodeWorkState; scopeExtended: boolean}>;
   message(project: string, taskId: string, text: string): Promise<void>;
   events(project: string, taskId: string, after: number, waitMs: number): Promise<{events: CodeWorkEvent[]; next: number; state: CodeWorkState}>;
   abort(project: string, taskId: string): Promise<void>;
@@ -35,6 +36,8 @@ export type CodeWorkTurn = {
   projectTitle: string;
   /** Нужен для запуска новой сессии; при продолжении не используется. */
   target?: CodeWorkTarget;
+  /** Работа над гаджетом: сессия запускается без репозитория. */
+  gadget?: boolean;
   /** Сессия продолжается, если задача ещё жива. */
   taskId?: string;
   cursor: number;
@@ -81,7 +84,7 @@ export async function runCodeWorkTurn(turn: CodeWorkTurn): Promise<{output: Code
     }
     await turn.backend.message(turn.projectId, taskId, text);
   } else {
-    if (!turn.target) throw new Error("У проекта нет подключённого кода.");
+    if (!turn.target && !turn.gadget) throw new Error("У проекта нет подключённого кода.");
     let started = await turn.backend.start(turn.projectId, turn.target, turn.prompt);
     taskId = started.taskId;
     state = started.state;

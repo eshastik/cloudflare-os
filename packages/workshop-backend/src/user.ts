@@ -2410,6 +2410,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   async codeWorkChanges(accountId: number, project: string, task: string) { return this.#codeWorkAccount(accountId).codeWorkChanges(project, task); }
   async codeWorkAccept(accountId: number, project: string, task: string, summary: string) { return this.#codeWorkAccount(accountId).codeWorkAccept(project, task, summary); }
   async codeWorkRevert(accountId: number, project: string, task: string, mergeRequest: number) { return this.#codeWorkAccount(accountId).codeWorkRevert(project, task, mergeRequest); }
+  /** Гаджет через агента кода (ADR 0028): подключение без этих методов гаджеты не делает. */
+  async codeWorkStartGadget(accountId: number, project: string, prompt: string) {
+    const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
+    if (!account.codeWorkStartGadget) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
+    return account.codeWorkStartGadget(project, prompt);
+  }
+  async codeWorkSaveGadget(accountId: number, project: string, task: string, resource?: string) {
+    const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
+    if (!account.codeWorkSaveGadget) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
+    const saved = await account.codeWorkSaveGadget(project, task, resource);
+    // vendorId — для адреса «Открыть гаджет» в разделе проектов этого подключения.
+    return {...saved, vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
+  }
   async codeWorkPutFile(accountId: number, project: string, task: string, path: string, contentBase64: string) { return this.#codeWorkAccount(accountId).codeWorkPutFile(project, task, path, contentBase64); }
 
   // Describe one of the user's connected accounts so a caller can name it in a message. Returns null

@@ -40,7 +40,16 @@ export type ChatCodeWork = {
   review?: {outcome: "draft" | "awaiting_approval" | "accepted" | "rejected" | "no_approver" | "reverted"; note?: string; responsible?: string[];
     /** Номер запроса на слияние в Mnemos: нужен для «Вернуть как было». Человеку не показывается. */
     mergeRequest?: number};
+  /** Работа над гаджетом (ADR 0028): узел приложения, в который сохраняется сборка каждого хода. */
+  gadget?: {resource: string; title: string; head: string};
 };
+
+/** Итог сохранения сборки гаджета на этом ходе: узел в проекте или почему не сохранён. */
+export type GadgetWorkResult =
+  | {saved: true; accountId: number; projectId: string; resource: string; title: string; collaborative: boolean; created: boolean;
+    /** Адрес «Открыть гаджет» в оболочке; нет — установка не знает свой публичный адрес. */
+    link?: string}
+  | {saved: false; error: string};
 
 export type AgentStepKind =
   "file" | "edit" | "run" | "search" | "memory" | "document" | "database" | "code" | "project" | "web" | "tool" | "state";
@@ -79,6 +88,8 @@ export type CodeWorkOutput = {
   durationMs: number;
   /** Человек остановил ответ агента кода; работа с кодом осталась живой. */
   interrupted?: boolean;
+  /** Ход работы над гаджетом: что стало со сборкой. */
+  gadget?: GadgetWorkResult;
 };
 
 export const MAX_CHAT_PROJECTS = 8;
@@ -153,7 +164,9 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
   let lines = [
     // Идентификатор задачи агенту беседы не нужен (продолжение идёт по беседе) и не должен
     // попадать в его ответ человеку; projectId нужен для следующих вызовов инструментов.
-    `Работа с кодом проекта «${output.projectTitle}» (projectId для инструментов: ${output.projectId}), состояние: ${output.state}.`,
+    output.gadget
+      ? `Работа над гаджетом для проекта «${output.projectTitle}» (projectId для инструментов: ${output.projectId}), состояние: ${output.state}.`
+      : `Работа с кодом проекта «${output.projectTitle}» (projectId для инструментов: ${output.projectId}), состояние: ${output.state}.`,
   ];
   if (output.interrupted) {
     lines.push("", "Человек остановил ответ агента кода. Работа с кодом не закрыта и продолжится по следующему сообщению человека. Сам работу не продолжай: коротко скажи, на чём остановились.");
@@ -164,6 +177,10 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
     lines.push("", `Шаги (${steps.length}):`);
     for (let s of steps.slice(-MAX_SUMMARY_STEPS)) lines.push(`- ${s.title}${s.status === "error" ? " — ошибка" : ""}`);
   }
+  if (output.gadget) {
+    lines.push("", ...gadgetResultLines(output.gadget, output.projectTitle));
+    return lines.join("\n");
+  }
   if (output.changedFiles.length) {
     lines.push("", "Изменённые файлы (ещё не приняты человеком):");
     for (let f of output.changedFiles) lines.push(`- ${f.path} (${f.status}, +${f.additions} −${f.deletions})`);
@@ -172,6 +189,22 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
     lines.push("", "Изменений в файлах нет.");
   }
   return lines.join("\n");
+}
+
+function gadgetResultLines(result: GadgetWorkResult, projectTitle: string): string[] {
+  if (!result.saved) {
+    return [`Гаджет не сохранён: ${result.error}`,
+      "Скажи человеку об этом прямо. Если сборки нет или она не годится, снова вызови gadgetWork и попроси агента кода исправить и пересобрать (pnpm build)."];
+  }
+  let lines = [
+    `Гаджет «${result.title}» сохранён ${result.created ? "новым файлом" : "новой версией того же файла"} в проект «${projectTitle}» — личной версией: пока человек не опубликует, его видит только он.`,
+    result.collaborative ? "Гаджет совместный: у всех, кому открыт файл, он заработает после публикации." : "Гаджет личный: у каждого, кому его дадут, будет своя копия данных.",
+    result.link
+      ? `Дай человеку ссылку ровно в таком виде: [Открыть гаджет](${result.link})`
+      : `Скажи, что открыть гаджет можно из проекта «${projectTitle}» в Mnemos.`,
+    "Скажи, что гаджет открывается в предпросмотре, а опубликовать его — кнопка «Опубликовать» в шапке файла. Сам ничего не публикуй. Правки — снова через gadgetWork: выйдет новая версия того же файла.",
+  ];
+  return lines;
 }
 
 /** Сводка для строки над ответом: «обращался к: 5 файлов, 2 документа». */

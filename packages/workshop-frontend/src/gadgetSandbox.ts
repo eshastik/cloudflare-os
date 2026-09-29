@@ -1,6 +1,6 @@
 // Разметка изолированного фрейма гаджета (srcdoc): Cap'n Web, связь с родителем через MessagePort,
 // защитные заплатки окна. Общая для рабочего места и редактора в Telegram Mini App.
-import { gadgetAccentVariables, isAccentHex } from '@gadgets/workshop-shared/accent-theme'
+import { FRAME_THEME_SCRIPT, HOST_BASE_CSS, hostRootAttributes, type HostTheme } from './gadgetHostTheme'
 import CAPNWEB_BUNDLE from 'capnweb?raw'
 
 // We want to inject Cap'n Web into the Gadget. Luckily it has no dependencies, so we can just take
@@ -101,16 +101,7 @@ window.addEventListener('click', (event) => {
   anchor.setAttribute('rel', Array.from(rel).join(' '));
 }, true);
 
-// Акцент оболочки: редакторы берут его из переменных --host-accent*. Принимаются только эти имена
-// и только HEX, чтобы сообщение не могло подставить в страницу гаджета произвольный CSS.
-window.addEventListener('message', (event) => {
-  if (event.source !== window.parent || event.data?.type !== 'host-accent') return;
-  const vars = event.data.vars || {};
-  for (const name of ['--host-accent', '--host-accent-hover', '--host-accent-text', '--host-accent-tint']) {
-    if (typeof vars[name] === 'string' && /^#[0-9a-f]{6}$/i.test(vars[name])) document.documentElement.style.setProperty(name, vars[name]);
-  }
-});
-
+${FRAME_THEME_SCRIPT}
 // Capture unhandled exceptions and promise rejections.
 window.addEventListener('error', (event) => {
   window.parent.postMessage({
@@ -130,22 +121,17 @@ window.addEventListener('unhandledrejection', (event) => {
 
 `);
 
-/** Переменные акцента для корня фрейма: первый кадр редактора уже в цвете пользователя. */
-export function hostAccentStyle(accent: string | null): string {
-  if (!accent || !isAccentHex(accent)) return ''
-  return Object.entries(gadgetAccentVariables(accent)).map(([name, value]) => `${name}:${value}`).join(';')
-}
-
-export const createSandboxedHtml = (jsCode: string, readinessId?: string, accent: string | null = null): string => {
-  const style = hostAccentStyle(accent)
+/** Разметка фрейма. theme — тема и акцент оболочки на момент создания: первый кадр гаджета уже в них,
+ *  дальнейшие смены приходят сообщением host-theme. Базовые токены Mnemos стоят в <head> до кода гаджета. */
+export const createSandboxedHtml = (jsCode: string, readinessId?: string, theme: HostTheme = { mode: 'light', accent: null }): string => {
   return `<!DOCTYPE html>
-<html${style ? ` style="${style}"` : ''}>
+<html${hostRootAttributes(theme)}>
 <head>
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src 'none'; script-src data: 'unsafe-inline'; style-src data: 'unsafe-inline'; img-src data:; media-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src 'none';">
+  <style id="mnemos-host-tokens">${HOST_BASE_CSS}</style>
 </head>
 <body>
     <script type="module" src="data:text/javascript;charset=utf-8,${INJECTED_CODE_PREFIX}${encodeURIComponent(`const nativeUIReadinessAttempt = ${JSON.stringify(readinessId ?? null)};\nconst shellOrigin = ${JSON.stringify(window.location.origin)};\n` + jsCode)}"></script>
 </body>
 </html>`.trim()
 }
-

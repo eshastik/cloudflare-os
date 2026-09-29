@@ -6,7 +6,7 @@ import {storedAccountOwner} from './account-identity.ts';
 import {LocalOperationStorage} from './local-operation-storage.ts';
 import {ConnectionAuditQueue} from './connection-audit-queue.ts';
 import {AccountAlarms} from './account-alarms.ts';
-import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceTasks} from './workspace-tasks.ts';
+import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceError,WorkspaceTasks} from './workspace-tasks.ts';
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
 import { menuInboxCount, sourceErrorsFor } from "./account-description.ts";
@@ -43,6 +43,7 @@ import {ResourceMapCreation,type ResourceMapSetup} from "./resource-map-creation
 import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.ts";
 import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
+import {saveGadgetBuild} from "./gadget-bridge.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
@@ -171,6 +172,9 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async codeWorkAccept(project:string,task:string,summary:string){return this.#account().codeWorkAccept(project,task,summary);}
   async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#account().codeWorkRevert(project,task,mergeRequest);}
   async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#account().codeWorkPutFile(project,task,path,contentBase64);}
+  /** Гаджет через агента кода (ADR 0028, этап 5): задача opencode и сохранение сборки личной версией узла. */
+  async codeWorkStartGadget(project:string,prompt:string){return this.#account().codeWorkStartGadget(project,prompt);}
+  async codeWorkSaveGadget(project:string,task:string,resource?:string){return this.#account().codeWorkSaveGadget(project,task,resource);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
     const nonce = await this.#account().prepareReconnect();
@@ -283,6 +287,17 @@ export class UserAccount extends DurableObject<Env> {
  async codeWorkRevert(project:string,task:string,mergeRequest:number){return this.#workspace().revert(project,task,mergeRequest);}
  /** Файл в /workspace/.mnemos задачи: контекст беседы или приложенный файл; задача должна принадлежать проекту. */
  async codeWorkPutFile(project:string,task:string,path:string,contentBase64:string){return this.#workspace().putFile(project,task,path,contentBase64);}
+ async codeWorkStartGadget(project:string,prompt:string){const out=await this.#workspace().startGadget(project,prompt,{agentName:'chat'});return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended};}
+ /** Сборка задачи гаджета → личная версия узла приложения правами человека. Ничего не публикуется. */
+ async codeWorkSaveGadget(project:string,task:string,resource?:string){
+  if(resource!==undefined&&(typeof resource!=='string'||!resource||resource.length>255))throw new WorkspaceError('invalid','Неизвестный файл гаджета.');
+  const build=await this.#workspace().gadgetBuild(project,task);
+  const storageOrigin=this.#origins().storageOrigin;
+  if(!storageOrigin)throw new Error('Хранилище Mnemos не настроено: сохранить гаджет нельзя.');
+  const session=this.#account().session();
+  try{return await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource);}
+  finally{session.dispose();}
+ }
  #auditCredential(kind:'mail'|'calendar',origin:string){
   const configured=[this.env.MNEMOS_API_ORIGIN];
   if(this.env.MNEMOS_LOGIN_PROFILES){

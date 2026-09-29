@@ -6768,6 +6768,7 @@ class OverseerImpl implements AgentHooks {
         prefix: `${keyString(chatId)}.`, reverse: true, limit: CONTEXT_PACK_LOOKBACK,
       })].filter(m => m.sequence > afterSequence).reverse(),
       attachmentContent: (chatId, attachmentId) => this.getChatAttachmentData(chatId, attachmentId),
+      ...(this.env.PUBLIC_BASE_URL ? {publicBase: this.env.PUBLIC_BASE_URL} : {}),
     };
   }
 
@@ -6795,12 +6796,14 @@ class OverseerImpl implements AgentHooks {
     }
     let work = meta?.codeWork;
     let alive = !!work && codeWorkAlive(work.state);
+    let gadget = meta?.gadgetWork;
     return {projects, ...(work ? {active: {projectTitle: work.projectTitle, alive, ...(alive ? {brief: codeWorkBrief(work)} : {})}} : {}),
+      ...(gadget ? {gadget: {projectTitle: gadget.projectTitle, alive: codeWorkAlive(gadget.state), ...(gadget.gadget ? {title: gadget.gadget.title} : {})}} : {}),
       mode: chatCodeMode(meta), hasCodeProject: !!meta && !!chatCodeTarget(meta)};
   }
 
   async runCodeWork(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput> {
     let userId = this.#codeWorkUserId(chatId, initiator);
@@ -6816,7 +6819,7 @@ class OverseerImpl implements AgentHooks {
     };
     return runChatCodeWork(host, {chatId, toolCallId: request.toolCallId, prompt: request.prompt,
       projectId: request.projectId, continueOnly: request.continueOnly, promptSequence: request.promptSequence,
-      userId, profileId: initiator.id, signal: request.signal});
+      ...(request.gadget ? {gadget: true} : {}), userId, profileId: initiator.id, signal: request.signal});
   }
 
   // Кому отвечать на сообщение человека (переключатель «Код» и маршрутизатор Jev). Если агенту

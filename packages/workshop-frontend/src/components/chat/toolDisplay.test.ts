@@ -118,6 +118,17 @@ describe("строки инструментов агента", () => {
     expect(callStep(call("executeCode", { code: "await env.SHEET.addRow([1])" })).label).toBe("Запустил код: SHEET.addRow");
   });
 
+  it("гаджет агента кода: название и ссылка «Открыть гаджет», отказ — словами", () => {
+    const saved = callStep(call("gadgetWork", { task: "учёт отпусков" }, { output: { projectTitle: "Кадры", steps: [],
+      gadget: { saved: true, accountId: 3, projectId: "hr", resource: "node-7", title: "Отпуска", collaborative: true, created: true } } }));
+    expect(saved.label).toBe("Построил гаджет «Отпуска»");
+    expect(saved.detail).toEqual({ type: "found", items: [{ name: "Открыть гаджет «Отпуска»", link: { project: "hr", document: "node-7" } }] });
+    const refused = callStep(call("gadgetWork", { task: "x" }, { output: { projectTitle: "Кадры", steps: [], gadget: { saved: false, error: "нет сборки" } } }));
+    expect(refused.label).toBe("Построил гаджет");
+    expect(refused.detail).toEqual({ type: "text", text: "Гаджет не сохранён: нет сборки" });
+    expect(callStep(call("gadgetWork", { task: "x" }, { error: "Агент кода выключен" })).label).toBe("Не удалось построить гаджет");
+  });
+
   it("ошибка — «Не удалось …» и текст ошибки в раскрытии", () => {
     const step = callStep(call("readFile", { filename: "нет.txt" }, { error: "Файл не найден" }));
     expect(step.label).toBe("Не удалось прочитать файл нет.txt");

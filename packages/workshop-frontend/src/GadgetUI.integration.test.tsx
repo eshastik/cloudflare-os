@@ -214,22 +214,38 @@ describe('GadgetUI RPC recovery', () => {
     } finally { raf.mockRestore() }
   })
 
-  it('редактор получает акцент оболочки в первой разметке и при смене цвета без перезагрузки фрейма', async () => {
+  it('гаджет получает тему и акцент оболочки в первом кадре и при смене — без перезагрузки фрейма', async () => {
     theme.accent = '#ae4b14'
+    document.documentElement.setAttribute('data-mode', 'dark')
     try {
       const gadget = fakeGadget('accent', 'document.body.textContent = "accent"')
       await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
       await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
       const frame = container.querySelector('iframe')!
-      expect(frame.srcdoc).toContain('<html style="--host-accent:#ae4b14;')
+      // Первый кадр: режим и акцент уже на корне, базовые токены — в <head> до кода гаджета.
+      expect(frame.srcdoc).toMatch(/^<!DOCTYPE html>\n<html data-mode="dark" style="--host-accent:#ae4b14;[^"]*--host-accent-hue:[0-9.]+;--host-neutral-tint:[0-9.]+">/)
+      const tokens = frame.srcdoc.indexOf('<style id="mnemos-host-tokens">:root:root:root{--color-kumo-base:light-dark(')
+      expect(tokens).toBeGreaterThan(0)
+      expect(tokens).toBeLessThan(frame.srcdoc.indexOf('<script'))
       const post = vi.spyOn(frame.contentWindow!, 'postMessage')
       theme.accent = '#176b9a'
       await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
       expect(container.querySelector('iframe')).toBe(frame)
-      expect(post).toHaveBeenCalledWith({ type: 'host-accent', vars: expect.objectContaining({ '--host-accent': '#176b9a' }) }, '*')
-      // Фрейм принимает только имена --host-accent* и только HEX.
-      expect(decodeURIComponent(frame.srcdoc)).toContain("/^#[0-9a-f]{6}$/i.test(vars[name])")
-    } finally { theme.accent = null }
+      expect(post).toHaveBeenLastCalledWith({ type: 'host-theme', mode: 'dark', vars: expect.objectContaining({ '--host-accent': '#176b9a' }) }, '*')
+      // Смена темы оболочки (в том числе «как в системе») — атрибут data-mode корня страницы.
+      await act(async () => { document.documentElement.setAttribute('data-mode', 'light') })
+      expect(container.querySelector('iframe')).toBe(frame)
+      expect(post).toHaveBeenLastCalledWith({ type: 'host-theme', mode: 'light', vars: expect.objectContaining({ '--host-accent': '#176b9a' }) }, '*')
+      // Не HEX от оболочки во фрейм не уходит: действует зелёный Mnemos.
+      theme.accent = 'red;background:url(//x)'
+      await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
+      const last = post.mock.calls.at(-1)![0] as { vars: Record<string, string> }
+      expect(last.vars['--host-accent']).toBe('#21664f')
+      expect(JSON.stringify(last)).not.toContain('url(')
+    } finally {
+      theme.accent = null
+      document.documentElement.removeAttribute('data-mode')
+    }
   })
 
   it('ссылка гаджета на адрес оболочки открывается на той же странице, только по нажатию и не на служебные адреса', async () => {

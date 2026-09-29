@@ -4,7 +4,7 @@ import type { NativeDocumentEditor } from '@gadgets/workshop-shared/native-docum
 import type { MiniAppDocumentInfo, MiniAppVersion } from '@gadgets/workshop-shared/telegram-mini-app'
 import type { NativeSnapshotSource } from '../nativeSnapshotSource'
 import EditorFrame from './EditorFrame'
-import { applyTelegramTheme, type TelegramWebApp } from './telegram'
+import { applyTelegramTheme, telegramThemeMode, type TelegramWebApp } from './telegram'
 import {
   createInProject, documentName, fetchVersion, isDocumentChanged, openDocumentSession, saveVersion, snapshotRevision,
   type DocumentApi,
@@ -47,6 +47,8 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   const [busy, setBusy] = useState<'save' | 'restore' | null>(null)
   const [message, setMessage] = useState<Message>(null)
   const [changedByOther, setChangedByOther] = useState(false)
+  // Тема Telegram для фрейма редактора или приложения; меняется на лету вместе с темой Telegram.
+  const [mode, setMode] = useState(() => telegramThemeMode(webApp))
   const [versions, setVersions] = useState<{ list: MiniAppVersion[]; next: string; loading: boolean } | null>(null)
   const [chosen, setChosen] = useState<MiniAppVersion | null>(null)
   const lifetime = useRef(new AbortController())
@@ -64,6 +66,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
     link.api.describe().then(info => {
       if (abort.signal.aborted) return
       applyTelegramTheme(webApp, info.accent)
+      setMode(telegramThemeMode(webApp))
       setPhase({ kind: 'ready', info })
     }, error => { if (!abort.signal.aborted && !fail(error)) setPhase({ kind: 'failed' }) })
     return () => { abort.abort(); link.close() }
@@ -73,7 +76,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   useEffect(() => {
     if (!webApp?.onEvent || phase.kind !== 'ready') return
     const accent = phase.info.accent
-    const update = () => applyTelegramTheme(webApp, accent)
+    const update = () => { applyTelegramTheme(webApp, accent); setMode(telegramThemeMode(webApp)) }
     webApp.onEvent('themeChanged', update)
     return () => webApp.offEvent?.('themeChanged', update)
   }, [webApp, phase])
@@ -265,7 +268,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
       {!isApp && info?.mnemos.kind === 'none' && <p className="md-message md-message-note">В Mnemos этот документ сохраняется на сайте: там выбирается проект. <button type="button" className="md-link" onClick={openSite}>Открыть на сайте</button></p>}
       {info && !isApp && !info.storageOrigin && info.mnemos.kind !== 'none' && <p className="md-message md-message-note">Хранилище Mnemos недоступно из Telegram. <button type="button" className="md-link" onClick={openSite}>Сохранить на сайте</button></p>}
       <div className="md-stage">
-        {api && info && <Frame api={api.api} accent={info.accent} onSnapshotSource={next => setRead(next ? { read: next } : null)} onFailed={() => setPhase({ kind: 'failed' })} />}
+        {api && info && <Frame api={api.api} accent={info.accent} mode={mode} onSnapshotSource={next => setRead(next ? { read: next } : null)} onFailed={() => setPhase({ kind: 'failed' })} />}
       </div>
       {!telegramMain && mainLabel && !versions && (
         <footer className="md-foot">

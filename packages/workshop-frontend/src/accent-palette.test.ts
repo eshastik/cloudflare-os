@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from "vitest";
 import { ACCENT_PALETTE, accentCSSVariables, accentLuminance, accentShades, gadgetAccentVariables, hexToOklch, oklchToHex } from "@gadgets/workshop-shared/accent-theme";
 import { ACCENT_TOKENS, accentViolations, defaultAccentHue, greenLiterals, isBrandGreenHex } from "@gadgets/workshop-shared/accent-audit";
-import { hostAccentStyle } from "./GadgetUI";
+import { hostRootAttributes, hostThemeVariables } from "./gadgetHostTheme";
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -53,12 +53,16 @@ describe("акцент оболочки", () => {
     expect(greenLiterals(indexHtml)).toEqual([]);
   });
 
-  it("редактор во фрейме получает оттенки акцента только как HEX", () => {
-    const vars = gadgetAccentVariables("#ae4b14");
-    expect(Object.keys(vars)).toEqual(["--host-accent", "--host-accent-hover", "--host-accent-text", "--host-accent-tint"]);
-    for (const value of Object.values(vars)) { expect(value).toMatch(/^#[0-9a-f]{6}$/); expect(isBrandGreenHex(value)).toBe(false); }
-    expect(hostAccentStyle("#ae4b14")).toBe(Object.entries(vars).map(([k, v]) => `${k}:${v}`).join(";"));
-    expect(hostAccentStyle("red;background:url(x)")).toBe("");
-    expect(hostAccentStyle(null)).toBe("");
+  it("редактор во фрейме получает оттенки акцента только как HEX, светлые — под прежними именами", () => {
+    const vars = hostThemeVariables("#ae4b14");
+    expect(vars).toMatchObject(gadgetAccentVariables("#ae4b14"));
+    for (const [name, value] of Object.entries(vars)) {
+      if (name === "--host-accent-hue" || name === "--host-neutral-tint") continue;
+      expect(value).toMatch(/^#[0-9a-f]{6}$/); expect(isBrandGreenHex(value)).toBe(false);
+    }
+    expect(hostRootAttributes({ mode: "light", accent: "#ae4b14" })).toBe(` data-mode="light" style="${Object.entries(vars).map(([k, v]) => `${k}:${v}`).join(";")}"`);
+    // Не HEX — действует зелёный Mnemos, чужой CSS в разметку не попадает.
+    expect(hostRootAttributes({ mode: "dark", accent: "red;background:url(x)" })).toBe(hostRootAttributes({ mode: "dark", accent: null }));
+    expect(hostRootAttributes({ mode: "dark", accent: null })).not.toContain("url(");
   });
 });

@@ -8,9 +8,8 @@ import { Sparkle } from '@phosphor-icons/react'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
 import { GadgetClient, ConsoleLogEvent } from '@gadgets/workshop-shared/api'
 import { queueNativeSnapshots, requestNativeSnapshot, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
-import { gadgetAccentVariables, isAccentHex } from '@gadgets/workshop-shared/accent-theme'
-import { createSandboxedHtml, hostAccentStyle } from './gadgetSandbox'
-export { hostAccentStyle }
+import { createSandboxedHtml } from './gadgetSandbox'
+import { hostThemeMessage, useHostThemeMode, type HostTheme } from './gadgetHostTheme'
 import { useOptionalAccentColor } from './ThemeContext'
 
 /** Путь оболочки из сообщения гаджета; null — не путь этого сайта или служебный адрес. */
@@ -55,14 +54,14 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const [iframeGeneration, setIframeGeneration] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const accent = useOptionalAccentColor()
-  const accentRef = useRef(accent)
-  accentRef.current = accent
-  // Смена акцента доходит до открытого редактора без перезагрузки фрейма.
-  const sendAccent = () => {
-    const color = accentRef.current
-    if (color && isAccentHex(color)) iframeRef.current?.contentWindow?.postMessage({ type: 'host-accent', vars: gadgetAccentVariables(color) }, '*')
+  const mode = useHostThemeMode()
+  const themeRef = useRef<HostTheme>({ mode, accent })
+  themeRef.current = { mode, accent }
+  // Смена темы и акцента доходит до открытого гаджета без перезагрузки фрейма (docs/gadget-apps.md).
+  const sendTheme = () => {
+    iframeRef.current?.contentWindow?.postMessage(hostThemeMessage(themeRef.current), '*')
   }
-  useEffect(sendAccent, [accent])
+  useEffect(sendTheme, [accent, mode])
   const activityVisibleRef = useRef(isVisible)
   activityVisibleRef.current = isVisible
   useEffect(() => {
@@ -247,7 +246,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           const supportsReadiness = /type:\s*["']native-ui-readiness["']/.test(bundle.jsCode)
           resolveSupport(supportsReadiness)
           if (!supportsReadiness) attempt?.finish("abandoned")
-          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId, accentRef.current)
+          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId, themeRef.current)
           setSandboxedHtml(html)
         } else {
           resolveSupport(true)
@@ -297,8 +296,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
 
       if (event.data === 'handshake' && event.ports && event.ports[0]) {
         const port = event.ports[0]
-        // Фрейм мог перезагрузиться со старой разметкой: акцент отправляется заново.
-        sendAccent()
+        // Фрейм мог перезагрузиться со старой разметкой: тема и акцент отправляются заново.
+        sendTheme()
         let gadgetStub: any = null
         resetConnection(new Error('Gadget iframe reloaded.'))
         const generation = connectionGenerationRef.current
