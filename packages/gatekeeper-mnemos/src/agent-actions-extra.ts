@@ -25,7 +25,7 @@ import { CODE_AGENT_CAPABILITY } from "./workspace-tasks.ts";
 const ADMINS_GROUP = "system:organization-admins";
 import { allPages, flag, inScope, money, oneOf, pickOne, project, projectName, str, text, type AgentActionSession, type PreparedAgentAction } from "./agent-actions.ts";
 
-/** Методы человека сверх AgentActionSession: сессия управления и источники самого аккаунта (ящики, календари, диск, Telegram). */
+/** Методы человека сверх AgentActionSession: сессия управления и источники самого аккаунта (ящики, календари, диск). */
 export interface ExtraActionSession extends AgentActionSession {
   readProjectSharingSettings(): Promise<ProjectSharingSettings>;
   updateProjectSharingSettings(settings: ProjectSharingSettings): Promise<ProjectSharingSettings>;
@@ -80,11 +80,9 @@ export interface ExtraActionSession extends AgentActionSession {
   removeCalDAVAccount(id: string): Promise<unknown>;
   listWebDAVAccounts(): Promise<{ accounts: WebDAVAccountInfo[] }>;
   removeWebDAVAccount(id: string): Promise<unknown>;
-  listTelegram(): Promise<{ connections: { bot: string; username: string; disconnected: boolean }[] }>;
-  disconnectTelegram(bot: string): Promise<unknown>;
 }
 
-export type SourceType = "imap" | "caldav" | "webdav" | "telegram" | "database" | "github" | "sync";
+export type SourceType = "imap" | "caldav" | "webdav" | "database" | "github" | "sync";
 export type ScreenTarget = "mail" | "calendar" | "drive" | "github" | "git" | "database" | "telegram" | "upload";
 type RulesPatch = Partial<ProjectSharingSettings>;
 
@@ -139,7 +137,7 @@ const RULE_WORDS: Record<keyof ProjectSharingSettings, [string, Record<string, s
   share_organization_approval: ["Открыть проект всей организации", { none: "без решения", admin: "с решением администратора" }],
   default_visibility: ["Новые проекты видны", { private: "только участникам", department: "отделу", organization: "всей организации" }],
 };
-const SOURCE_WORDS: Record<SourceType, string> = { imap: "почтового ящика", caldav: "календаря", webdav: "диска", telegram: "Telegram", database: "базы данных", github: "аккаунта GitHub", sync: "синхронизации с GitHub" };
+const SOURCE_WORDS: Record<SourceType, string> = { imap: "почтового ящика", caldav: "календаря", webdav: "диска", database: "базы данных", github: "аккаунта GitHub", sync: "синхронизации с GitHub" };
 const SCREENS: Record<ScreenTarget, { title: string; detail: string; section: string; label: string }> = {
   mail: { title: "Подключить почту", detail: "Нужен пароль приложения от ящика: его вводит человек сам", section: "connections", label: "Открыть «Подключения»" },
   calendar: { title: "Подключить календарь", detail: "Нужен пароль приложения от календаря: его вводит человек сам", section: "connections", label: "Открыть «Подключения»" },
@@ -147,7 +145,7 @@ const SCREENS: Record<ScreenTarget, { title: string; detail: string; section: st
   github: { title: "Подключить GitHub", detail: "Вход на GitHub и выбор репозиториев делает человек — кнопка «Подключить GitHub»", section: "connections", label: "Открыть «Подключения»" },
   git: { title: "Подключить репозитории по ключу доступа", detail: "Ключ доступа GitHub или GitLab вводит человек сам", section: "connections", label: "Открыть «Подключения»" },
   database: { title: "Подключить базу данных", detail: "Адрес и пароль базы задаёт администратор сервера", section: "connections", label: "Открыть «Подключения»" },
-  telegram: { title: "Подключить Telegram", detail: "Ключ бота вводит человек сам, затем подтверждает бота", section: "connections", label: "Открыть «Подключения»" },
+  telegram: { title: "Подключить Telegram", detail: "Личный бот подключает сам человек: «Настройки» → «Telegram»", section: "connections", label: "Открыть «Подключения»" },
   upload: { title: "Загрузить файлы", detail: "Файлы выбирает человек: кнопка «Загрузить файлы» на странице проекта", section: "projects", label: "Открыть проект" },
 };
 
@@ -188,7 +186,7 @@ export function checkedExtraAction(kind: ExtraActionKind, value: Record<string, 
     case "revoke_agent": return { kind, agent: text(value.agent, "агент") };
     case "set_agent_project_right": return { kind, agent: text(value.agent, "агент"), project: text(value.project, "проект"), mode: oneOf(value.mode, ["read", "write"] as const, "mode"), enabled: flag(value.enabled, "enabled") };
     case "set_agent_source_access": return { kind, type: oneOf(value.type, ["mail", "calendar"] as const, "type"), connection: text(value.connection, "подключение"), agent: text(value.agent, "агент"), enabled: flag(value.enabled, "enabled") };
-    case "disconnect_source": return { kind, type: oneOf(value.type, ["imap", "caldav", "webdav", "telegram", "database", "github", "sync"] as const, "type"), connection: text(value.connection, "подключение") };
+    case "disconnect_source": return { kind, type: oneOf(value.type, ["imap", "caldav", "webdav", "database", "github", "sync"] as const, "type"), connection: text(value.connection, "подключение") };
     case "create_sync_link": {
       const folder = text(value.folder, "папка", true, 1024).replace(/^\/+|\/+$/g, "");
       if (/(^|\/)\.\.(\/|$)/.test(folder)) throw new Error("Некорректное значение: папка.");
@@ -233,7 +231,6 @@ export async function sources(session: ExtraActionSession, type: SourceType): Pr
     case "imap": return (await session.listImapAccounts()).accounts.map(a => ({ id: a.id, name: `${a.username} — ${a.mailbox}`, enabled: a.enabled }));
     case "caldav": return (await session.listCalDAVAccounts()).accounts.map(a => ({ id: a.id, name: a.username, enabled: a.enabled }));
     case "webdav": return (await session.listWebDAVAccounts()).accounts.map(a => ({ id: a.id, name: a.username, enabled: a.enabled }));
-    case "telegram": return (await session.listTelegram()).connections.map(c => ({ id: c.bot, name: `@${c.username}`, enabled: !c.disconnected }));
     case "database": return (await session.listVisibleDatabaseConnections()).databases.map(d => ({ id: `${d.project_id}/${d.name}`, name: d.name, enabled: true, project: d.project_id }));
     case "github": return (await session.listGitHubAccounts()).accounts.map(a => ({ id: a.installation_id, name: a.account_login, enabled: true }));
     case "sync": return (await session.listGitSyncLinks()).links.filter(l => l.can_manage && l.state !== "disabled").map(l => ({ id: l.link_id, name: l.repository_name, enabled: true, revision: l.revision, project: l.project_id }));
@@ -489,7 +486,6 @@ export async function executeExtraAction(session: ExtraActionSession, kind: Extr
         case "imap": await session.removeImapAccount(id); break;
         case "caldav": await session.removeCalDAVAccount(id); break;
         case "webdav": await session.removeWebDAVAccount(id); break;
-        case "telegram": await session.disconnectTelegram(id); break;
         case "database": await session.removeDatabaseConnection(str(r, "project"), str(r, "name")); break;
         case "github": await session.disconnectGitHubAccount(id); break;
         case "sync": await session.deleteGitSyncLink(id, r.revision as number); break;
@@ -532,7 +528,7 @@ export function checkedExtraRead(kind: ExtraReadKind, v: Record<string, unknown>
     case "review_policy": case "team_budgets": return { kind, project: text(v.project, "проект") };
     case "intake_questions": return { kind, project: text(v.project, "проект", true) };
     case "person_rights": return { kind, person: text(v.person, "сотрудник") };
-    case "sources": return { kind, type: oneOf(v.type, ["imap", "caldav", "webdav", "telegram", "database", "github", "sync"] as const, "type") };
+    case "sources": return { kind, type: oneOf(v.type, ["imap", "caldav", "webdav", "database", "github", "sync"] as const, "type") };
     default: return { kind } as ExtraReadRequest;
   }
 }

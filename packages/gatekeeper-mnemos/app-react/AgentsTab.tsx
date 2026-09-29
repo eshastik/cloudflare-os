@@ -41,14 +41,11 @@ export default function AgentsTab({ data }: { data: MemoryData }) {
 }
 
 function AgentList({ data }: { data: MemoryData }) {
-  const ui = useUi();
-  const telegram = useLoad(() => ui.listTelegram(), "Каналы Telegram не прочитаны.", [ui]);
   // Отозванные подключения не работают и только засоряют список: они свёрнуты внизу.
   const active = data.connections.filter(c => !c.revoked);
   const revoked = data.connections.filter(c => c.revoked);
   const titles = agentNames(data.connections);
-  const card = (agent: AgentConnection) => <AgentCard key={agent.binding_id} agent={agent} title={titles.get(agent.binding_id) ?? agentKind(agent)} data={data}
-    telegram={telegram.error ? telegram.error : (telegram.value?.connections ?? []).filter(c => c.binding === agent.binding_id).map(c => `@${c.username}${c.disconnected ? " — отключён" : c.channel_registered ? "" : " — ждёт подтверждения"}`).join(", ")} />;
+  const card = (agent: AgentConnection) => <AgentCard key={agent.binding_id} agent={agent} title={titles.get(agent.binding_id) ?? agentKind(agent)} data={data} />;
   if (data.connectionsError) return <Notice tone="danger">{data.connectionsError}</Notice>;
   if (data.connectionsLoading && data.connections.length === 0) return <Notice>Загрузка агентов…</Notice>;
   return <>
@@ -63,7 +60,7 @@ function AgentList({ data }: { data: MemoryData }) {
   </>;
 }
 
-function AgentCard({ agent, title, data, telegram }: { agent: AgentConnection; title: string; data: MemoryData; telegram: string }) {
+function AgentCard({ agent, title, data }: { agent: AgentConnection; title: string; data: MemoryData }) {
   const ui = useUi();
   const [confirming, setConfirming] = useState(false);
   const [editingScope, setEditingScope] = useState(false);
@@ -122,7 +119,6 @@ function AgentCard({ agent, title, data, telegram }: { agent: AgentConnection; t
         </dd>
         <dt className="m-0 text-kumo-subtle">Сейчас</dt>
         <dd className="m-0 flex flex-wrap items-center gap-2">{task ? `${(task.message ?? "").slice(0, 100) || "задача"} — ${taskState}` : "задач нет"}{agent.managed_runtime === true && <Pill tone="ghost" aria-expanded={history} onClick={() => setHistory(!history)}>{history ? "Скрыть историю" : "История задач"}</Pill>}</dd>
-        {telegram && <><dt className="m-0 text-kumo-subtle">Telegram</dt><dd className="m-0">{telegram}</dd></>}
         {absences.length > 0 && <><dt className="m-0 text-kumo-subtle">Замещение</dt>
           <dd className="m-0">{absences.map(a => `${a.managed_binding_id === agent.binding_id ? "замещает" : "замещается"} в проекте «${projectName(data.projects, a.project_id)}» до ${new Date(a.ends_at).toLocaleString("ru-RU")}`).join("; ")}</dd></>}
       </dl>

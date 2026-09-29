@@ -315,5 +315,5 @@ its connection unavailable instead of silently switching organization. The local
 runner accepts private `login-profiles.json` alongside `login.json`.
 
 Live acceptance currently covers selection/OIDC, organization identity, metrics
-and reconnect for two local organizations. Other workflows on secondary profiles,
-including external Telegram channel routing, require their own acceptance.
+and reconnect for two local organizations. Other workflows on secondary profiles
+require their own acceptance.

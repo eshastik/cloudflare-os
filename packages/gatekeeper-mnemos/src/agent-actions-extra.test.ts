@@ -77,8 +77,6 @@ function session() {
     async removeCalDAVAccount(id: string) { calls.push(`caldav-off:${id}`); },
     async listWebDAVAccounts() { return { accounts: [{ id: "wd-1", username: "disk-alice", enabled: true }] }; },
     async removeWebDAVAccount(id: string) { calls.push(`webdav-off:${id}`); },
-    async listTelegram() { return { connections: [{ bot: "123", username: "acme_bot", disconnected: false }] }; },
-    async disconnectTelegram(bot: string) { calls.push(`telegram-off:${bot}`); },
   };
   return s;
 }
@@ -191,11 +189,11 @@ test("внешние агенты: отзыв (кроме агента бесе�
   await assert.rejects(prepareAgentAction(session() as any, SCOPE, { kind: "set_agent_source_access", type: "mail", connection: "mc-1", agent: "b-ext", enabled: false }), /уже такой/);
 });
 
-test("отключение: личный ящик, календарь, диск, Telegram, база, GitHub и синхронизация", async () => {
+test("отключение: личный ящик, календарь, диск, база, GitHub и синхронизация", async () => {
   const s = session();
   const cases: [string, string, string][] = [
     ["imap", "sales@acme.ru — INBOX", "imap-off:im-1"], ["caldav", "alice", "caldav-off:cd-1"], ["webdav", "disk-alice", "webdav-off:wd-1"],
-    ["telegram", "@acme_bot", "telegram-off:123"], ["database", "crm", "db-off:p1:crm"], ["github", "acme", "github-off:in-1"], ["sync", "acme/site", "sync-delete:sl-1:4"],
+    ["database", "crm", "db-off:p1:crm"], ["github", "acme", "github-off:in-1"], ["sync", "acme/site", "sync-delete:sl-1:4"],
   ];
   for (const [type, name, call] of cases) {
     s.calls.length = 0;
@@ -249,7 +247,8 @@ test("сведения: правила, согласование, права, к
   assert.equal((await read({ kind: "intake_questions", project: "" })).questions[0].file, "договор.pdf");
   assert.deepEqual(await read({ kind: "team_budgets", project: "p1" }), [{ id: "tb-1", state: "awaiting_approval", estimate: "$5", limit: "$8", members: 2 }]);
   assert.deepEqual((await read({ kind: "agents" })).map((a: any) => a.name), ["Агент беседы", "Свой агент (Claude Code или Codex)"]);
-  assert.deepEqual(await read({ kind: "sources", type: "telegram" }), [{ id: "123", name: "@acme_bot", enabled: true }]);
+  assert.deepEqual(await read({ kind: "sources", type: "webdav" }), [{ id: "wd-1", name: "disk-alice", enabled: true }]);
+  assert.throws(() => checkedAgentRead({ kind: "sources", type: "telegram" }), /type/, "старые боты Telegram агенту больше не видны");
   assert.throws(() => checkedAgentRead({ kind: "sources", type: "fax" }), /type/);
   assert.deepEqual(s.calls, [], "чтения ничего не меняют");
 });

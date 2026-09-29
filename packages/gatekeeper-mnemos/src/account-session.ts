@@ -642,18 +642,6 @@ export class MnemosAccountSession {
     if (!identity.subject?.user_id || identity.subject.agent_principal_id) throw new MnemosAPIError(403);
     return identity;
   }
-  /** Server-only registration after the human confirmed the exact Telegram sender. */
-  async registerTelegramChannel(input: import('./mnemos-api.ts').TelegramChannelRegistration) {
-    input = {...input};
-    const identity = await this.whoAmI();
-    const result = await this.#client.registerTelegramChannel(input, this.#lifetime.signal);
-    this.#check();
-    if (!result || result.id !== input.request_id || result.owner_id !== identity.subject.user_id ||
-        result.binding_id !== input.binding_id || result.bot_id !== input.bot_id ||
-        result.sender_id !== input.sender_id || result.revision !== 1 || result.enabled !== true) throw new MnemosAPIError(502);
-    return {id: result.id, owner_id: result.owner_id, binding_id: result.binding_id, bot_id: result.bot_id,
-      sender_id: result.sender_id, revision: result.revision, enabled: result.enabled};
-  }
   async beginVoiceUpload(project:string,size:number,checksum:string){
     if(!Number.isSafeInteger(size)||size<1||size>20_000_000)throw new MnemosAPIError(400);
     await this.whoAmI();const out=await this.#client.beginVoiceUpload(project,size,checksum,this.#lifetime.signal);this.#check();return out;
@@ -667,38 +655,6 @@ export class MnemosAccountSession {
   async editVoiceTranscript(source:string,input:import('./voice-contract.ts').VoiceEdit){input={...input};await this.whoAmI();const out=await this.#client.editVoiceTranscript(source,input,this.#lifetime.signal);this.#check();return out;}
   async confirmVoiceTranscript(source:string,input:import('./voice-contract.ts').VoiceConfirm){input={...input};await this.whoAmI();const out=await this.#client.confirmVoiceTranscript(source,input,this.#lifetime.signal);this.#check();return out;}
   async readVoiceConfirmation(source:string,operation:string){await this.whoAmI();const out=await this.#client.readVoiceConfirmation(source,operation,this.#lifetime.signal);this.#check();return out;}
-  async readTelegramBudget(id:string){
-    await this.whoAmI();
-    const out=await this.#client.readTelegramBudget(id,this.#lifetime.signal);this.#check();return out;
-  }
-  async setTelegramBudget(id:string,expected:number,input:Omit<import('./mnemos-api.ts').TelegramBudgetSettings,'revision'>,confirmed:boolean){
-    input={project_id:input.project_id,policy_revision:input.policy_revision,limit_usd_micros:input.limit_usd_micros,...(input.voice_binding_id!==undefined||input.voice_limit_usd_micros!==undefined?{voice_binding_id:input.voice_binding_id,voice_limit_usd_micros:input.voice_limit_usd_micros}:{})};
-    await this.whoAmI();
-    const out=await this.#client.setTelegramBudget(id,expected,input,confirmed,this.#lifetime.signal);this.#check();return out;
-  }
-  /** Exposes only the current human's source journal, including disabled channels. */
-  async telegramTaskJournal(id:string,after=-1) {
-    const identity=await this.whoAmI();
-    const page=await this.#client.telegramTaskJournal(id,after,this.#lifetime.signal);this.#check();
-    const c=page?.channel;
-    if(!c||c.id!==id||c.owner_id!==identity.subject.user_id||!Array.isArray(page.items)||page.items.length>25)throw new MnemosAPIError(502);
-    let previous=after;
-    const items=page.items.map(item=>{
-      if(!Number.isSafeInteger(item.update_id)||item.update_id<=previous||!Number.isSafeInteger(item.message_id)||item.message_id<1||item.sender_id!==c.sender_id||typeof item.message!=='string'||typeof item.criteria!=='string'||typeof item.request_id!=='string'||!item.request_id)throw new MnemosAPIError(502);
-      previous=item.update_id;
-      const source={update_id:item.update_id,message_id:item.message_id,sender_id:item.sender_id,message:item.message,criteria:item.criteria,request_id:item.request_id};
-      if(item.kind==='task'&&item.target_update_id===null&&item.correction_id===null)return {...source,kind:'task' as const,target_update_id:null,correction_id:null};
-      if(item.kind==='correction'&&Number.isSafeInteger(item.target_update_id)&&item.target_update_id>=0&&typeof item.correction_id==='string'&&item.correction_id)return {...source,kind:'correction' as const,target_update_id:item.target_update_id,correction_id:item.correction_id};
-      throw new MnemosAPIError(502);
-    });
-    if(page.next_after!==null&&(items.length!==25||page.next_after!==previous))throw new MnemosAPIError(502);
-    return {channel:{id:c.id,owner_id:c.owner_id,binding_id:c.binding_id,bot_id:c.bot_id,sender_id:c.sender_id,revision:c.revision,enabled:c.enabled},items,next_after:page.next_after};
-  }
-  async disableTelegramChannel(id: string) {
-    this.#check();
-    const result = await this.#client.disableTelegramChannel(id, this.#lifetime.signal);
-    this.#check(); if (!result || result.disabled !== true) throw new MnemosAPIError(502);
-  }
   async searchProject(projectId: string, query: string) {
     this.#check();
     const page = await this.#client.searchProject(projectId, query, 20, this.#lifetime.signal);

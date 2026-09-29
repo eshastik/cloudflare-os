@@ -6,7 +6,6 @@ import type {CalDAVManagement} from '../src/caldav-types.ts';
 import type {CalendarDraftManagement} from '../src/calendar-drafts.ts';
 import type {MailDraftManagement} from '../src/mail-drafts.ts';
 import type {VoiceManagement} from "../src/voice-management.ts";
-import type {TelegramManagement} from '../src/telegram-management.ts';
 import type {CorporateTaskManagement} from "../src/corporate-task-creation.ts";
 import type {ResourceMapManagement} from "../src/resource-map-creation.ts";
 import type {ResourceMapEditManagement} from "../src/resource-map-edits.ts";
@@ -17,7 +16,7 @@ import type {TeamDocumentManagement} from "../src/team-document-creation.ts";
 import type { MnemosAccountSession, ManagedAgentRequest, ManagedTaskRequest } from "../src/account-session.ts";
 import type { RpcTarget, RpcStub } from "capnweb";
 import type { WhoAmI, ProjectPage, NodePage, DocumentContent, DraftDocument, DraftState, DraftHead, PublicationResult, PublicationReview, PublicationReviewPage, PublicationPolicy, PolicyDomain, PolicyApproverPage, ProjectSearchPage, NodeHistoryPage } from "../src/mnemos-api.ts";
-export interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement, CalendarDraftManagement, MailDraftManagement, RpcTarget, TelegramManagement, VoiceManagement {
+export interface Management extends WebDAVManagement, ImapManagement, CalDAVManagement, CalendarDraftManagement, MailDraftManagement, RpcTarget, VoiceManagement {
  beginInboxUpload: MnemosAccountSession["beginInboxUpload"];
  submitInboxUpload: MnemosAccountSession["submitInboxUpload"];
  inboxStatus: MnemosAccountSession["inboxStatus"];

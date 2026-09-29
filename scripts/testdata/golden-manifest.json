@@ -748,6 +748,13 @@
             "MnemosLibrary"
           ],
           "tag": "v4"
+        },
+        {
+          "deleted_classes": [
+            "TelegramBot",
+            "TelegramPoller"
+          ],
+          "tag": "v5"
         }
       ],
       "modules": [

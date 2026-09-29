@@ -6,7 +6,6 @@ import type {CentroidResult} from './centroid.ts';
 import type {ReindexInventory} from './reindex-batch.ts';
 import type {ReindexResult} from './reindex.ts';
 import type {PolicyAlertPage} from './policy-alerts.ts';
-import {telegramVoiceBudget} from './telegram-budget.ts';
 import {voiceRecord,checkedVoiceDownload,type VoiceSource,checkedVoiceSource,checkedVoiceTranscript,checkedVoiceConfirmation,voiceID,voiceRevision,voiceHash,type VoiceEdit,type VoiceConfirm} from "./voice-contract.ts";
 import type {CalendarConnectionInfo,CalendarGrantDecision,CalendarGrantState} from "./calendar-connections.ts";
 import type {MailConnectionInfo,MailGrantDecision,MailGrantState} from "./mail-connections.ts";
@@ -706,18 +705,6 @@ export class MnemosAPI {
   whoAmI(signal?: AbortSignal): Promise<WhoAmI> {
     return this.#request("/v1/whoami", "GET", signal);
   }
-  async readTelegramBudget(id:string,signal?:AbortSignal):Promise<TelegramBudgetSettings>{
-    const out=await this.#request<TelegramBudgetSettings>('/v1/telegram-channels/'+segment(id)+'/budget','GET',signal);
-    return checkedTelegramBudget(out);
-  }
-  async setTelegramBudget(id:string,expected:number,input:Omit<TelegramBudgetSettings,'revision'>,confirmed:boolean,signal?:AbortSignal):Promise<TelegramBudgetSettings>{
-    if(!Number.isSafeInteger(expected)||expected<0||expected>=Number.MAX_SAFE_INTEGER||confirmed!==true)throw new MnemosAPIError(400);
-    const selection={project_id:input.project_id,policy_revision:input.policy_revision,limit_usd_micros:input.limit_usd_micros,...(input.voice_binding_id!==undefined||input.voice_limit_usd_micros!==undefined?{voice_binding_id:input.voice_binding_id,voice_limit_usd_micros:input.voice_limit_usd_micros}:{})};
-    try{checkedTelegramBudget({revision:expected+1,...selection});}catch{throw new MnemosAPIError(400);}
-    const out=checkedTelegramBudget(await this.#request<TelegramBudgetSettings>('/v1/telegram-channels/'+segment(id)+'/budget','POST',signal,{expected_revision:expected,...selection,confirmed:true}));
-    if(out.revision!==expected+1||out.project_id!==selection.project_id||out.policy_revision!==selection.policy_revision||out.limit_usd_micros!==selection.limit_usd_micros||(out.voice_binding_id??'')!==(selection.voice_binding_id??'')||(out.voice_limit_usd_micros??'0')!==(selection.voice_limit_usd_micros??'0'))throw new MnemosAPIError(502);
-    return out;
-  }
   async readVoiceSource(request:string,signal?:AbortSignal){
     if(!voiceID(request))throw new MnemosAPIError(400);
     const value=voiceRecord(await this.#request('/v1/voice-sources/'+segment(request),'GET',signal));
@@ -749,21 +736,6 @@ export class MnemosAPI {
   }
   async readVoiceConfirmation(source:string,operation:string,signal?:AbortSignal){
     return checkedVoiceConfirmation(await this.#request('/v1/voice-sources/'+segment(source)+'/confirmations/'+segment(operation),'GET',signal),source,operation);
-  }
-  /** Human-owned source journal; each page is limited by the server to 25 messages. */
-  telegramTaskJournal(id: string, after: number, signal?:AbortSignal):Promise<TelegramTaskJournal> {
-    segment(id);
-    if(!Number.isSafeInteger(after)||after < -1||after>Number.MAX_SAFE_INTEGER)throw new MnemosAPIError(400);
-    return this.#request('/v1/telegram-channels/'+encodeURIComponent(id)+'/journal','POST',signal,{after});
-  }
-  registerTelegramChannel(input: TelegramChannelRegistration, signal?: AbortSignal): Promise<TelegramChannelInfo> {
-    segment(input.request_id); segment(input.binding_id);
-    if (!/^[1-9][0-9]{0,19}$/.test(input.bot_id) || !Number.isSafeInteger(input.sender_id) || input.sender_id < 1 ||
-        !/^[a-f0-9]{64}$/.test(input.credential_sha256) || input.confirmed !== true) throw new MnemosAPIError(400);
-    return this.#request('/v1/telegram-channels', 'POST', signal, {...input});
-  }
-  disableTelegramChannel(id: string, signal?: AbortSignal): Promise<{disabled: boolean}> {
-    return this.#request(`/v1/telegram-channels/${segment(id)}/disable`, 'POST', signal, {});
   }
   /** Record a bounded readiness event through this verified human account. */
   recordUIReadiness(sample:UIReadinessSample, signal?:AbortSignal):Promise<void> {
@@ -1555,29 +1527,6 @@ export type OfficeUpdateComparison={drive_source_verified?:boolean;node_id:strin
 function validateOfficeUpdateInput(input:OfficeUpdateInput){
  head(input.expected_head);head(input.source_head);segment(input.source_node_id);
  if(!["docx","xlsx","pptx"].includes(input.format)||typeof input.title!=="string"||new TextEncoder().encode(input.title).length>255)throw new MnemosAPIError(400);
-}
-
-/** Dedicated task-channel consent; only a digest crosses the human API boundary. */
-export interface TelegramChannelRegistration {
-  request_id: string; binding_id: string; bot_id: string; sender_id: number;
-  credential_sha256: string; confirmed: true;
-}
-/** Public metadata never contains either channel secret or credential digest. */
-export interface TelegramChannelInfo {
-  id: string; owner_id: string; binding_id: string; bot_id: string; sender_id: number;
-  revision: number; enabled: boolean;
-}
-
-export interface TelegramTaskJournal {
- channel:TelegramChannelInfo;
- items:({update_id:number;message_id:number;sender_id:number;message:string;criteria:string;request_id:string} & ({kind:"task";target_update_id:null;correction_id:null}|{kind:"correction";target_update_id:number;correction_id:string}))[];
- next_after:number|null;
-}
-
-/** Human defaults for future Telegram proposals, not a spending permission. */
-export interface TelegramBudgetSettings {revision:number;project_id:string;policy_revision:number;limit_usd_micros:string;voice_binding_id?:string;voice_limit_usd_micros?:string}
-function checkedTelegramBudget(value:TelegramBudgetSettings):TelegramBudgetSettings {
- try{return telegramVoiceBudget(value);}catch{throw new MnemosAPIError(502);}
 }
 
 export interface ProjectSignalProfile {requirements:{id:string;purpose:string;max_age_seconds:number;expected_unit?:string}[];queries:{signal_id:string;database:string;sql:string}[]}

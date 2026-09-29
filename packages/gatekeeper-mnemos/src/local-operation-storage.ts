@@ -5,11 +5,9 @@ import type {ConnectionAuditEvent} from './connection-audit-storage.ts';
 
 const families = ['corporateTaskCreation','corporateUpdate','corporateWorkflowCreation','driveImportCapture',
  'resourceMapCreation','resourceMapEdit','teamDocumentCreation','trackerCreation','trackerEdit','mnemosTaskHistory','reindexRequest','reindexBatch','reindexBatchChunk','centroidRequest',
- 'voiceUpload','voiceBudget','voiceCommandBudget','telegramVoice','telegramVoiceTransfer','telegramVoiceSettings'] as const;
+ 'voiceUpload','voiceBudget','voiceCommandBudget'] as const;
 /** Only canonical operation records are audited; derived indexes pass through. */
 export function localOperationKind(key:string):string|undefined {
- if(/^telegramDelivery:[^:]+:job:[0-9]+$/.test(key))return 'telegramDeliveryJob';
- if(/^telegramInbox:[0-9]+:[^:]+:update:[0-9]+$/.test(key))return 'telegramMessageIntent';
  if(['gitRegistrations','mnemosManagedTaskRequest','mnemosManagedAgentRequest'].includes(key))return key;
  return families.find(kind=>key.startsWith(kind+':'));
 }
@@ -35,7 +33,7 @@ function envelope(value:unknown):value is Envelope{return !!value&&typeof value=
 /** State and pending history share one canonical KV write. Reads expose only the
  * original value, including during legacy migration and after queue pruning. */
 export class LocalOperationStorage implements Storage {
- /** Bot DOs resolve their trusted account owner from the canonical connection. */
+ /** Владелец по умолчанию — сохранённый владелец аккаунта; тесты подставляют свой. */
  constructor(private storage:Storage,private sink:AccountStorage,private owner=()=>storedAccountOwner(storage),readonly transactionSync?:<T>(callback:()=>T)=>T){}
  get<T>(key:string):T|undefined {
   const saved=this.storage.get<unknown>(key);

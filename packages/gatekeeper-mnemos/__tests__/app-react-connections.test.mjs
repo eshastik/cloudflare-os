@@ -14,7 +14,6 @@ const SOURCES = {
   async listGitAppRepositories() { return { available: true, repositories: [] }; },
   async listGitBranches() { return { branches: [{ name: "main", sha: "a".repeat(40) }] }; },
   async listVisibleDatabaseConnections() { return { databases: [{ db_id: "db-1", project_id: "two", name: "Аналитика", driver: "postgres", env_var: "MNEMOS_DB_A", registered_by: "alice", registered_at: "", configured: true, last_sweep_at: "", unreachable_since: "2026-09-13T08:00:00Z" }], truncated: false }; },
-  async listTelegram() { return { connections: [], unavailable: 0 }; },
 };
 
 const TICKET = "T" + "k".repeat(42);

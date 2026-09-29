@@ -12,7 +12,6 @@ test("«Агенты и расходы»: агенты по именам, без
       ], next_cursor: "" };
     },
     async revokeAgentConnection(id) { app.calls.push(["revokeAgentConnection", id]); revoked = true; },
-    async listTelegram() { return { connections: [{ bot: "bot-1", username: "acme_bot", binding: "b-managed", ready: true, disconnected: false, cleanup_pending: false, channel_registered: true }], unavailable: 0 }; },
   });
   try {
     await app.open("Агенты и расходы");
@@ -21,7 +20,7 @@ test("«Агенты и расходы»: агенты по именам, без
     const managed = card("b-managed"), external = card("b-external");
     assert.ok(managed.textContent.includes("Агент AgenticOS") && external.textContent.includes("Свой агент"), "агенты названы словами");
     await app.until(() => managed.querySelector("dd").textContent.includes("документ «Заметка команды»"), "документ назван по имени");
-    await app.until(() => managed.textContent.includes("@acme_bot"), "канал Telegram");
+    assert.doesNotMatch(managed.textContent, /Telegram/, "старые каналы Telegram у агента не показываются");
     // Ни одного поля для ввода идентификатора: выдача агента по ID шаблона и «Кто может привлекать» убраны.
     assert.equal(app.document.querySelector('#root input[aria-label*="ID"]'), null);
     assert.ok(!app.buttons().some(b => ["Выдать агента", "Кто может привлекать", "Журнал обращений", "Поставить задачу"].includes(b.textContent)), "технические действия убраны");

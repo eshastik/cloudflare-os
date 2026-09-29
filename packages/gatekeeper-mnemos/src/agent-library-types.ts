@@ -89,7 +89,7 @@ interface MnemosLibrary {
   /** Лимит расходов проекта в долларах. */
   setProjectBudget(project: string, limitUsd: number): Promise<MnemosActionProposal>;
   /** Отключить подключение; connection — id или имя из listConnections(type). mail/calendar/git — подключения
-   * проектов; imap/caldav/webdav — личные ящик, календарь, диск; telegram — бот; database — база проекта;
+   * проектов; imap/caldav/webdav — личные ящик, календарь, диск; database — база проекта;
    * github — аккаунт GitHub; sync — связь репозитория с проектом. */
   disableConnection(type: MnemosConnectionType, connection: string): Promise<MnemosActionProposal>;
   /** Правила организации о проектах; передайте только меняемые: personal_projects_enabled (boolean),
@@ -128,8 +128,8 @@ interface MnemosLibrary {
   /** «Обновить сейчас» для связи репозитория; link — id или имя репозитория из listConnections("sync"). */
   refreshRepository(link: string): Promise<MnemosActionProposal>;
   /** То, что требует пароля, входа у провайдера или выбора файлов, делает человек: карточка с кнопкой
-   * открывает ему нужный экран. target: mail, calendar, drive, github, git, database, telegram или
-   * upload (загрузка файлов, нужен project). Ход не останавливается; скажите человеку нажать кнопку. */
+   * открывает ему нужный экран. target: mail, calendar, drive, github, git, database, telegram (личный бот
+   * человека подключается в его настройках) или upload (загрузка файлов, нужен project). Ход не останавливается; скажите человеку нажать кнопку. */
   openScreen(target: "mail" | "calendar" | "drive" | "github" | "git" | "database" | "telegram" | "upload", project?: string): Promise<MnemosActionProposal>;
   /** Итог предложенного действия: ждёт решения, сделано (result — что именно) или отклонено. */
   actionStatus(action: number): Promise<MnemosActionStatus>;
@@ -244,7 +244,7 @@ interface MnemosActionStatus {
   url?: string;
 }
 
-type MnemosConnectionType = "mail" | "calendar" | "git" | "imap" | "caldav" | "webdav" | "telegram" | "database" | "github" | "sync";
+type MnemosConnectionType = "mail" | "calendar" | "git" | "imap" | "caldav" | "webdav" | "database" | "github" | "sync";
 
 interface MnemosAccessRequest {
   id: string; project: string; level: "private" | "department" | "organization"; canEdit: boolean;

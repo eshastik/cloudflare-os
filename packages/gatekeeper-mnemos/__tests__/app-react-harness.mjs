@@ -71,7 +71,6 @@ export function defaultMethods(calls) {
     async readSpending(period) { return { period, all_visible: true, micro_usd: "0", count: 0, estimated_count: 0, kinds: [], operations: [], projects: [], people: [], agents: [], models: [] }; },
     async externalAgentSetup() { return {resource:"https://memory.example/mcp",clientId:"mnemos-cli"}; },
     async readPersonalMemory() { return { revision: 0, project_id: "", node_id: "", head: "" }; },
-    async listTelegram() { return { connections: [], unavailable: 0 }; },
     async listImapAccounts() { return { servers: [], accounts: [] }; },
     async listWebDAVAccounts() { return { servers: [], accounts: [] }; },
     async listCalDAVAccounts() { return { servers: [], accounts: [] }; },

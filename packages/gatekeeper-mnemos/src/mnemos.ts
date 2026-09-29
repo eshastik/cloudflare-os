@@ -25,13 +25,9 @@ import {MailSelections} from "./mail-selection.ts";
 import {handleMailBridge, splitMailSelection, type MailBridgeDraft, type MailBridgeRead, type MailBridgeResolve, type MailBridgeConnection} from "./mail-bridge.ts";
 import {VoiceTransfer} from "./voice-transfer.ts";
 import type {VoiceManagement} from "./voice-management.ts";
-import type {TelegramManagement} from './telegram-management.ts';
 import {OfficeUpdateRecovery} from "./office-update-recovery.ts";
-export {TelegramBot} from './telegram-bot.ts';
-export {TelegramPoller} from './telegram-poller.ts';
 export { MnemosLibrary } from './agent-library.ts';
 import { MNEMOS_LIBRARY_TYPES } from './agent-library-types.ts';
-import {telegramRoute} from './telegram-bot.ts';
 import {DriveImportCapture} from "./drive-import-capture.ts";
 import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
 import type {CalendarGrantDecision} from "./calendar-connections.ts";
@@ -312,101 +308,6 @@ export class UserAccount extends DurableObject<Env> {
  }
 
  #voiceTransfer?:VoiceTransfer;
-  /** Internal bot authority lookup: all identity comes from the live Mnemos session. */
-  async telegramAuthority(binding: string) {
-    if (typeof binding !== 'string' || !binding || binding.length > 255) throw Error('Invalid agent binding.');
-    const session = this.#account().session();
-    try {
-      const identity = await session.whoAmI();
-      const epoch = this.#account().calendarEpoch();
-      if (!epoch) throw Error('Mnemos account unavailable.');
-      let cursor = ''; const seen = new Set<string>();
-      for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
-        const page = await session.listAgentConnections(cursor);
-        if (page.connections.some(item => item.binding_id === binding && !item.revoked)) {
-          await session.whoAmI();
-          if (this.#account().calendarEpoch() !== epoch) throw Error('Mnemos account changed.');
-          return {tenant: identity.subject.tenant_id, owner: identity.subject.user_id, epoch, ...this.#origins()};
-        }
-        if (!page.next_cursor || seen.has(page.next_cursor)) break;
-        cursor = page.next_cursor; seen.add(cursor);
-      }
-      throw Error('Agent connection unavailable.');
-    } finally { session.dispose(); }
-  }
-  /** Pairing-only check survives expiry but not explicit account disconnect. */
-  /** Internal audit attribution remains available after credential revocation. */
-  telegramAuditOwner(){const owner=storedAccountOwner(this.ctx.storage.kv);if(!owner)throw Error('Telegram audit owner unavailable');return owner;}
-  async telegramEpochValid(epoch: string): Promise<boolean> { return this.#account().calendarEpoch() === epoch; }
-  /** Only the bot DO supplies the digest, after an owned sender-confirmation operation. */
-  async registerTelegramGrant(epoch: string, input: import('./mnemos-api.ts').TelegramChannelRegistration) {
-    const authority = await this.telegramAuthority(input.binding_id);
-    if (authority.epoch !== epoch) throw Error('Mnemos account changed.');
-    const session = this.#account().session();
-    try {
-      const result = await session.registerTelegramChannel(input);
-      if (this.#account().calendarEpoch() !== epoch) throw Error('Mnemos account changed.');
-      return result;
-    } finally { session.dispose(); }
-  }
-  /** Human cleanup remains possible after the selected agent was revoked. */
-  async disableTelegramGrant(id: string) {
-    const session = this.#account().session();
-    try { await session.whoAmI(); await session.disableTelegramChannel(id); }
-    finally { session.dispose(); }
-  }
-  #telegramBot(bot: string) {
-    if (typeof bot !== 'string' || !/^[1-9][0-9]{0,19}$/.test(bot)) throw Error('Invalid Telegram bot.');
-    return this.ctx.exports.TelegramBot.get(this.ctx.exports.TelegramBot.idFromName(bot));
-  }
-  async connectTelegram(request: string, token: string, binding: string, deliveryAcknowledged: boolean) {
-    const authority = await this.telegramAuthority(binding);
-    if (typeof token !== 'string' || !/^[1-9][0-9]{0,19}:[A-Za-z0-9_-]{30,100}$/.test(token)) throw Error('Invalid Telegram bot credential.');
-    const bot = token.split(':')[0];
-    const bots = this.ctx.storage.kv.get<string[]>('telegramBots') ?? [];
-    if (!bots.includes(bot)) {
-      if (bots.length >= 100) throw Error('Telegram connection limit reached.');
-      bots.push(bot); this.ctx.storage.kv.put('telegramBots', bots);
-    }
-    return this.#telegramBot(bot).configure(this.ctx.id.toString(), request, token, binding, deliveryAcknowledged, authority.epoch);
-  }
-  /** Called only by the human target after the source journal's owner check. */
-  async telegramLocalInbox(bot:string,channel:string,after:number){
-    return this.#telegramBot(bot).localInbox(this.ctx.id.toString(),channel,after);
-  }
-  async telegramVoiceInbox(bot:string,channel:string){
-    return this.#telegramBot(bot).voiceInbox(this.ctx.id.toString(),channel);
-  }
-  async telegramVoiceFile(bot:string,channel:string,update:number){
-    const file=await this.#telegramBot(bot).voiceFile(this.ctx.id.toString(),channel,update);
-    return {request:file.request,mime:file.mime,bytes:file.bytes,sha256:file.sha256};
-  }
-  async telegramVoiceImportState(bot:string,channel:string,update:number):Promise<{request:string;project:string;sha256:string}|null>{
-    const saved=await this.#telegramBot(bot).voiceImportState(this.ctx.id.toString(),channel,update);
-    return saved?{request:saved.request,project:saved.project,sha256:saved.sha256}:null;
-  }
-  async completeTelegramVoiceImport(bot:string,channel:string,update:number,source:import('./telegram-voice-inbox.ts').TelegramVoiceImport){return this.#telegramBot(bot).completeVoiceImport(this.ctx.id.toString(),channel,update,source);}
-  async telegramDeliveryStates(bot:string,channel:string,updates:number[]){
-    return this.#telegramBot(bot).deliveryStates(this.ctx.id.toString(),channel,updates);
-  }
-  async listTelegram():ReturnType<TelegramManagement['listTelegram']> {
-    const session=this.#account().session(),epoch=this.#account().calendarEpoch();
-    try {
-      await session.whoAmI();
-      const bots=this.ctx.storage.kv.get<string[]>('telegramBots')??[];
-      const results=await Promise.allSettled(bots.map(bot=>this.#telegramBot(bot).describe(this.ctx.id.toString())));
-      await session.whoAmI();
-      if(!epoch||epoch!==this.#account().calendarEpoch())throw Error('Mnemos account changed.');
-      const connections:Awaited<ReturnType<TelegramManagement['listTelegram']>>['connections']=[];
-      let unavailable=0;
-      for(const result of results){
-        if(result.status==='rejected'){unavailable++;continue;}
-        const {bot,username,binding,ready,disconnected,cleanup_pending,channel_registered}=result.value;
-        connections.push({bot,username,binding,ready,disconnected,cleanup_pending,channel_registered});
-      }
-      return {connections,unavailable};
-    } finally {session.dispose();}
-  }
   async #withNotificationSession<T>(operation: (session: NotificationSession) => Promise<T>): Promise<T> {
     const session = this.#account().session();
     try { return await operation(session); } finally { session.dispose(); }
@@ -423,9 +324,6 @@ export class UserAccount extends DurableObject<Env> {
   async saveNotificationSettings(kinds: unknown) { return this.#withNotificationSession(session => saveNotificationSettings(session, kinds)); }
   async prepareNotificationDecision(object: unknown) { return this.#withNotificationSession(session => prepareNotificationDecision(session, object)); }
   async decideNotification(object: unknown, version: unknown, decision: unknown) { return this.#withNotificationSession(session => decideNotification(session, object, version, decision)); }
-  async describeTelegram(bot: string) { return this.#telegramBot(bot).describe(this.ctx.id.toString()); }
-  async confirmTelegram(bot: string, epoch: string, sender: number) { return this.#telegramBot(bot).confirm(this.ctx.id.toString(), epoch, sender); }
-  async disconnectTelegram(bot: string) { return this.#telegramBot(bot).disconnect(this.ctx.id.toString()); }
  #driveImports?:DriveImportCapture;
  #teamDocuments?:TeamDocumentCreation;
  #corporateTasks?:CorporateTaskCreation;
@@ -1033,18 +931,14 @@ export class UserAccount extends DurableObject<Env> {
     // Потеря ответа не страшна: кэш агента уже очищен, а новый credential без человека не выпустить.
     try { await this.#account().revokeWorkshopAgent(); } catch { /* связь на сервере доживёт до переподключения */ }
     this.#disconnectAccount();
-    const results = await Promise.allSettled((this.ctx.storage.kv.get<string[]>('telegramBots') ?? [])
-      .map(bot => this.#telegramBot(bot).revokeAccount(this.ctx.id.toString())));
-    if (results.some(result => result.status === 'rejected')) throw Error('Account disconnected; retry to confirm Telegram cleanup.');
   }
-  /** Ящики, календари, диск и Telegram хранятся в самом аккаунте, а не на сервере: действиям они
+  /** Ящики, календари и диск хранятся в самом аккаунте, а не на сервере: действиям они
    * нужны рядом с методами сессии. Методы сессии привязываются к ней из-за приватных полей. */
   #withSources(session: MnemosAccountSession) {
     const own: Record<string, (...args: never[]) => unknown> = {
       listImapAccounts: () => this.listImapAccounts(), removeImapAccount: (id: string) => this.removeImapAccount(id),
       listCalDAVAccounts: () => this.listCalDAVAccounts(), removeCalDAVAccount: (id: string) => this.removeCalDAVAccount(id),
       listWebDAVAccounts: () => this.listWebDAVAccounts(), removeWebDAVAccount: (id: string) => this.removeWebDAVAccount(id),
-      listTelegram: () => this.listTelegram(), disconnectTelegram: (bot: string) => this.disconnectTelegram(bot),
     };
     return new Proxy(session, { get: (target, key, receiver) => {
       if (typeof key === "string" && Object.hasOwn(own, key)) return own[key];
@@ -1384,7 +1278,7 @@ class MnemosAgentConsent extends RpcTarget {
   [Symbol.dispose](): void { this.#session.dispose(); }
 }
 
-class MnemosManagementSession extends RpcTarget implements TeamDocumentManagement, TelegramManagement, VoiceManagement {
+class MnemosManagementSession extends RpcTarget implements TeamDocumentManagement, VoiceManagement {
   async createProject(...args:Parameters<MnemosAccountSession["createProject"]>) { return this.#session.createProject(...args); }
   async readWorkshopAgentScope(...args:Parameters<MnemosAccountSession["readWorkshopAgentScope"]>) { return this.#session.readWorkshopAgentScope(...args); }
   async updateWorkshopAgentScope(...args:Parameters<MnemosAccountSession["updateWorkshopAgentScope"]>) { return this.#session.updateWorkshopAgentScope(...args); }
@@ -1409,61 +1303,11 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async editVoiceTranscript(...args:Parameters<MnemosAccountSession['editVoiceTranscript']>){return this.#session.editVoiceTranscript(...args);}
   async confirmVoiceTranscript(...args:Parameters<MnemosAccountSession['confirmVoiceTranscript']>){return this.#session.confirmVoiceTranscript(...args);}
   async readVoiceConfirmation(...args:Parameters<MnemosAccountSession['readVoiceConfirmation']>){return this.#session.readVoiceConfirmation(...args);}
-  async readTelegramBudget(...args:Parameters<MnemosAccountSession['readTelegramBudget']>){return this.#session.readTelegramBudget(...args);}
-  async setTelegramBudget(...args:Parameters<MnemosAccountSession['setTelegramBudget']>){return this.#session.setTelegramBudget(...args);}
   #voiceTransfer?:VoiceTransfer;
   #session: MnemosAccountSession;
   #teamDocuments:TeamDocumentCreation;
-  #telegram?: DurableObjectStub<UserAccount>;
-  constructor(session: MnemosAccountSession,teamDocuments:TeamDocumentCreation,private trackers:TrackerCreation,private trackerEdits:TrackerEdits,private resourceMaps:ResourceMapCreation,private resourceMapEdits:ResourceMapEdits,private corporateTasks:CorporateTaskCreation, telegram?: DurableObjectStub<UserAccount>,voiceTransfer?:VoiceTransfer) { super(); this.#voiceTransfer=voiceTransfer; this.#session = session;this.#teamDocuments=teamDocuments;this.#telegram=telegram; }
-  async telegramVoiceInbox(id:string){
-    const proof=await this.#session.telegramTaskJournal(id,-1);
-    if(!this.#telegram)throw Error('Telegram unavailable.');
-    const items=await this.#telegram.telegramVoiceInbox(proof.channel.bot_id,id);
-    await this.#session.telegramTaskJournal(id,-1);return items;
-  }
-  async importTelegramVoice(id:string,update:number,project:string){
-    const proof=await this.#session.telegramTaskJournal(id,-1);
-    if(!this.#telegram||!this.#voiceTransfer)throw Error('Telegram voice unavailable.');
-    const imported=await this.#telegram.telegramVoiceImportState(proof.channel.bot_id,id,update);
-    if(imported){
-      if(imported.project!==project)throw Error('Telegram voice project changed.');
-      const source=await this.#session.readVoiceSource(imported.request);
-      if(source.project_id!==project||source.sha256!==imported.sha256)throw Error('Telegram voice original changed.');
-      await this.#session.telegramTaskJournal(id,-1);return source;
-    }
-    const file=await this.#telegram.telegramVoiceFile(proof.channel.bot_id,id,update);
-    await this.#session.telegramTaskJournal(id,-1);
-    const source=await this.#voiceTransfer.upload(this.#session,file.request,project,file.mime,file.bytes);
-    if(source.sha256!==file.sha256)throw Error('Telegram voice original changed.');
-    await this.#session.telegramTaskJournal(id,-1);
-    await this.#telegram.completeTelegramVoiceImport(proof.channel.bot_id,id,update,{request:source.request_id,project:source.project_id,sha256:source.sha256});
-    await this.#session.telegramTaskJournal(id,-1);return source;
-  }
-  async telegramLocalInbox(id:string,after=-1){
-    const proof=await this.#session.telegramTaskJournal(id,-1);
-    if(!this.#telegram)throw Error('Telegram unavailable.');
-    const inbox=await this.#telegram.telegramLocalInbox(proof.channel.bot_id,id,after);
-    const current=await this.#session.whoAmI();
-    if(current.subject.user_id!==proof.channel.owner_id)throw Error('Telegram inbox unavailable.');
-    return inbox;
-  }
-  async telegramTaskJournal(id:string,after=-1){
-    const page=await this.#session.telegramTaskJournal(id,after);
-    const states=this.#telegram?await this.#telegram.telegramDeliveryStates(page.channel.bot_id,id,page.items.map(item=>item.update_id)):[];
-    const current=await this.#session.whoAmI();
-    if(current.subject.user_id!==page.channel.owner_id)throw Error('Telegram journal unavailable.');
-    const delivery=states.filter(state=>{const item=page.items.find(item=>item.update_id===state.update_id);return item&&(state.request_id===null||state.request_id===item.request_id);});
-    return {...page,delivery};
-  }
-  async connectTelegram(request: string, token: string, binding: string, deliveryAcknowledged: boolean) {
-    await this.#session.whoAmI(); if (!this.#telegram) throw Error('Telegram unavailable.');
-    return this.#telegram.connectTelegram(request, token, binding, deliveryAcknowledged);
-  }
-  async listTelegram(){await this.#session.whoAmI();if(!this.#telegram)throw Error('Telegram unavailable.');const result=await this.#telegram.listTelegram();await this.#session.whoAmI();return result;}
-  async describeTelegram(bot: string) { await this.#session.whoAmI(); if (!this.#telegram) throw Error('Telegram unavailable.'); return this.#telegram.describeTelegram(bot); }
-  async confirmTelegram(bot: string, epoch: string, sender: number) { await this.#session.whoAmI(); if (!this.#telegram) throw Error('Telegram unavailable.'); return this.#telegram.confirmTelegram(bot, epoch, sender); }
-  async disconnectTelegram(bot: string) { await this.#session.whoAmI(); if (!this.#telegram) throw Error('Telegram unavailable.'); return this.#telegram.disconnectTelegram(bot); }
+  #account?: DurableObjectStub<UserAccount>;
+  constructor(session: MnemosAccountSession,teamDocuments:TeamDocumentCreation,private trackers:TrackerCreation,private trackerEdits:TrackerEdits,private resourceMaps:ResourceMapCreation,private resourceMapEdits:ResourceMapEdits,private corporateTasks:CorporateTaskCreation, account?: DurableObjectStub<UserAccount>,voiceTransfer?:VoiceTransfer) { super(); this.#voiceTransfer=voiceTransfer; this.#session = session;this.#teamDocuments=teamDocuments;this.#account=account; }
   async readPrivateVersionDigest(project:string,node:string,version:string) {return this.#session.readPrivateVersionDigest(project,node,version);}
   async readDraftDocument(projectId: string, nodeId: string) { return this.#session.readDraftDocument(projectId, nodeId); }
   async checkTrackerAssignee(project:string,node:string,head:string,principal:string){return this.#session.checkTrackerAssignee(project,node,head,principal);}
@@ -1528,9 +1372,9 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async listInvitations() { return this.#session.listInvitations(); }
   /** Ссылка собирается здесь: адрес входа знает только подключение, а не фрейм. */
   async createInvitation(email: string, displayName: string, orgUnit: string, role: import("./mnemos-api.ts").InvitationRole = "employee", codeAgent = false) {
-    if (!this.#telegram) throw new Error("Invitation link unavailable");
+    if (!this.#account) throw new Error("Invitation link unavailable");
     const { code, ...invitation } = await this.#session.createInvitation(email, displayName, orgUnit, role, codeAgent);
-    return { invitation, link: await this.#telegram.invitationLink(code) };
+    return { invitation, link: await this.#account.invitationLink(code) };
   }
   async revokeInvitation(id: string) { return this.#session.revokeInvitation(id); }
   async updateProjectSharingSettings(...args: Parameters<MnemosAccountSession["updateProjectSharingSettings"]>) { return this.#session.updateProjectSharingSettings(...args); }
@@ -1694,8 +1538,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readGitCommit(project:string,connection:string,repository:string,ref:string){return this.#session.readGitCommit(project,connection,repository,ref);}
   async readGitTree(project:string,connection:string,repository:string,commit:string,path=""){return this.#session.readGitTree(project,connection,repository,commit,path);}
   async listGitBranches(project:string,connection:string,repository:string,page=1){return this.#session.listGitBranches(project,connection,repository,page);}
-  #workspace(){if(!this.#telegram)throw Error('Рабочие места агентов недоступны.');return this.#telegram;}
-  async workspaceAvailable(){return this.#telegram?this.#telegram.workspaceAvailable():false;}
+  #workspace(){if(!this.#account)throw Error('Рабочие места агентов недоступны.');return this.#account;}
+  async workspaceAvailable(){return this.#account?this.#account.workspaceAvailable():false;}
   async listWorkspaceTasks(project:string){return this.#workspace().listWorkspaceTasks(project);}
   async startWorkspaceTask(project:string,connection:string,repository:string,prompt:string){return this.#workspace().startWorkspaceTask(project,connection,repository,prompt);}
   async readWorkspaceTask(project:string,task:string){return this.#workspace().readWorkspaceTask(project,task);}
@@ -1729,25 +1573,25 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async setPrincipalMembership(container:string,member:string,decision:Parameters<MnemosAccountSession["setPrincipalMembership"]>[2]){return this.#session.setPrincipalMembership(container,member,decision);}
   async readCalendarGrantState(id:string,principal:string){return this.#session.readCalendarGrantState(id,principal);}
   async readMailGrantState(id:string,principal:string){return this.#session.readMailGrantState(id,principal);}
-  async listCalendarDrafts(connection:string,cursor=''){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const out=await this.#telegram.listCalendarDrafts(connection,cursor);await this.#session.whoAmI();return out;}
-  async readCalendarDraft(id:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const out=await this.#telegram.readCalendarDraft(id);await this.#session.whoAmI();return out;}
-  async decideCalendarDraft(id:string,sha256:string,approved:boolean){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const out=await this.#telegram.decideCalendarDraft(id,sha256,approved);await this.#session.whoAmI();return out;}
-  async listImapAccounts(){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.listImapAccounts();await this.#session.whoAmI();return result;}
-  async connectImapAccount(input:ImapSetup){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.connectImapAccount(input);await this.#session.whoAmI();return result;}
-  async removeImapAccount(id:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');await this.#telegram.removeImapAccount(id);await this.#session.whoAmI();}
-  async listWebDAVAccounts(){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.listWebDAVAccounts();await this.#session.whoAmI();return result;}
-  async connectWebDAVAccount(input:WebDAVSetup){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.connectWebDAVAccount(input);await this.#session.whoAmI();return result;}
-  async removeWebDAVAccount(id:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');await this.#telegram.removeWebDAVAccount(id);await this.#session.whoAmI();}
-  async checkCalDAVScheduling(calendarId:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.checkCalDAVScheduling(calendarId);await this.#session.whoAmI();return result;}
-  async listCalDAVAccounts(){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.listCalDAVAccounts();await this.#session.whoAmI();return result;}
-  async connectCalDAVAccount(input:CalDAVSetup){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.connectCalDAVAccount(input);await this.#session.whoAmI();return result;}
-  async removeCalDAVAccount(id:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');await this.#telegram.removeCalDAVAccount(id);await this.#session.whoAmI();}
+  async listCalendarDrafts(connection:string,cursor=''){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const out=await this.#account.listCalendarDrafts(connection,cursor);await this.#session.whoAmI();return out;}
+  async readCalendarDraft(id:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const out=await this.#account.readCalendarDraft(id);await this.#session.whoAmI();return out;}
+  async decideCalendarDraft(id:string,sha256:string,approved:boolean){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const out=await this.#account.decideCalendarDraft(id,sha256,approved);await this.#session.whoAmI();return out;}
+  async listImapAccounts(){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.listImapAccounts();await this.#session.whoAmI();return result;}
+  async connectImapAccount(input:ImapSetup){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.connectImapAccount(input);await this.#session.whoAmI();return result;}
+  async removeImapAccount(id:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');await this.#account.removeImapAccount(id);await this.#session.whoAmI();}
+  async listWebDAVAccounts(){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.listWebDAVAccounts();await this.#session.whoAmI();return result;}
+  async connectWebDAVAccount(input:WebDAVSetup){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.connectWebDAVAccount(input);await this.#session.whoAmI();return result;}
+  async removeWebDAVAccount(id:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');await this.#account.removeWebDAVAccount(id);await this.#session.whoAmI();}
+  async checkCalDAVScheduling(calendarId:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.checkCalDAVScheduling(calendarId);await this.#session.whoAmI();return result;}
+  async listCalDAVAccounts(){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.listCalDAVAccounts();await this.#session.whoAmI();return result;}
+  async connectCalDAVAccount(input:CalDAVSetup){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.connectCalDAVAccount(input);await this.#session.whoAmI();return result;}
+  async removeCalDAVAccount(id:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');await this.#account.removeCalDAVAccount(id);await this.#session.whoAmI();}
   async listCalendarConnections(cursor=''){return this.#session.listCalendarConnections(cursor);}
   async readCalendarEvents(project:string,connection:string,query:import('./calendar-connections.ts').CalendarEventQuery){return this.#session.readCalendarEvents(project,connection,query);}
   async readCalendarConnection(id:string){return this.#session.readCalendarConnection(id);}
-  async listMailDrafts(connection:string,cursor=''){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.listMailDrafts(connection,cursor);await this.#session.whoAmI();return result;}
-  async readMailDraft(id:string){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.readMailDraft(id);await this.#session.whoAmI();return result;}
-  async decideMailDraft(id:string,sha256:string,approved:boolean){await this.#session.whoAmI();if(!this.#telegram)throw Error('Account unavailable.');const result=await this.#telegram.decideMailDraft(id,sha256,approved);await this.#session.whoAmI();return result;}
+  async listMailDrafts(connection:string,cursor=''){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.listMailDrafts(connection,cursor);await this.#session.whoAmI();return result;}
+  async readMailDraft(id:string){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.readMailDraft(id);await this.#session.whoAmI();return result;}
+  async decideMailDraft(id:string,sha256:string,approved:boolean){await this.#session.whoAmI();if(!this.#account)throw Error('Account unavailable.');const result=await this.#account.decideMailDraft(id,sha256,approved);await this.#session.whoAmI();return result;}
   async readMailMessages(project:string,connection:string,query:import('./mail-connections.ts').MailMessageQuery){return this.#session.readMailMessages(project,connection,query);}
   async listMailConnections(cursor=''){return this.#session.listMailConnections(cursor);}
   async readMailConnection(id:string){return this.#session.readMailConnection(id);}
@@ -1802,13 +1646,6 @@ export default {
     let callbackUrl: string;
     try { callbackUrl = JSON.parse(env.MNEMOS_LOGIN_CONFIG ?? "").callbackUrl; }
     catch { return new Response("Not Found", { status: 404 }); }
-    const telegram = telegramRoute(request, callbackUrl);
-    if (telegram) {
-      let id:DurableObjectId;
-      try { id=ctx.exports.TelegramBot.idFromString(telegram); }
-      catch { return new Response("Not Found", {status:404}); }
-      return ctx.exports.TelegramBot.get(id).fetch(request);
-    }
     const mailBridge = await handleMailBridge(request, callbackUrl, env.MNEMOS_MAIL_BRIDGE_TOKEN,
       (id,input) => ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(id)).resolveMailSelection(input),
       (id,input) => ctx.exports.UserAccount.get(ctx.exports.UserAccount.idFromString(id)).readMailSelection(input),

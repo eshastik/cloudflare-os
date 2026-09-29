@@ -17,7 +17,7 @@ function fixture(){
 }
 test('all operation families preserve legacy values, canonical hashes and retained delete history',async()=>{
  for(const key of ['corporateTaskCreation:x','corporateUpdate:x','corporateWorkflowCreation:x','driveImportCapture:x',
- 'resourceMapCreation:x','resourceMapEdit:x','teamDocumentCreation:x','trackerCreation:x','trackerEdit:x','gitRegistrations','mnemosManagedTaskRequest','mnemosManagedAgentRequest','mnemosTaskHistory:x','voiceUpload:x','voiceBudget:x','voiceCommandBudget:x','telegramVoice:x','telegramVoiceTransfer:x','telegramVoiceSettings:x','telegramDelivery:channel:job:0000000000000001','telegramInbox:123:epoch:update:1']){
+ 'resourceMapCreation:x','resourceMapEdit:x','teamDocumentCreation:x','trackerCreation:x','trackerEdit:x','gitRegistrations','mnemosManagedTaskRequest','mnemosManagedAgentRequest','mnemosTaskHistory:x','voiceUpload:x','voiceBudget:x','voiceCommandBudget:x']){
   const f=fixture(),legacy={request:'id',source:'private-content',attempted:false};f.storage.put(key,legacy);
   let {operations,queue}=f.reopen();assert.deepEqual(operations.get(key),legacy);
   const changed={...legacy,attempted:true};operations.put(key,changed);
@@ -47,14 +47,14 @@ test('listing unwraps operation records and skips tombstones without hiding late
  operations.put('driveImportSourceIndex:p',{cursor:'derived'});assert.deepEqual(f.storage.get('driveImportSourceIndex:p'),{cursor:'derived'});
 });
 
-test('Bot ownership is resolved from trusted connection state; routing indexes stay ordinary records',()=>{
+test('Owner is resolved from the supplied owner source; derived indexes stay ordinary records',()=>{
  const f=fixture();f.storage.delete('mnemosAccountOwner');
  let owner={tenant:'tenant',user:'human'};
  const operations=new LocalOperationStorage(f.storage,f.storage,()=>owner);
- const key='telegramDelivery:channel:job:0000000000000001';
+ const key='trackerEdit:x';
  operations.put(key,{source:{message:'private-content'},state:'pending'});
  assert.equal(f.storage.get<any>(key).connection_audit[0].owner_id,'human');
- for(const index of ['telegramDelivery:channel:latest','telegramDelivery:channel:message:1','telegramDelivery:channel:pending:1','telegramVoicePending:scope:1','voiceCommandLatest:source']){
+ for(const index of ['voiceCommandLatest:source','driveImportSourceIndex:p']){
   operations.put(index,1);assert.equal(f.storage.get(index),1);
  }
  owner={...owner,user:'foreign'};assert.throws(()=>operations.get(key),/owner changed/);
@@ -76,25 +76,6 @@ test('Voice upload audit refusal prevents upstream I/O and recovery retains the 
  assert.equal(f.sent[0].after_sha256,f.sent[1].before_sha256);
 });
 
-test('A failed voice execution enqueue rolls back its dedup pointer, job, audit and pending index',async()=>{
- const {TelegramDelivery}=await import('./telegram-delivery.ts');
- for(const failed of ['connectionAuditPending:telegramDelivery:channel:job:0000000000000002','telegramDelivery:channel:job:0000000000000002','telegramDelivery:channel:pending:0000000000000002']){
-  const f=fixture(),parent='telegramDelivery:channel:job:0000000000000001';
-  f.storage.put(parent,{mode:'voice',voiceReview:{revision:1,hash:'a'.repeat(64),source:'source'}});
-  const transaction=<T>(callback:()=>T):T=>{const snapshot=structuredClone(f.rows);try{return callback();}catch(error){f.rows.clear();for(const [key,value] of snapshot)f.rows.set(key,value);throw error;}};
-  const audit=f.reopen().queue;
-  const operations=new LocalOperationStorage(f.storage,audit.capture('https://operation.test',()=>{}),undefined,transaction);
-  const delivery=()=>new TelegramDelivery(operations,'channel',42,{authorize:async()=>{},arm:async()=>{},send:async()=>{throw Error('unexpected send')},client:{} as any});
-  const input={update:2,message:2,sender:42,text:'/voice_execute 1 1 '+'a'.repeat(64)};
-  const before=structuredClone(f.rows);f.refuse(failed);
-  await assert.rejects(delivery().enqueue(input));assert.deepEqual(f.rows,before);
-  f.refuse('');await delivery().enqueue(input);
-  const saved=operations.get<any>('telegramDelivery:channel:job:0000000000000002');
-  assert.equal(saved.mode,'voice_confirm');assert.equal(saved.executeOnConfirmation,true);
-  await delivery().enqueue(input);
-  assert.equal(f.storage.get<any>('telegramDelivery:channel:job:0000000000000002').connection_audit.length,1);
- }
-});
 test('Git registration cannot call upstream without an audited attempt and recovers a lost local result',async()=>{
  const {GitRegistrations}=await import('./git-registration.ts');
  const f=fixture();let {operations}=f.reopen(),controller=new GitRegistrations(operations),posts=0;
