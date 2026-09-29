@@ -231,8 +231,9 @@ async function fetchAppText(storageOrigin: string, ticket: { url: string; method
       !Number.isSafeInteger(ticket.size_bytes) || ticket.size_bytes < 0 || ticket.size_bytes > GADGET_APP_LIMITS.totalBytes || !/^[a-f0-9]{64}$/.test(ticket.sha256_hex)) {
     throw new Error("Недоверенный билет на версию приложения.");
   }
-  let response = await fetch(url.href, { redirect: "error" });
-  if (!response.ok) throw new Error("Версия приложения не скачалась.");
+  // workerd отвергает запрет перенаправлений в fetch (TypeError на каждом вызове): перенаправление — сбой по статусу.
+  let response = await fetch(url.href, { redirect: "manual" });
+  if (!response.ok) { await response.body?.cancel(); throw new Error("Версия приложения не скачалась."); }
   let bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength !== ticket.size_bytes) throw new Error("Версия приложения не скачалась.");
   let digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(b => b.toString(16).padStart(2, "0")).join("");

@@ -24,7 +24,7 @@ export async function uploadAppText(storageOrigin: string, text: string,
   if (url.origin !== storageOrigin || url.username || url.password || url.hash || ticket.method !== "PUT" ||
       ticket.checksum_header !== "x-amz-checksum-sha256" || ticket.checksum_value !== checksum || ticket.content_length !== bytes.byteLength ||
       typeof ticket.upload_id !== "string" || !ticket.upload_id || ticket.upload_id.length > 255) throw failed();
-  const response = await fetcher(url.href, { method: "PUT", body: bytes, redirect: "error", headers: { "x-amz-checksum-sha256": checksum } });
+  const response = await fetcher(url.href, { method: "PUT", body: bytes, redirect: "manual", headers: { "x-amz-checksum-sha256": checksum } });
   await response.body?.cancel();
   if (!response.ok) throw failed();
   return ticket.upload_id;
