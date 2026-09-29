@@ -257,7 +257,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     const { deployed } = await this.object.state();
     if (!deployed) throw new Error("Приложение ещё не запущено: откройте его версию.");
     if (this.#readable !== deployed.sha256) {
-      const ticket = await this.ports.version(deployed.version).catch((error: unknown) => { if (isSetupFailure(error)) throw error; return null; });
+      const ticket = await this.ports.version(deployed.version).catch((error: unknown) => { if (isSetupFailure(error)) throw error; logVersionFailure("version", error); return null; });
       if (!ticket || ticket.sha256 !== deployed.sha256 || ticket.contentType !== GADGET_APP_MIME) throw new Error(APP_VERSION_UNAVAILABLE);
       this.#readable = deployed.sha256;
     }
@@ -268,7 +268,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
   async #text(version: string) {
     if (typeof version !== "string" || !version || version.length > 300) throw new Error("Неверная версия приложения.");
     // Отказ служебного пути (нет ключа оболочки, нет права) — своим текстом; прочие сбои — общим.
-    const read = await this.ports.text(version).catch((error: unknown) => { if (isSetupFailure(error) || isVersionDenied(error)) throw error; return null; });
+    const read = await this.ports.text(version).catch((error: unknown) => { if (isSetupFailure(error) || isVersionDenied(error)) throw error; logVersionFailure("text", error); return null; });
     if (!read || read.contentType !== GADGET_APP_MIME || await gadgetAppSha256(read.text) !== read.sha256) throw new Error("Версия приложения недоступна или повреждена.");
     return { text: read.text, sha256: read.sha256, envelope: parseGadgetAppText(read.text) };
   }
@@ -466,4 +466,10 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     await this.ports.forkSources({ project: origin.project, node: origin.node }, { project: this.identity.project, node: this.identity.node }, origin.sha256);
     await this.object.clearOrigin(this.#now());
   }
+}
+
+/** Причина сбоя чтения версии — в журнал оболочки: человеку идёт общий текст, а без причины
+ *  сбой не разобрать (29.09 предпросмотр падал с «недоступна или повреждена» без следа). */
+function logVersionFailure(port: string, error: unknown): void {
+  console.warn("mnemos-app: версия не прочитана", port, error instanceof Error ? `${error.name}: ${error.message}` : String(error));
 }
