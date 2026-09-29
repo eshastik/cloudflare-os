@@ -62,6 +62,8 @@ import { useNarrowScreen } from './useNarrowScreen'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 import { isGadgetRestartLog } from './gadgetRestartLog'
 import MnemosAppStatus, { MnemosAppUnavailable, useMnemosApp } from './MnemosAppStatus'
+import { openAppInWorkspace, type AppWorkspace } from './mnemosAppInChat'
+import type { OpenAppInChat } from './components/chat/useMnemosLink'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
 
@@ -1205,6 +1207,19 @@ export default function GadgetEditor() {
     })
   }, [id, navigate, isAgentActive, setWorkspaceVisibility, workpieces, handleTabSelect])
 
+  // Приложение Mnemos из беседы (карточка гаджета, ссылки хода работы) открывается в панели этой же
+  // беседы: найденный или новый гаджет рабочего места, привязку ставит шапка приложения после проверки прав.
+  const allGadgetsRef = useRef(allGadgets)
+  allGadgetsRef.current = allGadgets
+  const openMnemosApp = useCallback<OpenAppInChat>(async target => {
+    if (!overseer || !id) return false
+    const workspace: AppWorkspace = { id, overseer: overseer.stub as unknown as AppWorkspace['overseer'], gadgets: allGadgetsRef.current }
+    const gadgetId = await openAppInWorkspace(authenticatedApi, workspace, target)
+    if (gadgetId === null) return false
+    handleSelectWorkpiece(gadgetId)
+    return true
+  }, [overseer, id, authenticatedApi, handleSelectWorkpiece])
+
   const handleRenameWorkpiece = useCallback(async (workpieceId: WorkpieceId, title: string) => {
     if (!overseer) return
     // The subscription delivers the updated summary, so no local state change is needed.
@@ -1583,6 +1598,7 @@ export default function GadgetEditor() {
                   onOpenGadget={handleSelectWorkpiece}
                   outputOfWorkpiece={outputOfWorkpiece}
                   workspaceGadgets={allGadgets}
+                  openMnemosApp={openMnemosApp}
                 />
               </div>
 

@@ -122,7 +122,7 @@ describe("строки инструментов агента", () => {
     const saved = callStep(call("gadgetWork", { task: "учёт отпусков" }, { output: { projectTitle: "Кадры", steps: [],
       gadget: { saved: true, accountId: 3, projectId: "hr", resource: "node-7", title: "Отпуска", collaborative: true, created: true } } }));
     expect(saved.label).toBe("Построил гаджет «Отпуска»");
-    expect(saved.detail).toEqual({ type: "found", items: [{ name: "Открыть гаджет «Отпуска»", link: { project: "hr", document: "node-7" } }] });
+    expect(saved.detail).toEqual({ type: "found", items: [{ name: "Открыть гаджет «Отпуска»", link: { project: "hr", document: "node-7", accountId: 3, title: "Отпуска" } }] });
     const refused = callStep(call("gadgetWork", { task: "x" }, { output: { projectTitle: "Кадры", steps: [], gadget: { saved: false, error: "нет сборки" } } }));
     expect(refused.label).toBe("Построил гаджет");
     expect(refused.detail).toEqual({ type: "text", text: "Гаджет не сохранён: нет сборки" });

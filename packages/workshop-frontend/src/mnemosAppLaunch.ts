@@ -19,13 +19,16 @@ export function readMnemosAppLaunch(): MnemosAppLaunch | null {
 }
 export function clearMnemosAppLaunch() { try { sessionStorage.removeItem(key(location.pathname)) } catch { /* нечего чистить */ } }
 
+/** Заявка для страницы рабочего места: её выполнит шапка приложения, когда откроется гаджет gadgetId. */
+export function rememberMnemosAppLaunch(workspace: string, launch: Omit<MnemosAppLaunch, 'at'>) {
+  sessionStorage.setItem(key(`/workspace/${encodeURIComponent(workspace)}`), JSON.stringify({...launch, at: Date.now()} satisfies MnemosAppLaunch))
+}
+
 /** Своё рабочее место на каждый узел приложения, как у документа: второе открытие попадает в то же место. */
 export async function launchMnemosApp(api: Pick<AuthenticatedApi, 'listGadgets' | 'newGadget'>, accountId: number, scope: string, resource: string, publication: string,
   navigate: (id: string) => void | Promise<void>): Promise<boolean> {
   const workspaceKey = `mnemos-app-workspace:${JSON.stringify([accountId, scope, resource])}`
-  const remember = (workspace: string, gadgetId: number) => {
-    sessionStorage.setItem(key(`/workspace/${encodeURIComponent(workspace)}`), JSON.stringify({accountId, scope, resource, publication, gadgetId, at: Date.now()} satisfies MnemosAppLaunch))
-  }
+  const remember = (workspace: string, gadgetId: number) => rememberMnemosAppLaunch(workspace, {accountId, scope, resource, publication, gadgetId})
   let previous: {workspace: string; gadgetId: number} | null = null
   try {
     const stored = JSON.parse(localStorage.getItem(workspaceKey) || 'null')

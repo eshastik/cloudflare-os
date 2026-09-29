@@ -322,13 +322,14 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     } finally { if (opened !== source.current) disposeGatekeeperFrame(opened.frame) }
   }
 
-  // Открытие из Mnemos: заявка страницы выполняется один раз для своего гаджета.
-  const launched = useRef(false)
+  // Открытие из Mnemos: заявка страницы выполняется один раз для своего гаджета. Проверка идёт по каждому
+  // выбранному гаджету: из беседы заявка пишется, пока в панели открыт другой гаджет.
+  const launchedFor = useRef<Gadget | null>(null)
   useEffect(() => {
-    if (!gadget || !app || launched.current) return
+    if (!gadget || !app || launchedFor.current === gadget) return
     const launch = readMnemosAppLaunch()
     if (!launch) return
-    launched.current = true
+    launchedFor.current = gadget
     void gadget.getId().then(id => {
       if (id !== launch.gadgetId) return
       clearMnemosAppLaunch()

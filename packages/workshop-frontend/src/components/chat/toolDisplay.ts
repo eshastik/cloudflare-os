@@ -297,8 +297,8 @@ export type FoundItem = {
   path?: string;
   snippet?: string;
   folder?: boolean;
-  /** Куда ведёт ссылка: проект и документ Mnemos. */
-  link?: { project: string; document?: string; resourceTitle?: string };
+  /** Куда ведёт ссылка: проект и документ Mnemos; accountId и title известны у сохранённого гаджета. */
+  link?: { project: string; document?: string; resourceTitle?: string; accountId?: number; title?: string };
 };
 
 export type StepDetail =
@@ -571,7 +571,7 @@ export function callStep(call: AiToolCall): WorkStep {
       const gadget = call.output?.gadget;
       if (gadget?.saved) {
         target = gadget.title;
-        detail = { type: "found", items: [{ name: `Открыть гаджет «${clip(gadget.title, 60)}»`, link: { project: gadget.projectId, document: gadget.resource } }] };
+        detail = { type: "found", items: [{ name: `Открыть гаджет «${clip(gadget.title, 60)}»`, link: { project: gadget.projectId, document: gadget.resource, accountId: gadget.accountId, title: gadget.title } }] };
       } else if (gadget) {
         detail = { type: "text", text: `Гаджет не сохранён: ${gadget.error}` };
       }

@@ -131,7 +131,7 @@ import { ActionConfirmCard } from "./components/chat/ActionConfirmCard";
 import { useActionOpen } from "./components/chat/useActionOpen";
 import { LiveStep, WorkRun, type OpenDocument } from "./components/chat/WorkSteps";
 import { actionDisplay, describeLiveStep, type GadgetRef, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
-import { useMnemosLink } from "./components/chat/useMnemosLink";
+import { useMnemosLink, type OpenAppInChat } from "./components/chat/useMnemosLink";
 import { reasoningSections } from "./components/chat/reasoningSections";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
@@ -1750,7 +1750,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
         <GadgetWorkCard
           gadget={gadget}
           projectTitle={displayName(codeCall.output?.projectTitle, "Проект")}
-          onOpen={openDocument?.({ project: gadget.projectId, document: gadget.resource })}
+          onOpen={openDocument?.({ project: gadget.projectId, document: gadget.resource, accountId: gadget.accountId, title: gadget.title })}
         />
       </div>
     );
@@ -4223,6 +4223,8 @@ interface ChatInterfaceProps {
   outputOfWorkpiece: (gadgetId: WorkpieceId) => BlueprintOutput | undefined;
   // Гаджеты рабочего места: заголовок для шагов кода в старых записях, где список гаджетов не сохранён.
   workspaceGadgets?: readonly { title: string; output?: BlueprintOutput }[];
+  // Открыть приложение Mnemos (гаджет из проекта) в панели этой беседы; false — узел не приложение.
+  openMnemosApp?: OpenAppInChat;
 }
 
 // Bucket a chat's lastActive into a time grouping for the chat list.
@@ -4407,6 +4409,7 @@ function ChatInterface({
   onOpenGadget,
   outputOfWorkpiece,
   workspaceGadgets,
+  openMnemosApp,
 }: ChatInterfaceProps) {
   // Persistent cache that survives reconnects
   const toasts = useKumoToastManager();
@@ -5462,7 +5465,8 @@ function ChatInterface({
 
   // Patch cached chat messages on action upserts.
   const openActionScreen = useActionOpen();
-  const openMnemosDocument = useMnemosLink();
+  const reportLinkError = useCallback((title: string) => { toasts.add({ title, variant: "error" }); }, [toasts]);
+  const openMnemosDocument = useMnemosLink(openMnemosApp, reportLinkError);
   const workRunContext = useMemo(() => ({
     projectNames: new Map(chatProjectList.flatMap((p) => p.title && !looksLikeId(p.title) ? [[p.projectId, p.title] as const] : [])),
     // Гаджеты, созданные в этой беседе: имя привязки → заголовок, для записей без списка гаджетов.

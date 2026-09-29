@@ -135,6 +135,23 @@ test('с правом правки: код не скачивается и в р�
   await unmount()
 })
 
+test('заявка из беседы пишется, пока в панели другой гаджет: выполняется, когда откроется её гаджет', async () => {
+  launch(PUBLISHED)
+  const h = harness()
+  const other = { ...h.gadget, getId: async () => 4, setMnemosApp: vi.fn() }
+  const out: { current: MnemosAppHandle | null } = { current: null }
+  function Probe({ gadget }: { gadget: unknown }) { out.current = useMnemosApp({ api: h.api as never, gadget: gadget as never, pollMs: 0 }); return null }
+  const root = createRoot(document.createElement('div'))
+  await act(async () => root.render(<Probe gadget={other} />))
+  await act(async () => { await Promise.resolve() })
+  expect(other.setMnemosApp).not.toHaveBeenCalled()
+  expect(readMnemosAppLaunch()).not.toBeNull()
+  await act(async () => root.render(<Probe gadget={h.gadget} />))
+  await act(async () => { await vi.waitFor(() => expect(h.calls.bindings.at(-1)).toMatchObject({ resource: 'node', savedVersion: PUBLISHED })) })
+  expect(readMnemosAppLaunch()).toBeNull()
+  await act(async () => root.unmount())
+})
+
 test('личная версия совместного приложения у автора — предпросмотр отдельным экземпляром; общий не трогается; переключатель на опубликованную', async () => {
   launch(`private:${HEAD}`)
   const h = harness({ deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
