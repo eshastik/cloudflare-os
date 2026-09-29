@@ -62,7 +62,7 @@ import { useNarrowScreen } from './useNarrowScreen'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 import { isGadgetRestartLog } from './gadgetRestartLog'
 import MnemosAppStatus, { MnemosAppUnavailable, useMnemosApp } from './MnemosAppStatus'
-import { openAppInWorkspace, type AppWorkspace } from './mnemosAppInChat'
+import { openAppInWorkspace, WorkpieceArrivals, type AppWorkspace } from './mnemosAppInChat'
 import type { OpenAppInChat } from './components/chat/useMnemosLink'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
@@ -420,6 +420,9 @@ function NoGadgetPlaceholder({ height }: { height: string }) {
 }
 
 // ─── component ────────────────────────────────────────────────────────────────
+
+/** Сколько ждать, пока новый гаджет придёт в список рабочего места. */
+const APP_ARRIVAL_MS = 15_000
 
 export default function GadgetEditor() {
   const nativeSnapshotSource = useRef<NativeSnapshotSource | null>(null)
@@ -1211,14 +1214,21 @@ export default function GadgetEditor() {
   // беседы: найденный или новый гаджет рабочего места, привязку ставит шапка приложения после проверки прав.
   const allGadgetsRef = useRef(allGadgets)
   allGadgetsRef.current = allGadgets
+  const arrivals = useMemo(() => new WorkpieceArrivals(), [id])
+  useEffect(() => { arrivals.update(allGadgets.map(g => g.id)) }, [arrivals, allGadgets])
+  const selectWorkpieceRef = useRef(handleSelectWorkpiece)
+  selectWorkpieceRef.current = handleSelectWorkpiece
   const openMnemosApp = useCallback<OpenAppInChat>(async target => {
     if (!overseer || !id) return false
     const workspace: AppWorkspace = { id, overseer: overseer.stub as unknown as AppWorkspace['overseer'], gadgets: allGadgetsRef.current }
     const gadgetId = await openAppInWorkspace(authenticatedApi, workspace, target)
     if (gadgetId === null) return false
-    handleSelectWorkpiece(gadgetId)
+    // Новый гаджет выбирается, когда он уже в списке и страница перестроилась под первый гаджет.
+    if (!await arrivals.wait(gadgetId, APP_ARRIVAL_MS)) throw new Error('рабочее место не показало новый гаджет')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    selectWorkpieceRef.current(gadgetId)
     return true
-  }, [overseer, id, authenticatedApi, handleSelectWorkpiece])
+  }, [overseer, id, authenticatedApi, arrivals])
 
   const handleRenameWorkpiece = useCallback(async (workpieceId: WorkpieceId, title: string) => {
     if (!overseer) return
@@ -1659,7 +1669,7 @@ export default function GadgetEditor() {
               : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
           <header
-            className={`flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
+            className={`@container flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
               ? `gap-3.5 border-b border-kumo-fill bg-kumo-overlay ${narrow ? 'px-3' : 'px-6'}`
               : narrow ? 'border-b border-kumo-fill pl-4 pr-2' : 'pl-5 pr-3'}`}
             style={{ height: isGadgetFullscreen ? FULLSCREEN_HEADER_H : GADGET_HEADER_H }}
@@ -1693,7 +1703,8 @@ export default function GadgetEditor() {
               )}
             </div>
 
-            {!paneShowsActivity && !narrow && presence}
+            {/* В панели рядом с беседой места нет: соавторы видны в «Поделиться», шапке нужны действия. */}
+            {!paneShowsActivity && !narrow && <div className="flex shrink-0 empty:hidden @max-[860px]:hidden">{presence}</div>}
 
             {!paneShowsActivity && selectedGadgetStub && selectedNativeFormat && (
               <DocumentStatus

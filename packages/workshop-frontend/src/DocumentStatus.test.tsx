@@ -486,3 +486,21 @@ it('отказ сохранения общего документа: понят�
     expect(harness.saves).toHaveLength(1)
   } finally { await view.unmount() }
 })
+
+it('шапка в узкой панели: «Версии» и второе действие уходят в меню «…» после главной кнопки; без контейнера меню скрыто', () => {
+  const model = { kind: 'saved', version: 'Общее приложение', audience: 'своя пустая база', saved: 'Предпросмотр личной версии', tone: 'info', primary: { kind: 'submit', label: 'Опубликовать', hint: '' }, secondary: { kind: 'published', label: 'Показать опубликованную' } } as const
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  act(() => root.render(<DocumentStatusView model={model} bound versionOpen={false} onPrimary={() => {}} onSecondary={() => {}} onOpenVersion={() => {}} />))
+  const buttons = [...host.querySelectorAll('button')]
+  const byText = (text: string) => buttons.find(b => b.textContent?.includes(text))!
+  // Широкая шапка — кнопки на месте; в контейнере уже 1100 px они скрываются, появляется «…».
+  expect(byText('Версии').className).toContain('@max-[1100px]:hidden')
+  expect(byText('Показать опубликованную').className).toContain('@max-[1100px]:!hidden')
+  expect(byText('Опубликовать').className).not.toContain('@max-[1100px]')
+  const more = host.querySelector('[data-status-more]')!
+  expect(more.className).toMatch(/(^| )hidden( |$)/)
+  expect(more.className).toContain('@max-[1100px]:inline-flex')
+  expect(buttons.indexOf(more as HTMLButtonElement)).toBeGreaterThan(buttons.indexOf(byText('Опубликовать')))
+  act(() => root.unmount())
+})

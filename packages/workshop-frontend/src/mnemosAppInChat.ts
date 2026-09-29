@@ -88,3 +88,34 @@ export function openAppInWorkspace(api: Api, workspace: AppWorkspace, target: Ap
   void job.finally(() => { if (inFlight.get(key) === job) inFlight.delete(key) }).catch(() => {})
   return job
 }
+
+/**
+ * Ожидание, пока новый гаджет появится в списке рабочего места (он приходит подпиской). Панель
+ * открывается только после этого: выбор ещё не пришедшего гаджета страница отбрасывала — вид панели
+ * сбрасывался на беседу, а адрес перезаписывался её же переходами при появлении первого гаджета.
+ */
+export class WorkpieceArrivals {
+  #listed = new Set<number>()
+  #waiters = new Map<number, Set<(listed: boolean) => void>>()
+
+  update(ids: Iterable<number>) {
+    this.#listed = new Set(ids)
+    for (const [id, waiters] of this.#waiters) {
+      if (!this.#listed.has(id)) continue
+      this.#waiters.delete(id)
+      for (const resolve of waiters) resolve(true)
+    }
+  }
+
+  /** true — гаджет в списке; false — не пришёл за timeoutMs. */
+  wait(id: number, timeoutMs: number): Promise<boolean> {
+    if (this.#listed.has(id)) return Promise.resolve(true)
+    return new Promise(resolve => {
+      const waiters = this.#waiters.get(id) ?? new Set()
+      this.#waiters.set(id, waiters)
+      const done = (listed: boolean) => { clearTimeout(timer); waiters.delete(done); resolve(listed) }
+      const timer = setTimeout(() => done(false), timeoutMs)
+      waiters.add(done)
+    })
+  }
+}

@@ -1,6 +1,6 @@
 // Карточка гаджета в ленте беседы: итог gadgetWork, когда сборка сохранена в проект.
 // Открывает файл гаджета через навигацию оболочки (useMnemosLink), а не по внешнему адресу.
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { AppWindow, FolderSimple, LockSimple } from "@phosphor-icons/react";
 import type { AiChatMessage } from "@gadgets/workshop-shared/api";
 import type { GadgetWorkResult } from "@gadgets/workshop-shared/code-work";
@@ -10,8 +10,8 @@ export type SavedGadget = Extract<GadgetWorkResult, { saved: true }>;
 export type GadgetWorkCardProps = {
   gadget: SavedGadget;
   projectTitle: string;
-  /** Переход к файлу гаджета; нет — приложение Mnemos не подключено, кнопка неактивна. */
-  onOpen?: () => void;
+  /** Открыть гаджет; нет — приложение Mnemos не подключено, кнопка неактивна. Обещание — открытие идёт. */
+  onOpen?: () => void | Promise<unknown>;
 };
 
 /** Строка под названием: описание из манифеста, иначе — что значит «совместный» или «личный». */
@@ -26,6 +26,17 @@ function gadgetSummary(gadget: SavedGadget): string {
 const badgeClass = "inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[12px] font-medium leading-4";
 
 export const GadgetWorkCard = memo(function GadgetWorkCard({ gadget, projectTitle, onOpen }: GadgetWorkCardProps) {
+  // Первое открытие заводит гаджет в рабочем месте — это секунды; кнопка показывает, что нажатие принято.
+  const [opening, setOpening] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const open = () => {
+    if (!onOpen || opening) return;
+    const result = onOpen();
+    if (!(result instanceof Promise)) return;
+    setOpening(true);
+    void result.catch(() => {}).finally(() => { if (mounted.current) setOpening(false); });
+  };
   return (
     <article
       aria-label={`Гаджет «${gadget.title}»`}
@@ -69,12 +80,13 @@ export const GadgetWorkCard = memo(function GadgetWorkCard({ gadget, projectTitl
         </div>
         <button
           type="button"
-          onClick={onOpen}
-          disabled={!onOpen}
+          onClick={open}
+          disabled={!onOpen || opening}
+          aria-busy={opening || undefined}
           title={onOpen ? undefined : "Приложение Mnemos не подключено"}
-          className="inline-flex h-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg bg-kumo-brand px-4 text-[14px] font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring focus-visible:ring-offset-2 focus-visible:ring-offset-kumo-overlay active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none touch:h-10"
+          className="inline-flex h-9 flex-shrink-0 cursor-pointer items-center justify-center rounded-lg bg-kumo-brand px-4 text-[14px] font-medium text-white transition-[background-color,transform] duration-150 ease-out hover:bg-kumo-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring focus-visible:ring-offset-2 focus-visible:ring-offset-kumo-overlay active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 aria-busy:!cursor-progress aria-busy:!opacity-100 min-w-[112px] motion-reduce:transition-none touch:h-10"
         >
-          Открыть
+          {opening ? "Открываю…" : "Открыть"}
         </button>
       </div>
       {gadget.sourcesNote && (

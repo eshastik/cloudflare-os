@@ -15,7 +15,7 @@ vi.mock('./accountCapabilities', () => ({
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: () => {} }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-import { openAppInWorkspace, type AppWorkspace } from './mnemosAppInChat'
+import { openAppInWorkspace, WorkpieceArrivals, type AppWorkspace } from './mnemosAppInChat'
 import { readMnemosAppLaunch } from './mnemosAppLaunch'
 import { mnemosLinkOpener, type OpenAppInChat } from './components/chat/useMnemosLink'
 import { GadgetWorkCard, type SavedGadget } from './components/chat/GadgetWorkCard'
@@ -152,5 +152,47 @@ describe('карточка гаджета в беседе', () => {
     expect(ws.created).toEqual(['Учёт отпусков'])
     expect(navigate).not.toHaveBeenCalled()
     expect(location.pathname).toBe('/workspace/ws-chat')
+  })
+})
+
+describe('первое нажатие: гаджет выбирается, когда он уже в списке рабочего места', () => {
+  it('ожидание завершается приходом гаджета в список, а не раньше; без прихода — отказ по сроку', async () => {
+    const arrivals = new WorkpieceArrivals()
+    arrivals.update([1])
+    let arrived: boolean | undefined
+    const waiting = arrivals.wait(2, 1000).then(listed => { arrived = listed })
+    await Promise.resolve()
+    expect(arrived).toBeUndefined()
+    arrivals.update([1])
+    await Promise.resolve()
+    expect(arrived).toBeUndefined()
+    arrivals.update([1, 2])
+    await waiting
+    expect(arrived).toBe(true)
+    expect(await arrivals.wait(2, 1000)).toBe(true)
+    expect(await arrivals.wait(3, 5)).toBe(false)
+  })
+})
+
+describe('кнопка «Открыть» пока гаджет готовится', () => {
+  let root: Root | undefined, host: HTMLDivElement | undefined
+  afterEach(() => { act(() => root?.unmount()); host?.remove(); root = undefined; host = undefined })
+
+  it('первое нажатие сразу видно: «Открываю…», повторное нажатие не запускает второе открытие', async () => {
+    let finish!: () => void
+    const onOpen = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    const gadget: SavedGadget = { saved: true, accountId: 3, projectId: 'hr', resource: 'node-7', title: 'Учёт отпусков', collaborative: true, created: true }
+    host = document.createElement('div'); document.body.append(host)
+    root = createRoot(host)
+    act(() => root!.render(<GadgetWorkCard gadget={gadget} projectTitle="Кадры" onOpen={onOpen} />))
+    const button = host.querySelector('button') as HTMLButtonElement
+    act(() => button.click())
+    expect(button.textContent).toBe('Открываю…')
+    expect(button.getAttribute('aria-busy')).toBe('true')
+    act(() => button.click())
+    expect(onOpen).toHaveBeenCalledOnce()
+    await act(async () => { finish() })
+    expect(button.textContent).toBe('Открыть')
+    expect(button.disabled).toBe(false)
   })
 })

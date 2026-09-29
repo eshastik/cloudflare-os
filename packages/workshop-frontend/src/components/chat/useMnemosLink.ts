@@ -31,8 +31,8 @@ export function mnemosLinkOpener({ apps, navigate, openInChat, onError }: {
     const accountId = link.accountId ?? app?.accountId;
     const document = link.document;
     if (openInChat && document && accountId !== undefined) {
-      return () => {
-        void openInChat({ accountId, scope: link.project, resource: document, ...(link.title ? { title: link.title } : {}) }).then(
+      // Обещание возвращается кнопке: пока гаджет готовится (это секунды), она показывает, что работа идёт.
+      return () => openInChat({ accountId, scope: link.project, resource: document, ...(link.title ? { title: link.title } : {}) }).then(
           opened => {
             if (opened) return;
             if (toProjects) toProjects();
@@ -42,7 +42,6 @@ export function mnemosLinkOpener({ apps, navigate, openInChat, onError }: {
             const reason = error instanceof Error && /[А-Яа-яЁё]/.test(error.message) ? error.message.replace(/\.$/, "") : "Mnemos не ответил";
             onError?.(`Не удалось открыть: ${reason}. Повторите попытку.`);
           });
-      };
     }
     return toProjects;
   };

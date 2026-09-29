@@ -3,7 +3,9 @@ import { HistoryPreparingLine } from './HistoryPreparingNotice'
 import { readNativeDocumentLaunch, clearNativeDocumentLaunch, type NativeDocumentLaunch } from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ClockCounterClockwise } from '@phosphor-icons/react'
+import { ClockCounterClockwise, DotsThree } from '@phosphor-icons/react'
+import { DropdownMenu } from '@cloudflare/kumo'
+import { MENU_CONTENT, MENU_ITEM, MENU_POSITIONER_STYLE } from './components/menuStyles'
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentSelector, GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
@@ -194,6 +196,9 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
   const button = compact ? '!h-10 !rounded-full !px-4' : '!h-8 !rounded-full'
   const shareShown = !!(compact && onShare && !model?.primary && !(unsaved && onSaveToProject))
   useEffect(() => { onShareShown?.(shareShown) }, [shareShown, onShareShown])
+  // Шапка гаджета — контейнер (@container): в панели рядом с беседой (~730 px) «Версии» и второе действие
+  // не помещаются рядом с переключателем и «Поделиться» и уходят в меню «…» после главной кнопки.
+  const secondary = model?.secondary && (!compact || !model.primary || model.secondary.kind !== 'withdraw') ? model.secondary : null
   return <div className="flex min-w-0 items-center gap-2">
     <span data-document-status title={statusText} className={`flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[13px] leading-4 text-kumo-subtle ${compact ? 'max-w-[120px]' : 'max-w-[340px]'}`}>
       {flash ? <span role="status" className="flex min-w-0 items-center gap-1.5 text-kumo-default">
@@ -206,11 +211,19 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
       </> : <span className="truncate">{saving ?? (busy ? (compact ? 'Читаю…' : 'Читаю состояние в Mnemos…') : bound ? (compact ? 'Не прочитано' : 'Состояние документа не прочитано') : (compact ? 'Не в Mnemos' : 'Не сохранён в Mnemos, версий нет'))}</span>}
     </span>
     {!compact && <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
-      className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>}
-    {error && !compact && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger">{error}</span>}
+      className={`inline-flex @max-[1100px]:hidden h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>}
+    {error && !compact && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger @max-[1100px]:max-w-[160px]">{error}</span>}
     {error && compact && <span role="alert" title={error} className="h-2 w-2 shrink-0 rounded-full bg-kumo-danger" aria-label={error} />}
-    {model?.secondary && (!compact || !model.primary || model.secondary.kind !== 'withdraw') && <WorkshopButton className={button} disabled={disabled || busy} onClick={onSecondary}>{model.secondary.label}</WorkshopButton>}
+    {secondary && <WorkshopButton className={`${button} ${compact ? '' : '@max-[1100px]:!hidden'}`} disabled={disabled || busy} onClick={onSecondary}>{secondary.label}</WorkshopButton>}
     {model?.primary && <WorkshopButton tone="primary" className={button} data-primary-action title={model.primary.hint} disabled={disabled || busy || model.primary.disabled} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
+    {!compact && <DropdownMenu>
+      <DropdownMenu.Trigger render={<button type="button" data-status-more aria-label="Ещё действия" title="Ещё действия"
+        className="hidden @max-[1100px]:inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><DotsThree size={18} weight="bold" /></button>} />
+      <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
+        <DropdownMenu.Item disabled={disabled} onClick={onOpenVersion} className={MENU_ITEM}>Версии</DropdownMenu.Item>
+        {secondary && <DropdownMenu.Item disabled={disabled || busy} onClick={onSecondary} className={MENU_ITEM}>{secondary.label}</DropdownMenu.Item>}
+      </DropdownMenu.Content>
+    </DropdownMenu>}
     {shareShown && <WorkshopButton tone="primary" className={button} onClick={onShare}>Поделиться</WorkshopButton>}
     {unsaved && onSaveToProject && <WorkshopButton tone="primary" className={button} data-primary-action title="Документ сохранится в выбранный проект Mnemos как ваш личный черновик; после этого появятся версии, согласование и скачивание в Word." disabled={disabled} onClick={onSaveToProject}>{compact ? 'Сохранить' : 'Сохранить в проект…'}</WorkshopButton>}
   </div>
