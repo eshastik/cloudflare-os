@@ -104,6 +104,13 @@ async function harness(options: Options = {}) {
     },
     drafts: new DraftLimiter(),
     voice: { busy: false },
+    mnemos: {
+      read: async () => ({ principal: "p", page: { items: [], next_after: 0, delivered: 0, more: false } }),
+      ack: async sequence => sequence,
+      prepare: async () => ({ version: null, details: [] }),
+      decide: async () => ({ status: "stale", reason: "нет" }),
+    },
+    setAlarm: () => {},
   });
   let record: BotRecord = {
     owner: OWNER, mnemos: null, bot: { id: BOT, username: "alice_helper_bot", title: "Помощник" },

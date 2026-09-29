@@ -11,6 +11,8 @@ const api = vi.hoisted(() => ({
   connectTelegramBot: vi.fn<(token: string) => Promise<unknown>>(),
   renewTelegramCode: vi.fn<() => Promise<unknown>>(),
   disconnectTelegramBot: vi.fn<() => Promise<unknown>>(),
+  getNotificationSettings: vi.fn<() => Promise<unknown>>(async () => null),
+  saveNotificationSettings: vi.fn<(kinds: Record<string, boolean>) => Promise<unknown>>(),
 }));
 vi.mock("./AuthContext", () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }));
 import TelegramSettings from "./TelegramSettings";
@@ -118,5 +120,53 @@ it("подключённый бот: выключенные треды — пр�
     await React.act(async () => button(el, "Да, отключить")!.click());
     expect(api.disconnectTelegramBot).toHaveBeenCalledOnce();
     expect(el.querySelector("#telegram-token")).not.toBeNull();
+  } finally { await done(); }
+});
+
+const CONNECTED = { status: "connected", bot: BOT, threads: ON, owner: { name: "Алиса", username: null }, connectedAt: Date.now() } satisfies TelegramBotState;
+const KINDS = { decision_needed: true, task_result: true, shared_with_me: false, platform_failure: false };
+const switches = (el: HTMLElement) => [...el.querySelectorAll<HTMLButtonElement>('button[role="switch"]')];
+
+it("уведомления: три вида у обычного человека, переключение сохраняет все четыре", async () => {
+  api.getTelegramBot.mockResolvedValue(CONNECTED);
+  api.getNotificationSettings.mockResolvedValue({ kinds: KINDS, platformFailure: false });
+  api.saveNotificationSettings.mockImplementation(async kinds => ({ kinds, platformFailure: false }));
+  const { el, done } = await render();
+  try {
+    expect(el.textContent).toContain("Уведомления");
+    expect(el.textContent).not.toContain("Сбои системы");
+    const list = switches(el);
+    expect(list.map(b => b.getAttribute("aria-checked"))).toEqual(["true", "true", "false"]);
+    await React.act(async () => list[2].click());
+    expect(api.saveNotificationSettings).toHaveBeenCalledWith({ ...KINDS, shared_with_me: true });
+    expect(switches(el)[2].getAttribute("aria-checked")).toBe("true");
+  } finally { await done(); }
+});
+
+it("уведомления: администратор видит «Сбои системы»", async () => {
+  api.getTelegramBot.mockResolvedValue(CONNECTED);
+  api.getNotificationSettings.mockResolvedValue({ kinds: { ...KINDS, platform_failure: true }, platformFailure: true });
+  const { el, done } = await render();
+  try {
+    expect(el.textContent).toContain("Сбои системы");
+    expect(switches(el)).toHaveLength(4);
+  } finally { await done(); }
+});
+
+it("уведомления: без подключения Mnemos — объяснение вместо переключателей; сбой сохранения — сообщение", async () => {
+  api.getTelegramBot.mockResolvedValue(CONNECTED);
+  api.getNotificationSettings.mockResolvedValueOnce(null);
+  let first = await render();
+  try {
+    expect(first.el.textContent).toContain("Подключите Mnemos");
+    expect(switches(first.el)).toHaveLength(0);
+  } finally { await first.done(); }
+  api.getNotificationSettings.mockResolvedValue({ kinds: KINDS, platformFailure: false });
+  api.saveNotificationSettings.mockRejectedValue(new Error("Не получилось прочитать или сохранить настройки уведомлений. Обновите страницу и повторите."));
+  const { el, done } = await render();
+  try {
+    await React.act(async () => switches(el)[0].click());
+    expect(el.querySelector('[role="alert"]')?.textContent).toContain("Не получилось");
+    expect(switches(el)[0].getAttribute("aria-checked")).toBe("true");
   } finally { await done(); }
 });

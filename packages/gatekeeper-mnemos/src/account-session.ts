@@ -779,6 +779,19 @@ export class MnemosAccountSession {
   async setProjectVisibility(project: string, level: import("./project-sharing.ts").ProjectVisibility, canEdit: boolean, consent = false) {
     await this.whoAmI(); const out = await this.#client.setProjectVisibility(project, level, canEdit, this.#lifetime.signal, consent === true); this.#check(); return out;
   }
+  /** Очередь уведомлений и её настройки — только сессией человека (whoAmI отсекает агентскую). */
+  async readNotifications(after: number | null, limit: number) {
+    await this.whoAmI(); const out = await this.#client.readNotifications(after, limit, this.#lifetime.signal); this.#check(); return out;
+  }
+  async acknowledgeNotifications(sequence: number) {
+    await this.whoAmI(); const out = await this.#client.acknowledgeNotifications(sequence, this.#lifetime.signal); this.#check(); return out;
+  }
+  async readNotificationSettings() {
+    this.#check(); const out = await this.#client.readNotificationSettings(this.#lifetime.signal); this.#check(); return out;
+  }
+  async saveNotificationSettings(kinds: Record<string, boolean>) {
+    await this.whoAmI(); const out = await this.#client.saveNotificationSettings({ ...kinds }, this.#lifetime.signal); this.#check(); return out;
+  }
   async listShareRequests(mine = false) {
     await this.whoAmI(); const out = await this.#client.listShareRequests(mine, this.#lifetime.signal); this.#check(); return out;
   }

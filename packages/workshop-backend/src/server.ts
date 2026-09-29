@@ -34,8 +34,9 @@ import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PAT
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
-import { handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramChatTarget, TelegramPersonalBot } from "./telegram/durable";
-import type { TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
+import { handleTelegramAppOpen, handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramChatTarget, TelegramPersonalBot, TELEGRAM_APP_OPEN_PATH } from "./telegram/durable";
+import type { NotificationKind, NotificationSettings, TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
+import { MNEMOS_NOTIFICATIONS_UNAVAILABLE } from "./user";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { recordAnalytics } from "./analytics";
 import { handleClientErrorRequest } from "./client-errors.js";
@@ -87,6 +88,16 @@ type Env = Cloudflare.Env & ChatVoiceConfig & {
   CF_ACCESS_ISS?: string,  // team URL, i.e. https://<team>.cloudflareaccess.com
   DEV?: boolean;
   FLAGS?: Flagship;
+}
+
+// Настройки уведомлений: без подключения Mnemos — null (экран так и скажет); остальные сбои —
+// общим текстом без подробностей.
+async function notificationSettingsCall(operation: () => Promise<NotificationSettings>): Promise<NotificationSettings | null> {
+  try { return await operation(); }
+  catch (error) {
+    if (error instanceof Error && error.message.includes(MNEMOS_NOTIFICATIONS_UNAVAILABLE)) return null;
+    throw new Error("Не получилось прочитать или сохранить настройки уведомлений. Обновите страницу и повторите.");
+  }
 }
 
 // =======================================================================================
@@ -264,6 +275,13 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   }
   disconnectTelegramBot(): Promise<TelegramDisconnectResult> {
     return telegramBotFor(this.ctx.exports.TelegramPersonalBot, this.user.id.name!).disconnectBot(this.user.id.name!);
+  }
+  // Виды уведомлений Mnemos — настройка самого человека в Mnemos, через его подключение.
+  async getNotificationSettings(): Promise<NotificationSettings | null> {
+    return notificationSettingsCall(() => this.user.mnemosNotificationSettings());
+  }
+  async saveNotificationSettings(kinds: Record<NotificationKind, boolean>): Promise<NotificationSettings | null> {
+    return notificationSettingsCall(() => this.user.saveMnemosNotificationSettings(kinds));
   }
   async getAvatar(userId: string): Promise<Uint8Array | null> {
     let result = await this.env.AVATARS.get(userId, "arrayBuffer");
@@ -976,6 +994,9 @@ export default {
     }
 
     // Вебхук личного бота Telegram: подлинность проверяет объект бота по secret_token.
+    if (url.pathname === TELEGRAM_APP_OPEN_PATH) {
+      return handleTelegramAppOpen(req, ctx.exports.TelegramPersonalBot);
+    }
     if (url.pathname.startsWith("/api/telegram/")) {
       return handleTelegramWebhook(req, ctx.exports.TelegramPersonalBot);
     }

@@ -30,6 +30,25 @@ import { ConnectFlows, confirmConnectBrowser, type Flow, type FlowRequest, type 
 import type { ShellBrowserProof } from "@gadgets/workshop-shared/shell-browser";
 import { parseAppearancePreference, type AppearancePreference } from "@gadgets/workshop-shared/accent-theme";
 
+import {
+  validNotificationKinds, validNotificationObject, validNotificationPage,
+  type NotificationDecisionResult, type NotificationDecisionTicket, type NotificationKind, type NotificationObject,
+  type NotificationPage, type NotificationSettings,
+} from "@gadgets/workshop-shared/telegram-bot";
+
+/** Нет действующего подключения Mnemos: уведомлений взять неоткуда. */
+export const MNEMOS_NOTIFICATIONS_UNAVAILABLE = "Mnemos is not connected for notifications.";
+
+/** Методы подключения Mnemos для уведомлений (gatekeeper-mnemos GatekeeperUserImpl). */
+type MnemosNotificationAccount = {
+  readNotifications(after: number | null, limit: number): Promise<unknown>;
+  acknowledgeNotifications(sequence: number): Promise<number>;
+  notificationSettings(): Promise<NotificationSettings>;
+  saveNotificationSettings(kinds: Record<NotificationKind, boolean>): Promise<NotificationSettings>;
+  prepareNotificationDecision(object: NotificationObject): Promise<NotificationDecisionTicket>;
+  decideNotification(object: NotificationObject, version: number, decision: "approve" | "reject"): Promise<NotificationDecisionResult>;
+};
+
 /** Сколько держать список людей Mnemos для подсказок «Поделиться». */
 const MNEMOS_PEOPLE_TTL_MS = 60_000;
 
@@ -483,6 +502,64 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     let found = principalsForUsers(ids, input);
     if (Object.keys(found).length < ids.length) found = principalsForUsers(ids, { ...input, mnemos: await this.listMnemosPeople() });
     return found;
+  }
+
+  // ---- уведомления Mnemos для личного бота Telegram (ADR 0027, раздел 5) ----
+  // Всё идёт через действующее подключение Mnemos этого человека, сессией человека. Зовут объект
+  // личного бота этого пользователя и AuthenticatedApi от имени вошедшего человека.
+
+  #notificationAccount(): MnemosNotificationAccount {
+    let found = this.#mnemosAccount();
+    let account = found?.record.account as unknown as Partial<MnemosNotificationAccount> | undefined;
+    if (!account || typeof account.readNotifications !== "function") throw new Error(MNEMOS_NOTIFICATIONS_UNAVAILABLE);
+    return account as MnemosNotificationAccount;
+  }
+
+  /** null — подключения Mnemos нет (или оно без уведомлений): боту некуда ходить, это не сбой. */
+  /** Принципал Mnemos подключения: у каждого аккаунта Mnemos своя очередь и свой курсор. */
+  #notificationPrincipal(): string | null {
+    let owner = this.#mnemosAccount()?.owner;
+    return owner ? JSON.stringify([owner.tenant, owner.principal]) : null;
+  }
+
+  /** Страница очереди и чей она аккаунт Mnemos. principal из ответа бот хранит рядом со своим
+   *  номером доставки: после смены аккаунта номер прежней очереди к новой не относится. */
+  async readMnemosNotifications(after: number | null, limit: number): Promise<{ principal: string; page: NotificationPage } | null> {
+    let account: MnemosNotificationAccount;
+    try { account = this.#notificationAccount(); } catch { return null; }
+    let principal = this.#notificationPrincipal();
+    if (!principal) return null;
+    let page = validNotificationPage(await account.readNotifications(after, limit));
+    if (!page) throw new Error("Invalid notification page.");
+    return { principal, page };
+  }
+
+  /** Подтверждение — только в очередь того аккаунта, из которой читали. */
+  async acknowledgeMnemosNotifications(sequence: number, principal: string): Promise<number> {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("Invalid notification sequence.");
+    if (this.#notificationPrincipal() !== principal) throw new Error("Mnemos account changed.");
+    return this.#notificationAccount().acknowledgeNotifications(sequence);
+  }
+
+  async mnemosNotificationSettings(): Promise<NotificationSettings> {
+    return this.#notificationAccount().notificationSettings();
+  }
+
+  async saveMnemosNotificationSettings(kinds: Record<NotificationKind, boolean>): Promise<NotificationSettings> {
+    if (!validNotificationKinds(kinds)) throw new Error("Invalid notification settings.");
+    return this.#notificationAccount().saveNotificationSettings(kinds);
+  }
+
+  async prepareMnemosNotificationDecision(object: NotificationObject): Promise<NotificationDecisionTicket> {
+    if (!validNotificationObject(object)) throw new Error("Invalid notification object.");
+    return this.#notificationAccount().prepareNotificationDecision(object);
+  }
+
+  async decideMnemosNotification(object: NotificationObject, version: number, decision: "approve" | "reject"): Promise<NotificationDecisionResult> {
+    if (!validNotificationObject(object) || !Number.isSafeInteger(version) || version < 0 || (decision !== "approve" && decision !== "reject")) {
+      throw new Error("Invalid notification decision.");
+    }
+    return this.#notificationAccount().decideNotification(object, version, decision);
   }
 
   async #readMnemosPeople(): Promise<MnemosPeople | null> {

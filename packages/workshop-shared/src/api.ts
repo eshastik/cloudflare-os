@@ -439,6 +439,10 @@ export interface AuthenticatedApi extends RpcTarget {
   connectTelegramBot(token: string): Promise<import("./telegram-bot.js").TelegramBotState>;
   renewTelegramCode(): Promise<import("./telegram-bot.js").TelegramBotState>;
   disconnectTelegramBot(): Promise<import("./telegram-bot.js").TelegramDisconnectResult>;
+  /** Виды уведомлений Mnemos (ADR 0027, раздел 5); null — нет подключения Mnemos. */
+  getNotificationSettings(): Promise<import("./telegram-bot.js").NotificationSettings | null>;
+  /** Сохранить все четыре вида; «сбои системы» меняются только у администратора. */
+  saveNotificationSettings(kinds: Record<import("./telegram-bot.js").NotificationKind, boolean>): Promise<import("./telegram-bot.js").NotificationSettings | null>;
 
   // Open an existing gadget.
   //

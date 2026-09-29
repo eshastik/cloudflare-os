@@ -577,6 +577,21 @@ export class MnemosAPI {
     try { segment(result.node_id); head(result.head); } catch { throw new MnemosAPIError(502); }
     return result;
   }
+  /** Очередь уведомлений человека (ADR 0027, раздел 5). after=null — от подтверждённого курсора. */
+  readNotifications(after: number | null, limit: number, signal?: AbortSignal): Promise<unknown> {
+    if ((after !== null && (!Number.isSafeInteger(after) || after < 0)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new MnemosAPIError(400);
+    return this.#request(`/v1/me/notifications?${after !== null ? `after=${after}&` : ""}limit=${limit}`, "GET", signal);
+  }
+  acknowledgeNotifications(sequence: number, signal?: AbortSignal): Promise<{ delivered: number }> {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new MnemosAPIError(400);
+    return this.#request("/v1/me/notifications/delivered", "POST", signal, { sequence });
+  }
+  readNotificationSettings(signal?: AbortSignal): Promise<{ kinds?: unknown }> {
+    return this.#request("/v1/me/notification-settings", "GET", signal);
+  }
+  saveNotificationSettings(kinds: Record<string, boolean>, signal?: AbortSignal): Promise<{ kinds?: unknown }> {
+    return this.#request("/v1/me/notification-settings", "PUT", signal, { kinds });
+  }
   listPublicationReviews(cursor = "", signal?: AbortSignal): Promise<PublicationReviewPage> {
     if (cursor) head(cursor);
     return this.#request(`/v1/publication-reviews${cursor ? `?cursor=${cursor}` : ""}`, "GET", signal);

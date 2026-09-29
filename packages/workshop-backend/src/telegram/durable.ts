@@ -6,7 +6,7 @@ import type { RpcStub } from "cloudflare:workers";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "../chat-voice";
 import { spendingEntry, type ModelSpend } from "../spend-ledger.js";
 import { createWorkshopLogger } from "../observability";
-import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, type PersonalBotDeps, type SiteChatInput, type SiteEvent, type TelegramTurnRef } from "./personal-bot";
+import { PersonalTelegramBot, telegramWebhookRoute, TelegramSetupError, VoiceUnavailableError, NOTIFY_FIRST_MS, type MiniAppOpenResult, type PersonalBotDeps, type SiteChatInput, type SiteEvent, type TelegramTurnRef } from "./personal-bot";
 import { DraftLimiter } from "./progress";
 
 const logger = createWorkshopLogger("workshop.telegram");
@@ -56,6 +56,16 @@ export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: Draft
     },
     drafts,
     voice,
+    // Уведомления — через подключение Mnemos владельца в его объекте пользователя, сессией человека.
+    mnemos: {
+      read: (owner, after, limit) => exports.UserDurableObject.getByName(owner).readMnemosNotifications(after, limit),
+      ack: (owner, sequence, principal) => exports.UserDurableObject.getByName(owner).acknowledgeMnemosNotifications(sequence, principal),
+      prepare: (owner, object) => exports.UserDurableObject.getByName(owner).prepareMnemosNotificationDecision(object),
+      decide: (owner, object, version, decision) => exports.UserDurableObject.getByName(owner).decideMnemosNotification(object, version, decision),
+    },
+    setAlarm: at => {
+      ctx.waitUntil((at === null ? ctx.storage.deleteAlarm() : ctx.storage.setAlarm(at)).catch(() => {}));
+    },
     ...overrides,
   };
 }
@@ -97,7 +107,34 @@ export class TelegramPersonalBot extends DurableObject<Env> {
     }
   }
 
+  /** Будильник уведомлений у подключённого бота, если его нет (после выпуска или сбоя). */
+  async #ensureAlarm(): Promise<void> {
+    try {
+      if (!this.#core().wantsNotifications()) return;
+      if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + NOTIFY_FIRST_MS);
+    } catch { /* следующий вызов попробует снова */ }
+  }
+
+  /** Доставка уведомлений Mnemos: по очереди с остальными отправками бота. */
+  async alarm(): Promise<void> {
+    let next = await this.#serialize(async () => {
+      try { return await this.#core().pollNotifications(); }
+      catch (error) {
+        logger.warn("telegram notifications not delivered", { event: "telegram.notify.failed", error });
+        return Date.now() + 60_000;
+      }
+    });
+    if (next !== null) await this.ctx.storage.setAlarm(next);
+  }
+
+  /** Экран Mini App: проверка initData и расход одноразового токена. */
+  async openMiniApp(secret: string, initData: string): Promise<MiniAppOpenResult> {
+    try { return await this.#core().openMiniApp(secret, initData); }
+    catch { return { status: "denied" }; }
+  }
+
   async getState(owner: string): Promise<TelegramBotState> {
+    this.ctx.waitUntil(this.#ensureAlarm());
     return this.#human(() => this.#core().state(owner));
   }
 
@@ -128,6 +165,7 @@ export class TelegramPersonalBot extends DurableObject<Env> {
 
   /** Можно ли продолжить беседу в Telegram и идёт ли она уже в треде. */
   async siteLink(owner: string, key: string | null): Promise<TelegramChatLink> {
+    this.ctx.waitUntil(this.#ensureAlarm());
     try { return this.#core().siteLink(owner, key); }
     catch { return { status: "unavailable" }; }
   }
@@ -160,6 +198,7 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    this.ctx.waitUntil(this.#ensureAlarm());
     return this.#core().webhook(request);
   }
 }
@@ -194,6 +233,32 @@ export class TelegramBotClaim extends DurableObject<Cloudflare.Env> {
   async release(owner: string): Promise<void> {
     if (this.ctx.storage.kv.get<string>("owner") === owner) this.ctx.storage.kv.delete("owner");
   }
+}
+
+/** Mini App: POST /api/telegram-app/open {token: "<номер объекта>.<секрет>", initData}. Ответ — JSON
+ *  MiniAppOpenResult; любой сбой разбора — denied без подробностей. */
+export const TELEGRAM_APP_OPEN_PATH = "/api/telegram-app/open";
+const MAX_APP_OPEN_BODY = 8192;
+
+export async function handleTelegramAppOpen(request: Request, namespace: DurableObjectNamespace<TelegramPersonalBot>): Promise<Response> {
+  let json = (body: MiniAppOpenResult, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  });
+  if (request.method !== "POST") return json({ status: "denied" }, 405);
+  if (!(request.headers.get("Content-Type") ?? "").startsWith("application/json")) return json({ status: "denied" }, 415);
+  let text: string;
+  try {
+    let bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength > MAX_APP_OPEN_BODY) return json({ status: "denied" }, 413);
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+  } catch { return json({ status: "denied" }, 400); }
+  let body: { token?: unknown; initData?: unknown };
+  try { body = JSON.parse(text); } catch { return json({ status: "denied" }, 400); }
+  let match = typeof body?.token === "string" ? /^([0-9a-f]{64})\.([A-Za-z0-9_-]{43})$/.exec(body.token) : null;
+  if (!match || typeof body.initData !== "string") return json({ status: "denied" }, 400);
+  let id: DurableObjectId;
+  try { id = namespace.idFromString(match[1]); } catch { return json({ status: "denied" }); }
+  return json(await namespace.get(id).openMiniApp(match[2], body.initData));
 }
 
 /** Вебхук личного бота: /api/telegram/<номер объекта>. Чужой или испорченный номер — 404. */

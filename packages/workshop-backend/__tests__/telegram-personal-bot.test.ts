@@ -63,6 +63,13 @@ function harness(options: { key?: string | undefined; publicBase?: string; failS
     transcribe: async () => "текст",
     drafts: new DraftLimiter(),
     voice: { busy: false },
+    mnemos: {
+      read: async () => ({ principal: "p", page: { items: [], next_after: 0, delivered: 0, more: false } }),
+      ack: async sequence => sequence,
+      prepare: async () => ({ version: null, details: [] }),
+      decide: async () => ({ status: "stale", reason: "нет" }),
+    },
+    setAlarm: () => {},
   });
   let settle = async () => { while (pending.length) await Promise.all(pending.splice(0)); };
   return { bot, map, calls: tg.calls, flags: tg.flags, claims, clock, settle };

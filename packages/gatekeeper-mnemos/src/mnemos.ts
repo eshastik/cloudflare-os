@@ -57,6 +57,7 @@ import { DurableObject, RpcStub, RpcTarget, WorkerEntrypoint } from "cloudflare:
 import { MnemosAccount, type MnemosAccountSession, type AccountStorage } from "./account-session.ts";
 import type { SelectedDocumentReader } from "./document-resource.ts";
 import { NativeCreationRecovery } from "./native-creation-recovery.ts";
+import { acknowledgeNotificationPage, decideNotification, prepareNotificationDecision, readNotificationPage, readNotificationSettings, saveNotificationSettings, type NotificationSession } from "./telegram-notifications.ts";
 import { NativeWriteSelector, listNativeDocuments } from "./native-writer.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 
@@ -191,6 +192,14 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   async getNativeDocumentSource(resourceUrl: string, publication: string) {
     return this.#account().nativeDocumentSource(resourceUrl, publication);
   }
+  /** Уведомления для личного бота Telegram (ADR 0027, раздел 5): хост зовёт от имени этого человека,
+   *  фрейм управления их не видит. Всё идёт сессией человека. */
+  async readNotifications(after: number | null, limit: number) { return this.#account().readNotifications(after, limit); }
+  async acknowledgeNotifications(sequence: number) { return this.#account().acknowledgeNotifications(sequence); }
+  async notificationSettings() { return this.#account().notificationSettings(); }
+  async saveNotificationSettings(kinds: unknown) { return this.#account().saveNotificationSettings(kinds); }
+  async prepareNotificationDecision(object: unknown) { return this.#account().prepareNotificationDecision(object); }
+  async decideNotification(object: unknown, version: unknown, decision: unknown) { return this.#account().decideNotification(object, version, decision); }
   async getVerifier(): Promise<Fetcher<GatekeeperUserVerifier>> {
     return this.#account().getVerifier();
   }
@@ -398,6 +407,22 @@ export class UserAccount extends DurableObject<Env> {
       return {connections,unavailable};
     } finally {session.dispose();}
   }
+  async #withNotificationSession<T>(operation: (session: NotificationSession) => Promise<T>): Promise<T> {
+    const session = this.#account().session();
+    try { return await operation(session); } finally { session.dispose(); }
+  }
+  async readNotifications(after: number | null, limit: number) {
+    if (!(after === null || (Number.isSafeInteger(after) && after >= 0)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new MnemosAPIError(400);
+    return this.#withNotificationSession(session => readNotificationPage(session, after, limit));
+  }
+  async acknowledgeNotifications(sequence: number) {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new MnemosAPIError(400);
+    return this.#withNotificationSession(session => acknowledgeNotificationPage(session, sequence));
+  }
+  async notificationSettings() { return this.#withNotificationSession(session => readNotificationSettings(session)); }
+  async saveNotificationSettings(kinds: unknown) { return this.#withNotificationSession(session => saveNotificationSettings(session, kinds)); }
+  async prepareNotificationDecision(object: unknown) { return this.#withNotificationSession(session => prepareNotificationDecision(session, object)); }
+  async decideNotification(object: unknown, version: unknown, decision: unknown) { return this.#withNotificationSession(session => decideNotification(session, object, version, decision)); }
   async describeTelegram(bot: string) { return this.#telegramBot(bot).describe(this.ctx.id.toString()); }
   async confirmTelegram(bot: string, epoch: string, sender: number) { return this.#telegramBot(bot).confirm(this.ctx.id.toString(), epoch, sender); }
   async disconnectTelegram(bot: string) { return this.#telegramBot(bot).disconnect(this.ctx.id.toString()); }

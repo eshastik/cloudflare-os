@@ -15,18 +15,33 @@ export type TelegramBotInfo = {
 type Method = "getMe" | "setWebhook" | "deleteWebhook" | "sendMessage" | "sendMessageDraft" | "answerCallbackQuery" |
   "createForumTopic" | "editForumTopic" | "deleteForumTopic" | "getFile" | "editMessageText" | "editMessageReplyMarkup";
 
-/** Кнопка под сообщением: надпись и данные нажатия (не длиннее 64 байт, их пришлёт Telegram). */
-export type InlineButton = { text: string; data: string };
+/** Кнопка под сообщением: данные нажатия (не длиннее 64 байт, их пришлёт Telegram), ссылка https
+ *  или Mini App (web_app, адрес https; открывается внутри Telegram). */
+export type InlineButton = { text: string; data: string } | { text: string; url: string } | { text: string; webApp: string };
+
+function httpsUrl(value: string): boolean {
+  try {
+    let url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && value.length <= 2048;
+  } catch { return false; }
+}
 
 function keyboard(rows: InlineButton[][]): object {
-  for (let row of rows) {
-    for (let button of row) {
-      if (!button.text.trim() || new TextEncoder().encode(button.data).byteLength > 64 || !button.data) {
-        throw new Error("Invalid Telegram button.");
+  return {
+    inline_keyboard: rows.map(row => row.map(button => {
+      if (!button.text.trim() || button.text.length > 64) throw new Error("Invalid Telegram button.");
+      if ("data" in button) {
+        if (!button.data || new TextEncoder().encode(button.data).byteLength > 64) throw new Error("Invalid Telegram button.");
+        return { text: button.text, callback_data: button.data };
       }
-    }
-  }
-  return { inline_keyboard: rows.map(row => row.map(button => ({ text: button.text, callback_data: button.data }))) };
+      if ("url" in button) {
+        if (!httpsUrl(button.url)) throw new Error("Invalid Telegram button.");
+        return { text: button.text, url: button.url };
+      }
+      if (!httpsUrl(button.webApp)) throw new Error("Invalid Telegram button.");
+      return { text: button.text, web_app: { url: button.webApp } };
+    })),
+  };
 }
 
 /** Отказ Telegram или сбой связи. description — описание отказа от Telegram, если он ответил. */
@@ -205,8 +220,8 @@ export class TelegramBotApi {
     await this.#call("deleteForumTopic", { chat_id: chat, message_thread_id: thread });
   }
 
-  /** Заменить текст сообщения бота; кнопки при этом снимаются (reply_markup не передаётся). */
-  async editText(chat: number, message: number, text: string, options: { html?: boolean } = {}): Promise<void> {
+  /** Заменить текст сообщения бота; кнопки снимаются, если новые не переданы. */
+  async editText(chat: number, message: number, text: string, options: { html?: boolean; buttons?: InlineButton[][] } = {}): Promise<void> {
     if (!Number.isSafeInteger(chat) || chat <= 0 || !Number.isSafeInteger(message) || message <= 0 ||
         typeof text !== "string" || !text.trim() || text.length > MAX_MESSAGE) {
       throw new Error("Invalid Telegram edit.");
@@ -214,6 +229,7 @@ export class TelegramBotApi {
     await this.#call("editMessageText", {
       chat_id: chat, message_id: message, text, link_preview_options: { is_disabled: true },
       ...(options.html ? { parse_mode: "HTML" } : {}),
+      ...(options.buttons ? { reply_markup: keyboard(options.buttons) } : {}),
     });
   }
 

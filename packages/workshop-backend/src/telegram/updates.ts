@@ -17,6 +17,8 @@ export type TelegramInput =
       thread: number | null;
       voice: TelegramVoice | null;
       topic: TelegramTopicEvent | null;
+      /** Ответ на реплику (reply): номер той реплики; null — не ответ. */
+      replyTo: number | null;
     }
   | {
       kind: "callback"; update: number; id: string; sender: TelegramSender;
@@ -118,5 +120,9 @@ export function parseTelegramUpdate(bytes: Uint8Array): TelegramInput | null | u
     ? { fileId: voiceRecord.file_id, size: positive(voiceRecord.file_size) ? voiceRecord.file_size : null,
         mimeType: typeof voiceRecord.mime_type === "string" ? voiceRecord.mime_type.slice(0, 64) : "audio/ogg" }
     : null;
-  return { kind: "message", update: id, message: message.message_id, sender: from, text, thread, voice, topic };
+  let reply = record(message.reply_to_message);
+  // В треде Telegram ставит reply_to_message и на служебное сообщение о создании треда: такой
+  // «ответ» ничем не отличается от обычного сообщения. Вызывающий сверяет номер со своими репликами.
+  let replyTo = positive(reply.message_id) && !reply.forum_topic_created ? reply.message_id : null;
+  return { kind: "message", update: id, message: message.message_id, sender: from, text, thread, voice, topic, replyTo };
 }

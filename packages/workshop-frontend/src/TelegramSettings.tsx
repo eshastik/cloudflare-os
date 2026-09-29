@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { CaretLeft, Check, Copy, Eye, EyeSlash, TelegramLogo } from '@phosphor-icons/react'
-import { threadsReady, type TelegramBotState, type TelegramThreads } from '@gadgets/workshop-shared/telegram-bot'
+import { NOTIFICATION_KINDS, threadsReady, type NotificationKind, type NotificationSettings, type TelegramBotState, type TelegramThreads } from '@gadgets/workshop-shared/telegram-bot'
 import { useAuthenticatedApi } from './AuthContext'
 import { useDocumentTitle } from './useDocumentTitle'
 import { copyToClipboard } from './clipboard'
@@ -74,6 +74,7 @@ export default function TelegramSettings() {
         {state?.status === 'none' && <TokenStep onDone={setState} />}
         {state?.status === 'pairing' && <PairingStep state={state} onChange={setState} />}
         {state?.status === 'connected' && <Connected state={state} onChange={setState} />}
+        {state?.status === 'connected' && <NotificationKinds />}
       </div>
     </div>
   )
@@ -327,7 +328,7 @@ function Connected({ state, onChange }: { state: Extract<TelegramBotState, { sta
       </dl>
       {!threadsReady(state.threads) && <div className="px-[18px] pb-3"><ThreadsHelp bot={state.bot} threads={state.threads} warning /></div>}
       <p className="m-0 border-t border-kumo-tint px-[18px] py-3 text-[13px] leading-5 text-kumo-subtle">
-        Бот принимает сообщения только от этого аккаунта и только в личном чате. Агент беседы появится в боте со следующим обновлением; пока бот подтверждает, что подключение работает.
+        Бот принимает сообщения только от этого аккаунта и только в личном чате. Каждый тред — беседа с агентом, такая же, как на сайте.
       </p>
       {notice && <p role="status" className="m-0 px-[18px] pb-3 text-[13px] text-kumo-default">{notice}</p>}
       {error && <p role="alert" className="m-0 px-[18px] pb-3 text-[13px] text-kumo-danger">{error}</p>}
@@ -339,6 +340,76 @@ function Connected({ state, onChange }: { state: Extract<TelegramBotState, { sta
           <button type="button" className={SECONDARY_PILL} disabled={busy} onClick={() => setConfirm(false)}>Отмена</button>
         </>}
       </div>
+    </section>
+  )
+}
+
+const KIND_TEXT: Record<NotificationKind, { title: string; note: string }> = {
+  decision_needed: { title: 'Нужно моё решение', note: 'Согласования, запросы открыть проект. Решить можно кнопкой прямо в Telegram.' },
+  task_result: { title: 'Результаты моих поручений', note: 'Готовый результат можно принять кнопкой.' },
+  shared_with_me: { title: 'Со мной поделились', note: 'Документы, к которым вас пригласили.' },
+  platform_failure: { title: 'Сбои системы', note: 'Сигналы о неполадках установки. Видно только администраторам.' },
+}
+
+/** Какие уведомления Mnemos бот присылает в тред «Уведомления». Настройка хранится в Mnemos. */
+function NotificationKinds() {
+  const { authenticatedApi } = useAuthenticatedApi()
+  const [settings, setSettings] = useState<NotificationSettings | null | undefined>(undefined)
+  const [busy, setBusy] = useState<NotificationKind | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    authenticatedApi.getNotificationSettings()
+      .then(next => { if (alive) setSettings(next) })
+      .catch(err => { if (alive) { setSettings(null); setError(errorText(err, 'Не удалось прочитать настройки уведомлений. Обновите страницу.')) } })
+    return () => { alive = false }
+  }, [authenticatedApi])
+
+  async function toggle(kind: NotificationKind) {
+    if (!settings || busy) return
+    setBusy(kind); setError('')
+    const kinds = { ...settings.kinds, [kind]: !settings.kinds[kind] }
+    try {
+      const next = await authenticatedApi.saveNotificationSettings(kinds)
+      if (next) setSettings(next)
+    } catch (err) { setError(errorText(err, 'Настройка не сохранилась. Повторите.')) }
+    finally { setBusy(null) }
+  }
+
+  const kinds = settings ? NOTIFICATION_KINDS.filter(kind => kind !== 'platform_failure' || settings.platformFailure) : []
+  return (
+    <section aria-labelledby="telegram-notify-title" className={GROUP_CARD}>
+      <div className="px-[18px] pt-4 pb-2">
+        <h2 id="telegram-notify-title" className="m-0 text-[15px] font-semibold text-kumo-default">Уведомления</h2>
+        <p className="mt-1 mb-0 text-[13px] leading-5 text-kumo-subtle">Приходят в тред «Уведомления». Ответьте на уведомление — агент начнёт отдельную беседу о нём.</p>
+      </div>
+      {settings === undefined && !error && <p role="status" className="m-0 px-[18px] pb-4 text-[14px] text-kumo-subtle">Загрузка…</p>}
+      {settings === null && !error && (
+        <p className="m-0 px-[18px] pb-4 text-[14px] leading-5 text-kumo-default">Подключите Mnemos, чтобы получать уведомления: без него боту неоткуда их брать.</p>
+      )}
+      {settings && (
+        <ul className="m-0 list-none p-0">
+          {kinds.map(kind => {
+            const on = settings.kinds[kind]
+            const id = `notify-${kind}`
+            return (
+              <li key={kind} className="flex items-center gap-4 border-t border-kumo-tint px-[18px] py-3">
+                <span className="min-w-0 flex-1">
+                  <label htmlFor={id} className="block cursor-pointer text-[14px] leading-5 font-medium text-kumo-default">{KIND_TEXT[kind].title}</label>
+                  <span id={id + '-note'} className="block text-[13px] leading-5 text-kumo-subtle">{KIND_TEXT[kind].note}</span>
+                </span>
+                <button id={id} type="button" role="switch" aria-checked={on} aria-describedby={id + '-note'} disabled={busy !== null}
+                  onClick={() => { void toggle(kind) }}
+                  className={`relative h-6 w-10 shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-kumo-ring disabled:cursor-wait disabled:opacity-70 ${on ? 'bg-kumo-brand' : 'bg-kumo-fill-hover'}`}>
+                  <span aria-hidden="true" className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform motion-reduce:transition-none ${on ? 'translate-x-4' : ''}`} />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {error && <p role="alert" className="m-0 border-t border-kumo-tint px-[18px] py-3 text-[13px] text-kumo-danger">{error}</p>}
     </section>
   )
 }

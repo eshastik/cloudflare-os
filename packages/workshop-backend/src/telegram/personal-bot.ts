@@ -22,6 +22,14 @@
 // Этап 4: действие агента, ждущее решения, приходит в тред карточкой с кнопками. В callback_data —
 // тред и номер карточки; всё остальное (беседа, действие, сообщение) берётся из записи карточки
 // здесь, а решение принимает беседа после своей проверки (DecideExternalAction).
+//
+// Этап 5: уведомления Mnemos приходят в служебный тред «Уведомления» (notifications.ts). Ответ
+// (reply) на уведомление открывает новую беседу с объектом уведомления.
+//
+// Этап 6: у документа есть кнопка Mini App. Адрес несёт одноразовый токен экрана (не дольше
+// SCREEN_TTL_MS); открыть экран можно только с initData владельца бота, подписанными Telegram
+// (web-app-data.ts). Сессии, ограниченной одним документом, в оболочке пока нет, поэтому экран
+// Mini App показывает документ и ведёт на сайт, а редактор не открывает.
 
 import { threadsReady, type TelegramBotState, type TelegramChatLink, type TelegramDisconnectResult, type TelegramThreads } from "@gadgets/workshop-shared/telegram-bot";
 import type {
@@ -34,6 +42,11 @@ import { markdownToTelegramHtml, telegramChunks, type TelegramChunk } from "./fo
 import { DraftLimiter, draftText } from "./progress";
 import { openSecret, sameSecret, sealSecret, secretsKeyConfigured, SecretsKeyMissingError, SECRETS_KEY_MISSING, type SealedSecret } from "./secret-box";
 import { parseTelegramUpdate, readBoundedBody, type TelegramInput } from "./updates";
+import {
+  claimNoticeCard, deliverNotifications, loadNotifyState, nextDelay, noticeCardHtml, noticeFor, noticePrompt, settleNoticeCard,
+  MnemosNotConnectedError, NOTIFY_KEY_PREFIXES, NOTIFY_KEYS, NOTIFY_MAX_BACKOFF_MS, NOTIFY_THREAD_TITLE, type TelegramMnemos,
+} from "./notifications";
+import { verifyWebAppData } from "./web-app-data";
 
 export const TOKEN_PURPOSE = "telegram-bot-token";
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
@@ -66,6 +79,25 @@ const KEPT_REPLIES = 128;
 export const THREADS_CHECK_MS = 60 * 1000;
 
 export const TELEGRAM_WEBHOOK_PREFIX = "/api/telegram/";
+/** Страница Mini App во фронтенде и срок одноразового токена экрана. */
+export const MINI_APP_PATH = "/telegram-app.html";
+export const SCREEN_TTL_MS = 15 * 60 * 1000;
+const SCREEN_PREFIX = "screen:";
+const SCREENS = "screens";
+const KEPT_SCREENS = 256;
+/** Пауза перед первой доставкой уведомлений после подключения или пробуждения. */
+export const NOTIFY_FIRST_MS = 1000;
+export const NOTICE_THREAD_PREFIX = "По уведомлению: ";
+
+/** Что открывает экран Mini App: название и адрес на сайте. Тред — откуда открыт. */
+export type ScreenTarget = { title: string; path: string };
+type ScreenRecord = { target: ScreenTarget; thread: number | null; expiresAt: number; used: boolean };
+
+/** Ответ экрана Mini App. denied — без подробностей: чужие данные, подделка, не тот бот. */
+export type MiniAppOpenResult =
+  | { status: "ok"; title: string; siteUrl: string | null }
+  | { status: "expired"; siteUrl: string | null }
+  | { status: "denied" };
 
 export type BotRecord = {
   owner: string;
@@ -185,6 +217,12 @@ export interface PersonalBotDeps {
   drafts: DraftLimiter;
   /** Одно распознавание голоса одновременно на бота, как диктовка на сайте. */
   voice: { busy: boolean };
+  /** Mnemos владельца для уведомлений: сессией человека через его подключение. */
+  mnemos: TelegramMnemos;
+  /** Будильник доставки уведомлений: время или null — снять. */
+  setAlarm(at: number | null): void;
+  /** Открытый ключ Telegram для initData Mini App; тесты подают свой. */
+  webAppPublicKey?: string;
 }
 
 /** Ошибка для человека: текст показывается на экране как есть. */
@@ -377,10 +415,11 @@ export class PersonalTelegramBot {
     // Запись удаляется до сетевых вызовов: даже если Telegram не ответит, вебхук сюда уже не пройдёт.
     // Связи тредов уходят вместе с ботом; беседы на сайте остаются.
     this.deps.storage.delete(RECORD);
-    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX]) {
+    for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX, SCREEN_PREFIX, ...NOTIFY_KEY_PREFIXES]) {
       for (let [key] of [...this.deps.storage.list({ prefix })]) this.deps.storage.delete(key);
     }
-    for (let key of [REPLIES, CARDS, CARD_SEQ]) this.deps.storage.delete(key);
+    for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, ...NOTIFY_KEYS]) this.deps.storage.delete(key);
+    this.deps.setAlarm(null);
     return { webhookRemoved: await this.#teardown(record) };
   }
 
@@ -431,6 +470,12 @@ export class PersonalTelegramBot {
       // Нажатие не владельца бота не отвечается и ничего не делает.
       if (!owner || input.sender.id !== owner.id) return reply(200);
       // Карточка занимается сразу, до ожиданий: второе нажатие застанет её занятой.
+      if (input.data?.startsWith("n:")) {
+        let notice = claimNoticeCard(this.deps.storage, input.data, input.message, this.deps.now(),
+          { unknown: CARD_UNKNOWN, busy: CARD_BUSY, stale: CARD_STALE });
+        this.deps.waitUntil(this.#settleNotice(current, input, notice).catch(() => {}));
+        return reply(200);
+      }
       let claim = this.#claimCard(current, input);
       this.deps.waitUntil(this.#settleCard(current, input, claim).catch(() => {}));
       return reply(200);
@@ -444,6 +489,7 @@ export class PersonalTelegramBot {
       current.connectedAt = this.deps.now();
       current.pairing = null;
       this.deps.storage.put(RECORD, current);
+      this.deps.setAlarm(this.deps.now() + NOTIFY_FIRST_MS);
       this.#reply(current, input.sender.id, PAIRED_REPLY);
       return reply(200);
     }
@@ -524,9 +570,23 @@ export class PersonalTelegramBot {
 
     // Тред беседы: из сообщения или новый, если сообщение пришло вне тредов (старый клиент).
     let link: ThreadLink;
-    if (input.thread !== null) {
+    let notice = input.replyTo !== null ? noticeFor(this.deps.storage, input.replyTo) : undefined;
+    let notifyThread = loadNotifyState(this.deps.storage).thread;
+    if (notice && input.thread !== null && input.thread === notifyThread) {
+      // Ответ на уведомление — новая беседа об этом объекте, в своём треде.
+      let title = (NOTICE_THREAD_PREFIX + notice.summary.replace(/\s+/g, " ").trim()).slice(0, 128);
+      let thread: number;
+      try { thread = await api.createTopic(chat, title); }
+      catch { await this.#say(record, NO_THREAD_REPLY, input.thread).catch(() => {}); return; }
+      link = this.#newLink(record, thread, "bot", title);
+      link.renamed = true;
+      this.#putLink(link);
+      await api.send(chat, `Беседа по этому уведомлению — в треде «${title}».`, { thread: input.thread }).catch(() => {});
+    } else if (input.thread !== null) {
+      notice = undefined;
       link = this.#link(input.thread) ?? this.#newLink(record, input.thread, null, null);
     } else {
+      notice = undefined;
       let thread: number;
       try { thread = await api.createTopic(chat, NEW_THREAD_TITLE); }
       catch { await api.send(chat, NO_THREAD_REPLY).catch(() => {}); return; }
@@ -549,6 +609,7 @@ export class PersonalTelegramBot {
       } finally { this.deps.voice.busy = false; }
     }
     if (!prompt?.trim()) { await this.#say(record, VOICE_FAILED_REPLY, link.thread); return; }
+    if (notice) prompt = noticePrompt(notice, prompt, this.deps.publicBase);
 
     let result: SubmitExternalMessageResult;
     try {
@@ -557,7 +618,7 @@ export class PersonalTelegramBot {
         gadgetKey: link.key,
         chatKey: link.key,
         messageKey: `${record.bot.id}:${input.update}`,
-        gadgetTitle: link.naming === "user" && link.title ? link.title : DEFAULT_WORKSPACE_TITLE,
+        gadgetTitle: (link.naming === "user" || notice) && link.title ? link.title : DEFAULT_WORKSPACE_TITLE,
         prompt,
         streamProgress: true,
         ...(link.workspace ? { workspaceId: link.workspace } : {}),
@@ -624,7 +685,9 @@ export class PersonalTelegramBot {
       let item = items[index];
       let send = (thread: number | undefined, lead: Lead) => item.kind === "chunk"
         ? this.#sendChunk(api, ref.chat, item.chunk, thread, lead)
-        : this.#sendCard(api, record, link, item.decision, thread, lead);
+        : item.kind === "apps"
+          ? this.#sendApps(api, ref.chat, item.documents, link, thread)
+          : this.#sendCard(api, record, link, item.decision, thread, lead);
       let threaded = !link.unlinked;
       try {
         await send(threaded ? link.thread : undefined, !threaded && !state.unthreaded ? titleLead(link.title) : null);
@@ -655,7 +718,7 @@ export class PersonalTelegramBot {
     this.#putLink(link);
   }
 
-  #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision })[] {
+  #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision } | { kind: "apps"; documents: string[] })[] {
     let decisions = (response.decisions ?? []).filter(decision => Number.isSafeInteger(decision.action) && decision.action >= 0);
     // Карточка, которая целиком не помещается в сообщение, решается только на сайте.
     let fits = decisions.filter(decision => cardHtml(decision) !== null);
@@ -675,8 +738,11 @@ export class PersonalTelegramBot {
     if (typeof response.waitingFor === "string" && response.waitingFor.trim()) {
       text += `\n\n${response.waitingFor.replace(/[[\]()*_`~]/g, "").trim()} ждёт решения — ${open("на сайте")}.`;
     }
+    // Документы беседы открываются в Telegram (Mini App) кнопками отдельным сообщением.
+    let apps = url && response.documents?.length ? [{ kind: "apps" as const, documents: response.documents.slice(0, 5) }] : [];
     return [
       ...(text.trim() ? telegramChunks(text).map(chunk => ({ kind: "chunk" as const, chunk })) : []),
+      ...apps,
       ...decisions.map(decision => ({ kind: "card" as const, decision })),
     ];
   }
@@ -700,6 +766,19 @@ export class PersonalTelegramBot {
     }
     // Разметку Telegram не разобрал (или её нет): тот же кусок простым текстом.
     await api.send(chat, ((lead?.plain ?? "") + chunk.plain).slice(0, 4096), options);
+  }
+
+  /** Кнопки «Открыть» (Mini App) для документов беседы. Без адреса Mini App сообщение не шлётся. */
+  async #sendApps(api: TelegramBotApi, chat: number, documents: string[], link: ThreadLink, thread: number | undefined): Promise<void> {
+    if (!link.chatPath) return;
+    let rows: InlineButton[][] = [];
+    for (let name of documents) {
+      let title = name.replace(/\s+/g, " ").trim().slice(0, 200);
+      let app = title ? await this.#screenUrl({ title, path: link.chatPath }, link.thread) : null;
+      if (app) rows.push([{ text: `Открыть «${title.slice(0, 40)}»`, webApp: app }]);
+    }
+    if (!rows.length) return;
+    await api.send(chat, "Документы беседы можно открыть здесь, в Telegram:", { ...(thread !== undefined ? { thread } : {}), buttons: rows });
   }
 
   #rememberReply(stateKey: string): void {
@@ -821,6 +900,111 @@ export class PersonalTelegramBot {
       if (isNotModified(error)) return;
       await api.removeButtons(chat, card.message).catch(() => {});
     }
+  }
+
+  // ---- уведомления (этап 5) ----
+
+  /** Будильник нужен подключённому боту; зовётся при пробуждении объекта. */
+  wantsNotifications(): boolean {
+    let record = this.#record();
+    return !!record?.telegramOwner && record.connectedAt !== null;
+  }
+
+  /** Один проход доставки уведомлений. Возвращает, когда будить снова; null — бот не подключён. */
+  async pollNotifications(): Promise<number | null> {
+    let record = this.#record();
+    if (!record?.telegramOwner || record.connectedAt === null) return null;
+    let owner = record.owner;
+    let chat = record.telegramOwner.id;
+    let secret = record.secretSha256;
+    let failed = false;
+    try {
+      await deliverNotifications({
+        storage: this.deps.storage, now: () => this.deps.now(), owner, chat, publicBase: this.deps.publicBase,
+        api: await this.#api(record), mnemos: this.deps.mnemos,
+        screenUrl: target => this.#screenUrl(target, loadNotifyState(this.deps.storage).thread),
+        threadCreated: thread => {
+          // Тред уведомлений назван ботом и не переименовывается по названию беседы.
+          let current = this.#record();
+          if (!current || current.secretSha256 !== secret) return;
+          let link = this.#newLink(current, thread, "user", NOTIFY_THREAD_TITLE);
+          this.#putLink(link);
+        },
+      });
+    } catch (error) {
+      if (error instanceof MnemosNotConnectedError) return this.deps.now() + NOTIFY_MAX_BACKOFF_MS;
+      failed = true;
+    }
+    let state = loadNotifyState(this.deps.storage);
+    state.failures = failed ? state.failures + 1 : 0;
+    this.deps.storage.put("notify", state);
+    return this.deps.now() + nextDelay(state);
+  }
+
+  /** Решение по кнопке уведомления — от имени владельца бота, через его Mnemos. */
+  async #settleNotice(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>,
+      claim: ReturnType<typeof claimNoticeCard>): Promise<void> {
+    let api = await this.#api(record);
+    if ("answer" in claim) { await api.answerCallback(input.id, claim.answer); return; }
+    let result = await this.deps.mnemos.decide(record.owner, claim.card.object, claim.card.version, claim.decision).catch(() => null);
+    let { answer, line } = settleNoticeCard(this.deps.storage, claim.card, result);
+    await api.answerCallback(input.id, answer).catch(() => {});
+    if (line === null || claim.card.message === null) return;
+    let chat = record.telegramOwner!.id;
+    try { await api.editText(chat, claim.card.message, noticeCardHtml(claim.card, line), { html: true }); }
+    catch (error) {
+      if (isNotModified(error)) return;
+      await api.removeButtons(chat, claim.card.message).catch(() => {});
+    }
+  }
+
+  // ---- Mini App (этап 6) ----
+
+  /** Адрес Mini App с новым одноразовым токеном экрана; null — у установки нет адреса https. */
+  async #screenUrl(target: ScreenTarget, thread: number | null): Promise<string | null> {
+    let base = this.deps.publicBase;
+    if (!base || !/^[0-9a-f]{64}$/.test(this.deps.routeId)) return null;
+    let origin: string;
+    try { let url = new URL(base); if (url.protocol !== "https:") return null; origin = url.origin; } catch { return null; }
+    let secret = randomSecret();
+    // Хранится только хэш: токен из адреса кнопки не восстановить по хранилищу.
+    let key = SCREEN_PREFIX + await sha256(secret);
+    this.deps.storage.put(key, { target, thread, expiresAt: this.deps.now() + SCREEN_TTL_MS, used: false } satisfies ScreenRecord);
+    let screens = [...(this.deps.storage.get<string[]>(SCREENS) ?? []), key];
+    for (let old of screens.splice(0, Math.max(0, screens.length - KEPT_SCREENS))) this.deps.storage.delete(old);
+    this.deps.storage.put(SCREENS, screens);
+    return `${origin}${MINI_APP_PATH}?t=${this.deps.routeId}.${secret}`;
+  }
+
+  /** Открыть экран Mini App. Сначала подпись Telegram и владелец бота, потом токен: без верных
+   *  initData владельца токен не проверяется вовсе. Токен расходуется до любых ожиданий. */
+  async openMiniApp(secret: unknown, initData: unknown): Promise<MiniAppOpenResult> {
+    let record = this.#record();
+    if (!record?.telegramOwner || record.connectedAt === null || typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) {
+      return { status: "denied" };
+    }
+    let identity = await verifyWebAppData(initData, record.bot.id, this.deps.now(), this.deps.webAppPublicKey);
+    let key = SCREEN_PREFIX + await sha256(secret);
+    // Дальше без ожиданий: проверка и расход токена одним куском.
+    let current = this.#record();
+    if (!identity || !current?.telegramOwner || current.secretSha256 !== record.secretSha256 || identity.userId !== current.telegramOwner.id) {
+      return { status: "denied" };
+    }
+    let screen = this.deps.storage.get<ScreenRecord>(key);
+    if (!screen) return { status: "denied" };
+    let site = this.#siteUrlFor(screen.target.path);
+    if (screen.used || screen.expiresAt <= this.deps.now()) return { status: "expired", siteUrl: site };
+    screen.used = true;
+    this.deps.storage.put(key, screen);
+    return { status: "ok", title: screen.target.title, siteUrl: site };
+  }
+
+  #siteUrlFor(path: string): string | null {
+    if (!path.startsWith("/workspace/") && !path.startsWith("/gatekeepers/")) return null;
+    try {
+      let base = new URL(this.deps.publicBase ?? "");
+      return base.protocol === "https:" ? base.origin + path : null;
+    } catch { return null; }
   }
 
   // ---- беседа сайта ↔ тред (этап 3) ----

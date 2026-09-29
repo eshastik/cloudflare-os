@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Экран Mini App в Telegram (ADR 0027 Mnemos, этап 6). Свой строгий CSP: сторонний скрипт —
+         только официальный telegram-web-app.js, запросы — только к своей установке. В режиме
+         разработки Vite снимает эту строку (vite.config.ts): ему нужны встроенные скрипты. -->
+    <meta http-equiv="Content-Security-Policy" data-mini-app-csp content="default-src 'none'; script-src 'self' https://telegram.org/js/telegram-web-app.js; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+    <!-- Одноразовый токен экрана в адресе не должен уходить дальше этой страницы. -->
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Документ — Mnemos</title>
+    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+  </head>
+  <body>
+    <div id="mini-app"></div>
+    <script type="module" src="/src/telegram-app/main.tsx"></script>
+  </body>
+</html>
