@@ -1,14 +1,28 @@
 import { isTextLikeAttachmentMimeType } from "@gadgets/workshop-shared/api";
 import type { AiModelConfig, AiModelProvider, ChatAttachmentUpload } from "@gadgets/workshop-shared/api";
 import { PDF_MIME_TYPE } from "./chat-attachment-pdf";
-import {
-  MAX_OFFICE_ATTACHMENT_BYTES,
-  UNSUPPORTED_ATTACHMENT_MESSAGE,
-  extractOfficeText,
-  isLegacyDocument,
-  officeAttachmentText,
-  officeDocumentKind,
-} from "./chat-attachment-office";
+import { chatDocumentContentType } from "./chat-documents";
+
+export const UNSUPPORTED_ATTACHMENT_MESSAGE =
+  "Этот формат не поддерживается: сохраните документ как DOCX, XLSX, PPTX или PDF";
+
+// Старые двоичные форматы Office и соседние: Mnemos их не разбирает, человеку нужен понятный совет.
+const LEGACY_MIME_TYPES = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/rtf",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.presentation",
+]);
+const LEGACY_EXTENSIONS = new Set(["doc", "xls", "ppt", "rtf", "odt", "ods", "odp", "docm", "xlsm", "pptm"]);
+
+/** Старый или иной формат документа, для которого нужен отказ с советом пересохранить. */
+export function isLegacyDocument(mimeType: string, name: string | undefined): boolean {
+  let extension = /\.([A-Za-z0-9]+)$/.exec(name ?? "")?.[1]?.toLowerCase() ?? "";
+  return LEGACY_MIME_TYPES.has(mimeType) || LEGACY_EXTENSIONS.has(extension);
+}
 
 // Bounds attachment storage and the bytes replayed into model requests.
 const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
@@ -101,38 +115,28 @@ export function validateChatAttachmentUpload(
 }
 
 /**
- * Принять вложение беседы: документ Office превращается в текстовое вложение с исходным именем,
- * остальное проверяется как есть. Предел 1 МиБ относится к тексту после извлечения.
+ * Принять вложение беседы байтами: картинки и небольшие файлы, которые не документы (код, yaml и
+ * подобное). При подключённом Mnemos документы (PDF, Office, txt/md/csv/json) сюда не принимаются:
+ * браузер кладёт их прямо в Mnemos (beginChatDocumentUpload), и через беседу их байты не идут
+ * (ADR 0003). Без Mnemos класть их некуда: текст и PDF идут прежним путём с пределом 1 МиБ, а Office
+ * разбирать без Mnemos нечем.
  */
-export async function prepareChatAttachmentUpload(
+export function prepareChatAttachmentUpload(
   attachment: ChatAttachmentUpload,
   provider?: AiModelConfig["provider"],
-): Promise<ChatAttachmentUpload> {
+  mnemosConnected = true,
+): ChatAttachmentUpload {
   attachment.name = sanitizeChatAttachmentName(attachment.name);
   attachment.mimeType = sanitizeChatAttachmentMimeType(attachment.mimeType);
-
-  // Windows отдаёт CSV с типом Excel; по расширению это текст.
-  if (attachment.mimeType === "application/vnd.ms-excel" && /\.csv$/i.test(attachment.name ?? "")) {
-    attachment.mimeType = "text/csv";
+  let document = chatDocumentContentType(attachment.mimeType, attachment.name);
+  if (document && mnemosConnected) {
+    throw new Error("Документы прикрепляются через Mnemos: обновите страницу и прикрепите файл заново.");
   }
-
-  let kind = officeDocumentKind(attachment.mimeType, attachment.name);
-  if (kind) {
-    if (attachment.content.byteLength > MAX_OFFICE_ATTACHMENT_BYTES) {
-      throw new Error("Документ больше 15 МиБ.");
-    }
-    let zip = [0x50, 0x4b, 0x03, 0x04];
-    if (zip.some((byte, index) => attachment.content[index] !== byte)) {
-      throw new Error("Содержимое файла не совпадает с его типом.");
-    }
-    let text = await extractOfficeText(attachment.content, kind);
-    attachment = {
-      ...attachment,
-      mimeType: "text/plain; charset=utf-8",
-      content: new TextEncoder().encode(
-        officeAttachmentText(attachment.name, text, MAX_CHAT_ATTACHMENT_BYTES)),
-    };
-  } else if (isLegacyDocument(attachment.mimeType, attachment.name)) {
+  if (document?.startsWith("application/vnd.openxmlformats-officedocument.")) {
+    throw new Error("Документы Word, Excel и PowerPoint читаются через Mnemos: подключите Mnemos или сохраните файл как PDF.");
+  }
+  if (document) attachment.mimeType = document;
+  if (isLegacyDocument(attachment.mimeType, attachment.name)) {
     throw new Error(UNSUPPORTED_ATTACHMENT_MESSAGE);
   }
   return validateChatAttachmentUpload(attachment, provider);

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChatCircleText, CircleNotch, FileArrowUp, MagnifyingGlass, X } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
-import { documentRows, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
+import { documentRows, isPersonalSpace, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
-import { folderOf, MaterialCard, queryTerms, MaterialChatButtons, materialPrompt, type MaterialAction } from "./MaterialCard.tsx";
+import { folderOf, MaterialCard, queryTerms, MaterialChatButtons, materialPrompt, type MaterialAction, type MoveTarget, type MoveTargets } from "./MaterialCard.tsx";
 import { isMarkdown, Markdown } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
 import { Button, Notice, StatusBadge, touchOnly } from "./ui.tsx";
@@ -66,6 +66,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   const [times, setTimes] = useState<Map<string, string>>(new Map());
   const [opened, setOpened] = useState<Opened | null>(null);
   const [notice, setNotice] = useState("");
+  const [moved, setMoved] = useState("");
   const [uploading, setUploading] = useState(false);
   const requested = useRef(new Set<string>());
   const searchGeneration = useRef(0);
@@ -186,6 +187,33 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
       .catch(() => setNotice("Беседа не открылась. Повторите попытку."));
   }
 
+  // Файлы из бесед ложатся в личное пространство; отсюда человек переносит их в рабочий проект.
+  const userId = data.identity?.subject.user_id;
+  const personalSpaces = useMemo(() => new Set(data.projects.filter(p => isPersonalSpace(p, userId)).map(p => p.id)), [data.projects, userId]);
+
+  async function moveDocument(row: DocumentRow, target: MoveTarget) {
+    setNotice(""); setMoved("");
+    try {
+      const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
+      if (!doc.exists) throw new Error("Личной версии файла нет: переносить нечего.");
+      if (doc.conflicted) throw new Error("У файла конфликт версий. Сначала выберите вариант в личном черновике.");
+      await ui.transferPrivateDocument(row.projectId, row.nodeId, { request_id: "move-" + crypto.randomUUID(), target_project_id: target.id, expected_head: doc.head });
+    } catch (error) {
+      const own = error instanceof Error && /^(Личной версии|У файла конфликт)/.test(error.message);
+      setNotice(`Файл «${row.name}» не перенесён: ${own ? (error as Error).message : "Mnemos не принял перенос. Проверьте право на правку проекта и повторите."}`);
+      return;
+    }
+    setMoved(`Файл «${row.name}» перенесён в проект «${target.name}»`);
+    setOpened(current => current?.row.projectId === row.projectId && current.row.nodeId === row.nodeId ? null : current);
+    await data.reloadProjects();
+  }
+
+  function moveFor(row: DocumentRow): MoveTargets | undefined {
+    if (!personalSpaces.has(row.projectId)) return undefined;
+    const targets = data.projects.filter(p => p.id !== row.projectId && p.canEdit !== false && !personalSpaces.has(p.id)).map(p => ({ id: p.id, name: p.name }));
+    return { targets, onMove: target => moveDocument(row, target) };
+  }
+
   function askAgent(text: string) {
     setNotice("");
     const project = data.projects.find(p => p.id === selected);
@@ -222,7 +250,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   const materialRow = (row: DocumentRow, fragment?: string, folder?: string) => (
     <MaterialCard key={keyOf(row.projectId, row.nodeId)} row={row} fragment={fragment} folder={folder ?? row.folder} terms={search ? terms : undefined}
       showProject={!selected} at={times.get(keyOf(row.projectId, row.nodeId))}
-      selected={isOpened(row)} onOpen={() => void open(row)} onChat={action => chat(row, action)} />
+      selected={isOpened(row)} onOpen={() => void open(row)} onChat={action => chat(row, action)} move={moveFor(row)} />
   );
 
   return (
@@ -254,6 +282,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
       </div>
 
       {notice && <div className="mb-3"><Notice tone="danger">{notice}</Notice></div>}
+      {moved && <div className="mb-3"><Notice tone="success">{moved}</Notice></div>}
       {data.projectsError && <div className="mb-3"><Notice tone="danger">{data.projectsError}</Notice></div>}
 
       <div className={opened ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)]" : ""}>

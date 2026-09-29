@@ -6,11 +6,12 @@
  */
 import type { ActionCardIcon, ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
 import type { PublicationReview } from "@gadgets/workshop-shared/publication-review";
-import { MnemosAPIError, type InvitationRole, type OrgUnit, type OrganizationInvitation, type PrivateDocumentPage, type PrivateParticipantMode, type PrivateParticipantPage, type ProjectBudgetPolicy, type ProjectPage, type DraftState, type PublicationPolicy, type WhoAmI, type WorkJournalPage, type SpendingPeriod, type SpendingSummary } from "./mnemos-api.ts";
+import { MnemosAPIError, type InvitationRole, type OrgUnit, type OrganizationInvitation, type PrivateDocumentPage, type PrivateParticipantMode, type PrivateParticipantPage, type ProjectBudgetPolicy, type ProjectPage, type DraftState, type DraftDocument, type DocumentTransfer, type PublicationPolicy, type WhoAmI, type WorkJournalPage, type SpendingPeriod, type SpendingSummary } from "./mnemos-api.ts";
 import type { ProjectVisibility, ProjectVisibilityResult, ShareRequest } from "./project-sharing.ts";
 import type { MailConnectionPage } from "./mail-connections.ts";
 import type { CalendarConnectionPage } from "./calendar-connections.ts";
 import type { GitConnectionPage } from "./git-connections.ts";
+import { isPersonalSpace, moveChatDocument } from "./chat-documents.ts";
 import { EXTRA_AUTO_APPROVABLE, EXTRA_KEYS, EXTRA_LABELS, EXTRA_READ_KEYS, EXTRA_READ_TITLES, checkedExtraAction, checkedExtraRead, executeExtraAction, prepareExtraAction, readExtra, type ExtraActionKind, type ExtraActionRequest, type ExtraActionSession, type ExtraReadKind, type ExtraReadRequest } from "./agent-actions-extra.ts";
 
 /** Методы сессии человека, которыми пользуются действия; MnemosAccountSession им удовлетворяет. */
@@ -48,6 +49,8 @@ export interface AgentActionSession {
   listPublicationReviews(cursor: string): Promise<{ reviews: PublicationReview[]; next_cursor: string }>;
   listWorkJournal(project: string, cursor?: string): Promise<WorkJournalPage>;
   readSpending(period: SpendingPeriod, timeZone?: string): Promise<SpendingSummary>;
+  readDraftDocument(project: string, node: string): Promise<DraftDocument>;
+  transferPrivateDocument(project: string, node: string, request: {request_id: string; target_project_id: string; expected_head: string}): Promise<DocumentTransfer>;
 }
 
 export type ShareMode = "read" | "write" | "none";
@@ -69,6 +72,7 @@ export type AgentActionRequest =
   | { kind: "set_department_member"; department: string; person: string; member: boolean; head: boolean }
   | { kind: "set_project_budget"; project: string; limitUsd: number }
   | { kind: "disable_connection"; type: ConnectionType; connection: string }
+  | { kind: "move_file"; project: string; document: string; target: string }
   | ExtraActionRequest;
 
 export type AgentActionKind = AgentActionRequest["kind"];
@@ -98,6 +102,7 @@ export const ACTION_LABELS: Record<AgentActionKind, string> = {
   revoke_invitation: "Отзыв приглашения", create_department: "Создание отдела",
   delete_department: "Удаление отдела", set_department_member: "Состав отдела",
   set_project_budget: "Лимит расходов проекта", disable_connection: "Отключение подключения",
+  move_file: "Перенос файла в проект",
   ...EXTRA_LABELS,
 };
 
@@ -115,6 +120,7 @@ const KEYS: Record<BaseActionKind, string[]> = {
   create_department: ["name"], delete_department: ["department"],
   set_department_member: ["department", "person", "member", "head"],
   set_project_budget: ["project", "limitUsd"], disable_connection: ["type", "connection"],
+  move_file: ["project", "document", "target"],
 };
 
 export function text(value: unknown, label: string, empty = false, max = 255): string {
@@ -161,6 +167,7 @@ export function checkedAgentAction(input: unknown): AgentActionRequest {
       return { kind, project: text(value.project, "проект"), limitUsd: Math.round(limit * 100) / 100 };
     }
     case "disable_connection": return { kind, type: oneOf(value.type, ["mail", "calendar", "git"] as const, "type"), connection: text(value.connection, "подключение") };
+    case "move_file": return { kind, project: text(value.project, "проект"), document: text(value.document, "файл", false, 1024), target: text(value.target, "проект назначения") };
   }
 }
 
@@ -264,6 +271,22 @@ export async function prepareAgentAction(session: AgentActionSession, scope: Rea
         title: request.mode === "none" ? `Закрыть доступ к «${document.name}»: ${person.display_name}` : `Поделиться документом «${document.name}»: ${person.display_name} — ${MODE_WORDS[request.mode]}`,
         details: [`Проект «${p.name}»`, before, ...((request.mode === "read" && person.document_only_read) || (request.mode === "write" && person.document_only_write) ? ["Получит доступ только к этому документу, без папки проекта"] : [])],
         resolved: { project: p.id, projectName: p.name, node: document.node_id, name: document.name, person: person.principal_id, personName: person.display_name, expected: person.mode, mode } };
+    }
+    case "move_file": {
+      // Область агента (ADR 0010): источник — проект из области или собственное личное пространство
+      // человека (туда падают вложения беседы без проекта), назначение — только из области. Иначе
+      // подбор документа перечислил бы агенту личные файлы проектов вне его области.
+      const from = await project(session, request.project);
+      if (!isPersonalSpace(from, (await session.whoAmI()).subject.user_id)) inScope(scope, from.id, from.name);
+      const to = await project(session, request.target);
+      inScope(scope, to.id, to.name);
+      const { document } = await personalDocument(session, from.id, request.document);
+      if (to.id === from.id) throw new Error(`Файл «${document.name}» уже в проекте «${from.name}».`);
+      if (to.can_edit === false) throw new Error(`В проект «${to.name}» у вас нет права записи.`);
+      return { kind: request.kind, icon: "other", ownerOnly: true,
+        title: `Перенести «${document.name}» в проект «${to.name}»`,
+        details: [`Сейчас файл в «${from.name}», личной версией`, "В новом проекте он тоже будет вашей личной версией", "Вы получите уведомление о переносе"],
+        resolved: { project: from.id, projectName: from.name, node: document.node_id, name: document.name, target: to.id, targetName: to.name, request: `move-${crypto.randomUUID()}` } };
     }
     case "request_review": {
       const p = await project(session, request.project); inScope(scope, p.id, p.name);
@@ -389,6 +412,10 @@ export async function executeAgentAction(session: AgentActionSession, kind: Agen
       try { await session.setPrivateDraftParticipant(project, node, head, str(r, "person"), str(r, "expected") as PrivateParticipantMode, mode); }
       catch (error) { if (error instanceof MnemosAPIError && error.status === 409) throw new Error("Доступ к документу изменился после предложения. Попросите агента предложить заново."); throw error; }
       return { summary: mode === "" ? `${str(r, "personName")} больше не видит «${str(r, "name")}»` : `${str(r, "personName")} ${MODE_WORDS[mode]} «${str(r, "name")}»` };
+    }
+    case "move_file": {
+      const moved = await moveChatDocument(session, str(r, "project"), str(r, "node"), str(r, "target"), str(r, "request"));
+      return { summary: `Файл «${moved.name}» перенесён в проект «${str(r, "targetName")}»${moved.notified ? "" : " (уведомление не поставлено)"}` };
     }
     case "request_review": {
       const project = str(r, "project"), state = await session.draftState(project);

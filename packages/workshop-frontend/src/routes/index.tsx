@@ -232,6 +232,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
             seedText={seed.text}
             seedNonce={seed.nonce}
             onFolderProjectCreated={addProject}
+            documentProject={projects[0] && { accountId: projects[0].accountId, projectId: projects[0].projectId }}
           />
         </div>
 

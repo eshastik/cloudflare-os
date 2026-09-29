@@ -1,4 +1,5 @@
-import { ChatCircleText, FileCode, FileText, ListChecks } from "@phosphor-icons/react";
+import { useState } from "react";
+import { ArrowSquareRight, ChatCircleText, FileCode, FileText, ListChecks } from "@phosphor-icons/react";
 import type { DocumentRow } from "./data.ts";
 import { isMarkdown, markdownToPlain } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
@@ -52,9 +53,11 @@ export function folderOf(path: string | undefined, name: string): string {
  * Строка материала по макету: значок, имя, папка, фрагмент найденного, справа — проект и время.
  * Действия видны у выбранной строки и при наведении или фокусе, чтобы длинный список оставался спокойным.
  */
-export function MaterialCard({ row, at, fragment, folder, showProject, terms, selected, onOpen, onChat }: {
+export function MaterialCard({ row, at, fragment, folder, showProject, terms, selected, onOpen, onChat, move }: {
   row: DocumentRow; at?: string; fragment?: string; folder?: string; showProject?: boolean; terms?: string[]; selected: boolean;
   onOpen(): void; onChat(action: MaterialAction): void;
+  /** Перенос в проект: только у файла личного пространства. */
+  move?: MoveTargets;
 }) {
   const code = CODE_FILE.test(row.name);
   const Icon = code ? FileCode : FileText;
@@ -79,6 +82,7 @@ export function MaterialCard({ row, at, fragment, folder, showProject, terms, se
           <Button variant="secondary" size="sm" className="relative" onClick={onOpen}>Открыть</Button>
           <MaterialChatButtons onChat={onChat} />
         </div>
+        {move && <MoveToProject name={row.name} move={move} />}
       </div>
       {!quiet && <div className="relative shrink-0"><StatusBadge tone={row.status.tone}>{row.status.label}</StatusBadge></div>}
     </article>
@@ -91,4 +95,45 @@ export function MaterialChatButtons({ onChat }: { onChat(action: MaterialAction)
     <Button variant="ghost" size="sm" className="relative" icon={ChatCircleText} onClick={() => onChat("ask")}>Спросить в беседе</Button>
     <Button variant="ghost" size="sm" className="relative" icon={ListChecks} onClick={() => onChat("task")}>Сделать задачу по документу</Button>
   </>;
+}
+
+export type MoveTarget = { id: string; name: string };
+export type MoveTargets = { targets: MoveTarget[]; onMove(target: MoveTarget): Promise<void> };
+
+/**
+ * «Переместить в проект…»: список проектов раскрывается в строке, без выпадающего списка — как выбор
+ * проекта чипами на этом экране. Кнопка стоит отдельно от действий строки: они прячутся до наведения,
+ * а раскрытый выбор не должен исчезать, когда указатель ушёл.
+ */
+export function MoveToProject({ name, move }: { name: string; move: MoveTargets }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string>("");
+  async function choose(target: MoveTarget) {
+    setBusy(target.id);
+    try { await move.onMove(target); setOpen(false); }
+    finally { setBusy(""); }
+  }
+  if (!open) return (
+    <div className="mt-1 flex">
+      <Button variant="ghost" size="sm" className="relative" icon={ArrowSquareRight} onClick={() => setOpen(true)}>Переместить в проект…</Button>
+    </div>
+  );
+  return (
+    <div data-move-to-project="" className="relative mt-2 rounded-[12px] border border-kumo-fill bg-kumo-base p-2">
+      <p className="m-0 px-1 pb-1.5 text-[12px] leading-4 text-kumo-subtle">Куда перенести «{name}»? Файл станет вашей личной версией в выбранном проекте.</p>
+      {move.targets.length === 0
+        ? <p className="m-0 px-1 pb-1 text-[13px] text-kumo-subtle">Нет проектов, которые вы можете править.</p>
+        : <div role="listbox" aria-label={`Проект для «${name}»`} className="flex flex-wrap gap-1">
+            {move.targets.map(target => (
+              <button key={target.id} type="button" role="option" aria-selected={false} disabled={!!busy} onClick={() => void choose(target)}
+                className="inline-flex h-7 max-w-[240px] items-center rounded-full border border-kumo-fill bg-kumo-overlay px-3 text-[13px] text-kumo-default outline-none transition-colors hover:bg-kumo-tint focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:opacity-50">
+                <span className="truncate">{busy === target.id ? "Переношу…" : target.name}</span>
+              </button>
+            ))}
+          </div>}
+      <div className="mt-1.5 flex justify-end">
+        <Button variant="ghost" size="sm" disabled={!!busy} onClick={() => setOpen(false)}>Отмена</Button>
+      </div>
+    </div>
+  );
 }

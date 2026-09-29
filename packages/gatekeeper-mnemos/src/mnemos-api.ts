@@ -588,6 +588,23 @@ export class MnemosAPI {
     try { segment(result.node_id); head(result.head); } catch { throw new MnemosAPIError(502); }
     return result;
   }
+  /** Извлечённый текст своей личной версии частями. 429 с кодом content.preparing — разбор ещё идёт. */
+  async readDraftText(project: string, node: string, offset: number, maxBytes: number, signal?: AbortSignal): Promise<DraftText> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 262144) throw new MnemosAPIError(400);
+    const out = await this.#request<DraftText>(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/text?offset=${offset}&max_bytes=${maxBytes}`, "GET", signal, undefined, false, 60_000);
+    if (!validDraftText(out, node, offset)) throw new MnemosAPIError(502);
+    return out;
+  }
+  /** Перенос своей личной версии в другой проект: создание в цели, удаление в источнике, уведомление владельцу. */
+  async transferPrivateDocument(project: string, node: string, request: {request_id: string; target_project_id: string; expected_head: string}, signal?: AbortSignal): Promise<DocumentTransfer> {
+    head(request.expected_head); segment(request.target_project_id);
+    if (typeof request.request_id !== "string" || !/^[A-Za-z0-9:_-]{16,200}$/.test(request.request_id) || request.target_project_id === project) throw new MnemosAPIError(400);
+    const body = {request_id: request.request_id, target_project_id: request.target_project_id, expected_head: request.expected_head};
+    const out = await this.#request<DocumentTransfer>(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/transfer`, "POST", signal, body, false, 120_000);
+    try { segment(out.node_id); head(out.head); } catch { throw new MnemosAPIError(502); }
+    if (out.project_id !== request.target_project_id || typeof out.name !== "string" || !out.name || typeof out.notified !== "boolean") throw new MnemosAPIError(502);
+    return out;
+  }
   /** Очередь уведомлений человека (ADR 0027, раздел 5). after=null — от подтверждённого курсора. */
   readNotifications(after: number | null, limit: number, signal?: AbortSignal): Promise<unknown> {
     if ((after !== null && (!Number.isSafeInteger(after) || after < 0)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new MnemosAPIError(400);
@@ -1299,6 +1316,17 @@ export interface ProjectPage { projects: { id: string; name: string; slug: strin
 /** parse_failure — файл принят, но не разобран: причина словами от сервера. */
 export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean; parse_failure?: string }[]; next_cursor?: string; truncated: boolean }
 export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean }
+/** Часть извлечённого текста личной версии: смещения — байты UTF-8 текста; no_text — текстового слоя нет. */
+export interface DraftText { node_id: string; head: string; name: string; content_type: string; size_bytes: number; offset: number; next_offset: number; total_bytes: number; text: string; truncated: boolean; no_text?: boolean; failure?: string }
+export function validDraftText(value: unknown, node: string, offset: number): value is DraftText {
+  const t = value as DraftText;
+  return !!t && typeof t === "object" && t.node_id === node && typeof t.head === "string" && typeof t.name === "string" &&
+    typeof t.content_type === "string" && typeof t.text === "string" && typeof t.truncated === "boolean" &&
+    t.offset === offset && Number.isSafeInteger(t.next_offset) && t.next_offset >= offset && Number.isSafeInteger(t.total_bytes) &&
+    Number.isSafeInteger(t.size_bytes) && (t.no_text === undefined || typeof t.no_text === "boolean") && (t.failure === undefined || typeof t.failure === "string");
+}
+/** Итог переноса личной версии между проектами. notified=false — перенос прошёл, уведомление не поставлено. */
+export interface DocumentTransfer { node_id: string; head: string; project_id: string; name: string; source_project_id: string; source_node_id: string; source_head: string; notified: boolean }
 
 export interface UploadTicket { upload_id: string; url: string; method: string; checksum_header: string; checksum_value: string; content_length: number }
 

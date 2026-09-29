@@ -1,21 +1,40 @@
 import { describe, expect, it } from 'vitest'
-import { attachmentBudgetBytes, attachmentDownloadName, isOfficeAttachment } from './chatAttachmentFiles'
+import { attachmentDownloadName, chatDocumentContentType, chatDocumentPlaceLabel } from './chatAttachmentFiles'
 
-describe('вложения беседы: документы Office', () => {
-  it('опознаются по MIME, а при пустом или общем типе — по расширению', () => {
-    expect(isOfficeAttachment('Отчёт.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe(true)
-    expect(isOfficeAttachment('Продажи.XLSX', '')).toBe(true)
-    expect(isOfficeAttachment('План.pptx', 'application/octet-stream')).toBe(true)
-    expect(isOfficeAttachment('old.doc', 'application/msword')).toBe(false)
-    expect(isOfficeAttachment('notes.txt', 'text/plain')).toBe(false)
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+describe('вложения беседы: какой файл — документ', () => {
+  it('опознаёт документы по MIME', () => {
+    expect(chatDocumentContentType('application/pdf', 'a.pdf')).toBe('application/pdf')
+    expect(chatDocumentContentType(DOCX, 'Отчёт.docx')).toBe(DOCX)
+    expect(chatDocumentContentType('text/plain; charset=utf-8', 'a.txt')).toBe('text/plain')
   })
 
-  it('в общий объём документ идёт не больше своего текста', () => {
-    expect(attachmentBudgetBytes(10 * 1024 * 1024, 'a.docx', '')).toBe(1024 * 1024)
-    expect(attachmentBudgetBytes(10 * 1024 * 1024, 'a.pdf', 'application/pdf')).toBe(10 * 1024 * 1024)
+  it('при пустом или общем типе смотрит на расширение, как сервер', () => {
+    expect(chatDocumentContentType('', 'Продажи.XLSX')).toBe(XLSX)
+    expect(chatDocumentContentType('application/zip', 'План.pptx')).toBe(PPTX)
+    expect(chatDocumentContentType('application/octet-stream', 'Отчёт.docx')).toBe(DOCX)
+    expect(chatDocumentContentType('', 'README.md')).toBe('text/markdown')
+    expect(chatDocumentContentType('application/vnd.ms-excel', 'data.csv')).toBe('text/csv')
+    expect(chatDocumentContentType('text/json', 'conf.json')).toBe('application/json')
   })
 
-  it('извлечённый текст скачивается как .txt', () => {
+  it('картинки, код и старые форматы — не документы', () => {
+    expect(chatDocumentContentType('image/png', 'a.png')).toBeUndefined()
+    expect(chatDocumentContentType('image/png', 'обманка.pdf')).toBeUndefined()
+    expect(chatDocumentContentType('application/msword', 'old.doc')).toBeUndefined()
+    expect(chatDocumentContentType('text/javascript', 'app.js')).toBeUndefined()
+    expect(chatDocumentContentType('application/zip', 'архив.zip')).toBeUndefined()
+  })
+
+  it('пометка называет место документа', () => {
+    expect(chatDocumentPlaceLabel({ personal: true, projectTitle: 'x' })).toBe('Сохранено в личное пространство')
+    expect(chatDocumentPlaceLabel({ personal: false, projectTitle: 'Продажи' })).toBe('Сохранено в проект «Продажи» — личная версия')
+  })
+
+  it('старый документ Office (извлечённый текст) скачивается как .txt', () => {
     expect(attachmentDownloadName('Отчёт.docx', 'text/plain')).toBe('Отчёт.docx.txt')
     expect(attachmentDownloadName('Отчёт.pdf', 'application/pdf')).toBe('Отчёт.pdf')
     expect(attachmentDownloadName(undefined, 'text/plain')).toBe('attachment')

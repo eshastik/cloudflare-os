@@ -211,6 +211,8 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   setPersonalMemory: MnemosAccountSession["setPersonalMemory"];
   listPrivateDocuments: MnemosAccountSession["listPrivateDocuments"];
   listPrivateDocumentsForOwner: MnemosAccountSession["listPrivateDocumentsForOwner"];
+  /** Перенос файла личного пространства в проект (правами человека на оба проекта). */
+  transferPrivateDocument: MnemosAccountSession["transferPrivateDocument"];
   recordUIReadiness: MnemosAccountSession["recordUIReadiness"];
   readPlatformMetrics: MnemosAccountSession["readPlatformMetrics"];
   managedTaskRequest(): Promise<ManagedTaskRequest | null>;

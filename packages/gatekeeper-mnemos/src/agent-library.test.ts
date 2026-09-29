@@ -860,3 +860,30 @@ test("ход работы в беседе: поиск, чтение и обзо�
   assert.equal(hits.activity?.items?.[0].name, "readme.md");
 
 });
+
+test("файл из беседы: читается только вложение этой беседы, иначе отказ до чтения", async () => {
+  const { library, state, account } = fixture();
+  const reads: unknown[] = [];
+  (account as Record<string, unknown>).readChatDocumentText = async (project: string, node: string, offset: number) => {
+    reads.push([project, node, offset]);
+    return { state: "ready", name: "Отчёт.docx", contentType: "text/plain", text: "Итоги", offset, nextOffset: 5, totalBytes: 5, done: true, noText: false };
+  };
+  const allowed = new Set(["p-personal\0node-9"]);
+  const auth = Object.assign(authorizer(state), {
+    async authorizeChatDocument(project: string, node: string) {
+      state.calls.push(`chatfile:${project}:${node}`);
+      if (!allowed.has(`${project}\0${node}`)) throw new Error("Это не файл, прикреплённый в этой беседе");
+    },
+  });
+  const session = await library.startSession(auth as any);
+  const part = await session.readChatFile("p-personal", "node-9", 0);
+  assert.equal(part.state, "ready");
+  assert.deepEqual(reads, [["p-personal", "node-9", 0]]);
+  // Узел из другого проекта, доступный человеку, но не прикреплённый в беседе.
+  await assert.rejects(session.readChatFile("p1", "n1", 0), /не файл, прикреплённый/);
+  assert.equal(reads.length, 1);
+  // Старый хост без проверки вложений — отказ, чтения нет.
+  const old = await library.startSession(authorizer(state) as any);
+  await assert.rejects(old.readChatFile("p-personal", "node-9", 0));
+  assert.equal(reads.length, 1);
+});

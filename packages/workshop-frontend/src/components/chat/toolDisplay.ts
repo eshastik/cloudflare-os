@@ -93,6 +93,7 @@ export const MNEMOS_OBSERVATION_DISPLAY = {
   "mnemos.personal": spec("Посмотрел личные материалы", "Смотрю личные материалы", "прочитать личные материалы", ["обращение к личным материалам", "обращения к личным материалам", "обращений к личным материалам"], "document"),
   "mnemos.personal.list": spec("Посмотрел личные документы", "Смотрю личные документы", "получить личные документы", ["просмотр личных документов", "просмотра личных документов", "просмотров личных документов"], "folder"),
   "mnemos.personal.read": spec("Открыл личный документ", "Открываю личный документ", "открыть личный документ", ["личный документ открыт", "личных документа открыто", "личных документов открыто"], "document"),
+  "mnemos.chatfile.read": spec("Прочитал файл из беседы", "Читаю файл из беседы", "прочитать файл из беседы", ["файл из беседы прочитан", "файла из беседы прочитано", "файлов из беседы прочитано"], "document"),
   "mnemos.tracker.read": spec("Открыл трекер задач", "Открываю трекер задач", "открыть трекер задач", ["трекер открыт", "трекера открыто", "трекеров открыто"], "document"),
   "mnemos.tracker.change": spec("Изменил задачу в трекере", "Меняю задачу в трекере", "изменить задачу в трекере", ["задача изменена", "задачи изменено", "задач изменено"], "edit"),
   "mnemos.create": spec("Создал документ", "Создаю документ", "создать документ", ["документ создан", "документа создано", "документов создано"], "create"),
@@ -126,6 +127,7 @@ export const MNEMOS_LEGACY_TITLES: Record<string, string> = {
 /** Методы библиотеки MNEMOS, которые агент зовёт из кода, → вид шага: подпись идущего шага до прихода наблюдений. */
 export const MNEMOS_LIBRARY_METHODS: Record<string, string> = {
   listPersonalDocuments: "mnemos.personal.list", readPersonalDocument: "mnemos.personal.read",
+  readChatFile: "mnemos.chatfile.read", moveFileToProject: "mnemos.prepare",
   listProjects: "mnemos.projects", searchProject: "mnemos.search", search: "mnemos.search",
   readDocument: "mnemos.open", browseProject: "mnemos.browse", publishDraft: "mnemos.publish",
   readTracker: "mnemos.tracker.read", changeTrackerTask: "mnemos.tracker.change",
@@ -161,6 +163,7 @@ const act = (past: string, present: string, failed: string, icon: StepIcon): Act
 export const MNEMOS_ACTION_DISPLAY: Record<string, ActionDisplay> = {
   publish: act("Опубликовал", "Публикую", "опубликовать", "publish"),
   share_document: act("Открыл доступ к документу", "Открываю доступ к документу", "открыть доступ к документу", "share"),
+  move_file: act("Перенёс файл в проект", "Переношу файл в проект", "перенести файл в проект", "folder"),
   request_review: act("Отправил на согласование", "Отправляю на согласование", "отправить на согласование", "review"),
   decide_review: act("Принял решение по согласованию", "Принимаю решение по согласованию", "принять решение по согласованию", "review"),
   withdraw_review: act("Отозвал согласование", "Отзываю согласование", "отозвать согласование", "review"),
@@ -434,7 +437,7 @@ function observationLabel(kind: string, spec: DisplaySpec, scope: string | undef
     case "mnemos.create": case "mnemos.edit": case "mnemos.tracker.read":
       return `${spec.past}${subject ? ` ${quoted(subject, 80)}` : ""}${where}`;
     case "mnemos.tracker.change": return `${spec.past}${subject ? ` ${quoted(subject, 80)}` : ""}`;
-    case "mnemos.publish": case "mnemos.personal.list": case "mnemos.personal.read": case "mnemos.personal":
+    case "mnemos.publish": case "mnemos.personal.list": case "mnemos.personal.read": case "mnemos.personal": case "mnemos.chatfile.read":
       return `${spec.past}${where}`;
     case "external.mcp.tools": return `${spec.past} «${record.title.replace(/: list tools$/, "")}»`;
     case "external.mcp.call": {

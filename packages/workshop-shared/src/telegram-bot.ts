@@ -59,7 +59,9 @@ export type TelegramChatLink =
 export const NOTIFICATION_KINDS = ["decision_needed", "task_result", "shared_with_me", "platform_failure"] as const;
 export type NotificationKind = typeof NOTIFICATION_KINDS[number];
 
-export const NOTIFICATION_OBJECT_TYPES = ["publication_review", "share_request", "collaboration", "document", "platform_signal"] as const;
+// Последние три — из миграции 0179 Mnemos: без них одно такое событие делало недействительной всю
+// страницу очереди, и доставка в Telegram вставала целиком.
+export const NOTIFICATION_OBJECT_TYPES = ["publication_review", "share_request", "collaboration", "document", "platform_signal", "inbox_alert", "template_promotion", "project"] as const;
 export type NotificationObjectType = typeof NOTIFICATION_OBJECT_TYPES[number];
 
 /** Объект уведомления: только идентификаторы, без адресов. */
@@ -113,12 +115,15 @@ export function validNotificationObject(value: unknown): NotificationObject | nu
   let field = (name: string) => o[name] === undefined || o[name] === "" ? undefined : validId(o[name]) ? o[name] as string : null;
   let project = field("project_id"), owner = field("owner_id"), domain = field("domain_id");
   if (project === null || owner === null || domain === null) return null;
-  let shape: Record<NotificationObjectType, [boolean, boolean, boolean]> = {
+  // null — поле необязательно (у вопроса приёма организации проекта нет).
+  let shape: Record<NotificationObjectType, [boolean | null, boolean, boolean]> = {
     publication_review: [true, false, true], share_request: [true, false, false], collaboration: [true, false, false],
     document: [true, true, false], platform_signal: [false, false, false],
+    inbox_alert: [null, false, false], template_promotion: [false, false, false], project: [true, false, false],
   };
   let [p, w, d] = shape[type];
-  if (!!project !== p || !!owner !== w || !!domain !== d) return null;
+  if ((p !== null && !!project !== p) || !!owner !== w || !!domain !== d) return null;
+  if (type === "project" && project !== o.id) return null;
   return { type, id: o.id, ...(project ? { project_id: project } : {}), ...(owner ? { owner_id: owner } : {}), ...(domain ? { domain_id: domain } : {}) };
 }
 

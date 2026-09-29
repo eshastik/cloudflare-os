@@ -86,6 +86,7 @@ import {
   ChatAttachmentHandle,
   type ChatAttachmentUploaded,
   type ChatAttachmentProjectSave,
+  type ChatDocumentRef,
   ChatAttachmentRef,
   WorkpieceId,
   BlueprintOutput,
@@ -134,7 +135,9 @@ import { useActionOpen } from "./components/chat/useActionOpen";
 import { LiveStep, WorkRun, type OpenDocument } from "./components/chat/WorkSteps";
 import { actionDisplay, describeLiveStep, type GadgetRef, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
 import { useMnemosLink, type OpenAppInChat } from "./components/chat/useMnemosLink";
-import { MAX_CHAT_ATTACHMENT_BYTES, MAX_OFFICE_ATTACHMENT_BYTES, attachmentBudgetBytes, attachmentDownloadName, isOfficeAttachment } from "./chatAttachmentFiles";
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_CHAT_DOCUMENT_BYTES, attachmentDownloadName, chatDocumentContentType } from "./chatAttachmentFiles";
+import { uploadPreparedAttachment } from "./chatDocumentUpload";
+import { ChatDocumentNote } from "./components/chat/ChatDocumentNote";
 import { reasoningSections } from "./components/chat/reasoningSections";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
@@ -385,6 +388,8 @@ type PendingAttachment = {
   uploadState: "uploading" | "ready" | "error";
   ref?: ChatAttachmentUploaded;
   error?: string;
+  // Документ идёт в хранилище Mnemos и не занимает общий объём сообщения.
+  document?: boolean;
 };
 
 const MAX_PENDING_ATTACHMENTS = 5;
@@ -398,12 +403,14 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
   });
 }
 
-async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType: string}> {
-  if (isOfficeAttachment(file.name, file.type)) {
-    if (file.size > MAX_OFFICE_ATTACHMENT_BYTES) {
-      throw new Error(`Документ должен быть не больше ${formatAttachmentSize(MAX_OFFICE_ATTACHMENT_BYTES)}.`);
+async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType: string, document?: boolean}> {
+  const documentType = chatDocumentContentType(file.type, file.name);
+  if (documentType) {
+    if (file.size > MAX_CHAT_DOCUMENT_BYTES) {
+      throw new Error(`Документ должен быть не больше ${formatAttachmentSize(MAX_CHAT_DOCUMENT_BYTES)}.`);
     }
-    return { blob: file, mimeType: file.type || "application/octet-stream" };
+    if (file.size === 0) throw new Error(`Файл «${file.name}» пустой.`);
+    return { blob: file, mimeType: documentType, document: true };
   }
   if (!file.type.startsWith("image/")) {
     if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
@@ -1399,7 +1406,7 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
   );
 });
 
-// Пометка под документом, прикреплённым в беседе с проектом: куда он лёг или почему не лёг.
+// Пометка под документом из старых сообщений (до 29.09), когда копия ложилась в проект беседы.
 const AttachmentProjectNote = memo(function AttachmentProjectNote({ save }: { save: ChatAttachmentProjectSave }) {
   const { openDocument } = useContext(WorkRunContext);
   if (!save.saved) {
@@ -1428,25 +1435,57 @@ const AttachmentProjectNote = memo(function AttachmentProjectNote({ save }: { sa
 type ChatAttachmentGridProps = {
   attachments: ChatAttachmentRef[];
   onDownload?: AttachmentDownloadHandler;
+  loadProjects?: () => Promise<ChatProjectChoice[]>;
+  onMoveDocument?: (attachmentId: string, targetProjectId: string) => Promise<ChatDocumentRef>;
 };
 
 const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
   {
     attachments,
     onDownload,
+    loadProjects,
+    onMoveDocument,
   }: ChatAttachmentGridProps,
 ) {
+  const { openDocument } = useContext(WorkRunContext);
   const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
+  // Документ после переноса открывается по новому месту, а не по тому, что в сообщении.
+  const [movedDocuments, setMovedDocuments] = useState<ReadonlyMap<string, ChatDocumentRef>>(new Map());
+  const documentOf = useCallback((attachment: ChatAttachmentRef) =>
+    movedDocuments.get(attachment.id) ?? attachment.document, [movedDocuments]);
+  const openChatDocument = useCallback((doc: ChatDocumentRef) =>
+    openDocument?.({ project: doc.projectId, document: doc.resource, accountId: doc.accountId, title: doc.name }), [openDocument]);
   const previewAttachment = previewAttachmentId === null
     ? null
     : attachments.find((attachment) => attachment.id === previewAttachmentId) ?? null;
-  const handlePreview = useCallback((id: string) => setPreviewAttachmentId(id), []);
+  const handlePreview = useCallback((id: string) => {
+    const attachment = attachments.find((a) => a.id === id);
+    const doc = attachment && documentOf(attachment);
+    // У документа в беседе нет байтов: вместо просмотра — открыть его в Mnemos.
+    const open = doc && openChatDocument(doc);
+    if (open) void open();
+    else setPreviewAttachmentId(id);
+  }, [attachments, documentOf, openChatDocument]);
   const handleClose = useCallback(() => setPreviewAttachmentId(null), []);
 
   return (
     <>
       <div className="mb-2 flex flex-wrap gap-2">
-        {attachments.map((attachment) => attachment.project ? (
+        {attachments.map((attachment) => attachment.document ? (
+          <div key={attachment.id} className="flex w-36 flex-col gap-1">
+            <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
+            <ChatDocumentNote
+              document={attachment.document}
+              openDocument={openChatDocument}
+              loadProjects={loadProjects}
+              move={onMoveDocument && (async (target) => {
+                const next = await onMoveDocument(attachment.id, target);
+                setMovedDocuments((prev) => new Map(prev).set(attachment.id, next));
+                return next;
+              })}
+            />
+          </div>
+        ) : attachment.project ? (
           <div key={attachment.id} className="flex w-36 flex-col gap-1">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
             <AttachmentProjectNote save={attachment.project} />
@@ -1462,7 +1501,7 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
       <AttachmentPreviewModal
         attachment={previewAttachment}
         onClose={handleClose}
-        onDownload={onDownload}
+        onDownload={previewAttachment?.document ? undefined : onDownload}
       />
     </>
   );
@@ -1949,7 +1988,10 @@ export const ChatInput = ({
   onToggleThinkingTraces,
   onFolderProjectCreated,
   settings,
+  documentProject,
 }: {
+  /** Для ещё не созданной беседы: проект, куда лягут прикреплённые документы (первый выбранный). */
+  documentProject?: { accountId: number; projectId: string };
   /** Настройки беседы в нижней строке поля ввода, рядом с «+»: проекты и работа с кодом. */
   settings?: ReactNode;
   createCapsuleGatekeeper: (
@@ -2218,15 +2260,13 @@ export const ChatInput = ({
 
   const uploadPendingAttachment = async (id: string, blob: Blob, mimeType: string, name?: string) => {
     try {
-      const content = new Uint8Array(await blob.arrayBuffer());
-      if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) return;
       const overseer = await getOverseer();
       if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) return;
-      const ref = await overseer.uploadChatAttachment({
-        mimeType,
-        content,
-        name,
-      }, selectedModel, chatKey ?? undefined);
+      const ref = await uploadPreparedAttachment(overseer, { blob, mimeType, name }, {
+        modelId: selectedModel,
+        chatId: chatKey ?? undefined,
+        project: chatKey == null ? documentProject : undefined,
+      });
       if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) {
         deleteStagedAttachment(ref);
         return;
@@ -2277,14 +2317,14 @@ export const ChatInput = ({
         continue;
       }
 
-      const { file, blob, mimeType } = result.value;
+      const { file, blob, mimeType, document: isDocument } = result.value;
       if (pendingAttachmentsRef.current.length >= MAX_PENDING_ATTACHMENTS) {
         toasts.add({ title: `Можно прикрепить не более ${MAX_PENDING_ATTACHMENTS} файлов`, variant: "error" });
         continue;
       }
       const totalPendingBytes = pendingAttachmentsRef.current.reduce(
-        (sum, attachment) => sum + attachmentBudgetBytes(attachment.blob.size, attachment.name, attachment.mimeType), 0);
-      if (totalPendingBytes + attachmentBudgetBytes(blob.size, file.name, mimeType) > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
+        (sum, attachment) => sum + (attachment.document ? 0 : attachment.blob.size), 0);
+      if (!isDocument && totalPendingBytes + blob.size > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
         toasts.add({ title: `Общий размер файлов не должен превышать ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES)}`, variant: "error" });
         continue;
       }
@@ -2297,6 +2337,7 @@ export const ChatInput = ({
         name: file.name || undefined,
         previewUrl,
         uploadState: "uploading",
+        ...(isDocument ? { document: true } : {}),
       };
       pendingAttachmentsRef.current = [...pendingAttachmentsRef.current, pending];
       setPendingAttachments((prev) => [...prev, pending]);
@@ -3426,7 +3467,9 @@ export const ChatInput = ({
                 {attachment.previewUrl ? (
                   <img src={attachment.previewUrl} alt={attachment.name ?? "Прикреплённый файл"} className="h-full w-full object-cover" />
                 ) : (
-                  <FileIcon size={22} className="text-kumo-inactive" />
+                  <span className="grid h-full w-full place-items-center" title={attachment.error ? `${attachment.name ?? "Файл"}: ${attachment.error}` : attachment.name}>
+                    <FileIcon size={22} className="text-kumo-inactive" />
+                  </span>
                 )}
                 {attachment.uploadState === "uploading" && (
                   <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Загрузка</div>
@@ -7316,6 +7359,8 @@ function ChatInterface({
                                   <ChatAttachmentGrid
                                     attachments={msg.attachments}
                                     onDownload={(attachment) => { void downloadChatAttachment(msg.chatId, attachment); }}
+                                    loadProjects={loadProjectChoices}
+                                    onMoveDocument={(attachmentId, target) => overseer.moveChatDocument(msg.chatId, attachmentId, target)}
                                   />
                                 )}
                                 {entry.slashCommand ? (

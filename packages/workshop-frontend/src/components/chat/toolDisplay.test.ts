@@ -146,6 +146,12 @@ describe("строки инструментов агента", () => {
     expect(actionDisplay("gmail:send_message", "Send email").past).toBe("Отправил письмо");
     expect(actionDisplay("cal:create_event", "Create event").past).toBe("Назначил встречу");
     expect(actionDisplay("x:y", "Что-то").past).not.toMatch(/Выполнил действие/);
+    expect(actionDisplay("mnemos.move_file", "Перенос файла в проект").past).toBe("Перенёс файл в проект");
+  });
+
+  it("файл из беседы: чтение частями и перенос в проект названы по смыслу", () => {
+    expect(STEP_DISPLAY[MNEMOS_LIBRARY_METHODS.readChatFile].present).toBe("Читаю файл из беседы");
+    expect(MNEMOS_LIBRARY_METHODS.moveFileToProject).toBe("mnemos.prepare");
   });
 });
 

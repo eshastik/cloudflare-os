@@ -5,7 +5,7 @@ import type {DriveImportSource} from "@gadgets/workshop-shared/drive-import";
 import type {CalendarSourceAccounts} from "./calendar-source-lease.js";
 import { isUIReadinessSample, type UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import type { WorkspaceActivityReporting, ChatProjectChoice } from "@gadgets/workshop-shared/api";
-import type { CodeWorkTarget } from "@gadgets/workshop-shared/gatekeeper";
+import type { ChatDocumentFile, CodeWorkTarget } from "@gadgets/workshop-shared/gatekeeper";
 import { emptyWorkspaceActivity, recordWorkspaceActivity, type WorkspaceActivityState } from "./workspace-activity.js";
 import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, SUGGESTED_MODELS, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, BlueprintOutput, OutputSummary, WorkpieceId, ListOutputsResult, AUTH_ERROR_CODES, createAuthError } from '@gadgets/workshop-shared/api';
@@ -2425,11 +2425,34 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     // vendorId — для адреса «Открыть гаджет» в разделе проектов этого подключения.
     return {...saved, vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
   }
-  /** Документ из беседы — файлом в проект через подключение этого человека (его правами). */
-  async saveChatAttachmentToProject(accountId: number, project: string, request: string, file: {name: string; contentType: string; content: Uint8Array}) {
-    const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
-    if (!account.saveChatAttachment) throw new Error("подключение Mnemos не умеет сохранять файлы из беседы");
-    return account.saveChatAttachment(project, request, file);
+  /** Подключение памяти для документа из беседы: названное, иначе первое действующее, которое это умеет. */
+  #chatDocumentAccount(accountId: number | null): {id: number; account: GatekeeperUser} {
+    if (accountId !== null) {
+      const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
+      if (!account.beginChatDocument) throw new Error("подключение Mnemos не умеет принимать файлы из беседы — обновите его");
+      return {id: accountId, account};
+    }
+    for (const record of [...this.storage.connectedAccounts.list()]) {
+      if (!areCredentialsValid(record) || !record.description?.providesUi) continue;
+      // Метод на стабе RPC есть всегда; наличие проверяет сам вызов, отказ — понятной ошибкой ниже.
+      return {id: record.id, account: record.account as unknown as GatekeeperUser};
+    }
+    throw new Error("Mnemos не подключён — подключите его, чтобы прикреплять документы");
+  }
+  /** Документ из беседы (ADR 0003): билет выгрузки для браузера; project=null — личное пространство. */
+  async beginChatDocument(accountId: number | null, project: string | null, file: ChatDocumentFile) {
+    const {id, account} = this.#chatDocumentAccount(accountId);
+    if (!account.beginChatDocument) throw new Error("подключение Mnemos не умеет принимать файлы из беседы — обновите его");
+    return {accountId: id, ...await account.beginChatDocument(project, file)};
+  }
+  async finishChatDocument(accountId: number, project: string, request: string, uploadId: string, file: {name: string; contentType: string}) {
+    const {account} = this.#chatDocumentAccount(accountId);
+    return account.finishChatDocument!(project, request, uploadId, file);
+  }
+  async moveChatDocument(accountId: number, project: string, node: string, target: string, request: string) {
+    const {account} = this.#chatDocumentAccount(accountId);
+    if (!account.moveChatDocument) throw new Error("подключение Mnemos не умеет переносить файлы — обновите его");
+    return account.moveChatDocument(project, node, target, request);
   }
   /** «Сделать своей» у копии гаджета: исходники версии оригинала — к копии, агентом получателя. */
   async codeWorkForkGadget(accountId: number, from: {project: string; node: string}, to: {project: string; node: string}, bodySha256: string) {

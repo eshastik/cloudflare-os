@@ -1718,9 +1718,23 @@ export interface Overseer extends RpcTarget {
   // selected provider can receive a raw file attachment.
   //
   // Pass the returned handle to newChat() or sendChatMessage() to commit the attachment into chat history.
-  // chatId — беседа, в которой прикрепляют файл: если к ней подключён проект Mnemos, документ
-  // (PDF, Office, txt/md/csv/json) ещё и сохраняется в проект личной версией правами человека.
+  // Картинки и прочие небольшие вложения. Документы (PDF, Office, txt/md/csv/json) сюда не идут:
+  // см. beginChatDocumentUpload.
   uploadChatAttachment(attachment: ChatAttachmentUpload, modelId: string | null, chatId?: number): Promise<ChatAttachmentUploaded>;
+
+  // Документ беседы (ADR 0003: байты не идут через сервисы). Шаг 1 — место и одноразовый билет:
+  // проект беседы (chatId) или проект, выбранный для ещё не созданной беседы (project), иначе
+  // личное пространство человека. Шаг 2 — браузер сам кладёт файл по билету в хранилище Mnemos.
+  // Шаг 3 — finishChatDocumentUpload создаёт узел (личную версию) и отдаёт handle вложения без байтов.
+  beginChatDocumentUpload(file: ChatDocumentUploadRequest, chatId?: number,
+      project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket>;
+  finishChatDocumentUpload(token: string): Promise<ChatAttachmentUploaded>;
+  // Есть ли подключение Mnemos для документов. Нет — txt/md/csv/json и PDF прикрепляются прежним
+  // путём (байтами, до 1 МиБ), а Office не прикрепляется.
+  chatDocumentsAvailable(): Promise<boolean>;
+  // Перенести документ беседы в другой проект средствами Mnemos (правами человека на оба проекта);
+  // Mnemos ставит человеку уведомление. Возвращает новое место документа.
+  moveChatDocument(chatId: number, attachmentId: string, targetProjectId: string): Promise<ChatDocumentRef>;
 
   // Fetch the bytes of a committed chat attachment over RPC. The canonical metadata is already
   // present in the message's ChatAttachmentRef. Images are inlined there, so this is normally used
@@ -2231,15 +2245,45 @@ export type ChatAttachmentHandle = {
   id: string;
 };
 
-// Сохранение прикреплённого документа в проект беседы. saved=false — вложение ушло в беседу,
-// а файл в проект не лёг; reason объясняет почему.
+// Прежний способ (выпуск 446581eb): байты документа шли через беседу и копией в проект. Остаётся
+// только для показа старых сообщений; новые документы описывает ChatDocumentRef.
 export type ChatAttachmentProjectSave =
   | {saved: true; accountId: number; projectId: string; projectTitle: string; resource: string; name: string}
   | {saved: false; projectTitle: string; reason: string};
 
-// Ответ на загрузку вложения: handle для отправки и итог сохранения в проект, если оно было.
+// Документ беседы, который лежит в Mnemos: в беседе нет его байтов, только место. Агент читает
+// извлечённый Mnemos текст частями; человек открывает и переносит документ по этим полям.
+export type ChatDocumentRef = {
+  accountId: number;
+  projectId: string;
+  projectTitle: string;
+  // true — личное пространство человека, а не проект беседы.
+  personal: boolean;
+  // Узел — личная версия человека.
+  resource: string;
+  // Имя в Mnemos (при совпадении добавляется « (2)»).
+  name: string;
+  contentType: string;
+  size: number;
+};
+
+// Описание документа для билета выгрузки: без байтов. checksum — base64 SHA-256, посчитанный браузером.
+export type ChatDocumentUploadRequest = {name: string; mimeType: string; size: number; checksum: string};
+
+// Билет выгрузки документа беседы. url — одноразовый адрес PUT в хранилище Mnemos; storageOrigin —
+// разрешённый адрес хранилища установки, браузер сверяет с ним url. token передаётся в finish.
+export type ChatDocumentUploadTicket = {
+  token: string;
+  place: {projectTitle: string; personal: boolean};
+  storageOrigin: string;
+  upload: {url: string; method: string; checksum_header: string; checksum_value: string; content_length: number};
+};
+
+// Ответ на загрузку вложения: handle для отправки и, у документа, его место в Mnemos.
 // Серверу при отправке передаётся только {id}.
 export type ChatAttachmentUploaded = ChatAttachmentHandle & {
+  document?: ChatDocumentRef;
+  // Прежний способ, только в старых ответах.
   project?: ChatAttachmentProjectSave;
 };
 
@@ -2256,7 +2300,10 @@ export type ChatAttachmentRef = ChatAttachmentHandle & {
   // Inlined bytes for small image attachments. Present only for images.
   content?: Uint8Array;
 
-  // Итог сохранения документа в проект беседы; нет — не сохранялся.
+  // Документ в Mnemos: байтов у вложения нет (size — размер файла в Mnemos).
+  document?: ChatDocumentRef;
+
+  // Прежний способ: итог копии документа в проект беседы; только в старых сообщениях.
   project?: ChatAttachmentProjectSave;
 };
 

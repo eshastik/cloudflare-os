@@ -405,6 +405,22 @@ export interface GatekeeperUploadTicket {
   content_length: number;
 }
 
+/** Документ из беседы, который браузер выгружает прямо в хранилище Mnemos: только описание, без байтов. */
+export interface ChatDocumentFile {
+  name: string;
+  contentType: string;
+  /** Точный размер в байтах. */
+  size: number;
+  /** base64 SHA-256 тела, посчитанный браузером; хранилище сверяет его при приёме. */
+  checksum: string;
+}
+/** Куда лёг документ из беседы: проект беседы или личное пространство человека. */
+export interface ChatDocumentPlace { project: string; projectTitle: string; personal: boolean }
+/** Часть извлечённого Mnemos текста; preparing — разбор ещё идёт, это не ошибка. */
+export type ChatDocumentText =
+  | { state: "ready"; name: string; contentType: string; text: string; offset: number; nextOffset: number; totalBytes: number; done: boolean; noText: boolean; failure?: string }
+  | { state: "preparing"; message: string };
+
 /** Host-only capability; the service authenticates and authorizes each scope. */
 export interface GatekeeperTextUploadIssuer extends RpcTarget {
   /** Issue a ticket for at most 256 KiB, with the host-computed size and checksum. */
@@ -1218,10 +1234,17 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   /** Положить файл в /workspace/.mnemos рабочего места: path — ".mnemos/context.md" или ".mnemos/attachments/<имя>";
    * до 10 МиБ на файл. Отказ, если задача ещё запускается или уже остановлена. */
   codeWorkPutFile?(project: string, taskId: string, path: string, contentBase64: string): Promise<void>;
-  /** Документ, прикреплённый в беседе, — файлом в проект, личной версией правами человека.
-   * request — квитанция: повтор с той же квитанцией отдаёт уже созданный файл, а не второй.
-   * name — имя, под которым файл лёг (при совпадении имени добавляется « (2)» и дальше). */
-  saveChatAttachment?(project: string, request: string, file: {name: string; contentType: string; content: Uint8Array}): Promise<{resource: string; name: string; created: boolean}>;
+  /** Документ, прикреплённый в беседе (ADR 0003: байты идут браузером прямо в хранилище, мимо хоста).
+   * project=null — в личное пространство человека (создаётся при первом файле). Возвращает место и
+   * одноразовый билет выгрузки; адрес билета уже сверен с хранилищем установки. */
+  beginChatDocument?(project: string | null, file: ChatDocumentFile): Promise<ChatDocumentPlace & {ticket: GatekeeperUploadTicket; storageOrigin: string}>;
+  /** Узел из выгруженного файла — личная версия правами человека. request — квитанция: повтор с той же
+   * квитанцией отдаёт уже созданный узел. name — имя, под которым файл лёг (при совпадении « (2)» и дальше). */
+  finishChatDocument?(project: string, request: string, uploadId: string, file: {name: string; contentType: string}): Promise<{resource: string; name: string; created: boolean}>;
+  /** Извлечённый Mnemos текст файла частями (offset — байты UTF-8 текста). preparing — разбор ещё идёт. */
+  readChatDocumentText?(project: string, node: string, offset?: number): Promise<ChatDocumentText>;
+  /** Перенос личной версии в другой проект средствами Mnemos; Mnemos ставит человеку уведомление. */
+  moveChatDocument?(project: string, node: string, target: string, request: string): Promise<{project: string; projectTitle: string; resource: string; name: string; notified: boolean}>;
   /** Гаджет через агента кода (ADR 0028): рабочее место без репозитория с шаблоном гаджета. */
   /** options.resource — правка уже сохранённого узла гаджета: право правки проверяется правами человека,
    * служба восстанавливает исходники его последней версии; sourcesRestored=false — их нет, задача начала с шаблона. */
@@ -1666,6 +1689,10 @@ export interface ApprovalQueue extends ObservationAuthorizer {
   // TODO: It would be nice if we can link this with the output gate so that if the submission
   //   does not complete, any SQL writes performed just before submit() are rolled back...
   submitAction(action: number, description: ActionDescription): Promise<void>;
+
+  // Файл из беседы: пропускает только документ, прикреплённый в беседе, от имени которой идёт вызов;
+  // иначе бросает. Нет у старых хостов — читать такой файл нельзя.
+  authorizeChatDocument?(project: string, node: string): Promise<void>;
 
   // Notifies the overseer that the gadget (or an agent) has requested to register a persistent
   // callback hook.

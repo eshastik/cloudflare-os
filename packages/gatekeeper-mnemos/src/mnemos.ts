@@ -44,7 +44,7 @@ import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.t
 import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
 import {checkGadgetEditable,gadgetReceipts,saveGadgetBuild,validGadgetRequest} from "./gadget-bridge.ts";
-import {chatAttachmentReceipts,saveChatAttachment} from "./chat-attachment-save.ts";
+import {beginChatDocument,chatDocumentReceipts,finishChatDocument,moveChatDocument,personalSpace,readChatDocumentText,type ChatDocumentFile} from "./chat-documents.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
@@ -178,8 +178,11 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   /** Гаджет через агента кода (ADR 0028, этап 5): задача opencode и сохранение сборки личной версией узла. */
   async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){return this.#account().codeWorkStartGadget(project,prompt,options);}
   async codeWorkSaveGadget(project:string,task:string,resource?:string,options?:{request?:string}){return this.#account().codeWorkSaveGadget(project,task,resource,options);}
-  /** Документ из беседы — файлом в проект правами этого человека; хост зовёт от его имени. */
-  async saveChatAttachment(project:string,request:string,file:{name:string;contentType:string;content:Uint8Array}){return this.#account().saveChatAttachment(project,request,file);}
+  /** Документ из беседы правами этого человека; хост зовёт от его имени, байты идут браузером мимо хоста. */
+  async beginChatDocument(project:string|null,file:ChatDocumentFile){return this.#account().beginChatDocument(project,file);}
+  async finishChatDocument(project:string,request:string,uploadId:string,file:{name:string;contentType:string}){return this.#account().finishChatDocument(project,request,uploadId,file);}
+  async readChatDocumentText(project:string,node:string,offset?:number){return this.#account().readChatDocumentText(project,node,offset);}
+  async moveChatDocument(project:string,node:string,target:string,request:string){return this.#account().moveChatDocument(project,node,target,request);}
   async codeWorkForkGadget(fromProject:string,fromResource:string,toProject:string,toResource:string,bodySha256:string){return this.#account().codeWorkForkGadget(fromProject,fromResource,toProject,toResource,bodySha256);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
@@ -325,13 +328,38 @@ export class UserAccount extends DurableObject<Env> {
   const {bodySha256:_sum,...shown}=saved;
   return {...shown,...sources,codeText:build.modules["server.js"]+"\n"+build.modules["client.js"]};
  }
- /** Документ из беседы — файлом в проект личной версией правами человека; квитанция по request. */
- async saveChatAttachment(project:string,request:string,file:{name:string;contentType:string;content:Uint8Array}){
+ /** Документ из беседы: билет выгрузки для браузера в проект беседы или, без проекта, в личное пространство. */
+ async beginChatDocument(project:string|null,file:ChatDocumentFile){
   const storageOrigin=this.#origins().storageOrigin;
   if(!storageOrigin)throw new Error('хранилище Mnemos не настроено');
+  if(project!==null&&(typeof project!=='string'||!project||project.length>255))throw new Error('не выбран проект');
   const session=this.#account().session();
-  try{return await saveChatAttachment(session,storageOrigin,fetch.bind(globalThis),chatAttachmentReceipts(this.ctx.storage.kv),project,request,file);}
+  try{
+   const place=project!==null?{project,projectTitle:'',personal:false}:await personalSpace(session,(await session.whoAmI()).subject.user_id);
+   const ticket=await beginChatDocument(session,storageOrigin,place.project,file);
+   return {...place,ticket,storageOrigin};
+  }finally{session.dispose();}
+ }
+ /** Узел из выгруженного файла — личная версия правами человека; квитанция по request. */
+ async finishChatDocument(project:string,request:string,uploadId:string,file:{name:string;contentType:string}){
+  const session=this.#account().session();
+  try{return await finishChatDocument(session,chatDocumentReceipts(this.ctx.storage.kv),project,request,uploadId,file);}
   finally{session.dispose();}
+ }
+ /** Извлечённый Mnemos текст файла из беседы частями; «ещё разбирается» — состояние, не ошибка. */
+ async readChatDocumentText(project:string,node:string,offset=0){
+  const session=this.#account().session();
+  try{return await readChatDocumentText(session,project,node,offset);}
+  finally{session.dispose();}
+ }
+ /** Перенос файла из беседы в другой проект средствами Mnemos, правами человека на оба проекта. */
+ async moveChatDocument(project:string,node:string,target:string,request:string){
+  const session=this.#account().session();
+  try{
+   const moved=await moveChatDocument(session,project,node,target,request);
+   const title=(await session.listProjects().catch(()=>({projects:[]}))).projects.find(p=>p.id===moved.project)?.name??'';
+   return {...moved,projectTitle:title};
+  }finally{session.dispose();}
  }
  /** «Сделать своей»: право чтения оригинала и правки копии — правами человека, затем служба переносит
   *  исходники версии оригинала (сумма тела) к копии; ключ агента — этого же человека. */
@@ -1418,6 +1446,8 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   constructor(session: MnemosAccountSession,teamDocuments:TeamDocumentCreation,private trackers:TrackerCreation,private trackerEdits:TrackerEdits,private resourceMaps:ResourceMapCreation,private resourceMapEdits:ResourceMapEdits,private corporateTasks:CorporateTaskCreation, account?: DurableObjectStub<UserAccount>,voiceTransfer?:VoiceTransfer) { super(); this.#voiceTransfer=voiceTransfer; this.#session = session;this.#teamDocuments=teamDocuments;this.#account=account; }
   async readPrivateVersionDigest(project:string,node:string,version:string) {return this.#session.readPrivateVersionDigest(project,node,version);}
   async readDraftDocument(projectId: string, nodeId: string) { return this.#session.readDraftDocument(projectId, nodeId); }
+  /** «Переместить в проект…» у файла личного пространства: перенос и уведомление делает Mnemos, правами человека на оба проекта. */
+  async transferPrivateDocument(project: string, node: string, request: {request_id: string; target_project_id: string; expected_head: string}) { return this.#session.transferPrivateDocument(project, node, request); }
   async checkTrackerAssignee(project:string,node:string,head:string,principal:string){return this.#session.checkTrackerAssignee(project,node,head,principal);}
   async readPublishedHead(project:string) {return this.#session.readPublishedHead(project);}
   async draftState(projectId: string) { return this.#session.draftState(projectId); }

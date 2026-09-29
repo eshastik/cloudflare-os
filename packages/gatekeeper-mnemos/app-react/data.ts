@@ -12,6 +12,8 @@ export type { ManagedTaskRequest, AgentAbsence, CollaborationRequest, Collaborat
 export interface ProjectData {
   id: string;
   name: string;
+  /** Краткое имя: по нему узнаётся личное пространство (lichnoe-…). */
+  slug?: string;
   /** Кому виден проект; пусто — сервер без видимости проектов. */
   visibility?: ProjectVisibility;
   /** Видящие проект могут его править. */
@@ -69,6 +71,17 @@ export interface MemoryData {
   reloadCollaborations(): Promise<void>;
   /** Замещение по проектам; проект без записи — сервер отказал или не ответил. */
   absences: Map<string, AgentAbsence>;
+}
+
+/**
+ * Личное пространство человека — его проект с кратким именем lichnoe-<id> или lichnoe-<id>-<хвост>,
+ * созданный им самим (то же правило, что isPersonalSpace в src/chat-documents.ts). Имя угадывается,
+ * поэтому решает создатель: чужой проект с таким именем пространством не считается.
+ */
+export function isPersonalSpace(project: Pick<ProjectData, "slug" | "createdBy">, userId: string | undefined): boolean {
+  if (!userId || !project.slug || project.createdBy !== userId) return false;
+  const base = "lichnoe-" + userId.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 32);
+  return project.slug === base || (project.slug.startsWith(base) && /^-[a-z0-9]{6}$/.test(project.slug.slice(base.length)));
 }
 
 export interface DocumentRow {
@@ -347,7 +360,7 @@ export function useMemoryData(ui: Ui): MemoryData {
         const [person, page] = await Promise.all([ui.whoAmI(), ui.listProjects()]);
         if (!alive.current) return;
         setIdentity(person);
-        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null, detailsLoaded: false }));
+        const initial: ProjectData[] = page.projects.map(p => ({ id: p.id, name: p.name || "Проект без названия", slug: p.slug, visibility: p.visibility, canEdit: p.can_edit, createdBy: p.created_by, orgUnit: p.org_unit_id || undefined, pendingShare: p.pending_share, nodes: [], truncated: false, nodesError: false, privateDocs: new Map(), draftState: null, detailsLoaded: false }));
         setProjects(initial);
         readinessReady();
         await forEachLimited(initial, 4, async project => {

@@ -11,6 +11,10 @@ export const MNEMOS_LIBRARY_TYPES = `
  * {status: "awaiting_confirmation"}; ход агента приостанавливается до решения. После решения итог —
  * в actionStatus(action). Карточку не пересказывайте: человек видит её сам.
  */
+type MnemosChatFileText =
+  | { state: "ready"; name: string; contentType: string; text: string; offset: number; nextOffset: number; totalBytes: number; done: boolean; noText: boolean; failure?: string }
+  | { state: "preparing"; message: string };
+
 interface MnemosLibrary {
   /** Подключить существующий проект к агенту после явного подтверждения владельца.
    * project — точное имя или ID; requestId стабилен при повторе. Права людей не изменяются. */
@@ -22,6 +26,12 @@ interface MnemosLibrary {
    * Только text/plain и text/markdown до 256 КиБ. Недоступность не означает отсутствие файла.
    * При отказе по scope предложите подключение через proposeConnectProject и дождитесь подтверждения владельца. */
   readPersonalDocument(project: string, node: string): Promise<MnemosDocument>;
+  /** Файл, прикреплённый человеком в беседе (PDF, docx, xlsx, pptx, txt, md, csv, json). В сообщении
+   * указаны его project и node — это его личная версия. Текст извлекает Mnemos; читайте частями:
+   * offset — с начала 0, следующая часть — nextOffset, пока done не станет true. Читайте только нужное.
+   * state "preparing" — файл ещё разбирается: подождите несколько секунд и повторите вызов.
+   * noText — текстового слоя нет (скан, картинки). Проект беседы в scope агента не требуется. */
+  readChatFile(project: string, node: string, offset?: number): Promise<MnemosChatFileText>;
   /** Предложить создание проекта. Сначала покажется короткое подтверждение человеку.
    * requestId — стабильный уникальный ключ: повтор с тем же ключом не создаёт второй проект.
    * slug — краткое имя латиницей, цифрами и дефисами. Дождитесь подтверждения результата. */
@@ -65,6 +75,11 @@ interface MnemosLibrary {
   /** Поделиться ЛИЧНЫМ документом (из listPersonalDocuments) с сотрудником: "read" — читать,
    * "write" — править, "none" — закрыть доступ. Кто доступен — documentAccess(). */
   shareDocument(project: string, document: string, person: string, mode: "read" | "write" | "none"): Promise<MnemosActionProposal>;
+  /** Перенести ЛИЧНЫЙ файл (например, файл из беседы в личном пространстве) в другой проект.
+   * project — где файл сейчас, document — его node или имя, target — проект назначения (id или имя
+   * из listProjects()). В новом проекте файл останется личной версией; человек получит уведомление.
+   * Предлагайте, когда человек просит или файл явно относится к проекту; решает человек карточкой. */
+  moveFileToProject(project: string, document: string, target: string): Promise<MnemosActionProposal>;
   /** Отправить личный черновик проекта на согласование ответственным (если в проекте оно включено). */
   requestReview(project: string): Promise<MnemosActionProposal>;
   /** Согласовать (approve=true) или отклонить изменения, которые ждут решения человека; id — из listReviews(). */

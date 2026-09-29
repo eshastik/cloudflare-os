@@ -14,7 +14,7 @@ import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
 import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
 import type { MnemosVerifierApi } from "./mnemos.ts";
-import type { ActionDescription, ActionOutcome } from "@gadgets/workshop-shared/gatekeeper";
+import type { ActionDescription, ActionOutcome, ChatDocumentText } from "@gadgets/workshop-shared/gatekeeper";
 import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
 import { ACTION_LABELS, AUTO_APPROVABLE_KINDS, READ_TITLES, checkedAgentAction, checkedAgentRead, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction, type ShareMode, type ConnectionType } from "./agent-actions.ts";
 import type { ProjectVisibility } from "./project-sharing.ts";
@@ -86,6 +86,8 @@ export interface LibraryAccount {
   prepareAgentAction?(request: AgentActionRequest): Promise<PreparedAgentAction>;
   executeAgentAction?(kind: AgentActionKind, resolved: PreparedAgentAction["resolved"]): Promise<ActionOutcome>;
   readForAgent?(request: AgentReadRequest): Promise<unknown>;
+  /** Текст файла из беседы сессией человека: узел — его личная версия. */
+  readChatDocumentText?(project: string, node: string, offset?: number): Promise<ChatDocumentText>;
 }
 
 export interface MnemosProject { id: string; name: string; slug: string }
@@ -221,6 +223,7 @@ function release(value: unknown, depth = 0): void {
 interface SessionCalls {
   listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage>;
   readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument>;
+  readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number): Promise<ChatDocumentText>;
   proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, request: AdminOperationRequest): Promise<MnemosAdminProposal>;
   createDraft(queue: RpcStub<ApprovalQueue>, project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown"): Promise<MnemosDraftProposal>;
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
@@ -244,6 +247,7 @@ export class MnemosLibrarySession extends RpcTarget {
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
   async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
   async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
+  async readChatFile(project: string, node: string, offset = 0) { return this.#calls.readChatFile(this.#queue, project, node, offset); }
   async listProjects(): Promise<MnemosProject[]> { return this.#calls.listProjects(this.#queue); }
   async proposeConnectProject(requestId: string, project: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "connect_project", project}); }
   async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
@@ -259,6 +263,7 @@ export class MnemosLibrarySession extends RpcTarget {
   async saveDraft(project: string, document: string, content: string): Promise<MnemosDraftProposal> { return this.#calls.saveDraft(this.#queue, project, document, content); }
   // ---- действия человека через карточку подтверждения ----
   async shareDocument(project: string, document: string, person: string, mode: ShareMode) { return this.#calls.propose(this.#queue, {kind: "share_document", project, document, person, mode}); }
+  async moveFileToProject(project: string, document: string, target: string) { return this.#calls.propose(this.#queue, {kind: "move_file", project, document, target}); }
   async requestReview(project: string) { return this.#calls.propose(this.#queue, {kind: "request_review", project}); }
   async decideReview(review: string, approve: boolean) { return this.#calls.propose(this.#queue, {kind: "decide_review", review, approve}); }
   async withdrawReview(review: string) { return this.#calls.propose(this.#queue, {kind: "withdraw_review", review}); }
@@ -342,6 +347,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return new MnemosLibrarySession({
         listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
         readPersonalDocument: (q, project, node) => this.#readPersonalDocument(q, project, node),
+        readChatFile: (q, project, node, offset) => this.#readChatFile(q, project, node, offset),
         proposeAdmin: (q, id, request) => this.#proposeAdmin(q, id, request),
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
@@ -646,6 +652,22 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       const {draft, text} = await this.#personalText(agent, project, node, TEXT_TYPES, "Личный документ недоступен как текст или содержит конфликт.");
       return {document: node, name: draft.terms[0]?.metadata?.name ?? node, text, mediaType: draft.content_type!, truncated: false};
     } finally { release(agent); }
+  }
+  /** Файл из беседы: текст извлекает Mnemos, агент получает его частями. Чтение — сессией человека,
+   * потому что узел — его личная версия; наблюдение видит только владелец. */
+  async #readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number): Promise<ChatDocumentText> {
+    identifier(project, "проект"); identifier(node, "файл");
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Некорректное значение: offset — целое число от 0.");
+    // Только вложения этой беседы: чтение идёт сессией человека, мимо области агента (ADR 0010).
+    // На стабе RPC метод есть всегда; старый хост без проверки отвечает отказом, и чтения не будет.
+    const check = (queue as unknown as { authorizeChatDocument?: (project: string, node: string) => Promise<void> }).authorizeChatDocument;
+    if (typeof check !== "function") throw new Error(UNSUPPORTED);
+    await check.call(queue, project, node);
+    await this.#authorizePersonal(queue, {kind: "mnemos.chatfile.read", scopeId: project});
+    const read = this.#account().readChatDocumentText;
+    if (!read) throw new Error(UNSUPPORTED);
+    try { return await this.#account().readChatDocumentText!(project, node, offset); }
+    catch (error) { throw failure(error); }
   }
   /** Текст личной версии под агентским credential; версия сверяется до и после скачивания. */
   async #personalText(agent: LibraryAgent, project: string, node: string, types: Set<string>, refusal: string): Promise<{ draft: DraftDocument; text: string }> {

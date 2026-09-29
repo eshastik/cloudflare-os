@@ -1,6 +1,6 @@
-import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE, type UsedGadget } from '@gadgets/workshop-shared/api';
+import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE, type UsedGadget, type ChatDocumentRef } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
-import { projectSaveNote } from './chat-attachment-project';
+import { chatDocumentNote, legacyProjectNote } from './chat-documents';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
 import { formatCodeWorkResult, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
 import { createWorkshopLogger } from "./observability";
@@ -325,6 +325,9 @@ export interface AgentHooks {
 
   // Returns the bytes of a committed attachment owned by this chat for inclusion in model input.
   getChatAttachmentData(chatId: number, id: string): Promise<Uint8Array>;
+
+  // Текущее место документа беседы в Mnemos (после переноса — новое); undefined — берётся из сообщения.
+  getChatAttachmentDocument?(id: string): ChatDocumentRef | undefined;
 
   // Returns the resources needed by `webFetch` to delegate document-to-Markdown conversion
   // to Workers AI. Exposed as a narrow interface (rather than handing over the whole `env`)
@@ -1617,7 +1620,12 @@ export async function runAgent(
               let attachmentParts = await Promise.all(msg.attachments.map(
                   async (attachment): Promise<(TextContent | ImageContent)[]> => {
                 let filename = attachment.name ? ` (${attachment.name})` : "";
-                let projectNote = projectSaveNote(attachment.project);
+                if (attachment.document) {
+                  // Байтов документа в беседе нет: агент получает место и читает текст инструментом Mnemos.
+                  let document = hooks.getChatAttachmentDocument?.(attachment.id) ?? attachment.document;
+                  return [{type: "text", text: chatDocumentNote(document)}];
+                }
+                let projectNote = legacyProjectNote(attachment.project);
                 let data = await hooks.getChatAttachmentData(chatId, attachment.id);
                 if (attachment.mimeType.startsWith("image/")) {
                   return [{

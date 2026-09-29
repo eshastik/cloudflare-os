@@ -19,7 +19,7 @@ import { nativeFormatForOutput, type NativeDocumentFormat, type NativeMnemosBind
 import { APP_CODE_CLOSED, parseGadgetAppModules, parseMnemosAppBinding, type GadgetAppCaller, type GadgetAppModules, type MnemosAppBinding, type MnemosAppState } from "@gadgets/workshop-shared/gadget-app";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
-import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, ChatAttachmentUploaded, ChatAttachmentProjectSave, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
+import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, ChatAttachmentUploaded, ChatAttachmentProjectSave, ChatDocumentRef, ChatDocumentUploadRequest, ChatDocumentUploadTicket, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, ActionOutcome, ActionCardIcon } from "@gadgets/workshop-shared/gatekeeper";
 import {
   DurableObject, WorkerEntrypoint, RpcStub as NativeRpcStub,
@@ -71,7 +71,7 @@ import {
   prepareChatAttachmentUpload,
 } from "./chat-attachment-validation";
 import { renderGadgetPdf } from "./browser-export";
-import { saveChatAttachmentToProject } from "./chat-attachment-project";
+import { checkedChatDocument, checkedChatDocumentTicket, chatDocumentRequestId, chatDocumentTarget } from "./chat-documents";
 
 const logger = createWorkshopLogger("workshop.overseer");
 export const AGENT_RUNNING_ERROR_MESSAGE = "Agent is running, wait for it to finish.";
@@ -446,6 +446,7 @@ function validateChatAttachmentId(id: string): string {
   return id;
 }
 
+// Документ беседы хранится здесь без байтов (data пустой): только его место в Mnemos (ADR 0003).
 type ChatAttachmentContentRecord = {
   fileId: string;
   data: Uint8Array;
@@ -456,11 +457,25 @@ type ChatAttachmentContentRecord = {
         mimeType: string;
         name?: string;
         project?: ChatAttachmentProjectSave;
+        document?: ChatDocumentRef;
       }
     | {
         type: "committed";
         chatId: number;
+        // Текущее место документа: после переноса оно новее, чем в сообщении истории.
+        document?: ChatDocumentRef;
       };
+};
+
+function chatDocumentGrantKey(chatId: number, project: string, node: string): string {
+  return `${keyString(chatId)}.${project}\0${node}`;
+}
+
+// Билет выгрузки документа живёт столько же, сколько подписанная ссылка хранилища.
+const CHAT_DOCUMENT_UPLOAD_TTL_MS = 15 * 60 * 1000;
+type PendingChatDocument = {
+  accountId: number; projectId: string; projectTitle: string; personal: boolean;
+  uploadId: string; request: string; name: string; contentType: string; size: number; expiresAt: number;
 };
 
 // Sentinel gatekeeperId used on ActionRecords that originated from built-in agent tools
@@ -1131,6 +1146,13 @@ function makeOverseerStorage(storage: DurableObjectStorage) {
       // Attachment bytes. Before an attachment is committed to a chat message, this also carries
       // the temporary metadata needed to construct its ChatAttachmentRef. Once committed, the
       // message owns that metadata and this record retains only the bytes and owning chat ID.
+      // Документы беседы в Mnemos, которые агент этой беседы вправе читать (ADR 0010: чтение идёт
+      // сессией человека, поэтому хост пропускает только вложения самой беседы). Ключ —
+      // «<беседа>.<проект>\0<узел>».
+      chatDocumentGrants: collection<{key: string; chatId: number}>()({
+        primaryKey: "key",
+      }),
+
       chatAttachmentContent: collection<ChatAttachmentContentRecord>()({
         primaryKey: "fileId",
         nonUniqueIndexes: {
@@ -3249,6 +3271,28 @@ class OverseerImpl implements AgentHooks {
     this.#associateAction(caller, actionId);
   }
 
+  grantChatDocument(chatId: number, document: {projectId: string; resource: string}): void {
+    this.storage.chatDocumentGrants.put({key: chatDocumentGrantKey(chatId, document.projectId, document.resource), chatId});
+  }
+
+  // Чтение файла из беседы агентом: только документы, прикреплённые в этой же беседе. Любой другой
+  // узел — отказ, даже если человеку он доступен: подложенная в файл инструкция не выведет агента
+  // за пределы его области.
+  authorizeChatDocument(caller: GatekeeperCaller, project: string, node: string): void {
+    // Только агент беседы: гаджет, открытый в беседе, прочитал бы её вложения правами человека.
+    let chatId = caller.from === "agent" ? caller.chatId : undefined;
+    if (chatId === undefined || typeof project !== "string" || typeof node !== "string" ||
+        !this.storage.chatDocumentGrants.get(chatDocumentGrantKey(chatId, project, node))) {
+      throw new Error("Это не файл, прикреплённый в этой беседе: читать его так нельзя. Для остальных документов — search() и readDocument().");
+    }
+  }
+
+  // Текущее место документа беседы (после переноса — новое); undefined — это не документ.
+  getChatAttachmentDocument(id: string): ChatDocumentRef | undefined {
+    let content = this.storage.chatAttachmentContent.get(validateChatAttachmentId(id));
+    return content?.state.document;
+  }
+
   async getChatAttachmentData(chatId: number, id: string): Promise<Uint8Array> {
     let content = this.storage.chatAttachmentContent.get(validateChatAttachmentId(id));
     if (!content || content.state.type !== "committed" || content.state.chatId !== chatId) {
@@ -3262,6 +3306,10 @@ class OverseerImpl implements AgentHooks {
   hydrateChatMessageForClient(msg: AiChatMessage): AiChatMessage {
     if (msg.type !== "message" || !msg.attachments?.length) return msg;
     let attachments = msg.attachments.map((a) => {
+      if (a.document) {
+        let document = this.getChatAttachmentDocument(a.id);
+        return document ? {...a, document} : a;
+      }
       if (!isAllowedChatAttachmentImageMimeType(a.mimeType)) {
         return a;
       }
@@ -3296,6 +3344,12 @@ class OverseerImpl implements AgentHooks {
       if (!content || content.state.type !== "staged") {
         throw new Error("Chat attachment not found.");
       }
+      let document = content.state.document;
+      if (document) {
+        // Документ лежит в Mnemos, модель его байтов не получает: ни проверки поставщика, ни объёма.
+        result.push({id, mimeType: content.state.mimeType, name: content.state.name, size: document.size, document});
+        continue;
+      }
       assertChatAttachmentSupportedByProvider(provider, content.state.mimeType, content.data.byteLength);
       total += content.data.byteLength;
       result.push({
@@ -3322,8 +3376,9 @@ class OverseerImpl implements AgentHooks {
       this.storage.chatAttachmentContent.put({
         fileId: id,
         data: content.data,
-        state: {type: "committed", chatId},
+        state: {type: "committed", chatId, ...(content.state.document ? {document: content.state.document} : {})},
       });
+      if (content.state.document) this.grantChatDocument(chatId, content.state.document);
     }
   }
 
@@ -9186,18 +9241,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       provider = (await this.clientUser.getChatContext(modelId)).aiModel?.config.provider;
     }
     if (chatId !== undefined && !Number.isSafeInteger(chatId)) throw new Error("Неверная беседа.");
-    // Исходные байты нужны проекту: документ Office в беседе дальше живёт извлечённым текстом.
-    let original = {mimeType: attachment.mimeType, name: attachment.name, content: attachment.content};
-    attachment = await prepareChatAttachmentUpload(
-      attachment,
-      provider,
-    );
-    let project = chatId === undefined ? undefined : await saveChatAttachmentToProject({
-      meta: this.impl.storage.chatMeta.get(chatId),
-      userId: this.clientUser.id.toString(),
-      file: {...original, name: attachment.name},
-      host: this.clientUser,
-    });
+    attachment = prepareChatAttachmentUpload(attachment, provider, await this.clientUser.hasChatProjectSource());
 
     this.impl.sweepStagedChatAttachments();
 
@@ -9210,10 +9254,93 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
         uploadedAt: Date.now(),
         mimeType: attachment.mimeType,
         name: attachment.name,
-        ...(project ? {project} : {}),
       },
     });
-    return {id, ...(project ? {project} : {})};
+    return {id};
+  }
+
+  // Документы беседы в полёте: билет выдан, браузер кладёт файл в хранилище. Только в этом соединении.
+  #pendingChatDocuments = new Map<string, PendingChatDocument>();
+
+  async beginChatDocumentUpload(file: ChatDocumentUploadRequest, chatId?: number,
+      project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket> {
+    if (chatId !== undefined && !Number.isSafeInteger(chatId)) throw new Error("Неверная беседа.");
+    let checked = checkedChatDocument(file);
+    let userId = this.clientUser.id.toString();
+    let meta = chatId === undefined ? undefined : this.impl.storage.chatMeta.get(chatId);
+    if (chatId !== undefined && !meta) throw new Error("Беседа не найдена.");
+    let target = chatDocumentTarget(meta, userId, project);
+    let issued = await this.clientUser.beginChatDocument(target.accountId, target.projectId, checked);
+    let ticket = issued.ticket;
+    let storage = checkedChatDocumentTicket(issued, checked);
+    let request = await chatDocumentRequestId(meta && {creatorId: userId, chatId: meta.id, started: new Date(meta.started).valueOf()},
+        issued.project, checked.checksum);
+    let now = Date.now();
+    for (let [key, pending] of this.#pendingChatDocuments) if (pending.expiresAt < now) this.#pendingChatDocuments.delete(key);
+    let token = crypto.randomUUID();
+    let projectTitle = issued.projectTitle || target.title;
+    if (!projectTitle && !issued.personal) {
+      // Проект выбран для ещё не созданной беседы: название берётся из списка проектов человека.
+      projectTitle = (await this.clientUser.codeWorkTarget(issued.accountId, issued.project).catch(() => null))?.title ?? "";
+    }
+    this.#pendingChatDocuments.set(token, {
+      accountId: issued.accountId, projectId: issued.project, projectTitle, personal: issued.personal,
+      uploadId: ticket.upload_id, request, name: checked.name, contentType: checked.contentType, size: checked.size,
+      expiresAt: now + CHAT_DOCUMENT_UPLOAD_TTL_MS,
+    });
+    return {
+      token, place: {projectTitle, personal: issued.personal}, storageOrigin: storage,
+      upload: {url: ticket.url, method: ticket.method, checksum_header: ticket.checksum_header,
+        checksum_value: ticket.checksum_value, content_length: ticket.content_length},
+    };
+  }
+
+  // Есть ли у человека подключение Mnemos, куда класть документы; нет — текст и PDF идут прежним путём.
+  async chatDocumentsAvailable(): Promise<boolean> {
+    return await this.clientUser.hasChatProjectSource();
+  }
+
+  async finishChatDocumentUpload(token: string): Promise<ChatAttachmentUploaded> {
+    let pending = typeof token === "string" ? this.#pendingChatDocuments.get(token) : undefined;
+    if (!pending || pending.expiresAt < Date.now()) throw new Error("Выгрузка файла устарела: прикрепите его заново.");
+    let saved = await this.clientUser.finishChatDocument(pending.accountId, pending.projectId, pending.request,
+        pending.uploadId, {name: pending.name, contentType: pending.contentType});
+    this.#pendingChatDocuments.delete(token);
+    let document: ChatDocumentRef = {
+      accountId: pending.accountId, projectId: pending.projectId, projectTitle: pending.projectTitle,
+      personal: pending.personal, resource: saved.resource, name: saved.name, contentType: pending.contentType, size: pending.size,
+    };
+    this.impl.sweepStagedChatAttachments();
+    let id = crypto.randomUUID();
+    this.impl.storage.chatAttachmentContent.put({
+      fileId: id,
+      data: new Uint8Array(0),
+      state: {type: "staged", uploadedAt: Date.now(), mimeType: pending.contentType, name: saved.name, document},
+    });
+    return {id, document};
+  }
+
+  async moveChatDocument(chatId: number, attachmentId: string, targetProjectId: string): Promise<ChatDocumentRef> {
+    if (!Number.isSafeInteger(chatId)) throw new Error("Неверная беседа.");
+    if (typeof targetProjectId !== "string" || !targetProjectId || targetProjectId.length > 255) throw new Error("Не выбран проект.");
+    let id = validateChatAttachmentId(attachmentId);
+    let content = this.impl.storage.chatAttachmentContent.get(id);
+    if (!content || content.state.type !== "committed" || content.state.chatId !== chatId || !content.state.document) {
+      throw new Error("Файл беседы не найден.");
+    }
+    let document = content.state.document;
+    let moved = await this.clientUser.moveChatDocument(document.accountId, document.projectId, document.resource,
+        targetProjectId, `move-${crypto.randomUUID()}`);
+    let next: ChatDocumentRef = {...document, projectId: moved.project, projectTitle: moved.projectTitle || document.projectTitle,
+      personal: false, resource: moved.resource, name: moved.name};
+    // Запись перечитывается: за время переноса её могли удалить вместе с беседой.
+    let latest = this.impl.storage.chatAttachmentContent.get(id);
+    if (latest && latest.state.type === "committed") {
+      this.impl.storage.chatAttachmentContent.put({...latest, state: {...latest.state, document: next}});
+      this.impl.storage.chatDocumentGrants.delete(chatDocumentGrantKey(chatId, document.projectId, document.resource));
+      this.impl.grantChatDocument(chatId, next);
+    }
+    return next;
   }
 
   // Fetch the bytes of a committed chat attachment over the authenticated RPC connection. The
@@ -9714,6 +9841,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
         this.impl.storage.chatCompactions.list({prefix: `${keyString(chatId)}.`}),
         checkpoint => compactionKey(chatId, checkpoint.compactedTo));
     for (let key of checkpoints) this.impl.storage.chatCompactions.delete(key);
+    let grants = Array.from(this.impl.storage.chatDocumentGrants.list({prefix: `${keyString(chatId)}.`}), grant => grant.key);
+    for (let key of grants) this.impl.storage.chatDocumentGrants.delete(key);
     this.impl.deleteChatDraftUpdates(chatId);
 
     // Delete the chat's messages and the attachment content referenced by them. Attachment metadata
@@ -10298,6 +10427,11 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
     _attachment: ChatAttachmentUpload,
     _modelId: string | null,
   ): Promise<ChatAttachmentHandle> { this.#deny(); }
+  async beginChatDocumentUpload(_file: ChatDocumentUploadRequest, _chatId?: number,
+      _project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket> { this.#deny(); }
+  async finishChatDocumentUpload(_token: string): Promise<ChatAttachmentUploaded> { this.#deny(); }
+  async chatDocumentsAvailable(): Promise<boolean> { this.#deny(); }
+  async moveChatDocument(_chatId: number, _attachmentId: string, _targetProjectId: string): Promise<ChatDocumentRef> { this.#deny(); }
   async getChatAttachmentContent(_chatId: number, _id: string): Promise<Uint8Array> { this.#deny(); }
   async deleteChatAttachment(_id: string): Promise<void> { this.#deny(); }
   async setChatTitle(_chatId: number, _title: string): Promise<void> { this.#deny(); }
@@ -11030,6 +11164,10 @@ class ApprovalQueueImpl extends RpcTarget implements ApprovalQueue {
 
   submitAction(action: number, description: ActionDescription): Promise<void> {
     return this.impl.submitAction(this.gatekeeperId, action, description, this.caller);
+  }
+
+  async authorizeChatDocument(project: string, node: string): Promise<void> {
+    this.impl.authorizeChatDocument(this.caller, project, node);
   }
 
   bindHook<Hook extends RpcTarget>(
