@@ -61,7 +61,7 @@ test('шапка: в общем экземпляре — только опубл
 })
 
 type Deployed = { version: string; sha256: string; title: string; collaborative: boolean } | null
-function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?: GadgetAppDocument; restoreFails?: boolean; unpublished?: boolean } = {}) {
+function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?: GadgetAppDocument; restoreFails?: boolean; unpublished?: boolean; accessGate?: Promise<void>; sameSha?: boolean } = {}) {
   const doc = options.doc ?? DOC
   let state: MnemosAppState = { binding: null, codeVersion: 1, title: 'Приложение', notExportable: null }
   const calls = { bindings: [] as (MnemosAppBinding | null)[], deploys: [] as [boolean, string][], downloads: [] as string[], exports: 0, restores: [] as unknown[][], creates: [] as string[], opens: [] as boolean[], previews: 0, previewDeploys: [] as string[] }
@@ -74,15 +74,19 @@ function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?:
   const instances: Record<'shared' | 'personal' | 'preview', Deployed> = { shared: options.deployed ?? null, personal: null, preview: null }
   const connect = (personal: boolean, preview = false) => {
     const kind = preview ? 'preview' : personal ? 'personal' : 'shared'
+    let disposed = false
     const connection = {
       describe: async () => ({ access: options.access ?? 'edit', caller: { principal: 'anna', name: 'Анна' }, deployed: instances[kind] }),
       manifest: async () => doc.manifest,
       deploy: async (version: string) => {
         if (kind === 'shared' && version.startsWith('private:')) throw new Error('только опубликованная')
         if (kind === 'preview') calls.previewDeploys.push(version); else calls.deploys.push([personal, version])
-        instances[kind] = { version, sha256: kind === 'preview' ? 'e'.repeat(64) : 'd'.repeat(64), title: 'Общий список', collaborative: !personal }; return connection.describe()
+        instances[kind] = { version, sha256: kind === 'preview' && !options.sameSha ? 'e'.repeat(64) : 'd'.repeat(64), title: 'Общий список', collaborative: !personal }; return connection.describe()
       },
-      getUiBundle: async () => ({ jsCode: 'ui()' }), connectToGadget: async () => ({}), [Symbol.dispose]: () => {},
+      // Как у Cap'n Web: закрытая связь на вызов отвечает ошибкой.
+      getUiBundle: async () => ({ jsCode: 'ui()' }),
+      connectToGadget: async () => { if (disposed) throw new Error('Attempted to use RPC stub after it has been disposed.'); return {} },
+      [Symbol.dispose]: () => { disposed = true },
     }
     return connection
   }
@@ -92,7 +96,7 @@ function harness(options: { deployed?: Deployed; access?: 'edit' | 'read'; doc?:
   const writer = { head: async () => HEAD, access: async () => 'owner', [Symbol.dispose]: () => {} }
   const creator = { head: async () => HEAD, issue: async () => ({}), save: async () => NEXT, document: async () => 'new-node', [Symbol.dispose]: () => {} }
   frames.writes = {
-    appAccess: async () => ({ access: options.access ?? 'edit', principal: 'anna', tenant: 'org', name: 'Анна', project: 'project', node: 'node' }),
+    appAccess: async () => { await options.accessGate; return { access: options.access ?? 'edit', principal: 'anna', tenant: 'org', name: 'Анна', project: 'project', node: 'node' } },
     select: async () => writer,
     create: async (scope: string) => { calls.creates.push(scope); return creator },
     scopes: async () => ({ scopes: [{ id: 'project', name: 'Проект' }] }),
@@ -152,12 +156,40 @@ test('заявка из беседы пишется, пока в панели д
   await act(async () => root.unmount())
 })
 
+test('личная версия совместного узла, право ещё читается: связь наугад не открывается, экран приложения не остаётся на закрытой связи', async () => {
+  let allow!: () => void
+  const accessGate = new Promise<void>(resolve => { allow = resolve })
+  // Общий экземпляр уже работает той же сборкой, что пойдёт в предпросмотр: сумма совпадает.
+  const h = harness({ accessGate, sameSha: true, deployed: { version: PUBLISHED, sha256: 'd'.repeat(64), title: 'Общий список', collaborative: true } })
+  await h.gadget.setMnemosApp(bound({ savedVersion: `private:${HEAD}` }))
+  const seen: NonNullable<MnemosAppHandle['liveGadget']>[] = []
+  const out: { current: MnemosAppHandle | null } = { current: null }
+  function Probe() { out.current = useMnemosApp({ api: h.api as never, gadget: h.gadget as never, pollMs: 0 }); if (out.current.liveGadget && !seen.includes(out.current.liveGadget)) seen.push(out.current.liveGadget); return null }
+  const root = createRoot(document.createElement('div'))
+  await act(async () => root.render(<Probe />))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+  expect(h.calls.opens.filter(personal => !personal)).toEqual([])
+  expect(out.current?.liveGadget).toBeNull()
+  await act(async () => { allow(); await new Promise(resolve => setTimeout(resolve, 50)) })
+  expect(out.current?.liveGadget).not.toBeNull()
+  expect(h.calls.previews).toBe(1)
+  expect(out.current?.previewMode).toBe(true)
+  // Экран, который подключился к связи, держит её, пока ключ тот же: эта связь обязана быть живой.
+  const final = out.current!.liveGadget!
+  for (const shown of seen.filter(item => item.key === final.key)) await expect(shown.connectToGadget()).resolves.toEqual({})
+  // Новая связь (перечитывание) — новый ключ: экран пересоздаётся, а не звонит в закрытую.
+  await act(async () => { out.current!.refresh(); await new Promise(resolve => setTimeout(resolve, 50)) })
+  expect(out.current?.liveGadget?.key).toMatch(/^2:/)
+  await expect(out.current!.liveGadget!.connectToGadget()).resolves.toEqual({})
+  await act(async () => root.unmount())
+})
+
 test('личная версия совместного приложения у автора — предпросмотр отдельным экземпляром; общий не трогается; переключатель на опубликованную', async () => {
   launch(`private:${HEAD}`)
   const h = harness({ deployed: { version: PUBLISHED, sha256: 'c'.repeat(64), title: 'Общий список', collaborative: true } })
   const { out, unmount } = await mount(h)
   await act(async () => { await vi.waitFor(() => expect(h.calls.previewDeploys).toEqual([`private:${HEAD}`])) })
-  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('e'.repeat(64))) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key?.split(':')[1]).toBe('e'.repeat(64))) })
   expect(h.calls.deploys).toEqual([])
   expect(h.instances.shared?.version).toBe(PUBLISHED)
   expect(h.calls.downloads).toEqual([])
@@ -165,10 +197,10 @@ test('личная версия совместного приложения у �
   expect(out.current?.model).toMatchObject({ saved: 'Предпросмотр личной версии — данные не сохраняются для других', primary: { kind: 'submit', label: 'Опубликовать' }, secondary: { kind: 'published', label: 'Показать опубликованную' } })
   // Переключатель: экран — общий экземпляр с опубликованной версией; обратно — предпросмотр.
   await act(async () => { out.current!.setShowPublished(true) })
-  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('c'.repeat(64))) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key?.split(':')[1]).toBe('c'.repeat(64))) })
   expect(out.current?.model?.secondary).toMatchObject({ kind: 'preview', label: 'Предпросмотр личной версии' })
   await act(async () => { out.current!.setShowPublished(false) })
-  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key).toBe('e'.repeat(64))) })
+  await act(async () => { await vi.waitFor(() => expect(out.current?.liveGadget?.key?.split(':')[1]).toBe('e'.repeat(64))) })
   await unmount()
 })
 
@@ -186,7 +218,7 @@ test('без опубликованной версии предпросмотр 
   await reader.gadget.setMnemosApp({ accountId: 7, scope: 'project', resource: 'node', description: '', collaborative: true, session: true, permissions: [], savedVersion: `private:${HEAD}` })
   const second = await mount(reader)
   await act(async () => { await vi.waitFor(() => expect(second.out.current?.access).toBe('read')) })
-  await act(async () => { await vi.waitFor(() => expect(second.out.current?.liveGadget?.key).toBe('c'.repeat(64))) })
+  await act(async () => { await vi.waitFor(() => expect(second.out.current?.liveGadget?.key?.split(':')[1]).toBe('c'.repeat(64))) })
   expect(reader.calls.previews).toBe(0)
   expect(second.out.current?.previewMode).toBe(false)
   await second.unmount()

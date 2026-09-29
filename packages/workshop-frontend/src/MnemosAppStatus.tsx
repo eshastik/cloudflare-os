@@ -39,7 +39,8 @@ type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGa
 type Gadget = Pick<RpcStub<GadgetClient>, 'getId' | 'getMnemosApp' | 'setMnemosApp' | 'exportAppModules'>
 type Source = { accountId: number; writes: Writes; downloads: Downloads; origin: string; frame: GatekeeperUiFrame }
 type Connection = RpcStub<MnemosAppConnection & MnemosAppCopies>
-type Live = { connection: Connection; info: MnemosAppInfo }
+/** serial — номер связи: экран приложения пересоздаётся с каждой новой связью, старую он не трогает. */
+type Live = { connection: Connection; info: MnemosAppInfo; serial: number }
 /** Право на узел: владелец личной версии, правка по приглашению или проекту, только просмотр. */
 export type AppAccess = 'owner' | 'edit' | 'read'
 export type AppVersion = { id: string; recordedAt: string; author: string; personal: boolean }
@@ -192,6 +193,8 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
     return () => { stopped = true; clearInterval(timer) }
   }, [gadget, reload, pollMs])
 
+  // Право прежнего узла к новому не относится.
+  useEffect(() => { setAccess(null) }, [identity])
   // Подключение Mnemos привязки и право на узел.
   useEffect(() => {
     if (!identity || !binding) return
@@ -219,8 +222,13 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   // Предпросмотр: у того, кто правит, открыта личная версия совместного приложения — она идёт в отдельный
   // экземпляр со своей базой (ADR 0028 п. 2), общий экземпляр не трогается.
   const previewMode = collaborative && (access === 'owner' || access === 'edit') && !isPublishedVersion(binding?.savedVersion) && !showPublished
+  // Пока право не прочитано, неизвестно, какой экземпляр открывать: общий или предпросмотр. Связь,
+  // открытая наугад, закрывалась бы при переключении, пока экран приложения к ней подключается.
+  const waitAccess = collaborative && !isPublishedVersion(binding?.savedVersion) && access === null
+  const connections = useRef(0)
   useEffect(() => {
     if (!identity || !binding) { setLive(null); setLiveError(''); setOffer(null); setCopy(null); return }
+    if (waitAccess) { setLive(null); return }
     let cancelled = false, connection: Connection | null = null
     let timer: ReturnType<typeof setInterval> | undefined
     void (async () => {
@@ -231,7 +239,8 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
         let info = await connection.describe()
         if (previewMode && binding.savedVersion && info.deployed?.version !== binding.savedVersion) info = await connection.deploy(binding.savedVersion)
         if (cancelled) { dispose(connection); return }
-        setLive({ connection, info }); setLiveError(info.deployed ? '' : binding.collaborative ? 'приложение ещё не опубликовано' : 'приложение ещё не запущено')
+        const serial = ++connections.current
+        setLive({ connection, info, serial }); setLiveError(info.deployed ? '' : binding.collaborative ? 'приложение ещё не опубликовано' : 'приложение ещё не запущено')
         if (!binding.collaborative) {
           // Копии: версия для копий (у автора — для «Поделиться») и состояние своей копии.
           const [nextOffer, nextCopy] = await Promise.all([connection.offer().catch(() => null), connection.copyState().catch(() => null)])
@@ -239,16 +248,17 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
         } else { setOffer(null); setCopy(null) }
         if (pollMs > 0) timer = setInterval(() => {
           if (document.visibilityState === 'hidden' || !connection) return
-          void connection.describe().then(next => { if (!cancelled) setLive(old => old && old.info.deployed?.sha256 === next.deployed?.sha256 ? old : { connection: connection!, info: next }) },
+          void connection.describe().then(next => { if (!cancelled) setLive(old => !old || old.serial !== serial || old.info.deployed?.sha256 === next.deployed?.sha256 ? old : { connection: connection!, info: next, serial }) },
             caught => { if (!cancelled) setLiveError(errorText(caught, 'связь с приложением закрыта')) })
         }, pollMs * 3)
       } catch (caught) {
         if (!cancelled) { setLive(null); setLiveError(errorText(caught, 'приложение недоступно')) }
       }
     })()
-    return () => { cancelled = true; clearInterval(timer); dispose(connection) }
+    // Экран приложения снимается раньше, чем закрывается его связь: иначе он обратится к закрытой связи.
+    return () => { cancelled = true; clearInterval(timer); setLive(null); dispose(connection) }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- перечитывается при смене узла
-  }, [api, identity, collaborative, previewMode, previewMode ? binding?.savedVersion : '', tick])
+  }, [api, identity, collaborative, previewMode, waitAccess, previewMode ? binding?.savedVersion : '', tick])
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     if (busy) return
@@ -506,7 +516,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   const liveGadget = useMemo(() => {
     if (!live?.info.deployed || showWorkspace || offerMode) return null
     const connection = live.connection
-    return { getUiBundle: () => connection.getUiBundle(), connectToGadget: () => connection.connectToGadget(), key: live.info.deployed.sha256 }
+    return { getUiBundle: () => connection.getUiBundle(), connectToGadget: () => connection.connectToGadget(), key: `${live.serial}:${live.info.deployed.sha256}` }
   }, [live, showWorkspace, offerMode])
 
   const model = useMemo(() => {
