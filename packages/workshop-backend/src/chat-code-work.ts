@@ -153,7 +153,9 @@ export type ChatRouteReason =
   /** Jev недоступен (нет ключа, ошибка, срок): продолжает тот, кто отвечал последним. */
   | "router_failed"
   /** У человека нет права «Агент кода». */
-  | "code_disabled";
+  | "code_disabled"
+  /** Сообщение про гаджет: его делает агент беседы через gadgetWork, а не агент кода в репозитории. */
+  | "gadget";
 
 export type ChatRoute =
   | {target: "code"; projectId: string; continuing: boolean; reason: ChatRouteReason}
@@ -238,6 +240,14 @@ export function applyChatProjectChanges(host: ChatCodeWorkHost, chatId: number, 
   host.putChatMeta(withProjectChanges(metaOrThrow(host, chatId), changes, userId, profileId));
 }
 
+/** Сообщение про гаджет: названо словом или беседа уже работает над гаджетом, а живой работы
+ *  с кодом репозитория нет. */
+export function gadgetMessage(message: string, meta: AiChatMetadata): boolean {
+  if (/гаджет|gadget/i.test(message)) return true;
+  let code = meta.codeWork;
+  return !!meta.gadgetWork && !(code && codeWorkAlive(code.state));
+}
+
 /** Кому отвечать на сообщение человека: агенту кода или агенту беседы. Тем же вопросом Jev
  *  решает, какие проекты человека нужны беседе; маршрут выбирается уже по новому набору. */
 export async function routeChatMessage(input: ChatRouteInput): Promise<{route: ChatRoute; jev?: JevResult; projects?: ChatProjectChanges}> {
@@ -268,6 +278,9 @@ export async function routeChatMessage(input: ChatRouteInput): Promise<{route: C
   if (!target) return done({target: "chat", reason: "no_code_project"});
   let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
   if (input.mode === "on") return done(toCode("on"));
+  // Jev видит только «код или разговор»: «собери гаджет заново» он отдавал агенту кода в репозиторий,
+  // и гаджет оказывался файлами репозитория, а не приложением в проекте (29.09).
+  if (gadgetMessage(input.message, meta)) return done({target: "chat", reason: "gadget"});
 
   let answer: JevResult = jev ?? {ok: false, error: "no_key"};
   if (!answer.ok) {

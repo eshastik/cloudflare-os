@@ -348,6 +348,19 @@ describe("переключатель «Код» и маршрутизация с
       .toEqual({target: "chat", reason: "router_unsure"});
   });
 
+  it("«Авто»: гаджет делает агент беседы, даже если Jev уверенно выбрал код (29.09)", async () => {
+    const meta = baseMeta({projectContext: PROJECTS});
+    expect((await routeChatMessage({mode: "auto", meta, message: "Собери гаджет «Трекер задач» заново", ask: decided("code")})).route)
+      .toEqual({target: "chat", reason: "gadget"});
+    const gadget = baseMeta({projectContext: PROJECTS, gadgetWork: liveWork({state: "stopped"})});
+    expect((await routeChatMessage({mode: "auto", meta: gadget, message: "я изменил код, пробуй ещё раз", ask: decided("code")})).route)
+      .toEqual({target: "chat", reason: "gadget"});
+    // Живая работа с кодом репозитория: решает Jev, как раньше.
+    const both = baseMeta({projectContext: PROJECTS, codeWork: liveWork(), gadgetWork: liveWork({state: "stopped"})});
+    expect((await routeChatMessage({mode: "auto", meta: both, message: "запусти тесты", ask: decided("code")})).route)
+      .toMatchObject({target: "code", reason: "router"});
+  });
+
   it("«Авто»: сбой Jev — продолжает агент кода, если последний ответ был его; иначе агент беседы", async () => {
     const failed = async () => ({ok: false as const, error: "timeout"});
     expect((await routeChatMessage({mode: "auto", meta: baseMeta({projectContext: PROJECTS, codeWork: liveWork()}), message: "и ещё", ask: failed})).route)
