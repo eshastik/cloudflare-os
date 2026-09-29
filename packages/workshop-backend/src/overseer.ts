@@ -19,7 +19,7 @@ import { nativeFormatForOutput, type NativeDocumentFormat, type NativeMnemosBind
 import { APP_CODE_CLOSED, parseGadgetAppModules, parseMnemosAppBinding, type GadgetAppCaller, type GadgetAppModules, type MnemosAppBinding, type MnemosAppState } from "@gadgets/workshop-shared/gadget-app";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
-import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
+import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, ChatAttachmentUploaded, ChatAttachmentProjectSave, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, ActionOutcome, ActionCardIcon } from "@gadgets/workshop-shared/gatekeeper";
 import {
   DurableObject, WorkerEntrypoint, RpcStub as NativeRpcStub,
@@ -68,9 +68,10 @@ import { ExternalProgressRelay } from "./external-progress";
 import {
   assertChatAttachmentSupportedByProvider,
   isAllowedChatAttachmentImageMimeType,
-  validateChatAttachmentUpload,
+  prepareChatAttachmentUpload,
 } from "./chat-attachment-validation";
 import { renderGadgetPdf } from "./browser-export";
+import { saveChatAttachmentToProject } from "./chat-attachment-project";
 
 const logger = createWorkshopLogger("workshop.overseer");
 export const AGENT_RUNNING_ERROR_MESSAGE = "Agent is running, wait for it to finish.";
@@ -454,6 +455,7 @@ type ChatAttachmentContentRecord = {
         uploadedAt: number;
         mimeType: string;
         name?: string;
+        project?: ChatAttachmentProjectSave;
       }
     | {
         type: "committed";
@@ -3301,6 +3303,7 @@ class OverseerImpl implements AgentHooks {
         mimeType: content.state.mimeType,
         name: content.state.name,
         size: content.data.byteLength,
+        ...(content.state.project ? {project: content.state.project} : {}),
       });
     }
     if (total > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
@@ -9176,15 +9179,25 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   async uploadChatAttachment(
     attachment: ChatAttachmentUpload,
     modelId: string | null,
-  ): Promise<ChatAttachmentHandle> {
+    chatId?: number,
+  ): Promise<ChatAttachmentUploaded> {
     let provider: AiModelConfig["provider"] | undefined;
     if (modelId !== null) {
       provider = (await this.clientUser.getChatContext(modelId)).aiModel?.config.provider;
     }
-    attachment = validateChatAttachmentUpload(
+    if (chatId !== undefined && !Number.isSafeInteger(chatId)) throw new Error("Неверная беседа.");
+    // Исходные байты нужны проекту: документ Office в беседе дальше живёт извлечённым текстом.
+    let original = {mimeType: attachment.mimeType, name: attachment.name, content: attachment.content};
+    attachment = await prepareChatAttachmentUpload(
       attachment,
       provider,
     );
+    let project = chatId === undefined ? undefined : await saveChatAttachmentToProject({
+      meta: this.impl.storage.chatMeta.get(chatId),
+      userId: this.clientUser.id.toString(),
+      file: {...original, name: attachment.name},
+      host: this.clientUser,
+    });
 
     this.impl.sweepStagedChatAttachments();
 
@@ -9197,9 +9210,10 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
         uploadedAt: Date.now(),
         mimeType: attachment.mimeType,
         name: attachment.name,
+        ...(project ? {project} : {}),
       },
     });
-    return {id};
+    return {id, ...(project ? {project} : {})};
   }
 
   // Fetch the bytes of a committed chat attachment over the authenticated RPC connection. The

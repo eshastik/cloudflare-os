@@ -1,6 +1,14 @@
 import { isTextLikeAttachmentMimeType } from "@gadgets/workshop-shared/api";
 import type { AiModelConfig, AiModelProvider, ChatAttachmentUpload } from "@gadgets/workshop-shared/api";
 import { PDF_MIME_TYPE } from "./chat-attachment-pdf";
+import {
+  MAX_OFFICE_ATTACHMENT_BYTES,
+  UNSUPPORTED_ATTACHMENT_MESSAGE,
+  extractOfficeText,
+  isLegacyDocument,
+  officeAttachmentText,
+  officeDocumentKind,
+} from "./chat-attachment-office";
 
 // Bounds attachment storage and the bytes replayed into model requests.
 const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
@@ -58,17 +66,17 @@ export function assertChatAttachmentSupportedByProvider(
   byteLength: number,
 ): void {
   if (byteLength > MAX_CHAT_ATTACHMENT_BYTES) {
-    throw new Error("Chat attachment is too large.");
+    throw new Error("Вложение больше 1 МиБ.");
   }
 
   if (!provider) {
     if (isTextOrImageMime(mimeType)) return;
-    throw new Error("Unsupported file type");
+    throw new Error(UNSUPPORTED_ATTACHMENT_MESSAGE);
   }
 
   if (ATTACHMENT_SUPPORT_BY_PROVIDER[provider](mimeType)) return;
 
-  throw new Error("Unsupported file type");
+  throw new Error(UNSUPPORTED_ATTACHMENT_MESSAGE);
 }
 
 /** Normalize and validate attachment bytes before staging them in chat storage. */
@@ -84,12 +92,50 @@ export function validateChatAttachmentUpload(
   if (signature) {
     for (let [index, expected] of signature.entries()) {
       if (expected !== null && attachment.content[index] !== expected) {
-        throw new Error("Chat attachment content does not match its MIME type.");
+        throw new Error("Содержимое файла не совпадает с его типом.");
       }
     }
   }
 
   return attachment;
+}
+
+/**
+ * Принять вложение беседы: документ Office превращается в текстовое вложение с исходным именем,
+ * остальное проверяется как есть. Предел 1 МиБ относится к тексту после извлечения.
+ */
+export async function prepareChatAttachmentUpload(
+  attachment: ChatAttachmentUpload,
+  provider?: AiModelConfig["provider"],
+): Promise<ChatAttachmentUpload> {
+  attachment.name = sanitizeChatAttachmentName(attachment.name);
+  attachment.mimeType = sanitizeChatAttachmentMimeType(attachment.mimeType);
+
+  // Windows отдаёт CSV с типом Excel; по расширению это текст.
+  if (attachment.mimeType === "application/vnd.ms-excel" && /\.csv$/i.test(attachment.name ?? "")) {
+    attachment.mimeType = "text/csv";
+  }
+
+  let kind = officeDocumentKind(attachment.mimeType, attachment.name);
+  if (kind) {
+    if (attachment.content.byteLength > MAX_OFFICE_ATTACHMENT_BYTES) {
+      throw new Error("Документ больше 15 МиБ.");
+    }
+    let zip = [0x50, 0x4b, 0x03, 0x04];
+    if (zip.some((byte, index) => attachment.content[index] !== byte)) {
+      throw new Error("Содержимое файла не совпадает с его типом.");
+    }
+    let text = await extractOfficeText(attachment.content, kind);
+    attachment = {
+      ...attachment,
+      mimeType: "text/plain; charset=utf-8",
+      content: new TextEncoder().encode(
+        officeAttachmentText(attachment.name, text, MAX_CHAT_ATTACHMENT_BYTES)),
+    };
+  } else if (isLegacyDocument(attachment.mimeType, attachment.name)) {
+    throw new Error(UNSUPPORTED_ATTACHMENT_MESSAGE);
+  }
+  return validateChatAttachmentUpload(attachment, provider);
 }
 
 /** Whether a MIME type is one of the image encodings Workshop accepts for chat attachments. */

@@ -84,6 +84,8 @@ import {
   SlashCommandId,
   SlashCommandRequest,
   ChatAttachmentHandle,
+  type ChatAttachmentUploaded,
+  type ChatAttachmentProjectSave,
   ChatAttachmentRef,
   WorkpieceId,
   BlueprintOutput,
@@ -132,6 +134,7 @@ import { useActionOpen } from "./components/chat/useActionOpen";
 import { LiveStep, WorkRun, type OpenDocument } from "./components/chat/WorkSteps";
 import { actionDisplay, describeLiveStep, type GadgetRef, type ObservationRecord, type WorkBatch } from "./components/chat/toolDisplay";
 import { useMnemosLink, type OpenAppInChat } from "./components/chat/useMnemosLink";
+import { MAX_CHAT_ATTACHMENT_BYTES, MAX_OFFICE_ATTACHMENT_BYTES, attachmentBudgetBytes, attachmentDownloadName, isOfficeAttachment } from "./chatAttachmentFiles";
 import { reasoningSections } from "./components/chat/reasoningSections";
 import { FolderProjectCard, useFolderProject } from "./components/chat/FolderProjectCard";
 import { droppedFolderEntry } from "./folderProject";
@@ -380,12 +383,11 @@ type PendingAttachment = {
   previewUrl?: string;
   mimeType: string;
   uploadState: "uploading" | "ready" | "error";
-  ref?: ChatAttachmentHandle;
+  ref?: ChatAttachmentUploaded;
   error?: string;
 };
 
 const MAX_PENDING_ATTACHMENTS = 5;
-const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
 const MAX_CHAT_ATTACHMENT_TOTAL_BYTES = 5 * 1024 * 1024;
 const MAX_CHAT_ATTACHMENT_SOURCE_IMAGE_BYTES = 25 * 1024 * 1024;
 const CHAT_ATTACHMENT_IMAGE_MAX_EDGE = 1568;
@@ -397,6 +399,12 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
 }
 
 async function prepareChatAttachment(file: File): Promise<{blob: Blob, mimeType: string}> {
+  if (isOfficeAttachment(file.name, file.type)) {
+    if (file.size > MAX_OFFICE_ATTACHMENT_BYTES) {
+      throw new Error(`Документ должен быть не больше ${formatAttachmentSize(MAX_OFFICE_ATTACHMENT_BYTES)}.`);
+    }
+    return { blob: file, mimeType: file.type || "application/octet-stream" };
+  }
   if (!file.type.startsWith("image/")) {
     if (file.size > MAX_CHAT_ATTACHMENT_BYTES) {
       throw new Error(`Вложение должно быть не больше ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_BYTES)}.`);
@@ -1391,6 +1399,32 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
   );
 });
 
+// Пометка под документом, прикреплённым в беседе с проектом: куда он лёг или почему не лёг.
+const AttachmentProjectNote = memo(function AttachmentProjectNote({ save }: { save: ChatAttachmentProjectSave }) {
+  const { openDocument } = useContext(WorkRunContext);
+  if (!save.saved) {
+    return (
+      <p className="m-0 text-[11px] leading-[14px] text-kumo-danger">
+        Не сохранено в проект «{save.projectTitle}»: {save.reason}
+      </p>
+    );
+  }
+  const open = openDocument?.({ project: save.projectId, document: save.resource, accountId: save.accountId, title: save.name });
+  const label = `Сохранено в проект «${save.projectTitle}» — личная версия`;
+  return open ? (
+    <button
+      type="button"
+      onClick={() => { void open(); }}
+      className="cursor-pointer text-left text-[11px] leading-[14px] text-kumo-subtle underline decoration-kumo-line underline-offset-2 hover:text-kumo-default"
+      title={`Открыть «${save.name}» в проекте`}
+    >
+      {label}
+    </button>
+  ) : (
+    <p className="m-0 text-[11px] leading-[14px] text-kumo-subtle">{label}</p>
+  );
+});
+
 type ChatAttachmentGridProps = {
   attachments: ChatAttachmentRef[];
   onDownload?: AttachmentDownloadHandler;
@@ -1412,7 +1446,12 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
   return (
     <>
       <div className="mb-2 flex flex-wrap gap-2">
-        {attachments.map((attachment) => (
+        {attachments.map((attachment) => attachment.project ? (
+          <div key={attachment.id} className="flex w-36 flex-col gap-1">
+            <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
+            <AttachmentProjectNote save={attachment.project} />
+          </div>
+        ) : (
           <ChatAttachmentThumbnail
             key={attachment.id}
             attachment={attachment}
@@ -2187,12 +2226,15 @@ export const ChatInput = ({
         mimeType,
         content,
         name,
-      }, selectedModel);
+      }, selectedModel, chatKey ?? undefined);
       if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) {
         deleteStagedAttachment(ref);
         return;
       }
       setPendingAttachments((prev) => prev.map((attachment) => attachment.id === id ? { ...attachment, uploadState: "ready", ref } : attachment));
+      if (ref.project && !ref.project.saved) {
+        toasts.add({ title: `«${name ?? "Файл"}» не сохранён в проект «${ref.project.projectTitle}»: ${ref.project.reason}`, variant: "error" });
+      }
     } catch (err: any) {
       console.error("Failed to upload chat attachment:", err);
       if (!mountedRef.current) return;
@@ -2240,8 +2282,9 @@ export const ChatInput = ({
         toasts.add({ title: `Можно прикрепить не более ${MAX_PENDING_ATTACHMENTS} файлов`, variant: "error" });
         continue;
       }
-      const totalPendingBytes = pendingAttachmentsRef.current.reduce((sum, attachment) => sum + attachment.blob.size, 0);
-      if (totalPendingBytes + blob.size > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
+      const totalPendingBytes = pendingAttachmentsRef.current.reduce(
+        (sum, attachment) => sum + attachmentBudgetBytes(attachment.blob.size, attachment.name, attachment.mimeType), 0);
+      if (totalPendingBytes + attachmentBudgetBytes(blob.size, file.name, mimeType) > MAX_CHAT_ATTACHMENT_TOTAL_BYTES) {
         toasts.add({ title: `Общий размер файлов не должен превышать ${formatAttachmentSize(MAX_CHAT_ATTACHMENT_TOTAL_BYTES)}`, variant: "error" });
         continue;
       }
@@ -2435,7 +2478,7 @@ export const ChatInput = ({
     const attachmentsSnapshot = pendingAttachments;
     const readyAttachments = attachmentsSnapshot
       .filter((attachment) => attachment.uploadState === "ready" && attachment.ref)
-      .map((attachment) => attachment.ref!);
+      .map((attachment) => ({ id: attachment.ref!.id }));
     const hasUploadingAttachment = attachmentsSnapshot.some((attachment) => attachment.uploadState === "uploading");
     const hasFailedAttachment = attachmentsSnapshot.some((attachment) => attachment.uploadState === "error");
 
@@ -4834,7 +4877,7 @@ function ChatInterface({
       try {
         const a = document.createElement("a");
         a.href = url;
-        a.download = name ?? "attachment";
+        a.download = attachmentDownloadName(name, mimeType);
         a.click();
       } finally {
         setTimeout(() => URL.revokeObjectURL(url), 0);

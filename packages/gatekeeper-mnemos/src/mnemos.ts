@@ -44,6 +44,7 @@ import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.t
 import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
 import {checkGadgetEditable,gadgetReceipts,saveGadgetBuild,validGadgetRequest} from "./gadget-bridge.ts";
+import {chatAttachmentReceipts,saveChatAttachment} from "./chat-attachment-save.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
 import type { SpendingEntry } from "@gadgets/workshop-shared/spending";
@@ -177,6 +178,8 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   /** Гаджет через агента кода (ADR 0028, этап 5): задача opencode и сохранение сборки личной версией узла. */
   async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){return this.#account().codeWorkStartGadget(project,prompt,options);}
   async codeWorkSaveGadget(project:string,task:string,resource?:string,options?:{request?:string}){return this.#account().codeWorkSaveGadget(project,task,resource,options);}
+  /** Документ из беседы — файлом в проект правами этого человека; хост зовёт от его имени. */
+  async saveChatAttachment(project:string,request:string,file:{name:string;contentType:string;content:Uint8Array}){return this.#account().saveChatAttachment(project,request,file);}
   async codeWorkForkGadget(fromProject:string,fromResource:string,toProject:string,toResource:string,bodySha256:string){return this.#account().codeWorkForkGadget(fromProject,fromResource,toProject,toResource,bodySha256);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
   async reconnect(): Promise<{ url: string }> {
@@ -321,6 +324,14 @@ export class UserAccount extends DurableObject<Env> {
   const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource,saved.bodySha256).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
   const {bodySha256:_sum,...shown}=saved;
   return {...shown,...sources,codeText:build.modules["server.js"]+"\n"+build.modules["client.js"]};
+ }
+ /** Документ из беседы — файлом в проект личной версией правами человека; квитанция по request. */
+ async saveChatAttachment(project:string,request:string,file:{name:string;contentType:string;content:Uint8Array}){
+  const storageOrigin=this.#origins().storageOrigin;
+  if(!storageOrigin)throw new Error('хранилище Mnemos не настроено');
+  const session=this.#account().session();
+  try{return await saveChatAttachment(session,storageOrigin,fetch.bind(globalThis),chatAttachmentReceipts(this.ctx.storage.kv),project,request,file);}
+  finally{session.dispose();}
  }
  /** «Сделать своей»: право чтения оригинала и правки копии — правами человека, затем служба переносит
   *  исходники версии оригинала (сумма тела) к копии; ключ агента — этого же человека. */

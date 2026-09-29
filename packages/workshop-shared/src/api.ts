@@ -1718,7 +1718,9 @@ export interface Overseer extends RpcTarget {
   // selected provider can receive a raw file attachment.
   //
   // Pass the returned handle to newChat() or sendChatMessage() to commit the attachment into chat history.
-  uploadChatAttachment(attachment: ChatAttachmentUpload, modelId: string | null): Promise<ChatAttachmentHandle>;
+  // chatId — беседа, в которой прикрепляют файл: если к ней подключён проект Mnemos, документ
+  // (PDF, Office, txt/md/csv/json) ещё и сохраняется в проект личной версией правами человека.
+  uploadChatAttachment(attachment: ChatAttachmentUpload, modelId: string | null, chatId?: number): Promise<ChatAttachmentUploaded>;
 
   // Fetch the bytes of a committed chat attachment over RPC. The canonical metadata is already
   // present in the message's ChatAttachmentRef. Images are inlined there, so this is normally used
@@ -2229,6 +2231,18 @@ export type ChatAttachmentHandle = {
   id: string;
 };
 
+// Сохранение прикреплённого документа в проект беседы. saved=false — вложение ушло в беседу,
+// а файл в проект не лёг; reason объясняет почему.
+export type ChatAttachmentProjectSave =
+  | {saved: true; accountId: number; projectId: string; projectTitle: string; resource: string; name: string}
+  | {saved: false; projectTitle: string; reason: string};
+
+// Ответ на загрузку вложения: handle для отправки и итог сохранения в проект, если оно было.
+// Серверу при отправке передаётся только {id}.
+export type ChatAttachmentUploaded = ChatAttachmentHandle & {
+  project?: ChatAttachmentProjectSave;
+};
+
 // Attachment metadata returned to clients.
 //
 // For image attachments, `content` carries the full image bytes inline so the client can render
@@ -2241,6 +2255,9 @@ export type ChatAttachmentRef = ChatAttachmentHandle & {
 
   // Inlined bytes for small image attachments. Present only for images.
   content?: Uint8Array;
+
+  // Итог сохранения документа в проект беседы; нет — не сохранялся.
+  project?: ChatAttachmentProjectSave;
 };
 
 // Whether attachment bytes can be decoded and inlined into the agent's prompt as text.

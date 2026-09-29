@@ -1,5 +1,6 @@
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE, type UsedGadget } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
+import { projectSaveNote } from './chat-attachment-project';
 import { AgentCatalog, ObservationDescription } from '@gadgets/workshop-shared/gatekeeper';
 import { formatCodeWorkResult, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput } from '@gadgets/workshop-shared/code-work';
 import { createWorkshopLogger } from "./observability";
@@ -1616,6 +1617,7 @@ export async function runAgent(
               let attachmentParts = await Promise.all(msg.attachments.map(
                   async (attachment): Promise<(TextContent | ImageContent)[]> => {
                 let filename = attachment.name ? ` (${attachment.name})` : "";
+                let projectNote = projectSaveNote(attachment.project);
                 let data = await hooks.getChatAttachmentData(chatId, attachment.id);
                 if (attachment.mimeType.startsWith("image/")) {
                   return [{
@@ -1626,7 +1628,7 @@ export async function runAgent(
                 } else if (isTextLikeAttachmentMimeType(attachment.mimeType)) {
                   return [{
                     type: "text",
-                    text: `\n\n[Attached text file${filename}]\n${new TextDecoder().decode(data)}`,
+                    text: `\n\n[Attached text file${filename}]${projectNote}\n${new TextDecoder().decode(data)}`,
                   }];
                 } else if (attachment.mimeType === PDF_MIME_TYPE &&
                            modelApiSupportsPdfAttachments(handle.model.api)) {
@@ -1635,7 +1637,7 @@ export async function runAgent(
                   // before the request goes out (see chat-attachment-pdf.ts). The text part
                   // carries the filename, which the disguised part cannot.
                   return [
-                    {type: "text", text: `\n\n[Attached PDF file${filename}]`},
+                    {type: "text", text: `\n\n[Attached PDF file${filename}]${projectNote}`},
                     {type: "image", data: data.toBase64(), mimeType: attachment.mimeType},
                   ];
                 } else {
@@ -1645,7 +1647,7 @@ export async function runAgent(
                   return [{
                     type: "text",
                     text: `\n\n[Attached file${filename} (${attachment.mimeType}) omitted — ` +
-                        `this file type is not supported by the current model]`,
+                        `this file type is not supported by the current model]${projectNote}`,
                   }];
                 }
               }));

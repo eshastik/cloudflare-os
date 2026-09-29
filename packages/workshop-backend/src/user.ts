@@ -2425,6 +2425,12 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     // vendorId — для адреса «Открыть гаджет» в разделе проектов этого подключения.
     return {...saved, vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
   }
+  /** Документ из беседы — файлом в проект через подключение этого человека (его правами). */
+  async saveChatAttachmentToProject(accountId: number, project: string, request: string, file: {name: string; contentType: string; content: Uint8Array}) {
+    const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
+    if (!account.saveChatAttachment) throw new Error("подключение Mnemos не умеет сохранять файлы из беседы");
+    return account.saveChatAttachment(project, request, file);
+  }
   /** «Сделать своей» у копии гаджета: исходники версии оригинала — к копии, агентом получателя. */
   async codeWorkForkGadget(accountId: number, from: {project: string; node: string}, to: {project: string; node: string}, bodySha256: string) {
     const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;

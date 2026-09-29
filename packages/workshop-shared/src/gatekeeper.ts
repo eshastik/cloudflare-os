@@ -1218,6 +1218,10 @@ export interface GatekeeperUser extends WorkerEntrypoint {
   /** Положить файл в /workspace/.mnemos рабочего места: path — ".mnemos/context.md" или ".mnemos/attachments/<имя>";
    * до 10 МиБ на файл. Отказ, если задача ещё запускается или уже остановлена. */
   codeWorkPutFile?(project: string, taskId: string, path: string, contentBase64: string): Promise<void>;
+  /** Документ, прикреплённый в беседе, — файлом в проект, личной версией правами человека.
+   * request — квитанция: повтор с той же квитанцией отдаёт уже созданный файл, а не второй.
+   * name — имя, под которым файл лёг (при совпадении имени добавляется « (2)» и дальше). */
+  saveChatAttachment?(project: string, request: string, file: {name: string; contentType: string; content: Uint8Array}): Promise<{resource: string; name: string; created: boolean}>;
   /** Гаджет через агента кода (ADR 0028): рабочее место без репозитория с шаблоном гаджета. */
   /** options.resource — правка уже сохранённого узла гаджета: право правки проверяется правами человека,
    * служба восстанавливает исходники его последней версии; sourcesRestored=false — их нет, задача начала с шаблона. */
