@@ -474,7 +474,10 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           height: '100%',
           border: 'none'
         }}
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        // allow-forms: без него браузер молча отбрасывает отправку формы и onSubmit не вызывается —
+        // «Добавить задачу» в гаджете ничего не делала (29.09). Наружу форма не уйдёт: в CSP фрейма
+        // form-action 'none'. allow-same-origin по-прежнему нет.
+        sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
         title="Гаджет"
       />
     </div>
