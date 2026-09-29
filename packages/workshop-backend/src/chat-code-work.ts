@@ -4,7 +4,7 @@ import type {AiChatMessage, AiChatMetadata, AiChatStreamEvent, ChatCodeAcceptRes
 import {MAX_CHAT_PROJECTS, chatProjects, displayName, validateChatCodeMode, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatCodeWork, type ChatProject, type CodeWorkOutput, type GadgetWorkResult} from "@gadgets/workshop-shared/code-work";
 import type {CodeWorkReview, CodeWorkSavedGadget, CodeWorkTarget} from "@gadgets/workshop-shared/gatekeeper";
 import {codeWorkAlive, runCodeWorkTurn, type CodeWorkBackend, type CodeWorkFiles} from "./code-work.js";
-import {hideGadgetCode} from "./gadget-answer.js";
+import {gadgetFailureReason} from "./gadget-errors.js";
 import {JEV_CONFIDENCE_THRESHOLD, MAX_PROJECT_CANDIDATES, type CodeRouteContext, type JevProjectDecision, type JevResult} from "./code-router.js";
 import {
   ATTACHMENT_MAX_BYTES, ATTACHMENTS_DIR, CONTEXT_FILE, CONTEXT_FILE_MAX_BYTES, buildCodeContextPack, bytesToBase64, codeWorkBrief,
@@ -458,11 +458,10 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
       let current = metaOrThrow(host, request.chatId);
       if (current[slot]) { current[slot] = {...current[slot]!, gadgetRequest}; host.putChatMeta(current); }
     }
-    let {result, head, codeText} = await saveGadget(host, user, accountId, projectId, output, previous, gadgetRequest);
+    let {result, head} = await saveGadget(host, user, accountId, projectId, output, previous, gadgetRequest);
     output.gadget = result;
-    // До человека и агента беседы — ответ без кода гаджета (ADR 0028, п. 4).
-    output.answer = hideGadgetCode(output.answer, codeText);
-    if (output.answer) host.emit(request.chatId, {type: "toolOutputDelta", toolCallId: request.toolCallId, delta: output.answer});
+    // Произвольный ответ opencode может содержать исходник; итог передаёт карточка сохранения.
+    output.answer = "";
     savedGadget = result.saved ? {resource: result.resource, title: result.title, head} : previous;
     // Узел получен — квитанция исполнена; иначе она ждёт повтора.
     if (result.saved) gadgetRequest = undefined;
@@ -480,7 +479,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   current[slot] = {accountId, projectId, projectTitle, taskId: output.taskId, state: output.state,
     // Продолжение разговора с агентом кода по маршрутизатору — только у работы с кодом.
     foreground: !gadget && codeWorkAlive(output.state), cursor: next,
-    summary: (output.answer || before?.summary || "").slice(0, MAX_SUMMARY),
+    summary: gadget ? "" : (output.answer || before?.summary || "").slice(0, MAX_SUMMARY),
     contextSeq,
     ...(attachmentNames.length ? {attachmentNames, attachmentBytes} : {}),
     changedFiles: gadget ? [] : output.changedFiles.slice(0, MAX_STORED_FILES).map(f => ({path: f.path, status: f.status})),
@@ -494,7 +493,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
 /** Забрать сборку хода и сохранить её личной версией узла. Отказ (нет сборки, битая сборка, нет права)
  *  не роняет ход: агент беседы узнаёт причину и может попросить агента кода исправить. */
 async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId: number, projectId: string, output: CodeWorkOutput,
-    previous: ChatCodeWork["gadget"], request?: string): Promise<{result: GadgetWorkResult; head: string; codeText?: string}> {
+    previous: ChatCodeWork["gadget"], request?: string): Promise<{result: GadgetWorkResult; head: string}> {
   let refused = (error: string) => ({result: {saved: false as const, error}, head: ""});
   if (output.state === "failed" || output.state === "stopped") return refused("работа над гаджетом остановлена, сборка не забрана");
   if (output.interrupted) return refused("ход остановлен человеком, сборка не забрана");
@@ -503,12 +502,12 @@ async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId:
     saved = previous ? await user.codeWorkSaveGadget!(accountId, projectId, output.taskId, previous.resource)
       : await user.codeWorkSaveGadget!(accountId, projectId, output.taskId, undefined, request ? {request} : undefined);
   } catch (error) {
-    return refused((error as Error)?.message || "сборка не сохранена");
+    return refused(gadgetFailureReason(error, "Не удалось сохранить сборку гаджета."));
   }
   let link = gadgetLink(host.publicBase, saved.vendorId, accountId, projectId, saved.resource);
-  return {head: saved.head, codeText: saved.codeText, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, ...(saved.description?.trim() ? {description: saved.description.trim().slice(0, 300)} : {}), collaborative: saved.collaborative,
+  return {head: saved.head, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, ...(saved.description?.trim() ? {description: saved.description.trim().slice(0, 300)} : {}), collaborative: saved.collaborative,
     created: saved.created, ...(link ? {link} : {}),
-    ...(saved.sourcesKept === false ? {sourcesNote: saved.sourcesNote || "исходники не сохранены"} : {})}};
+    ...(saved.sourcesKept === false ? {sourcesNote: "исходники не сохранены"} : {})}};
 }
 
 /** Адрес раздела проектов Mnemos с открытием файла, как у ссылок на документы в ленте. */

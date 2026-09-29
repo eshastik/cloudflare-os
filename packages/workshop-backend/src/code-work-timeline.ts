@@ -2,8 +2,8 @@
 // нетехнического человека («Прочитал файл», «Выполнил команду»); команды, пути и выводы —
 // только в подробностях по раскрытию.
 //
-// В задаче гаджета код закрыт (ADR 0028, п. 4): в ленте только имя файла или короткая команда и итог
-// (успех или ошибка), без вывода инструментов и без полного текста команды.
+// В задаче гаджета код закрыт: лента содержит вид действия и итог, без текста модели и аргументов.
+import {gadgetFailureReason} from "./gadget-errors.js";
 import {displayName, type AgentStep} from "@gadgets/workshop-shared/code-work";
 
 export type CodeWorkEvent = {seq: number; type: string; data: unknown};
@@ -148,9 +148,11 @@ export class CodeWorkTimeline {
         let state = text(data.state);
         if (state) this.#state = state;
         if (state === "failed" || state === "stopped") {
-          let reason = oneLine(text(data.reason), 120);
+          let reason = this.#closedCode ? gadgetFailureReason(data.reason, "") : oneLine(text(data.reason), 120);
           let step: AgentStep = {id: `state:${event.seq}`, kind: "state", status: state === "failed" ? "error" : "done",
-            title: state === "failed" ? `Работа с кодом прервалась${reason ? `: ${reason}` : ""}` : "Работа с кодом остановлена"};
+            title: this.#closedCode
+              ? state === "failed" ? `Работа над гаджетом прервалась${reason ? `: ${reason}` : ""}` : "Работа над гаджетом остановлена"
+              : state === "failed" ? `Работа с кодом прервалась${reason ? `: ${reason}` : ""}` : "Работа с кодом остановлена"};
           this.#put(step, changed);
         }
         continue;
@@ -171,8 +173,8 @@ export class CodeWorkTimeline {
       } else if (type === "text" && text(part.id)) {
         let message = text(part.messageID);
         let value = text(part.text);
-        this.#texts.set(text(part.id), {message, value});
-        if (this.#roles.get(message) === "assistant") {
+        this.#texts.set(text(part.id), {message, value: this.#closedCode ? "" : value});
+        if (!this.#closedCode && this.#roles.get(message) === "assistant") {
           let sent = this.#sent.get(text(part.id)) ?? 0;
           if (value.length > sent) { delta += value.slice(sent); this.#sent.set(text(part.id), value.length); }
         }
@@ -195,15 +197,14 @@ export class CodeWorkTimeline {
     let tool = text(part.tool);
     let id = text(part.callID) || text(part.id);
     if (!id) return null;
-    let described = describeTool(tool, input);
+    let described = describeTool(tool, this.#closedCode ? {} : input);
     if (!described) return null;
     let s: AgentStep["status"] = status === "completed" ? "done" : status === "error" ? "error" : "running";
     let step: AgentStep = {id, kind: described.kind, status: s, title: described.verb[s === "done" ? "done" : s === "error" ? "error" : "running"]};
-    // Полная команда гаджета может нести код (heredoc): остаётся первая строка.
-    let closedCommand = this.#closedCode && tool === "bash" ? shortCommand(text(input.command)) : null;
-    let detail = closedCommand ?? described.detail;
-    if (detail) step.detail = detail;
-    if (described.resource) step.resource = closedCommand !== null ? {kind: "command", name: closedCommand || "команда"} : described.resource;
+    if (this.#closedCode && (described.kind === "edit" || (described.kind === "file" && tool !== "list"))) step.title = step.title.replace(/ файл$/, "");
+    if (this.#closedCode && described.kind === "tool") step.title = s === "done" ? "Использовал инструмент" : s === "error" ? "Не удалось использовать инструмент" : "Использую инструмент";
+    if (!this.#closedCode && described.detail) step.detail = described.detail;
+    if (!this.#closedCode && described.resource) step.resource = described.resource;
     let output = this.#closedCode ? "" : s === "error" ? text(state.error) : text(state.output);
     if (output) step.output = clip(output);
     if (described.kind === "edit") {

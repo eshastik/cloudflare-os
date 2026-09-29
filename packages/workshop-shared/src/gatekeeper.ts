@@ -1113,10 +1113,7 @@ export type CodeWorkTarget = {connectionId: string; repositoryId: string; reposi
 /** Сборка гаджета, сохранённая личной версией узла: head — голова личной ветки после записи. */
 export type CodeWorkSavedGadget = {resource: string; head: string; title: string; description?: string; collaborative: boolean; session: boolean; created: boolean;
   /** Исходники сборки сохранены рядом с узлом: следующая работа над ним продолжит их. false — почему нет, в sourcesNote. */
-  sourcesKept?: boolean; sourcesNote?: string;
-  /** server.js и client.js сохранённой сборки — только серверу оболочки, чтобы вырезать код из ответа агента
-   *  кода (ADR 0028, п. 4). В беседу, журнал и браузер не передаётся. */
-  codeText?: string};
+  sourcesKept?: boolean; sourcesNote?: string};
 export type CodeWorkState = "starting" | "running" | "idle" | "stopped" | "failed";
 
 export interface GatekeeperUser extends WorkerEntrypoint {

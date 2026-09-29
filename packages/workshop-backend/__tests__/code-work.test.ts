@@ -55,7 +55,7 @@ describe("шаги рабочего места для человека", () => {
     expect(steps[2].title).toBe("Выполнил команду: Проверить окружение");
   });
 
-  it("задача гаджета: код закрыт — в ленте имя файла или короткая команда и итог, без вывода; у обычной задачи вывод остаётся", () => {
+  it("задача гаджета: закрытые шаги и причины не содержат текст событий; обычная работа сохраняет диагностику", () => {
     const events = [
       role(1, "a1", "assistant"),
       part(2, { id: "g1", messageID: "a1", type: "tool", tool: "read", callID: "r1", state: { status: "completed", input: { filePath: "/workspace/gadget/src/server/server.ts" }, output: "export class Gadget {}" } }),
@@ -63,15 +63,29 @@ describe("шаги рабочего места для человека", () => {
       part(4, { id: "g3", messageID: "a1", type: "tool", tool: "grep", callID: "r3", state: { status: "completed", input: { pattern: "session" }, output: "server.ts:1: session(caller) {" } }),
       part(5, { id: "g4", messageID: "a1", type: "tool", tool: "bash", callID: "r4", state: { status: "error", input: { command: "pnpm build" }, error: "server.ts:3 export class Gadget" } }),
     ];
-    const gadget = new CodeWorkTimeline(0, { closedCode: true }).apply(events).steps;
+    const secret = "export default () => 'secret-gadget-logic';";
+    events.push(
+      part(6, {id: "g5", messageID: "a1", type: "tool", tool: "bash", callID: "r5", state: {status: "completed", input: {command: secret, description: secret}, output: secret}}),
+      part(7, {id: "g6", messageID: "a1", type: "text", text: secret}),
+      {seq: 8, type: "workspace.state", data: {state: "failed", reason: secret}},
+      {seq: 9, type: "workspace.state", data: {state: "failed", reason: "Model not found: " + secret}},
+    );
+    const timeline = new CodeWorkTimeline(0, {closedCode: true});
+    const {steps: gadget, textDelta} = timeline.apply(events);
+    expect(textDelta).toBe("");
+    expect(timeline.answer()).toBe("");
     expect(gadget.map(s => [s.title, s.status])).toEqual([
-      ["Прочитал файл gadget/src/server/server.ts", "done"],
-      ["Выполнил команду cat > src/server.ts <<'EOF' …", "done"],
-      ["Поискал в файлах «session»", "done"],
-      ["Команда завершилась с ошибкой pnpm build", "error"],
+      ["Прочитал файл", "done"],
+      ["Выполнил команду", "done"],
+      ["Поискал в файлах", "done"],
+      ["Команда завершилась с ошибкой", "error"],
+      ["Выполнил команду", "done"],
+      ["Работа над гаджетом прервалась", "error"],
+      ["Работа над гаджетом прервалась: Модель для задачи недоступна.", "error"],
     ]);
     expect(gadget.every(s => s.output === undefined)).toBe(true);
-    expect(gadget[1].detail).toBe("cat > src/server.ts <<'EOF' …");
+    expect(gadget.every(step => step.detail === undefined && step.resource === undefined)).toBe(true);
+    expect(JSON.stringify(gadget)).not.toContain(secret);
     expect(JSON.stringify(gadget)).not.toMatch(/export class Gadget|секретный код|session\(caller\)/);
     const project = new CodeWorkTimeline(0).apply(events).steps;
     expect(project[0].output).toBe("export class Gadget {}");

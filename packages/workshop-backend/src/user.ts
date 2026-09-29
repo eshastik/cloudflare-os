@@ -2423,7 +2423,10 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     if (!account.codeWorkSaveGadget) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
     const saved = await (options ? account.codeWorkSaveGadget(project, task, resource, options) : account.codeWorkSaveGadget(project, task, resource));
     // vendorId — для адреса «Открыть гаджет» в разделе проектов этого подключения.
-    return {...saved, vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
+    return {resource: saved.resource, head: saved.head, title: saved.title, description: saved.description,
+      collaborative: saved.collaborative, session: saved.session, created: saved.created,
+      sourcesKept: saved.sourcesKept, sourcesNote: saved.sourcesKept === false ? "исходники не сохранены" : undefined,
+      vendorId: this.storage.connectedAccounts.get(accountId)!.vendorId};
   }
   /** Подключение памяти для документа из беседы: названное, иначе первое действующее, которое это умеет. */
   #chatDocumentAccount(accountId: number | null): {id: number; account: GatekeeperUser} {

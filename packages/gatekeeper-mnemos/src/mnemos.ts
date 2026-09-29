@@ -326,7 +326,7 @@ export class UserAccount extends DurableObject<Env> {
   // Узел уже записан: отказ исходников не отменяет сохранения, агент беседы узнаёт причину.
   const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource,saved.bodySha256).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
   const {bodySha256:_sum,...shown}=saved;
-  return {...shown,...sources,codeText:build.modules["server.js"]+"\n"+build.modules["client.js"]};
+  return {...shown,...sources};
  }
  /** Документ из беседы: билет выгрузки для браузера в проект беседы или, без проекта, в личное пространство. */
  async beginChatDocument(project:string|null,file:ChatDocumentFile){

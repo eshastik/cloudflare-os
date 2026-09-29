@@ -92,7 +92,7 @@ describe("гаджет через агента кода", () => {
     failSave(new Error("Сборка гаджета не годится: client.js не совпадает с суммой в gadget.json"));
     setPages([{events: [role(2, "b")], state: "idle"}]);
     const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "поправь", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
-    expect(out.gadget).toEqual({saved: false, error: "Сборка гаджета не годится: client.js не совпадает с суммой в gadget.json"});
+    expect(out.gadget).toEqual({saved: false, error: "Не удалось сохранить сборку гаджета."});
     expect(meta().gadgetWork?.gadget).toEqual({resource: "node-7", title: "Отпуска", head: HEAD1});
     const text = formatCodeWorkResult(out);
     expect(text).toContain("Гаджет не сохранён");
@@ -198,7 +198,7 @@ describe("гаджет через агента кода", () => {
     const {host: h} = host(user, chat());
     setPages([{events: [role(1, "a")], state: "idle"}]);
     const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
-    expect(out.gadget).toMatchObject({saved: true, sourcesNote: "исходники гаджета больше 8 МиБ в архиве"});
+    expect(out.gadget).toMatchObject({saved: true, sourcesNote: "исходники не сохранены"});
     expect(formatCodeWorkResult(out)).toContain("Следующая правка начнётся с чистого шаблона");
   });
 
@@ -215,27 +215,23 @@ describe("гаджет через агента кода", () => {
 const text = (seq: number, id: string, message: string, value: string): CodeWorkEvent => ({seq, type: "message.part.updated", data: {part: {id, messageID: message, type: "text", text: value}}});
 const SERVER_LINE = "export class Gadget extends DurableObject { session(caller) { return new Session(this, caller); } }";
 
-describe("ответ агента кода в задаче гаджета без кода", () => {
-  it("длинный блок кода и строки из сборки скрываются и в ответе, и в ленте; куски по ходу не текут", async () => {
-    const {user, setPages, setCode} = fakeUser();
-    setCode(`${SERVER_LINE}\nconst ui = () => render(document.body);`);
-    const {host: h, meta, emitted} = host(user, chat());
-    const answer = ["Готово: список отпусков с согласованием.", "```ts", "a", "b", "c", "d", "e", "f", "```",
-      `Главное в сервере: \`${SERVER_LINE}\``, SERVER_LINE, "Короткий пример:", "```", "x = 1", "```"].join("\n");
-    setPages([{events: [role(1, "a"), text(2, "t1", "a", answer)], state: "idle"}]);
-    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
-    expect(out.answer).toBe(["Готово: список отпусков с согласованием.", "(код гаджета не показывается)",
-      "Главное в сервере: (код гаджета не показывается)", "(код гаджета не показывается)", "Короткий пример:", "```", "x = 1", "```"].join("\n"));
-    expect(formatCodeWorkResult(out)).not.toContain("session(caller)");
-    expect(meta().gadgetWork?.summary).not.toContain("session(caller)");
-    // В ленту человека уходит только отфильтрованный ответ, одним куском.
-    const deltas = emitted.filter((e): e is {type: string; delta: string} => (e as {type: string}).type === "toolOutputDelta");
-    expect(deltas.map(d => d.delta)).toEqual([out.answer]);
-  });
-
-  it("фильтр: короткий блок остаётся, оборванный длинный скрывается", async () => {
-    const {hideGadgetCode} = await import("../src/gadget-answer");
-    expect(hideGadgetCode("Итог\n```\n1\n2\n3\n```", SERVER_LINE)).toBe("Итог\n```\n1\n2\n3\n```");
-    expect(hideGadgetCode("Незакрытый блок\n```js\n1\n2\n3\n4\n5\n6")).toBe("Незакрытый блок\n(код гаджета не показывается)");
-  });
+describe("результат работы гаджета без исходников", () => {
+  it.each(["Содержимое server.js: " + SERVER_LINE, "```js\n" + SERVER_LINE + "\n```", "Короткий пример: export default () => 7;"])("ответ, ошибка сохранения и прежняя сводка не передают исходник: %s", async answer => {
+      for (const fails of [false, true]) {
+        const {user, setPages, setCode, failSave} = fakeUser();
+        setCode(SERVER_LINE);
+        const prior = {accountId: 3, projectId: "hr", projectTitle: "Кадры", taskId: "old", state: "stopped" as const,
+          foreground: false, cursor: 0, summary: SERVER_LINE};
+        const {host: h, meta, emitted} = host(user, {...chat(), gadgetWork: prior});
+        if (fails) failSave(new Error("save refused: " + SERVER_LINE));
+        setPages([{events: [role(1, "a"), text(2, "t1", "a", answer)], state: "idle"}]);
+        const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+        expect(out.answer).toBe("");
+        expect(out.gadget?.saved).toBe(!fails);
+        expect(JSON.stringify(out)).not.toContain(SERVER_LINE);
+        expect(formatCodeWorkResult(out)).not.toContain("export");
+        expect(meta().gadgetWork?.summary).toBe("");
+        expect(emitted.filter(e => (e as {type: string}).type === "toolOutputDelta")).toEqual([]);
+      }
+    });
 });
