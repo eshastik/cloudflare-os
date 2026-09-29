@@ -1,9 +1,10 @@
 import { HISTORY_PREPARING } from "./history-preparing.ts";
-import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
+import { isMnemosNodeFormat, isNativeDocumentFormat, mnemosNodeFormatOfMime, type MnemosNodeFormat } from "@gadgets/workshop-shared/native-document";
+import { appAccess, appDirectory } from "./app-access.ts";
 
-/** Формат редактора по типу содержимого Mnemos; null — документ не для редактора. */
-export function nativeFormatOf(mime: string): NativeDocumentFormat | null {
-  return mime === "application/vnd.cloudflareos.document+json" ? "cloudflareos.document" : mime === "application/vnd.cloudflareos.spreadsheet+json" ? "cloudflareos.spreadsheet" : mime === "application/vnd.cloudflareos.presentation+json" ? "cloudflareos.presentation" : null;
+/** Формат узла по типу содержимого Mnemos: документ, таблица, презентация или приложение; null — узел не открывается в оболочке. */
+export function nativeFormatOf(mime: string): MnemosNodeFormat | null {
+  return mnemosNodeFormatOfMime(mime);
 }
 import type {DriveImportCapture} from './drive-import-capture.ts';
 import {OfficeUpdateRecovery} from "./office-update-recovery.ts";
@@ -22,7 +23,9 @@ export class NativeWriteSelector extends RpcTarget {
   #recovery: NativeCreationRecovery;
   #updateRecovery?: OfficeUpdateRecovery;
   #driveImports?: DriveImportCapture;
-  constructor(session: MnemosAccountSession, recovery: NativeCreationRecovery, updateRecovery?:OfficeUpdateRecovery, driveImports?:DriveImportCapture) { super(); this.#session = session; this.#recovery = recovery; this.#updateRecovery=updateRecovery; this.#driveImports=driveImports; }
+  /** Адрес установки Mnemos: часть ключа экземпляра приложения, чтобы разные установки с совпавшими id не делили экземпляр. */
+  #installation: string;
+  constructor(session: MnemosAccountSession, recovery: NativeCreationRecovery, updateRecovery?:OfficeUpdateRecovery, driveImports?:DriveImportCapture, installation = "") { super(); this.#session = session; this.#recovery = recovery; this.#updateRecovery=updateRecovery; this.#driveImports=driveImports; this.#installation = installation; }
   async reviewOfficeUpdate(project:string,target:string,source:string,format:NativeDocumentFormat,head:string,hash:string){
     if(!this.#updateRecovery)throw Error("Office updates unavailable");
     return reviewOfficeUpdate(this.#session,this.#updateRecovery,project,target,source,format,head,hash,this.#driveImports);
@@ -80,14 +83,14 @@ export class NativeWriteSelector extends RpcTarget {
       async validate() { await session.checkPrivateVersionRead(project, node, expectedHead); }
     }());
   }
-  async documentLocation(project: string, node: string, format: NativeDocumentFormat) {
-    if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
+  async documentLocation(project: string, node: string, format: MnemosNodeFormat) {
+    if (!isMnemosNodeFormat(format)) throw new Error("Unsupported document format");
     const doc = await this.#session.readDraftDocument(project, node);
     const metadata = doc.terms[0]?.metadata;
     if (!doc.exists || doc.conflicted || doc.content_type !== `application/vnd.${format}+json` || !metadata) throw new Error("Select a document with versioned metadata");
     return { head: doc.head, name: metadata.name, parent: metadata.parent_id };
   }
-  async saveLocation(project: string, node: string, expectedHead: string, name: string, parent: string, format: NativeDocumentFormat) {
+  async saveLocation(project: string, node: string, expectedHead: string, name: string, parent: string, format: MnemosNodeFormat) {
     if ((await this.documentLocation(project, node, format)).head !== expectedHead) throw new Error("Draft changed; reread location");
     return this.#session.saveDraftLocation(project, node, expectedHead, name, parent);
   }
@@ -96,8 +99,8 @@ export class NativeWriteSelector extends RpcTarget {
     if (page.truncated && !page.next_cursor) throw new Error("Folder listing truncated");
     return { folders: page.nodes.filter(n => n.is_dir).map(n => ({ id: n.node_id, name: n.name, parent: n.parent_id || "" })), nextCursor: page.next_cursor || "" };
   }
-  async selectConflict(project: string, node: string, format: NativeDocumentFormat) {
-    if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
+  async selectConflict(project: string, node: string, format: MnemosNodeFormat) {
+    if (!isMnemosNodeFormat(format)) throw new Error("Unsupported document format");
     const document = await this.#session.readDraftDocument(project, node);
     const conflict = new NativeConflict(this.#session, project, node, format, document.head);
     await conflict.validate();
@@ -108,18 +111,18 @@ export class NativeWriteSelector extends RpcTarget {
   async decideReview(id: string, domain: string, version: number, approved: boolean) { await this.#session.recordReviewDecision(id, domain, version, approved); }
   async updateDraft(project: string, expectedHead: string) { return this.#session.updateDraft(project, expectedHead); }
   async publicationState(project: string) { return this.#session.draftState(project); }
-  async deleteDocument(project: string, node: string, expectedHead: string, format: NativeDocumentFormat) {
+  async deleteDocument(project: string, node: string, expectedHead: string, format: MnemosNodeFormat) {
     const state = await this.restorationState(project, node, format);
     if (state.deleted || state.head !== expectedHead) throw new Error("Draft changed; prepare deletion again");
     return this.#session.deleteDraftDocument(project, node, expectedHead);
   }
-  async restorationState(project: string, node: string, format: NativeDocumentFormat) {
-    if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
+  async restorationState(project: string, node: string, format: MnemosNodeFormat) {
+    if (!isMnemosNodeFormat(format)) throw new Error("Unsupported document format");
     const doc = await this.#session.readDraftDocument(project, node);
     if (doc.conflicted || (doc.exists && doc.content_type !== `application/vnd.${format}+json`)) throw new Error("Select a compatible resolved document");
     return { head: doc.head, deleted: !doc.exists };
   }
-  async restorePublication(project: string, node: string, publication: string, expectedHead: string, format: NativeDocumentFormat, deleted = false) {
+  async restorePublication(project: string, node: string, publication: string, expectedHead: string, format: MnemosNodeFormat, deleted = false) {
 
     const state = await this.restorationState(project, node, format);
     if (state.head !== expectedHead || state.deleted !== deleted) throw new Error("Draft changed; prepare restoration again");
@@ -189,8 +192,8 @@ export class NativeWriteSelector extends RpcTarget {
   }
   /** Снять отметку «новое» у уведомления о доступе к документу. */
   async sharedDocumentSeen(scope: string, owner: string, resource: string) { await this.#session.markSharedDocumentSeen(scope, owner, resource); }
-  async select(project: string, node: string, format: NativeDocumentFormat) {
-    if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
+  async select(project: string, node: string, format: MnemosNodeFormat) {
+    if (!isMnemosNodeFormat(format)) throw new Error("Unsupported document format");
     // Сначала приглашения: документ коллеги открывается из ветки владельца, и чтение своей ветки
     // для него заведомо отказывает (403 в журнале на каждое перечитывание состояния).
     let owner = "";
@@ -215,16 +218,22 @@ export class NativeWriteSelector extends RpcTarget {
     await writer.head();
     return new RpcStub(writer);
   }
-  async create(project: string, name: string, format: NativeDocumentFormat) {
-    if (!isNativeDocumentFormat(format)) throw new Error("Unsupported document format");
+  async create(project: string, name: string, format: MnemosNodeFormat) {
+    if (!isMnemosNodeFormat(format)) throw new Error("Unsupported document format");
     if (!name.trim() || /[/\\\0]/.test(name) || new TextEncoder().encode(name).length > 255) throw new Error("Invalid document name");
     const { head } = await this.#session.openDraft(project);
     return new RpcStub(new NativeCreator(this.#session, this.#recovery, { project, name, format, head, request: crypto.randomUUID(), upload: "" }));
   }
-  async resumeCreation(receipt: string, format: NativeDocumentFormat) {
+  async resumeCreation(receipt: string, format: MnemosNodeFormat) {
     const intent = await this.#recovery.open(receipt, format);
     return new RpcStub(new NativeCreator(this.#session, this.#recovery, intent));
   }
+  /** Право текущего человека на узел приложения (ADR 0028): участник, свой черновик или общая версия проекта. */
+  async appAccess(project: string, node: string, opening: boolean) {
+    return { ...(await appAccess(this.#session, project, node, opening === true)), installation: this.#installation };
+  }
+  /** Справочник людей и отделов для приложения — с правами текущего человека, только имена. */
+  async appDirectory() { return appDirectory(this.#session); }
   /** «Опубликовать» из шапки документа: заявка на согласование, а если сервер ответил, что согласование
    *  в проекте не требуется, — публикация сразу при тех же головах. Отказ в праве отдаётся состоянием:
    *  исключение через RPC теряет причину, и интерфейс не может её назвать. */
@@ -264,7 +273,7 @@ class NativeConflict extends RpcTarget {
   #node: string;
   #mime: string;
   #head: string;
-  constructor(session: MnemosAccountSession, project: string, node: string, format: NativeDocumentFormat, head: string) {
+  constructor(session: MnemosAccountSession, project: string, node: string, format: MnemosNodeFormat, head: string) {
     super(); this.#session=session; this.#project=project; this.#node=node; this.#mime=`application/vnd.${format}+json`; this.#head=head;
   }
   async describe() {
@@ -302,7 +311,7 @@ class NativeWriter extends RpcTarget {
   #node: string;
   #mime: string;
   #owner: string;
-  constructor(session: MnemosAccountSession, project: string, node: string, format: NativeDocumentFormat, owner = "") {
+  constructor(session: MnemosAccountSession, project: string, node: string, format: MnemosNodeFormat, owner = "") {
     super(); this.#session = session; this.#project = project; this.#node = node;
     this.#owner = owner;
     this.#mime = `application/vnd.${format}+json`;

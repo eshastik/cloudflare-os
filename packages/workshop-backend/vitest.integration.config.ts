@@ -12,6 +12,8 @@ const EXPECTED_OPEN_ERROR_CODES = new Set([
   "TELEGRAM_SETUP_REJECTED",
   // Отказ точки Mini App без действующей сессии.
   "MINI_APP_SESSION_ENDED",
+  // Код гаджета изменился после чтения версии: восстановление приложения отказывает.
+  "APP_CODE_CHANGED",
 ]);
 
 export default defineConfig({

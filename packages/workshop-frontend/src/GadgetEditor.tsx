@@ -60,6 +60,7 @@ import DocumentStatus, { DOCUMENT_BIND_EVENT, DOCUMENT_SHARE_EVENT, DOCUMENT_VER
 import { useNarrowScreen } from './useNarrowScreen'
 import type { NativeSnapshotSource } from './nativeSnapshotSource'
 import { isGadgetRestartLog } from './gadgetRestartLog'
+import MnemosAppStatus, { MnemosAppUnavailable, useMnemosApp } from './MnemosAppStatus'
 
 const NO_GADGETS: ReadonlySet<WorkpieceId> = new Set()
 
@@ -1301,6 +1302,13 @@ export default function GadgetEditor() {
     snapshotSource: nativeSnapshotSource,
   })
 
+  // Приложение как файл проекта Mnemos (ADR 0028): у всех гаджетов, кроме документа, таблицы и презентации.
+  const appGadget = selectedGadgetStub && !isUseOnly && !nativeFormatOf(selectedGadgetSummary?.output?.id) ? selectedGadgetStub : null
+  const app = useMnemosApp({ api: authenticatedApi, gadget: appGadget, previewChatId })
+  const appBound = !!appGadget && !!app.binding
+  // Совместное приложение без правок показывает общий экземпляр; недоступный экземпляр — причину вместо экрана.
+  const appUnavailable = appBound && !app.showWorkspace && !app.liveGadget ? (app.liveError || 'связываюсь с приложением…') : null
+
   // ── error / loading states ────────────────────────────────────────────────────
   if (error?.kind === 'open') {
     return (
@@ -1694,6 +1702,10 @@ export default function GadgetEditor() {
               />
             )}
 
+            {!paneShowsActivity && appGadget && (
+              <MnemosAppStatus key={`app:${selectedGadgetId}`} handle={app} compact={narrow} panelHost={versionPanelHost} onShareShown={setDocumentShareShown} />
+            )}
+
             {(paneShowsActivity || (showBuildTabs && !narrow)) && (
               <div
                 role="tablist"
@@ -1732,10 +1744,10 @@ export default function GadgetEditor() {
               />
             )}
 
-            {!paneShowsActivity && !(narrow && selectedNativeFormat) && (
+            {!paneShowsActivity && !(narrow && (selectedNativeFormat || appBound)) && (
               <button type="button" className={`${PILL_PRIMARY} ${narrow ? '!h-10 !px-4' : ''}`} onClick={() => {
-                // Документ, таблица, презентация: «Поделиться» открывает доступ к самому документу Mnemos.
-                if (selectedNativeFormat) window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))
+                // Документ, таблица, презентация и приложение проекта: «Поделиться» открывает доступ к самому файлу Mnemos.
+                if (selectedNativeFormat || appBound) window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))
                 else setShareModalOpen(true)
               }}>
                 Поделиться
@@ -1752,7 +1764,7 @@ export default function GadgetEditor() {
                   }
                 />
                 <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
-                  {selectedNativeFormat ? (
+                  {selectedNativeFormat || appBound ? (
                     <>
                       {!documentShareShown && (
                         <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
@@ -1816,7 +1828,18 @@ export default function GadgetEditor() {
             )}
             <div className={paneShowsActivity ? 'hidden' : 'contents'}>
             <div className={activeTab !== 'app' || previewMode ? 'hidden' : 'h-full'}>
-              {selectedGadgetStub && !previewMode ? (
+              {appUnavailable && !previewMode ? (
+                <MnemosAppUnavailable height={isGadgetFullscreen ? FULLSCREEN_CONTENT_H : RIGHT_CONTENT_H} reason={appUnavailable} />
+              ) : app.liveGadget && !previewMode ? (
+                <GadgetUI
+                  key={`live:${selectedGadgetId}:${app.liveGadget.key}`}
+                  gadget={app.liveGadget as unknown as RpcStub<GadgetClient>}
+                  height={isGadgetFullscreen ? FULLSCREEN_CONTENT_H : RIGHT_CONTENT_H}
+                  isVisible={activeTab === 'app' && !previewMode}
+                  onConsoleLog={handleClientConsoleLog}
+                  onIframeEscape={isGadgetFullscreen ? exitGadgetFullscreen : undefined}
+                />
+              ) : selectedGadgetStub && !previewMode ? (
                 <GadgetUI
                   key={selectedGadgetId}
                   gadget={selectedGadgetStub}

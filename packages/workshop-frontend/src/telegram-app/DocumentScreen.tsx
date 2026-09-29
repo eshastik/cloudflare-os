@@ -79,11 +79,13 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   }, [webApp, phase])
 
   const info = phase.kind === 'ready' ? phase.info : null
-  const bound = info?.mnemos.kind === 'bound' ? info.mnemos : null
+  // Приложение (ADR 0028): экран без сохранения и версий — код и версии меняются на сайте.
+  const isApp = info?.format === 'cloudflareos.app'
+  const bound = info?.mnemos.kind === 'bound' && !isApp ? info.mnemos : null
 
   // Ревизия редактора: сравнение с сохранённой говорит, есть ли несохранённые правки.
   useEffect(() => {
-    if (!api || !info || !pollMs) return
+    if (!api || !info || !pollMs || info.format === 'cloudflareos.app') return
     let probe: RpcStub<RpcTarget> | null = null, stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
@@ -99,7 +101,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   }, [api, info, pollMs, fail])
 
   const dirty = bound ? (bound.savedRevision === null || revision === null ? true : revision !== bound.savedRevision) : false
-  const canSave = !!info && !!read && !busy && !changedByOther && !!info.storageOrigin &&
+  const canSave = !!info && !isApp && !!read && !busy && !changedByOther && !!info.storageOrigin &&
     ((bound && bound.access !== 'read' && dirty) || info.mnemos.kind === 'project')
 
   const refresh = useCallback(async () => {
@@ -110,15 +112,17 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
 
   const save = useCallback(async () => {
     if (!api || !info || !read || busy) return
+    const format = info.format
+    if (format === 'cloudflareos.app') return
     const signal = lifetime.current.signal
     setBusy('save'); setMessage(null)
     try {
       if (info.mnemos.kind === 'project') {
-        const snapshot = await read.read(info.format, signal).catch(() => null)
-        await createInProject({ api: api.api, read: read.read, format: info.format, storageOrigin: info.storageOrigin, name: documentName(snapshot, info.title), signal })
+        const snapshot = await read.read(format, signal).catch(() => null)
+        await createInProject({ api: api.api, read: read.read, format, storageOrigin: info.storageOrigin, name: documentName(snapshot, info.title), signal })
         setMessage({ tone: 'note', text: `Сохранено в проект «${info.mnemos.projectTitle}» как ваш черновик.` })
       } else if (bound) {
-        await saveVersion({ api: api.api, read: read.read, format: info.format, storageOrigin: info.storageOrigin, base: bound.savedHead, signal })
+        await saveVersion({ api: api.api, read: read.read, format, storageOrigin: info.storageOrigin, base: bound.savedHead, signal })
         setMessage({ tone: 'note', text: 'Новая версия сохранена в Mnemos.' })
       }
       await refresh()
@@ -132,7 +136,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   }, [api, info, read, busy, bound, refresh, fail])
 
   // Главная кнопка Telegram: «Сохранить», пока есть что сохранять; «Сохранено» — неактивна.
-  const mainLabel = !info ? '' : busy === 'save' ? 'Сохраняю…' : info.mnemos.kind === 'project' ? `Сохранить в «${info.mnemos.projectTitle}»` : bound && bound.access !== 'read' ? (dirty && !changedByOther ? 'Сохранить' : 'Сохранено') : ''
+  const mainLabel = !info || isApp ? '' : busy === 'save' ? 'Сохраняю…' : info.mnemos.kind === 'project' ? `Сохранить в «${info.mnemos.projectTitle}»` : bound && bound.access !== 'read' ? (dirty && !changedByOther ? 'Сохранить' : 'Сохранено') : ''
   const telegramMain = webApp?.MainButton ?? null
   useEffect(() => {
     if (!telegramMain) return
@@ -180,11 +184,13 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
 
   const restore = useCallback(async (version: MiniAppVersion) => {
     if (!api || !info || !read || busy) return
+    const format = info.format
+    if (format === 'cloudflareos.app') return
     const signal = lifetime.current.signal
     setBusy('restore'); setMessage(null)
     try {
-      const snapshot = await fetchVersion({ api: api.api, id: version.id, format: info.format, storageOrigin: info.storageOrigin, signal })
-      const current = snapshotRevision(await read.read(info.format, signal))
+      const snapshot = await fetchVersion({ api: api.api, id: version.id, format, storageOrigin: info.storageOrigin, signal })
+      const current = snapshotRevision(await read.read(format, signal))
       if (current === null) throw new Error('no revision')
       using editor = await api.api.connectEditor() as unknown as RpcStub<NativeDocumentEditor>
       await editor.restoreDocumentSnapshot(snapshot, current)
@@ -235,6 +241,7 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
   )
 
   const status = !info ? 'подключаюсь…'
+    : isApp ? (info.mnemos.kind === 'bound' ? (info.mnemos.access === 'read' ? 'приложение проекта · только просмотр' : 'приложение проекта') : 'приложение беседы')
     : busy === 'save' ? 'сохраняю…'
     : busy === 'restore' ? 'открываю версию…'
     : changedByOther ? 'документ изменили без вас'
@@ -254,8 +261,9 @@ export default function DocumentScreen({ session, webApp, siteUrl, title, connec
       </header>
       <div className="md-progress" aria-hidden="true" />
       {message && <p className={`md-message md-message-${message.tone}`} role={message.tone === 'error' ? 'alert' : 'status'}>{message.text}</p>}
-      {info?.mnemos.kind === 'none' && <p className="md-message md-message-note">В Mnemos этот документ сохраняется на сайте: там выбирается проект. <button type="button" className="md-link" onClick={openSite}>Открыть на сайте</button></p>}
-      {info && !info.storageOrigin && info.mnemos.kind !== 'none' && <p className="md-message md-message-note">Хранилище Mnemos недоступно из Telegram. <button type="button" className="md-link" onClick={openSite}>Сохранить на сайте</button></p>}
+      {isApp && <p className="md-message md-message-note">Код и версии приложения меняются на сайте. <button type="button" className="md-link" onClick={openSite}>Открыть на сайте</button></p>}
+      {!isApp && info?.mnemos.kind === 'none' && <p className="md-message md-message-note">В Mnemos этот документ сохраняется на сайте: там выбирается проект. <button type="button" className="md-link" onClick={openSite}>Открыть на сайте</button></p>}
+      {info && !isApp && !info.storageOrigin && info.mnemos.kind !== 'none' && <p className="md-message md-message-note">Хранилище Mnemos недоступно из Telegram. <button type="button" className="md-link" onClick={openSite}>Сохранить на сайте</button></p>}
       <div className="md-stage">
         {api && info && <Frame api={api.api} accent={info.accent} onSnapshotSource={next => setRead(next ? { read: next } : null)} onFailed={() => setPhase({ kind: 'failed' })} />}
       </div>

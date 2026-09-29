@@ -24,7 +24,7 @@ import type { SpendingEntry } from "./spending.js";
 // `Adapter` type is the root interface implemented by the service binding.
 
 import type { WorkerEntrypoint, DurableObject, RpcTarget, RpcStub } from "cloudflare:workers";
-import type { NativeDocumentFormat } from "./native-document";
+import type { MnemosNodeFormat, NativeDocumentFormat } from "./native-document";
 
 /**
  * A pagination cursor.
@@ -530,7 +530,7 @@ export interface GatekeeperNativeDocumentSelector extends RpcTarget {
         /** Human owner when the recorder was an agent. */
         onBehalfOf: string;
       };
-      format: NativeDocumentFormat }[];
+      format: MnemosNodeFormat }[];
     /** Cursor for the next history page; empty means the end. */
     nextCursor: string;
   }>;
@@ -575,9 +575,24 @@ export interface GatekeeperNativeDocumentEditor extends GatekeeperNativeDocument
   access(): Promise<'owner' | 'write' | 'read'>;
 }
 
+/** Право человека на узел приложения Mnemos. tenant и name читаются только при первом открытии. */
+export interface GatekeeperAppAccess {
+  access: 'read' | 'edit';
+  /** Проект и узел так, как их назвал Mnemos: из них, а не из ввода страницы, строится ключ экземпляра. */
+  project: string;
+  node: string;
+  /** Адрес установки Mnemos (API): разные установки с совпавшими id — разные экземпляры приложения. */
+  installation: string;
+  principal: string;
+  /** Организация Mnemos; пусто, если не читалась. */
+  tenant: string;
+  /** Имя человека из справочника; пусто, если не читалось или не найдено. */
+  name: string;
+}
+
 /** Документ другого человека, открытый этому человеку. owner — служебный ключ, не для показа. */
 export interface GatekeeperSharedDocument {
-  scope: string; resource: string; owner: string; name: string; format: NativeDocumentFormat | null
+  scope: string; resource: string; owner: string; name: string; format: MnemosNodeFormat | null
   projectName: string; ownerName: string; grantedByName: string; mode: 'read' | 'write'; grantedAt: string; seen: boolean
   /** Приглашение открывает только этот документ, без папки проекта. */
   documentOnly?: boolean
@@ -664,13 +679,13 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Export a pinned personal version to DOCX/XLSX/PPTX; the returned download rechecks access. */
   exportOffice(scope: string, resource: string, expectedHead: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentDownload>>;
   /** Read the exact name/folder of an unconflicted native document with versioned metadata. */
-  documentLocation(scope: string, resource: string, format: NativeDocumentFormat): Promise<{ head: string; name: string; parent: string }>;
+  documentLocation(scope: string, resource: string, format: MnemosNodeFormat): Promise<{ head: string; name: string; parent: string }>;
   /** Save name/folder at the selected head with current source/destination rights; never publish or retry. */
-  saveLocation(scope: string, resource: string, expectedHead: string, name: string, parent: string, format: NativeDocumentFormat): Promise<{ head: string }>;
+  saveLocation(scope: string, resource: string, expectedHead: string, name: string, parent: string, format: MnemosNodeFormat): Promise<{ head: string }>;
   /** Page through currently visible destination folders; visibility does not grant write authority. */
   folders(scope: string, cursor: string): Promise<{ folders: { id: string; name: string; parent: string }[]; nextCursor: string }>;
   /** Select an existing native conflict without lending authority to gadget code. */
-  selectConflict(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeConflict>>;
+  selectConflict(scope: string, resource: string, format: MnemosNodeFormat): Promise<RpcStub<GatekeeperNativeConflict>>;
   /** Current human identity for displaying which decisions they may record. */
   reviewerIdentity(): Promise<string>;
   /** List proposals visible to the current human, preserving server pagination. */
@@ -682,11 +697,11 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Read current heads without creating or publishing a draft. */
   publicationState(scope: string): Promise<{ personal_head: string; shared_head: string; personal_exists: boolean }>;
   /** Delete one existing resolved native document at the explicitly confirmed personal head; never publish or retry. */
-  deleteDocument(scope: string, resource: string, expectedHead: string, format: NativeDocumentFormat): Promise<{ head: string }>;
+  deleteDocument(scope: string, resource: string, expectedHead: string, format: MnemosNodeFormat): Promise<{ head: string }>;
   /** Inspect the exact personal target before explicitly choosing content replacement or deleted-document restoration. */
-  restorationState(scope: string, resource: string, format: NativeDocumentFormat): Promise<{ head: string; deleted: boolean }>;
+  restorationState(scope: string, resource: string, format: MnemosNodeFormat): Promise<{ head: string; deleted: boolean }>;
   /** Restore one published document's content into the exact personal head; never publish or retry with a newer head. */
-  restorePublication(scope: string, resource: string, publication: string, expectedHead: string, format: NativeDocumentFormat, deleted?: boolean): Promise<{ head: string }>;
+  restorePublication(scope: string, resource: string, publication: string, expectedHead: string, format: MnemosNodeFormat, deleted?: boolean): Promise<{ head: string }>;
   /** Submit all saved project changes at the displayed immutable heads. */
   requestReview(scope: string, personalHead: string, sharedHead: string): Promise<{ candidate_id: string }>;
   /** Read an authorized proposal, including current required decisions. */
@@ -729,11 +744,16 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
   /** Снять отметку «новое» у уведомления о доступе к документу. */
   sharedDocumentSeen(scope: string, owner: string, resource: string): Promise<void>;
   /** Open the user's personal draft and bind editing to one document and format. */
-  select(scope: string, resource: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentEditor>>;
+  select(scope: string, resource: string, format: MnemosNodeFormat): Promise<RpcStub<GatekeeperNativeDocumentEditor>>;
   /** Bind one creation in the scope root; retries through this writer retain the operation identity. */
-  create(scope: string, name: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  create(scope: string, name: string, format: MnemosNodeFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
   /** Restore the exact creation request from this account's receipt; saving rechecks current rights. */
-  resumeCreation(receipt: string, format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  resumeCreation(receipt: string, format: MnemosNodeFormat): Promise<RpcStub<GatekeeperNativeDocumentCreator>>;
+  /** Право текущего человека на узел приложения (ADR 0028): правка, чтение или отказ ошибкой.
+   *  opening — первое открытие: заодно открывается личный черновик и читаются имя и организация. */
+  appAccess(scope: string, resource: string, opening: boolean): Promise<GatekeeperAppAccess>;
+  /** Справочник людей и отделов организации с правами текущего человека (как в «Поделиться»). */
+  appDirectory(): Promise<{ people: { id: string; name: string }[]; departments: { id: string; name: string; members: { id: string; name: string }[] }[] }>;
   /** «Опубликовать» при показанных головах: заявка на согласование; без согласования в проекте — публикация сразу.
    *  denied — нет права записи в место изменённого документа; folder_removed — папку документа удалили,
    *  message называет папку и документы. Отказы состоянием, чтобы интерфейс мог их назвать. */

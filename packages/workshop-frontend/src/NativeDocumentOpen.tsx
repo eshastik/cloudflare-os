@@ -5,7 +5,7 @@ import NativeOfficeImport from './NativeOfficeImport'
 import { RpcStub, RpcTarget } from 'capnweb'
 import type { ConnectedAccountsSubscriber, GadgetClient } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentSelector, GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
-import type { NativeDocumentEditor, NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
+import type { MnemosNodeFormat, NativeDocumentEditor, NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
 import { downloadGatekeeperOffice } from './gatekeeperAppDownload'
 import { useAuthenticatedApi } from './AuthContext'
 import { WorkshopButton } from './components/WorkshopControls'
@@ -27,7 +27,7 @@ type Props = {
   autoApply?: boolean
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
-type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: NativeDocumentFormat }
+type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: MnemosNodeFormat }
 
 const editorRevision = (value: unknown) => {
   const revision = (value as { revision?: unknown } | null | undefined)?.revision

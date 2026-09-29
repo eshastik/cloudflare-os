@@ -61,6 +61,11 @@
       // Личные боты Telegram: объект на пользователя и занятость бота по его номеру.
       "tag": "v3",
       "new_sqlite_classes": [ "TelegramPersonalBot", "TelegramBotClaim" ]
+    },
+    {
+      // Общий экземпляр приложения узла Mnemos (ADR 0028 Mnemos): объект и база на узел.
+      "tag": "v4",
+      "new_sqlite_classes": [ "MnemosAppDurableObject" ]
     }
   ],
 

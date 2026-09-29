@@ -74,11 +74,25 @@ it("наблюдение за источниками беседы не подт�
   expect(await s.openAs(s.builder)).toBe("отказ: Источник беседы вам недоступен");
 });
 
-it("не документ — отказ", async () => {
+it("вывод другого формата и гаджет без привязки — отказ; приложение проекта открывается (ADR 0028)", async () => {
   const s = await setup();
+  await runInDurableObject(s.stub, (instance: Instance) => {
+    const record = instance.impl.storage.gadgets.get(s.gadgetId)!;
+    instance.impl.storage.gadgets.put({ ...record, output: { id: "kanban", noun: "Доска", plural: "Доски", icon: "kanban" } });
+  });
+  expect(await s.openAs(s.owner)).toMatch(/^отказ: This output is not a document/);
+  // Гаджет без формата и без привязки к узлу Mnemos — не приложение проекта: отказ.
   await runInDurableObject(s.stub, (instance: Instance) => {
     const record = instance.impl.storage.gadgets.get(s.gadgetId)!;
     instance.impl.storage.gadgets.put({ ...record, output: undefined });
   });
   expect(await s.openAs(s.owner)).toMatch(/^отказ: This output is not a document/);
+  // Привязанный этим человеком к узлу — открывается экраном приложения; у другого человека привязки нет.
+  await runInDurableObject(s.stub, (instance: Instance) => {
+    const record = instance.impl.storage.gadgets.get(s.gadgetId)!;
+    instance.impl.storage.gadgets.put({ ...record, mnemosApps: { [s.owner.userId]: { accountId: 1, scope: "p", resource: "n", description: "", collaborative: true, session: true, permissions: [] } } });
+  });
+  expect(await s.openAs(s.owner)).toBe("cloudflareos.app");
+  expect(await s.openAs(s.builder)).toMatch(/^отказ: This output is not a document/);
+  expect(await s.openAs(s.user)).toMatch(/^отказ: You don't have access/);
 });

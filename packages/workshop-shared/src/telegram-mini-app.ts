@@ -60,8 +60,8 @@ export type MiniAppMnemosState =
 export type MiniAppDocumentInfo = {
   /** Название документа. */
   title: string;
-  /** Формат редактора. */
-  format: NativeDocumentFormat;
+  /** Формат редактора; `cloudflareos.app` — приложение (ADR 0028): экран без сохранения, код и версии — на сайте. */
+  format: NativeDocumentFormat | "cloudflareos.app";
   /** Цвет акцента человека (HEX). */
   accent: string;
   /** Документ в Mnemos. */

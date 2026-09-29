@@ -9,6 +9,7 @@ import { validateRpc } from "capnweb-validate";
 import { ACCENT_PALETTE, isAccentChoice, isAccentHex, type AppearancePreference } from "@gadgets/workshop-shared/accent-theme";
 import type { GatekeeperDownloadTicket, GatekeeperUploadTicket } from "@gadgets/workshop-shared/gatekeeper";
 import type { NativeDocumentFormat, NativeMnemosBinding, NativeMnemosState } from "@gadgets/workshop-shared/native-document";
+import type { MnemosAppBinding, MnemosAppConnection } from "@gadgets/workshop-shared/gadget-app";
 import {
   MINI_APP_SESSION, type MiniAppDocument, type MiniAppDocumentInfo, type MiniAppMnemosState, type MiniAppPublicApi,
   type MiniAppVersion,
@@ -31,12 +32,16 @@ export const SESSION_ENDED = "Сессия Mini App закончилась. На
 export const SESSION_ENDED_CODE = "MINI_APP_SESSION_ENDED";
 const sessionEnded = () => Object.assign(new Error(SESSION_ENDED), { code: SESSION_ENDED_CODE });
 export const NOT_IN_MNEMOS = "Документ ещё не сохранён в Mnemos.";
+export const APP_ON_SITE = "Код и версии приложения меняются на сайте.";
 
 type Stub<T> = T & Partial<Disposable>;
 
 /** Документ беседы (OverseerDurableObject.openMiniAppDocument). */
 export type MiniAppDocumentPort = Stub<{
-  info(): Promise<{ title: string; format: NativeDocumentFormat; sitePath: string }>;
+  info(): Promise<{ title: string; format: NativeDocumentFormat | "cloudflareos.app"; sitePath: string }>;
+  /** Приложение (ADR 0028): привязка к узлу и показывать ли экземпляр узла (код не менялся после
+   *  сохранения или кода в рабочем месте нет вовсе — открывший без права правки). */
+  app(): Promise<{ binding: MnemosAppBinding | null; saved: boolean }>;
   uiBundle(): Promise<{ jsCode: string } | null>;
   editor(): Promise<Record<string, (...args: unknown[]) => Promise<unknown>>>;
   mnemosState(): Promise<NativeMnemosState>;
@@ -67,9 +72,13 @@ export type MnemosPort = {
   writes: Stub<{
     select(scope: string, resource: string, format: NativeDocumentFormat): Promise<MnemosEditor>;
     create(scope: string, name: string, format: NativeDocumentFormat): Promise<MnemosCreator>;
+    /** Право на узел приложения (ADR 0028). */
+    appAccess(scope: string, resource: string, opening: boolean): Promise<import("@gadgets/workshop-shared/gatekeeper").GatekeeperAppAccess>;
+    /** Справочник людей и отделов с правами человека. */
+    appDirectory(): Promise<{ people: { id: string; name: string }[]; departments: { id: string; name: string; members: { id: string; name: string }[] }[] }>;
   }>;
   downloads: Stub<{
-    publications(scope: string, resource: string, cursor: string): Promise<{ publications: { id: string; recordedAt: string; actor: string; author?: string; onBehalfOf?: string; format: NativeDocumentFormat }[]; nextCursor: string }>;
+    publications(scope: string, resource: string, cursor: string): Promise<{ publications: { id: string; recordedAt: string; actor: string; author?: string; onBehalfOf?: string; format: NativeDocumentFormat | "cloudflareos.app" }[]; nextCursor: string }>;
     select(scope: string, resource: string, publication: string): Promise<MnemosDownload>;
   }>;
 };
@@ -85,6 +94,8 @@ export interface MiniAppPorts {
   now(): number;
   /** Разовый таймер; возвращает отмену. */
   schedule(ms: number, run: () => void): () => void;
+  /** Связь с общим экземпляром приложения узла от имени владельца бота; abort закрывает связь Mini App. */
+  openApp(owner: string, accountId: number, scope: string, resource: string, personal: boolean, abort: (reason: Error) => void): Promise<MnemosAppConnection & Partial<Disposable>>;
 }
 
 const dispose = (value: unknown) => { try { (value as Partial<Disposable> | null | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ } };
@@ -166,7 +177,7 @@ export class MiniAppPublicApiImpl extends RpcTarget implements MiniAppPublicApi 
     guard.watch(grant.endsAt);
     let document = await this.ports.openDocument(grant.owner, grant.document).catch(error => { guard.close(); throw error; });
     // @ts-expect-error RpcTarget, реализующий интерфейс, передаётся вместо заглушки.
-    return new MiniAppDocumentImpl(this.ports, guard, document);
+    return new MiniAppDocumentImpl(this.ports, guard, document, this.abort);
   }
 }
 
@@ -174,14 +185,16 @@ export class MiniAppPublicApiImpl extends RpcTarget implements MiniAppPublicApi 
 class MiniAppDocumentImpl extends RpcTarget {
   #mnemos: Promise<MnemosPort> | null = null;
   #mnemosAccount: number | null = null;
-  #format: NativeDocumentFormat | null = null;
+  #format: NativeDocumentFormat | "cloudflareos.app" | null = null;
+  #app: Promise<(MnemosAppConnection & Partial<Disposable>) | null> | null = null;
 
-  constructor(private ports: MiniAppPorts, private guard: SessionGuard, private document: MiniAppDocumentPort) { super(); }
+  constructor(private ports: MiniAppPorts, private guard: SessionGuard, private document: MiniAppDocumentPort, private abort: (reason: Error) => void = () => {}) { super(); }
 
   // Связь оборвалась или страница отпустила документ: сессию больше никто не использует.
   [Symbol.dispose]() {
     this.guard.close();
     dispose(this.document);
+    void this.#app?.then(dispose, () => {});
     void this.#mnemos?.then(port => { dispose(port.writes); dispose(port.downloads); }, () => {});
   }
 
@@ -190,8 +203,27 @@ class MiniAppDocumentImpl extends RpcTarget {
     this.guard.close();
   }
 
-  async #formatOf(): Promise<NativeDocumentFormat> {
+  async #anyFormat(): Promise<NativeDocumentFormat | "cloudflareos.app"> {
     return this.#format ??= (await this.document.info()).format;
+  }
+
+  /** Формат встроенного документа; у приложения сохранение и версии — только на сайте. */
+  async #formatOf(): Promise<NativeDocumentFormat> {
+    let format = await this.#anyFormat();
+    if (format === "cloudflareos.app") throw new Error(APP_ON_SITE);
+    return format;
+  }
+
+  /** Общий экземпляр совместного приложения, если код не менялся после сохранения; иначе null — экран рабочего места. */
+  async #live(): Promise<(MnemosAppConnection & Partial<Disposable>) | null> {
+    if (await this.#anyFormat() !== "cloudflareos.app") return null;
+    this.#app ??= (async () => {
+      let { binding, saved } = await this.document.app();
+      if (!binding || !saved) return null;
+      return this.ports.openApp(this.guard.owner, binding.accountId, binding.scope, binding.resource, !binding.collaborative, this.abort);
+    })();
+    this.#app.catch(() => { this.#app = null; });
+    return this.#app;
   }
 
   /** Подключение Mnemos того аккаунта, что был при выдаче сессии. */
@@ -221,7 +253,15 @@ class MiniAppDocumentImpl extends RpcTarget {
     let mnemos: MiniAppMnemosState = { kind: "none" };
     let storageOrigin = "";
     try {
-      if (state.binding) {
+      if (info.format === "cloudflareos.app") {
+        // Приложение: право на узел — из Mnemos; сохранять из Telegram нечего, хранилище не нужно.
+        let { binding } = await this.document.app();
+        if (binding) {
+          let port = await this.#port(binding.accountId);
+          let access = await port.writes.appAccess(binding.scope, binding.resource, false);
+          mnemos = { kind: "bound", access: access.access === "edit" ? "write" : "read", savedHead: null, savedRevision: null };
+        }
+      } else if (state.binding) {
         let port = await this.#port(state.binding.accountId);
         let editor = await port.writes.select(state.binding.scope, state.binding.resource, info.format);
         try {
@@ -243,17 +283,24 @@ class MiniAppDocumentImpl extends RpcTarget {
 
   async getUiBundle(): Promise<{ jsCode: string } | null> {
     await this.guard.check();
-    let bundle = await this.document.uiBundle();
+    let live = await this.#live();
+    let bundle = live ? await live.getUiBundle() : await this.document.uiBundle();
     return bundle ? { jsCode: bundle.jsCode } : null;
   }
 
   async connectEditor() {
     await this.guard.check();
+    if (await this.#anyFormat() === "cloudflareos.app") {
+      // Приложение: методы — его собственные, поэтому пропускаются любые, но каждый — после проверки сессии.
+      let live = await this.#live();
+      return miniAppGadgetGate(this.guard, live ? await live.connectToGadget() : await this.document.editor());
+    }
     return new MiniAppEditorGate(this.guard, this.document.editor() as Promise<EditorStub>);
   }
 
   async writer() {
     await this.guard.check();
+    await this.#formatOf();
     let binding = await this.#binding();
     let port = await this.#port(binding.accountId);
     let editor = await port.writes.select(binding.scope, binding.resource, await this.#formatOf());
@@ -265,6 +312,7 @@ class MiniAppDocumentImpl extends RpcTarget {
 
   async creator(name: string) {
     await this.guard.check();
+    await this.#formatOf();
     if (typeof name !== "string" || !name.trim() || name.length > 255) throw new Error("Invalid document name.");
     let state = await this.document.mnemosState();
     let project = state.project;
@@ -286,6 +334,7 @@ class MiniAppDocumentImpl extends RpcTarget {
 
   async versions(cursor: string): Promise<{ versions: MiniAppVersion[]; nextCursor: string }> {
     await this.guard.check();
+    await this.#formatOf();
     if (typeof cursor !== "string" || cursor.length > 4096) throw new Error("Invalid cursor.");
     let binding = await this.#binding();
     let port = await this.#port(binding.accountId);
@@ -301,6 +350,7 @@ class MiniAppDocumentImpl extends RpcTarget {
 
   async version(id: string) {
     await this.guard.check();
+    await this.#formatOf();
     if (typeof id !== "string" || !id || id.length > 300) throw new Error("Invalid version.");
     let binding = await this.#binding();
     let port = await this.#port(binding.accountId);
@@ -415,6 +465,23 @@ class MiniAppEditorGate extends RpcTarget {
   updateBlockText(...args: unknown[]) { return this.#call("updateBlockText", args); }
   getDocument(...args: unknown[]) { return this.#call("getDocument", args); }
   restoreDocumentSnapshot(...args: unknown[]) { return this.#call("restoreDocumentSnapshot", args); }
+}
+
+/** Связь с сервером приложения в Mini App: любой метод гаджета, но перед каждым — проверка сессии. */
+function miniAppGadgetGate(guard: SessionGuard, session: unknown): unknown {
+  let target = session as Record<string, unknown>;
+  return new Proxy(new RpcTarget() as unknown as Record<string | symbol, unknown>, {
+    get(self, property, receiver) {
+      if (typeof property === "symbol") return property === Symbol.dispose ? () => dispose(session) : Reflect.get(self, property, receiver);
+      if (property === "then" || property === "constructor") return undefined;
+      return async (...args: unknown[]) => {
+        await guard.recent();
+        let method = target[property];
+        if (typeof method !== "function") throw new Error(`Нет метода ${property}.`);
+        return Reflect.apply(method as (...a: unknown[]) => unknown, target, args);
+      };
+    },
+  });
 }
 
 /** Для тестов: только перечисленные методы видны у связи с редактором. */

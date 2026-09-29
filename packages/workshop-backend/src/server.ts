@@ -38,6 +38,9 @@ import { handleTelegramAppOpen, handleTelegramWebhook, telegramBotFor, TelegramB
 import type { NotificationKind, NotificationSettings, TelegramBotState, TelegramDisconnectResult } from "@gadgets/workshop-shared/telegram-bot";
 import { MNEMOS_NOTIFICATIONS_UNAVAILABLE } from "./user";
 import { MiniAppPublicApiImpl, type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort } from "./telegram/mini-app-api";
+import { MnemosAppDurableObject } from "./mnemos-app";
+import { openMnemosAppConnection, type AppObjectPort, type MnemosAppPorts } from "./mnemos-app-api";
+import { GADGET_APP_LIMITS, type MnemosAppConnection } from "@gadgets/workshop-shared/gadget-app";
 import { MINI_APP_EDITOR_FRAME_PATH, MINI_APP_RPC_PATH } from "@gadgets/workshop-shared/telegram-mini-app";
 import { handleMiniAppEditorFrame } from "./telegram/mini-app-frame";
 import { RpcStub as NativeRpcStub } from "cloudflare:workers";
@@ -84,6 +87,9 @@ export { ExternalMessageGateway };
 // Личные боты Telegram (ADR 0027 Mnemos).
 export { TelegramPersonalBot, TelegramBotClaim, TelegramChatTarget };
 
+// Общий экземпляр приложения узла Mnemos (ADR 0028 Mnemos).
+export { MnemosAppDurableObject };
+
 // Declare optional environment variables here since they may be omitted from wrangler.jsonc.
 type Env = Cloudflare.Env & ChatVoiceConfig & {
   // Set these if using Cloudflare Access for authentication, otherwise username/password is used.
@@ -122,7 +128,73 @@ function miniAppPorts(ctx: ExecutionContext, env: Env): MiniAppPorts {
     appearance: async owner => ({ preference: await user(owner).getAppearance(), deployment: (await readAdminConfig(env)).accentColor }),
     now: () => Date.now(),
     schedule: (ms, run) => { let timer = setTimeout(run, ms); return () => clearTimeout(timer); },
+    openApp: async (owner, accountId, scope, resource, personal, abort) =>
+      openMnemosAppConnection(mnemosAppPorts(ctx, user(owner), accountId, scope, resource, abort), personal),
   };
+}
+
+// Связь с общим экземпляром приложения узла Mnemos: подключение Mnemos человека (то же, что у сервера
+// Mini App), объект узла и закрытие сеанса при отзыве доступа.
+function mnemosAppPorts(ctx: ExecutionContext, user: DurableObjectStub<UserDurableObject>, accountId: number, scope: string, resource: string,
+    abort: (reason: Error) => void): MnemosAppPorts {
+  let port: Promise<MnemosPort> | null = null;
+  let mnemos = () => {
+    port ??= (user.miniAppMnemos(accountId) as unknown as Promise<MnemosPort>);
+    port.catch(() => { port = null; });
+    return port;
+  };
+  let dispose = (value: unknown) => { try { (value as Partial<Disposable> | undefined)?.[Symbol.dispose]?.(); } catch { /* уже закрыт */ } };
+  return {
+    access: async opening => (await mnemos()).writes.appAccess(scope, resource, opening),
+    version: async version => {
+      let downloads = (await mnemos()).downloads;
+      let download = await downloads.select(scope, resource, version);
+      try {
+        let ticket = await download.issue();
+        await download.validate();
+        return { sha256: ticket.sha256_hex, contentType: ticket.content_type };
+      } finally { dispose(download); }
+    },
+    text: async version => {
+      let current = await mnemos();
+      let download = await current.downloads.select(scope, resource, version);
+      try {
+        let ticket = await download.issue();
+        let text = await fetchAppText(current.storageOrigin, ticket);
+        await download.validate();
+        return { text, sha256: ticket.sha256_hex, contentType: ticket.content_type };
+      } finally { dispose(download); }
+    },
+    latestPublished: async () => {
+      let page = await (await mnemos()).downloads.publications(scope, resource, "");
+      // Личные версии (private:) в общий экземпляр не запускаются: берётся только опубликованная.
+      return (page.publications as { id: string; format: string }[]).find(p => p.format === "cloudflareos.app" && !p.id.startsWith("private:"))?.id ?? null;
+    },
+    directory: async () => (await mnemos()).writes.appDirectory(),
+    object: name => ctx.exports.MnemosAppDurableObject.getByName(name) as unknown as AppObjectPort,
+    profileName: async () => (await user.whoami()).name,
+    now: () => Date.now(),
+    schedule: (ms, run) => { let timer = setTimeout(run, ms); return () => clearTimeout(timer); },
+    abort,
+    release: () => { let current = port; port = null; void current?.then(value => { dispose(value.writes); dispose(value.downloads); }, () => {}); },
+  };
+}
+
+/** Текст версии приложения прямо из хранилища Mnemos по билету: только доверенный источник, размер и
+ *  сумма сверены. Код сервера гаджета до страницы при этом не доходит. */
+async function fetchAppText(storageOrigin: string, ticket: { url: string; method: string; size_bytes: number; sha256_hex: string }): Promise<string> {
+  let url = new URL(ticket.url);
+  if (url.origin !== storageOrigin || url.protocol !== "https:" || url.username || url.password || ticket.method !== "GET" ||
+      !Number.isSafeInteger(ticket.size_bytes) || ticket.size_bytes < 0 || ticket.size_bytes > GADGET_APP_LIMITS.totalBytes || !/^[a-f0-9]{64}$/.test(ticket.sha256_hex)) {
+    throw new Error("Недоверенный билет на версию приложения.");
+  }
+  let response = await fetch(url.href, { redirect: "error" });
+  if (!response.ok) throw new Error("Версия приложения не скачалась.");
+  let bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== ticket.size_bytes) throw new Error("Версия приложения не скачалась.");
+  let digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(b => b.toString(16).padStart(2, "0")).join("");
+  if (digest !== ticket.sha256_hex) throw new Error("Версия приложения повреждена.");
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
 }
 
 // WebSocket точки Mini App. Только своя страница (Origin), без cookie: сессия приходит первым вызовом.
@@ -771,6 +843,13 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     const opened = await this.user.openUiApp(id, accountId, { isAdmin: this.#isAdmin() });
     if (!opened) return null;
     return frameForBrowser(opened.frame, opened.accountId, known);
+  }
+
+  async openMnemosApp(accountId: number, scope: string, resource: string, personal: boolean) {
+    if (!Number.isSafeInteger(accountId) || !scope || !resource || scope.length > 255 || resource.length > 255 || typeof personal !== "boolean") throw new Error("Не выбран файл приложения.");
+    let connection = await openMnemosAppConnection(mnemosAppPorts(this.ctx, this.user, accountId, scope, resource, this.abortSession), personal);
+    // @ts-expect-error Связь — RpcTarget Cap'n Web, в браузере она заглушка того же интерфейса.
+    return connection as RpcStub<MnemosAppConnection>;
   }
 
   // --- Deployment admin ---

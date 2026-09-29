@@ -2,6 +2,7 @@ import {nativeFormatForOutput} from '@gadgets/workshop-shared/native-document'
 import type {NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
 import type {GatekeeperNativeDocumentSelector} from '@gadgets/workshop-shared/gatekeeper'
 import type {AuthenticatedApi} from '@gadgets/workshop-shared/api'
+import {launchMnemosApp} from './mnemosAppLaunch'
 
 export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; at: number}
 const key = (path: string) => `mnemos-document-launch:${path}`
@@ -15,17 +16,20 @@ export function readNativeDocumentLaunch(format: NativeDocumentFormat): NativeDo
 export function clearNativeDocumentLaunch() { sessionStorage.removeItem(key(location.pathname)) }
 
 /** Содержимое читает редактор через обычную проверку доступа; здесь только выбор нужного гаджета. */
-export async function launchNativeDocument(api: Pick<AuthenticatedApi, 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets'>, selector: Pick<GatekeeperNativeDocumentSelector, 'publications'>, accountId: number, scope: string, resource: string, navigate: (id: string) => void | Promise<void>): Promise<boolean> {
+export async function launchNativeDocument(api: Pick<AuthenticatedApi, 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets' | 'newGadget'>, selector: Pick<GatekeeperNativeDocumentSelector, 'publications'>, accountId: number, scope: string, resource: string, navigate: (id: string) => void | Promise<void>): Promise<boolean> {
   if (!Number.isSafeInteger(accountId) || !scope || !resource || scope.length > 255 || resource.length > 255) throw Error('Не выбран документ')
   const history = await selector.publications(scope, resource, '')
   const version = history.publications[0]
   if (!version) return false
-  const workspaceKey = `mnemos-document-workspace:${JSON.stringify([accountId, scope, resource, version.format])}`
+  // Приложение (ADR 0028) открывается так же, как документ, но в рабочем месте с гаджетом, а не с редактором формата.
+  if (version.format === 'cloudflareos.app') return launchMnemosApp(api, accountId, scope, resource, version.id, navigate)
+  const documentFormat = version.format
+  const workspaceKey = `mnemos-document-workspace:${JSON.stringify([accountId, scope, resource, documentFormat])}`
   let previous: string | null = null
   try { previous = localStorage.getItem(workspaceKey) } catch { /* Хранилище браузера может быть отключено. */ }
   const remember = (id: string) => {
     const path = `/workspace/${encodeURIComponent(id)}`
-    sessionStorage.setItem(key(path), JSON.stringify({accountId, scope, resource, format: version.format, publication: version.id, at: Date.now()} satisfies NativeDocumentLaunch))
+    sessionStorage.setItem(key(path), JSON.stringify({accountId, scope, resource, format: documentFormat, publication: version.id, at: Date.now()} satisfies NativeDocumentLaunch))
   }
   if (previous) {
     const workspaces = await api.listGadgets()
@@ -36,7 +40,7 @@ export async function launchNativeDocument(api: Pick<AuthenticatedApi, 'listOutp
     }
   }
   const formats = await api.listOutputFormats()
-  const format = formats.find(item => nativeFormatForOutput(item.output.id) === version.format && !item.requiresSetup)
+  const format = formats.find(item => nativeFormatForOutput(item.output.id) === documentFormat && !item.requiresSetup)
   if (!format) throw Error('Редактор этого формата пока не настроен')
   const overseer = await api.newGadgetFromBlueprint(format.blueprintId, {})
   try {

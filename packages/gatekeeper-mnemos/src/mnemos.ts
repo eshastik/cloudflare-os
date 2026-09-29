@@ -10,7 +10,7 @@ import {CODE_AGENT_CAPABILITY,WorkspaceClient,WorkspaceTasks} from './workspace-
 import {DraftAuditQueue} from './draft-audit-queue.ts';
 import { LoginProfiles, organizationAccountName } from './login-profiles.ts';
 import { menuInboxCount, sourceErrorsFor } from "./account-description.ts";
-import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
+import { isNativeDocumentFormat, mnemosNodeFormatOfMime, type MnemosNodeFormat } from "@gadgets/workshop-shared/native-document";
 import {WebDAVAccounts,webdavServers,WEBDAV_RESOURCE,type WebDAVSetup} from './webdav-accounts.ts';
 import {signDriveOrigin,driveSourceBinding} from "./drive-origin-proof.ts";
 import {SmtpClient} from './smtp-client.ts';
@@ -894,7 +894,7 @@ export class UserAccount extends DurableObject<Env> {
     return { ...(storageOrigin ? { blueprintTemplates: { storageOrigin, selector: new RpcStub(new BlueprintTemplates(this.#account().session(), this.#operationStorage())) } } : {}), iframeHtml: APP_HTML, ui: await this.openManagementSession(),
       organizationMetrics: new RpcStub(new MnemosOrganizationMetrics(this.#account().session(),this.#origins().apiOrigin)),
       agentConsent: new RpcStub(new MnemosAgentConsent(this.#account().session())),
-      ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin))) } } : {}),
+      ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin),this.#origins().apiOrigin)) } } : {}),
       ...(storageOrigin ? { nativeDownloads: { storageOrigin, selector: new RpcStub(new MnemosNativeDocumentSelector(this.#account().session(), this.#origins().apiOrigin)) } } : {}),
       ...(storageOrigin ? { inboxUploads: {storageOrigin,issuer:new RpcStub(new MnemosInboxUploadIssuer(this.#account().session()))}, reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
 
@@ -1055,8 +1055,9 @@ class MnemosNativeDocumentSelector extends RpcTarget {
   async documents(project: string, cursor: string) { return listNativeDocuments(this.#session, project, cursor); }
   async publications(project: string, node: string, cursor: string) {
     const resourceUrl = documentResourceUrl(this.#origin, { projectId: project, nodeId: node });
-    const formatOf = (mime: string) => mime === "application/vnd.cloudflareos.document+json" ? "cloudflareos.document" as const : mime === "application/vnd.cloudflareos.spreadsheet+json" ? "cloudflareos.spreadsheet" as const : mime === "application/vnd.cloudflareos.presentation+json" ? "cloudflareos.presentation" as const : null;
-    const privateVersions: {id: string; recordedAt: string; actor: string; author?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: "cloudflareos.document" | "cloudflareos.spreadsheet" | "cloudflareos.presentation"}[] = [];
+    // Приложение (ADR 0028) открывается и версионируется так же, как документ.
+    const formatOf = mnemosNodeFormatOfMime;
+    const privateVersions: {id: string; recordedAt: string; actor: string; author?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: MnemosNodeFormat}[] = [];
     let privateNext='';let historyLimited=false;
     if(!cursor||cursor.startsWith('private-history:')){
       const history=await this.#session.listPrivateVersions(project,node,cursor.startsWith('private-history:')?cursor.slice(16):'');

@@ -65,6 +65,10 @@
       "types": "./src/external-message-gateway.ts",
       "import": "./src/external-message-gateway.ts"
     },
+    "./gadget-app": {
+      "types": "./src/gadget-app.ts",
+      "import": "./src/gadget-app.ts"
+    },
     "./native-document": {
       "types": "./src/native-document.ts",
       "import": "./src/native-document.ts"

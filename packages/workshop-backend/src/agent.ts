@@ -501,6 +501,32 @@ DO NOT import \`RpcTarget\` in client.js. It is already imported.
 
 If you need \`RpcTarget\` in server.js, you can import it from "cloudflare:workers".
 
+## Who is calling: \`session(caller)\`
+
+A Gadget may define a method \`session(caller)\`. If it does, the platform calls it once per client connection and the client's \`gadget\` stub points at whatever \`session()\` returns (usually an \`RpcTarget\` that holds \`caller\` and forwards to the Gadget). \`caller\` is plain data: \`{ principal, name, access }\`, where \`principal\` is a stable id of the person (use it to separate data per person), \`name\` is for display, and \`access\` is \`"read"\` or \`"edit"\` (hide or refuse editing for \`"read"\`). If the app's manifest asks for the \`directory\` permission, \`caller.directory\` is \`{ people: [{id, name}], departments: [{id, name, members: [{id, name}]}] }\`, a snapshot of the organization directory visible to that person. Without \`session()\`, clients talk to the Gadget directly and the Gadget does not know who calls.
+
+Rules for \`session(caller)\`: never return \`this\` (the Gadget object) or anything else through which a client could act as an arbitrary person. Every method of the object that \`session()\` returns must take the person from its stored \`caller\` (\`caller.principal\`, \`caller.access\`), never from call arguments; methods of the Gadget class that accept a principal must not be reachable from the client.
+
+\`\`\`
+import { DurableObject, RpcTarget } from "cloudflare:workers";
+
+class Session extends RpcTarget {
+  constructor(app, caller) { super(); this.app = app; this.caller = caller; }
+  me() { return { name: this.caller.name, canEdit: this.caller.access === "edit" }; }
+  addTask(text) {
+    if (this.caller.access !== "edit") throw new Error("Только просмотр");
+    return this.app.addTask(this.caller.principal, text);
+  }
+}
+
+export class Gadget extends DurableObject {
+  session(caller) { return new Session(this, caller); }
+  addTask(principal, text) { /* store in this.ctx.storage */ }
+}
+\`\`\`
+
+A user can save a Gadget into a Mnemos project as an app file. Such an app consists of exactly client.js and server.js and has no bindings. A collaborative app runs as one shared instance with one database for everyone who has access to the file; it MUST define \`session(caller)\` (the shared instance never exposes the Gadget object itself), and only the published version of the file runs there. A non-collaborative app runs as a separate instance per person. Access is checked by the platform on every call; in chat previews \`caller.principal\` is \`workspace:<user id>\` and preview data are separate from the shared instance.
+
 ## Design Tips
 
 * ALWAYS store server state in Durable Object storage, not just in memory. Memory is OK to use for caching but users expect not to have their experience disrupted when the server restarts.

@@ -24,6 +24,20 @@ export function isNativeDocumentFormat(value: unknown): value is NativeDocumentF
   return value === "cloudflareos.document" || value === "cloudflareos.spreadsheet" || value === "cloudflareos.presentation";
 }
 
+/** Формат узла Mnemos, который открывается в оболочке: встроенный документ или приложение (ADR 0028). */
+export type MnemosNodeFormat = NativeDocumentFormat | "cloudflareos.app";
+
+/** Узел, который открывается в оболочке: документ, таблица, презентация или приложение. */
+export function isMnemosNodeFormat(value: unknown): value is MnemosNodeFormat {
+  return isNativeDocumentFormat(value) || value === "cloudflareos.app";
+}
+
+/** Формат узла по типу содержимого Mnemos; null — узел не открывается в оболочке. */
+export function mnemosNodeFormatOfMime(mime: string): MnemosNodeFormat | null {
+  const format = /^application\/vnd\.(cloudflareos\.(?:document|spreadsheet|presentation|app))\+json$/.exec(mime)?.[1];
+  return isMnemosNodeFormat(format) ? format : null;
+}
+
 /** Документ Mnemos, к которому привязан встроенный редактор. Привязка у каждого человека своя: сохранение идёт в его личный черновик. */
 export type NativeMnemosBinding = {
   /** Подключение Mnemos; null — привязка из старой версии интерфейса, подключение выбирается первым подходящим. */

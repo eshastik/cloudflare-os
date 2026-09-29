@@ -8,7 +8,7 @@ import { DraftLimiter } from "../src/telegram/progress";
 import { sealSecret } from "../src/telegram/secret-box";
 import { webAppCheckString } from "../src/telegram/web-app-data";
 import {
-  EDITOR_CHECK_MS, MINI_APP_EDITOR_METHODS, MINI_APP_HOLDER, MiniAppPublicApiImpl, NOT_IN_MNEMOS, SESSION_ENDED, editorGateMethods, miniAppAccent,
+  APP_ON_SITE, EDITOR_CHECK_MS, MINI_APP_EDITOR_METHODS, MINI_APP_HOLDER, MiniAppPublicApiImpl, NOT_IN_MNEMOS, SESSION_ENDED, editorGateMethods, miniAppAccent,
   type MiniAppDocumentPort, type MiniAppPorts, type MnemosPort,
 } from "../src/telegram/mini-app-api";
 import type { NativeMnemosBinding, NativeMnemosState } from "@gadgets/workshop-shared/native-document";
@@ -438,5 +438,76 @@ describe("точка RPC Mini App: только один документ", () =
     expect(miniAppAccent({ accent: "blue", themeMode: null }, "#123456")).toBe("#176b9a");
     expect(miniAppAccent(null, "#123456")).toBe("#123456");
     expect(miniAppAccent(null, "red; background:url(x)")).toBe("#21664f");
+  });
+});
+
+// ---- приложение (ADR 0028) ----
+
+describe("точка RPC Mini App: приложение", () => {
+  async function appFakes(options: { collaborative?: boolean; saved?: boolean; bound?: boolean } = {}) {
+    let grant: MiniAppSessionGrant = { owner: OWNER, document: { workspace: WORKSPACE, gadget: 9 }, principal: "P", endsAt: START + APP_SESSION_MAX_MS };
+    let clock = { now: START };
+    let calls: string[] = [];
+    let binding = options.bound === false ? null : { accountId: 5, scope: "p1", resource: "app1", description: "", collaborative: options.collaborative ?? true, session: true, permissions: [] as [], savedCodeVersion: 2 };
+    let workspaceGadget = { add: async (x: string) => { calls.push(`workspace:${x}`); return x; } };
+    let liveGadget = { add: async (x: string) => { calls.push(`live:${x}`); return x; } };
+    let document = {
+      info: async () => ({ title: "Список", format: "cloudflareos.app" as const, sitePath: `/workspace/${WORKSPACE}` }),
+      app: async () => ({ binding, saved: options.saved ?? true }),
+      uiBundle: async () => ({ jsCode: "workspace();" }),
+      editor: async () => workspaceGadget,
+      mnemosState: async () => ({ binding: null, creation: null, project: null }),
+      setMnemosDocument: async () => {}, claimMnemosDocument: async () => null, releaseMnemosDocument: async () => {}, recordMnemosDocumentReceipt: async () => {},
+    } as unknown as MiniAppDocumentPort;
+    let mnemos = { accountId: 5, principal: "P", storageOrigin: "https://mnemos.example.ru",
+      writes: { appAccess: async () => ({ access: "read", principal: "P", tenant: "", name: "" }) }, downloads: {} } as unknown as MnemosPort;
+    let ports: MiniAppPorts = {
+      session: async () => grant, endSession: async () => {}, principal: async () => "P",
+      openDocument: async () => document, mnemos: async () => mnemos,
+      appearance: async () => ({ preference: null, deployment: "" }), now: () => clock.now, schedule: () => () => {},
+      openApp: async (owner, accountId, scope, resource, personal) => {
+        calls.push(`openApp:${owner}:${accountId}:${scope}:${resource}:${personal ? "свой" : "общий"}`);
+        return { describe: async () => { throw new Error("unused"); }, deploy: async () => { throw new Error("unused"); },
+          getUiBundle: async () => ({ jsCode: "live();" }), connectToGadget: async () => liveGadget };
+      },
+    };
+    let api = new MiniAppPublicApiImpl(ports, () => {});
+    let doc = await api.open(`${ROUTE}.${SECRET}`) as unknown as Doc;
+    return { doc, calls, clock, revoke: () => { grant = null as unknown as MiniAppSessionGrant; } };
+  }
+
+  it("сохранённое совместное приложение открывает общий экземпляр узла; право — из Mnemos", async () => {
+    let f = await appFakes();
+    expect(await f.doc.describe()).toMatchObject({ title: "Список", mnemos: { kind: "bound", access: "read" }, storageOrigin: "" });
+    expect(await f.doc.getUiBundle()).toEqual({ jsCode: "live();" });
+    let gadget = await f.doc.connectEditor();
+    expect(await gadget.add("x")).toBe("x");
+    expect(f.calls).toEqual([`openApp:${OWNER}:5:p1:app1:общий`, "live:x"]);
+  });
+
+  it("личное приложение — свой экземпляр открывшего", async () => {
+    let f = await appFakes({ collaborative: false });
+    expect(await f.doc.getUiBundle()).toEqual({ jsCode: "live();" });
+    expect(f.calls).toEqual([`openApp:${OWNER}:5:p1:app1:свой`]);
+  });
+
+  it("несохранённые правки или нет привязки — экран рабочего места", async () => {
+    for (let options of [{ saved: false }, { bound: false }]) {
+      let f = await appFakes(options);
+      expect(await f.doc.getUiBundle()).toEqual({ jsCode: "workspace();" });
+      expect(await (await f.doc.connectEditor()).add("y")).toBe("y");
+      expect(f.calls).toEqual(["workspace:y"]);
+    }
+  });
+
+  it("сохранение и версии приложения из Telegram недоступны; отозванная сессия закрывает вызовы", async () => {
+    let f = await appFakes();
+    await expect(f.doc.writer()).rejects.toThrow(APP_ON_SITE);
+    await expect(f.doc.creator("x")).rejects.toThrow(APP_ON_SITE);
+    await expect(f.doc.versions("")).rejects.toThrow(APP_ON_SITE);
+    let gadget = await f.doc.connectEditor();
+    f.revoke(); f.clock.now += EDITOR_CHECK_MS;
+    await expect(gadget.add("после")).rejects.toThrow(SESSION_ENDED);
+    expect(f.calls).not.toContain("live:после");
   });
 });

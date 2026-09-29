@@ -15,6 +15,7 @@ import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from "
 import { claimMnemosCreation, mnemosDocumentState, mnemosProjectForChat, recordMnemosReceipt, releaseMnemosCreation, setMnemosBinding, type MnemosDocumentEntry } from "./native-mnemos-binding.js";
 import { ensureNativeTitle, titlePrompt, type NativeTitleEditor } from "./native-document-title.js";
 import { nativeFormatForOutput, type NativeDocumentFormat, type NativeMnemosBinding } from "@gadgets/workshop-shared/native-document";
+import { parseGadgetAppModules, parseMnemosAppBinding, type GadgetAppCaller, type GadgetAppModules, type MnemosAppBinding, type MnemosAppState } from "@gadgets/workshop-shared/gadget-app";
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -295,6 +296,9 @@ type GadgetRecord = {
 
   // Документ Mnemos встроенного редактора у каждого человека: ключ — id пользователя.
   mnemosDocuments?: Record<string, MnemosDocumentEntry>;
+
+  // Узел приложения Mnemos (ADR 0028), к которому гаджет привязан у каждого человека: ключ — id пользователя.
+  mnemosApps?: Record<string, MnemosAppBinding>;
 };
 
 // Produce a valid, unused binding name from a suggested base name: sanitized to identifier
@@ -1940,6 +1944,14 @@ class OverseerImpl implements AgentHooks {
   // *other* chat belongs to that chat's proposed changes and is treated as nonexistent here.
   // With `forChatId` undefined, only permanent (non-pending) edges are visible (mainline loads,
   // blueprints, sharing, the Connections UI).
+  /** Приложение проекта Mnemos (ADR 0028): гаджет без формата вывода, привязанный к узлу (этим человеком,
+   *  если он назван) и без подключений. Только такие открываются экраном приложения в Mini App. */
+  isMnemosAppGadget(gadget: GadgetRecord, userId?: string): boolean {
+    if (gadget.output || this.visibleBindings(gadget, undefined).length) return false;
+    let apps = gadget.mnemosApps ?? {};
+    return userId === undefined ? Object.keys(apps).length > 0 : !!apps[userId];
+  }
+
   visibleBindings(gadget: GadgetRecord, forChatId?: number): [string, BindingRecord][] {
     return Object.entries(gadget.bindings).filter(
         ([, edge]) => !edge.pending || edge.pending.chatId === forChatId);
@@ -4181,7 +4193,8 @@ class OverseerImpl implements AgentHooks {
         for (let created of message.createdGadgets ?? []) {
           if (created.title && !documents.includes(created.title)) documents.push(created.title);
           let record = this.storage.gadgets.get(created.gadgetId);
-          if (record && nativeFormatForOutput(record.output?.id) && !editable.some(e => e.gadgetId === created.gadgetId)) {
+          // Документы открываются редактором, приложения проекта (ADR 0028) — своим экраном.
+          if (record && (nativeFormatForOutput(record.output?.id) || this.isMnemosAppGadget(record)) && !editable.some(e => e.gadgetId === created.gadgetId)) {
             editable.push({gadgetId: created.gadgetId, title: record.title || created.title});
           }
         }
@@ -7496,7 +7509,10 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     await this.impl.ensureObserver(profileId, clientUser, "build");
     if (!isOwner && locked()) throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceAccessDenied);
     let record = this.impl.getGadgetRecord(gadgetId);
-    let format = nativeFormatForOutput(record.output?.id);
+    // Вывод без формата — приложение (ADR 0028): Mini App показывает его экран, сохранение — на сайте.
+    // Приложение — только гаджет, привязанный этим человеком к узлу Mnemos и без подключений.
+    let format: NativeDocumentFormat | "cloudflareos.app" | null = nativeFormatForOutput(record.output?.id) ??
+        (this.impl.isMnemosAppGadget(record, userId) ? "cloudflareos.app" : null);
     if (!format) throw new Error("This output is not a document, spreadsheet or presentation.");
     let chatId = record.pending?.chatId;
     let origin = record.originChatId ?? chatId;
@@ -10249,6 +10265,19 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async previewRevokeShareLink(_linkId: string): Promise<AffectedCollaborator[]> { this.#deny(); }
 }
 
+// Связь страницы с сервером гаджета рабочего места. Приложение (ADR 0028), чей манифест объявил
+// session(caller), получает вызывающего и в предпросмотре — клиентский код один и тот же у экземпляра
+// узла и у предпросмотра. Признак — явный, из привязки к узлу; по тексту ошибки схема не выбирается.
+async function connectWorkspaceGadget(impl: OverseerImpl, gadgetId: WorkpieceId, clientUser: DurableObjectStub<UserDurableObject>, chatId: number | undefined, access: GadgetAppCaller["access"] = "edit"): Promise<RpcStub<any>> {
+  let record = impl.getGadgetRecord(gadgetId);
+  if (!nativeFormatForOutput(record.output?.id) && record.mnemosApps?.[clientUser.id.toString()]?.session) {
+    let facet = impl.getGadgetFacetFetcher(gadgetId, chatId) as unknown as {session(caller: GadgetAppCaller): Promise<RpcStub<any>>};
+    let profile = await clientUser.whoami();
+    return await facet.session({principal: `workspace:${profile.id}`, name: profile.name, access});
+  }
+  return impl.getGadgetFacet(gadgetId, chatId);
+}
+
 // Capability representing one gadget workpiece, handed to "build"-role sessions via
 // Overseer.createGadget()/getGadget().
 @validateRpc()
@@ -10359,6 +10388,75 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
     return result?.title ?? null;
   }
 
+  /** Почему гаджет нельзя сохранить в проект приложением; null — можно. */
+  #appBlocker(record: GadgetRecord): string | null {
+    if (nativeFormatForOutput(record.output?.id)) return "Это документ, таблица или презентация: он сохраняется в проект своим способом.";
+    if (record.pending) return "Сначала примите изменения беседы, в которой создан гаджет.";
+    if (this.impl.visibleBindings(record, undefined).length) return "У гаджета есть подключения: в приложении проекта их нет, уберите их перед сохранением.";
+    const {ydoc} = this.impl.buildYDoc("current");
+    try {
+      const files = [...ydoc.getMap<Y.Text>(this.impl.gadgetRootName(this.id)).keys()];
+      if (!files.includes("client.js") || !files.includes("server.js")) return "У гаджета нет client.js и server.js.";
+      const extra = files.filter(name => name.endsWith(".js") && name !== "client.js" && name !== "server.js");
+      if (extra.length) return `Приложение проекта состоит ровно из client.js и server.js; лишний модуль: ${extra[0]}.`;
+    } finally { ydoc.destroy(); }
+    return null;
+  }
+
+  async getMnemosApp(): Promise<MnemosAppState> {
+    const record = this.impl.getGadgetRecord(this.id);
+    const userId = this.clientUser.id.toString();
+    return {binding: record.mnemosApps?.[userId] ?? null, codeVersion: this.impl.storage.codeVersion.get(),
+      title: record.title, notExportable: this.#appBlocker(record)};
+  }
+
+  async setMnemosApp(binding: MnemosAppBinding | null): Promise<void> {
+    const checked = binding === null ? null : parseMnemosAppBinding(binding);
+    const record = this.impl.getGadgetRecord(this.id);
+    if (nativeFormatForOutput(record.output?.id)) throw new Error("This gadget is a document, spreadsheet or presentation.");
+    const userId = this.clientUser.id.toString();
+    const apps = {...record.mnemosApps};
+    if (checked) apps[userId] = checked; else delete apps[userId];
+    record.mnemosApps = apps;
+    this.impl.storage.gadgets.put(record);
+  }
+
+  async exportAppModules(): Promise<{codeVersion: number; title: string; modules: GadgetAppModules}> {
+    const record = this.impl.getGadgetRecord(this.id);
+    const blocker = this.#appBlocker(record);
+    if (blocker) throw new Error(blocker);
+    const {ydoc, version} = this.impl.buildYDoc("current");
+    try {
+      const root = ydoc.getMap<Y.Text>(this.impl.gadgetRootName(this.id));
+      const modules = parseGadgetAppModules({"client.js": root.get("client.js")?.toString(), "server.js": root.get("server.js")?.toString()});
+      return {codeVersion: version, title: record.title, modules};
+    } finally { ydoc.destroy(); }
+  }
+
+  async restoreAppModules(modules: GadgetAppModules, title: string, expectedCodeVersion: number): Promise<number> {
+    const checked = parseGadgetAppModules(modules);
+    if (typeof title !== "string" || !title.trim() || title.length > 120) throw new Error("Invalid app title.");
+    const record = this.impl.getGadgetRecord(this.id);
+    if (nativeFormatForOutput(record.output?.id)) throw new Error("This gadget is a document, spreadsheet or presentation.");
+    // Без ожиданий ниже: проверка и запись кода идут одним шагом.
+    if (record.pending || [...this.impl.storage.chatMeta.list()].some(meta => meta.activeAgent || meta.hasProposedChanges)) {
+      throw new Error("Сначала примите или отмените предложенные правки кода в беседах.");
+    }
+    const {ydoc, version} = this.impl.buildYDoc("current");
+    try {
+      if (version !== expectedCodeVersion) throw Object.assign(new Error("Код гаджета изменился. Откройте версию ещё раз."), {code: "APP_CODE_CHANGED"});
+      const files = new Map([["client.js", checked["client.js"]], ["server.js", checked["server.js"]]]);
+      let next = version;
+      if (nativeEditorChanges(ydoc, this.impl.gadgetRootName(this.id), files).length) {
+        next = this.impl.updateCode(replaceNativeEditorCode(ydoc, this.impl.gadgetRootName(this.id), files), [this.id]);
+      }
+      const current = this.impl.getGadgetRecord(this.id);
+      current.title = title.trim();
+      this.impl.storage.gadgets.put(current);
+      return next;
+    } finally { ydoc.destroy(); }
+  }
+
   async getNativeEditorUpdate() {
     const record = this.impl.getGadgetRecord(this.id);
     const target = await nativeEditorCode(record.output?.id ?? "");
@@ -10441,7 +10539,7 @@ class GadgetClientImpl extends RpcTarget implements GadgetClient {
       chat_id: chatId,
       interaction_type: "gadget_ui_connected",
     });
-    return this.impl.getGadgetFacet(this.id, chatId);
+    return connectWorkspaceGadget(this.impl, this.id, this.clientUser, chatId);
   }
 
   async exportPdf(chatId?: number): Promise<ReadableStream<Uint8Array>> {
@@ -10671,6 +10769,10 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
   async recordMnemosDocumentReceipt(_claim: string, _receipt: string): Promise<void> { this.#deny(); }
   async setMnemosDocument(_binding: NativeMnemosBinding | null): Promise<void> { this.#deny(); }
   async ensureNativeDocumentTitle(_chatId?: number): Promise<never> { this.#deny(); }
+  async getMnemosApp(): Promise<never> { this.#deny(); }
+  async setMnemosApp(_binding: MnemosAppBinding | null): Promise<void> { this.#deny(); }
+  async exportAppModules(): Promise<never> { this.#deny(); }
+  async restoreAppModules(_modules: GadgetAppModules, _title: string, _expectedCodeVersion: number): Promise<never> { this.#deny(); }
 
   async getId(): Promise<WorkpieceId> {
     return this.id;
@@ -10700,7 +10802,7 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
       user_id: this.clientUser.id.toString(),
       interaction_type: "gadget_ui_connected",
     });
-    return this.impl.getGadgetFacet(this.id, undefined);
+    return connectWorkspaceGadget(this.impl, this.id, this.clientUser, undefined, "read");
   }
 
   async exportPdf(chatId?: number): Promise<ReadableStream<Uint8Array>> {
@@ -10739,18 +10841,28 @@ class UseGadgetClientInterface extends RpcTarget implements GadgetClient {
 // предложен; выбирает её сервер по записи документа, а не вызывающий.
 class MiniAppDocumentTarget extends RpcTarget {
   #gadget: GadgetClientImpl;
-  #format: NativeDocumentFormat;
+  #format: NativeDocumentFormat | "cloudflareos.app";
   #chatId: number | undefined;
   #sitePath: string;
   #stopLease: () => void;
-  constructor(gadget: GadgetClientImpl, format: NativeDocumentFormat, chatId: number | undefined, sitePath: string, stopLease: () => void) {
+  constructor(gadget: GadgetClientImpl, format: NativeDocumentFormat | "cloudflareos.app", chatId: number | undefined, sitePath: string, stopLease: () => void) {
     super();
     this.#gadget = gadget; this.#format = format; this.#chatId = chatId; this.#sitePath = sitePath; this.#stopLease = stopLease;
   }
   async info() { return {title: await this.#gadget.getTitle(), format: this.#format, sitePath: this.#sitePath}; }
   async uiBundle() { return this.#gadget.getUiBundle(this.#chatId); }
   async editor(): Promise<RpcStub<any>> { return this.#gadget.connectToGadget(this.#chatId); }
-  async mnemosState() { return this.#gadget.getMnemosDocument(this.#chatId); }
+  /** Приложение: привязка к узлу Mnemos и совпадает ли код с сохранённой версией; беседа с правками — предпросмотр. */
+  async app() {
+    if (this.#format !== "cloudflareos.app") throw new Error("This output is not an app.");
+    let state = await this.#gadget.getMnemosApp();
+    let binding = state.binding;
+    return {binding, saved: !!binding && this.#chatId === undefined && (binding.savedCodeVersion === undefined || binding.savedCodeVersion === state.codeVersion)};
+  }
+  async mnemosState() {
+    if (this.#format === "cloudflareos.app") return {binding: null, creation: null, project: null};
+    return this.#gadget.getMnemosDocument(this.#chatId);
+  }
   async setMnemosDocument(binding: NativeMnemosBinding) { return this.#gadget.setMnemosDocument(binding); }
   async claimMnemosDocument(accountId: number, scope: string, name: string, holder: string) { return this.#gadget.claimMnemosDocument(accountId, scope, name, holder); }
   async releaseMnemosDocument(claim: string) { return this.#gadget.releaseMnemosDocument(claim); }

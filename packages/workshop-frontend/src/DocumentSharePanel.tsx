@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CaretDown, CaretLeft, CaretRight, Check, MagnifyingGlass } from '@phosphor-icons/react'
 import type { RpcStub } from 'capnweb'
 import type { GatekeeperNativeDocumentWriteSelector } from '@gadgets/workshop-shared/gatekeeper'
-import type { NativeDocumentFormat } from '@gadgets/workshop-shared/native-document'
+import type { MnemosNodeFormat } from '@gadgets/workshop-shared/native-document'
 import type { DocumentBinding } from './DocumentStatus'
 import { plural } from './versionDiff'
 import { useAuthenticatedApi } from './AuthContext'
@@ -136,7 +136,7 @@ function RightMenu({ person, disabled, onChange }: { person: SharePerson; disabl
  * Всё сохраняется сразу и перечитывается само: без «Применить» и «Перечитать».
  */
 export default function DocumentSharePanel({ selector, binding, format, documentName, onClose }: {
-  selector: Selector | null; binding: DocumentBinding | null; format: NativeDocumentFormat; documentName: string | null; onClose(): void
+  selector: Selector | null; binding: DocumentBinding | null; format: MnemosNodeFormat; documentName: string | null; onClose(): void
 }) {
   const [people, setPeople] = useState<SharePerson[] | null>(null)
   const [units, setUnits] = useState<ShareUnit[]>([]), [me, setMe] = useState(''), [recent, setRecent] = useState<string[]>(() => readRecent())

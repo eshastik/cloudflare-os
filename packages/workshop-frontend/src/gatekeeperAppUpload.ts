@@ -1,3 +1,4 @@
+import { GADGET_APP_LIMITS, parseGadgetAppText } from '@gadgets/workshop-shared/gadget-app'
 import { decodeBlueprintTemplate, MAX_BLUEPRINT_TEMPLATE_BYTES } from "@gadgets/workshop-shared/blueprint-template";
 import { isNativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
 import type { GatekeeperUploadTicket } from "@gadgets/workshop-shared/gatekeeper"
@@ -36,6 +37,12 @@ export async function uploadGatekeeperNativeDocument(
       Object.keys(snapshot).some(key => !['format', 'formatVersion', 'document'].includes(key))) throw new Error('Invalid native document snapshot.')
   const text = JSON.stringify({ format, formatVersion: 1, document: snapshot.document })
   return uploadVerifiedText(text, storageOrigin, issue, signal, 4 * 1024 * 1024)
+}
+
+/** Текст узла приложения (ADR 0028): строгая проверка формата до выгрузки. */
+export async function uploadGatekeeperAppText(text: string, storageOrigin: string, issue: IssueGatekeeperUpload, signal: AbortSignal): Promise<string> {
+  parseGadgetAppText(text)
+  return uploadVerifiedText(text, storageOrigin, issue, signal, GADGET_APP_LIMITS.totalBytes)
 }
 
 /** Upload exact preview text: reserialization would change the server-bound checksum. */

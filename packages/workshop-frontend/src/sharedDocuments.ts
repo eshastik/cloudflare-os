@@ -5,8 +5,8 @@ import { listAccounts, storesDocuments } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { launchNativeDocument } from './nativeDocumentLaunch'
 
-type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp' | 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets'>
-type LaunchApi = Pick<RpcStub<AuthenticatedApi>, 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets'>
+type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp' | 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets' | 'newGadget'>
+type LaunchApi = Pick<RpcStub<AuthenticatedApi>, 'listOutputFormats' | 'newGadgetFromBlueprint' | 'listGadgets' | 'newGadget'>
 
 /** Документ, которым поделились, вместе с подключением Mnemos, через которое он открывается. */
 export type SharedDocumentItem = GatekeeperSharedDocument & { accountId: number; vendorId: string }

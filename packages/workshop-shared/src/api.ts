@@ -626,6 +626,11 @@ export interface AuthenticatedApi extends RpcTarget {
    * MAX_KNOWN_FRAME_HASHES): при совпадении сборка не передаётся повторно, iframeHtml приходит пустым. */
   getGatekeeperApp(id: string, accountId?: number, knownHtmlSha256?: string[]): Promise<GatekeeperAppFrame | null>;
 
+  /** Экземпляр приложения узла Mnemos (ADR 0028): accountId — подключение Mnemos человека,
+   *  scope и resource — проект и узел. Права Mnemos проверяются при открытии и на каждом вызове. */
+  /** personal — свой экземпляр открывшего (приложение без совместной работы); иначе общий экземпляр узла. */
+  openMnemosApp(accountId: number, scope: string, resource: string, personal: boolean): Promise<RpcStub<import('./gadget-app.js').MnemosAppConnection>>;
+
   /** Проекты из подключённой памяти человека для набора проектов беседы. */
   listChatProjects(): Promise<ChatProjectChoice[]>;
   /** Право «Агент кода» человека: без него переключатель «Код» не показывается. */
@@ -3029,6 +3034,16 @@ export interface GadgetClient extends WorkpieceClient {
   /** Задать встроенному документу осмысленное название, если стоит название по умолчанию, а текст уже есть.
    *  Возвращает текущее название; null — текста ещё нет. */
   ensureNativeDocumentTitle(chatId?: number): Promise<string | null>;
+
+  /** Приложение как файл проекта Mnemos (ADR 0028): привязка текущего человека, версия кода и можно ли сохранить. */
+  getMnemosApp(): Promise<import('./gadget-app.js').MnemosAppState>;
+  /** Записать привязку к узлу приложения (null — снять). */
+  setMnemosApp(binding: import('./gadget-app.js').MnemosAppBinding | null): Promise<void>;
+  /** Модули гаджета для сохранения в проект: только client.js и server.js принятой версии кода. */
+  exportAppModules(): Promise<{ codeVersion: number; title: string; modules: import('./gadget-app.js').GadgetAppModules }>;
+  /** Поставить модули версии узла в код гаджета; отказ, если код изменился или в беседах есть предложенные правки.
+   *  Возвращает новую версию кода рабочего места. */
+  restoreAppModules(modules: import('./gadget-app.js').GadgetAppModules, title: string, expectedCodeVersion: number): Promise<number>;
 
   /** Prepare a code update for a native editor. Returns null for unsupported formats or use-only access. */
   getNativeEditorUpdate(): Promise<NativeEditorUpdate | null>;

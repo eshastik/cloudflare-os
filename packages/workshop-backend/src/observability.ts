@@ -5,6 +5,9 @@ import { createTracer } from "@gadgets/backend-utils/tracing";
 export type WorkshopObservabilityFields = {
   accountId: number;
   actionId: number | string;
+  // Приложение узла Mnemos (ADR 0028): версия узла и кто открыл или сменил код.
+  appVersion: string;
+  principal: string;
   autoProvisioned: boolean;
   blueprintId: string;
   callbackInitiated: boolean;
