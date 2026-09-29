@@ -250,3 +250,18 @@ test("запросы на слияние: принять и вернуть ка�
   answer = Response.json({ code: "internal.secret" }, { status: 409 });
   await assert.rejects(api.acceptMergeRequest("p", "c", "1", 7, "abc"), (e: unknown) => e instanceof MnemosAPIError && e.code === undefined, "незнакомый код не передаётся");
 });
+
+// 29.09 гаджет «Трекер задач» дважды не сохранился: тип узла приложения не входил в
+// перечень createPrivateDocument, и отказ 400 рождался в клиенте, до запроса к Mnemos.
+test("createPrivateDocument пропускает узел гаджета до Mnemos", async () => {
+  const calls: string[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "human", async (url, init) => {
+    calls.push(`${init?.method} ${String(url)} ${String(init?.body)}`);
+    return Response.json({ node_id: "node-1", head: "a".repeat(64) });
+  });
+  const created = await api.createPrivateDocument("p", { request_id: "r-1", expected_head: "b".repeat(64), parent_id: "", name: "Трекер задач",
+    content_type: "application/vnd.cloudflareos.app+json", upload_id: "up-1", message: "Гаджет от агента кода" });
+  assert.equal(created.node_id, "node-1");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^POST https:\/\/memory\.example\/v1\/projects\/p\/draft\/create .*vnd\.cloudflareos\.app\+json/);
+});
