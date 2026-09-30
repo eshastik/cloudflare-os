@@ -107,7 +107,8 @@ test("пространство, которое не удалось закрыт�
   const { api } = session({ closes: false });
   await assert.rejects(personalSpace(api, USER), /открылось бы отделу, поэтому файл не сохранён/);
   const existing = session({ projects: [{ id: "p-open", name: "Личное пространство", slug: personalSpaceSlug(USER), created_by: USER, visibility: "department" }], closes: false });
-  await assert.rejects(personalSpace(existing.api, USER), /открылось бы отделу/);
+  await assert.rejects(personalSpace(existing.api, USER), /открыто другим людям/);
+  assert.equal(existing.calls.filter(c => c[0] === "visibility").length, 0);
 });
 
 test("личные проекты выключены — понятная причина", async () => {
@@ -222,4 +223,39 @@ test("действие агента «перенести файл»: карто�
   await assert.rejects(prepareAgentAction(s, scope, checkedAgentAction({ kind: "move_file", project: "Бухгалтерия", document: "Отчёт", target: "Стройка" })), /не подключён к агенту/);
   await assert.rejects(prepareAgentAction(s, scope, checkedAgentAction({ kind: "move_file", project: "Личное пространство", document: "Отчёт", target: "Бухгалтерия" })), /не подключён к агенту/);
   assert.equal(listed, 0);
+});
+
+
+test("открытое человеком личное пространство не закрывается автоматически", async () => {
+  const project = { id: "personal-open", name: "Мои файлы", slug: personalSpaceSlug(USER), created_by: USER, visibility: "department" as const };
+  const { api, calls } = session({ projects: [project] });
+  await assert.rejects(personalSpace(api, USER), /открыто другим людям/);
+  assert.equal(project.visibility, "department");
+  assert.equal(calls.filter(c => c[0] === "visibility" || c[0] === "createProject").length, 0);
+});
+
+test("удалённое или перенесённое вложение создаётся заново только со свежей выгрузкой", async () => {
+  const { api, calls } = session();
+  const receipts = chatDocumentReceipts(kv());
+  const original = await finishChatDocument(api, receipts, "p", REQUEST, "up-1", file);
+  (api as unknown as Record<string, unknown>).readDraftDocument = async () => ({ head: NEW_HEAD, exists: false });
+  await assert.rejects(finishChatDocument(api, receipts, "p", REQUEST, "up-1", file), /прикрепите его заново/);
+  assert.equal(calls.filter(c => c[0] === "create").length, 1);
+  const next = await finishChatDocument(api, receipts, "p", REQUEST, "up-2", file);
+  assert.equal(next.created, true);
+  assert.notEqual(next.resource, original.resource);
+  const requests = calls.filter(c => c[0] === "create").map(c => c[2] as { request_id: string; upload_id: string });
+  assert.notEqual(requests[0].request_id, requests[1].request_id);
+  assert.equal(requests[1].upload_id, "up-2");
+});
+
+test("сбой проверки прежнего вложения не создаёт копию и не скрывает отказ доступа", async () => {
+  const { api, calls } = session();
+  const receipts = chatDocumentReceipts(kv());
+  await finishChatDocument(api, receipts, "p", REQUEST, "up-1", file);
+  for (const status of [403, 503]) {
+    (api as unknown as Record<string, unknown>).readDraftDocument = async () => { throw new MnemosAPIError(status); };
+    await assert.rejects(finishChatDocument(api, receipts, "p", REQUEST, "up-2", file));
+  }
+  assert.equal(calls.filter(c => c[0] === "create").length, 1);
 });

@@ -49,11 +49,13 @@ export async function personalSpace(api: ChatDocumentAPI, user: string): Promise
   const find = async () => (await api.listProjects()).projects.filter(p => isPersonalSpace(p, user))
     .sort((a, b) => a.slug.length - b.slug.length || a.slug.localeCompare(b.slug))[0];
   let found = await find();
+  let created = false;
   if (!found) {
     let lastError: unknown;
     for (const slug of [base, `${base}-${randomTail()}`, `${base}-${randomTail()}`]) {
       try {
         found = (await api.createProject(PERSONAL_SPACE_NAME, slug)).project;
+        created = true;
         break;
       } catch (error) {
         lastError = error;
@@ -67,6 +69,7 @@ export async function personalSpace(api: ChatDocumentAPI, user: string): Promise
     if (!found) throw describeFailure(lastError, "не удалось создать личное пространство");
   }
   if (found.visibility !== "private") {
+    if (!created) throw new Error("личное пространство открыто другим людям — файл не сохранён. Закройте его сами или подключите к беседе проект");
     const closed = await api.setProjectVisibility(found.id, "private", false).catch(() => null);
     if (!closed || closed.visibility !== "private") throw new Error(CLOSED_REFUSAL);
   }
@@ -186,8 +189,16 @@ export async function finishChatDocument(api: ChatDocumentAPI, receipts: ChatDoc
     let fresh = request;
     const known = receipts.get(request);
     if (known && known.project === project) {
-      if (known.node) return { resource: known.node, name: known.body.name, created: false };
-      if (known.body.upload_id === uploadId) {
+      if (known.node) {
+        let current;
+        try { current = await api.readDraftDocument(project, known.node); }
+        catch (error) {
+          if (!(error instanceof MnemosAPIError && error.status === 404)) throw error;
+        }
+        if (current?.exists) return { resource: known.node, name: known.body.name, created: false };
+        if (known.body.upload_id === uploadId) throw new Error("файл удалён или перенесён — прикрепите его заново");
+      }
+      if (!known.node && known.body.upload_id === uploadId) {
         try {
           const replay = await api.createPrivateDocument(project, known.body);
           receipts.put(request, { ...known, node: replay.node_id });
