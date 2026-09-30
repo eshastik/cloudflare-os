@@ -181,7 +181,7 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   /** Документ из беседы правами этого человека; хост зовёт от его имени, байты идут браузером мимо хоста. */
   async beginChatDocument(project:string|null,file:ChatDocumentFile){return this.#account().beginChatDocument(project,file);}
   async finishChatDocument(project:string,request:string,uploadId:string,file:{name:string;contentType:string}){return this.#account().finishChatDocument(project,request,uploadId,file);}
-  async readChatDocumentText(project:string,node:string,offset?:number){return this.#account().readChatDocumentText(project,node,offset);}
+  async readChatDocumentText(project:string,node:string,offset?:number,archivePath?:(string | {nameBase64: string})[]){return this.#account().readChatDocumentText(project,node,offset,archivePath);}
   async moveChatDocument(project:string,node:string,target:string,request:string){return this.#account().moveChatDocument(project,node,target,request);}
   async codeWorkForkGadget(fromProject:string,fromResource:string,toProject:string,toResource:string,bodySha256:string){return this.#account().codeWorkForkGadget(fromProject,fromResource,toProject,toResource,bodySha256);}
   async revoke(): Promise<void> { await this.#account().revoke(); }
@@ -347,9 +347,9 @@ export class UserAccount extends DurableObject<Env> {
   finally{session.dispose();}
  }
  /** Извлечённый Mnemos текст файла из беседы частями; «ещё разбирается» — состояние, не ошибка. */
- async readChatDocumentText(project:string,node:string,offset=0){
+ async readChatDocumentText(project:string,node:string,offset=0,archivePath?:(string | {nameBase64: string})[]){
   const session=this.#account().session();
-  try{return await readChatDocumentText(session,project,node,offset);}
+  try{return await readChatDocumentText(session,project,node,offset,archivePath);}
   finally{session.dispose();}
  }
  /** Перенос файла из беседы в другой проект средствами Mnemos, правами человека на оба проекта. */

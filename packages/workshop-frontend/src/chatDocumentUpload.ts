@@ -42,7 +42,7 @@ export async function uploadChatDocument(
 /**
  * Выгрузка подготовленного вложения: документ — через хранилище Mnemos, остальное (картинки,
  * небольшие файлы) — прежним путём, байтами через беседу. Без подключения Mnemos документу некуда
- * лечь: текст и PDF идут прежним путём до 1 МиБ, Office без Mnemos не прочитать.
+ * лечь: текст и PDF идут прежним путём до 1 МиБ, Office и ZIP без Mnemos не прочитать.
  */
 export async function uploadPreparedAttachment(
     overseer: DocumentOverseer & Pick<Overseer, 'uploadChatAttachment' | 'chatDocumentsAvailable'>,
@@ -53,6 +53,9 @@ export async function uploadPreparedAttachment(
   const documentType = blob instanceof File ? chatDocumentContentType(blob.type || mimeType, blob.name) : undefined
   if (blob instanceof File && documentType) {
     if (await overseer.chatDocumentsAvailable()) return await uploadChatDocument(overseer, blob, options)
+    if (documentType === 'application/zip') {
+      throw new Error('Архивы ZIP читаются через Mnemos: подключите Mnemos к беседе.')
+    }
     if (documentType.startsWith('application/vnd.openxmlformats-officedocument.')) {
       throw new Error('Документы Word, Excel и PowerPoint читаются через Mnemos: подключите Mnemos или сохраните файл как PDF.')
     }

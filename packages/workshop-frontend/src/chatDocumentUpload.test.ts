@@ -151,3 +151,27 @@ describe('PDF больше 100 МиБ', () => {
     expect(overseer.finishChatDocumentUpload).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ZIP в хранилище Mnemos', () => {
+  it('архив больше 15 МиБ отправляется прямым PUT без байтов в методах беседы', async () => {
+    const file = new File([new Uint8Array(16 * 1024 * 1024)], 'архив.zip', { type: 'application/x-zip-compressed' })
+    vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('чтение целиком запрещено'))
+    const { overseer, calls } = fakeOverseer()
+    const send = vi.fn<typeof fetch>(async () => new Response(null, { status: 200 }))
+    await uploadPreparedAttachment(overseer, { blob: file, mimeType: file.type, name: file.name }, { modelId: 'm', send })
+    expect(overseer.beginChatDocumentUpload.mock.calls[0][0]).toEqual(expect.objectContaining({ size: file.size, mimeType: 'application/zip' }))
+    expect(overseer.uploadChatAttachment).not.toHaveBeenCalled()
+    expect(calls.some(c => containsBytes(c.args))).toBe(false)
+    expect(send.mock.calls[0][1]?.body).toBe(file)
+    expect(file.arrayBuffer).not.toHaveBeenCalled()
+  })
+  it('без Mnemos отказывает до чтения байтов и не отправляет архив модели', async () => {
+    const { overseer } = fakeOverseer(undefined, false)
+    const file = new File(['PK'], 'архив.zip', { type: 'application/zip' })
+    vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('чтение целиком запрещено'))
+    await expect(uploadPreparedAttachment(overseer, { blob: file, mimeType: file.type, name: file.name }, { modelId: 'm' })).rejects.toThrow(/ZIP.*Mnemos/)
+    expect(overseer.uploadChatAttachment).not.toHaveBeenCalled()
+    expect(overseer.beginChatDocumentUpload).not.toHaveBeenCalled()
+    expect(file.arrayBuffer).not.toHaveBeenCalled()
+  })
+})

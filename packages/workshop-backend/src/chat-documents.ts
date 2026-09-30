@@ -33,6 +33,10 @@ export function chatDocumentContentType(mimeType: string | undefined, name: stri
       mime === "application/vnd.ms-excel" || mime.endsWith("json"))) {
     return TEXT_BY_EXTENSION[extension];
   }
+  if (mime === "application/zip" || mime === "application/x-zip-compressed" ||
+      extension === "zip" && mime === "application/octet-stream") {
+    return "application/zip";
+  }
   return undefined;
 }
 
@@ -112,6 +116,10 @@ export function chatDocumentNote(doc: ChatDocumentRef): string {
     `${chatDocumentPlace(doc)}, личной версией человека; project="${doc.projectId}", node="${doc.resource}". ` +
     `Текст файла здесь не вложен: читайте его частями через MNEMOS.readChatFile(project, node, offset) — ` +
     `только то, что нужно для ответа. Если ответ state "preparing" — файл ещё разбирается: подождите и повторите. ` +
+    (doc.contentType === "application/zip" ? `Для ZIP сначала получите опись без archivePath; затем читайте выбранный файл ` +
+      `через MNEMOS.readChatFile(project, node, 0, ["точное имя файла"]). ` +
+      `Для вложенного архива передайте массив ["архив.zip", "файл.pdf"]. ` +
+      `Для имени в старой кодировке используйте объект {nameBase64: "name_base64 из описи"} вместо строки. Распаковка в оболочке не нужна. ` : "") +
     (doc.personal ? `Перенести файл в проект можно через MNEMOS.moveFileToProject(project, node, target) — ` +
       `только если человек об этом просит или согласен.` : "") + `]`;
 }

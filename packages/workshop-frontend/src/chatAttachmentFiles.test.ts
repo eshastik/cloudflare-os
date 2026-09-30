@@ -26,7 +26,7 @@ describe('вложения беседы: какой файл — докумен�
     expect(chatDocumentContentType('image/png', 'обманка.pdf')).toBeUndefined()
     expect(chatDocumentContentType('application/msword', 'old.doc')).toBeUndefined()
     expect(chatDocumentContentType('text/javascript', 'app.js')).toBeUndefined()
-    expect(chatDocumentContentType('application/zip', 'архив.zip')).toBeUndefined()
+
   })
 
   it('пометка называет место документа', () => {
@@ -40,3 +40,13 @@ describe('вложения беседы: какой файл — докумен�
     expect(attachmentDownloadName(undefined, 'text/plain')).toBe('attachment')
   })
 })
+
+describe("ZIP как документ Mnemos", () => {
+  it("нормализует тип ZIP и общий тип с расширением, сохраняя Office", () => {
+    for (const [mime, name] of [["application/zip", "архив.zip"], ["application/x-zip-compressed", "архив.ZIP"], ["", "архив.zip"], ["application/octet-stream", "архив.zip"], ["application/zip; charset=binary", "выгрузка"]]) {
+      expect(chatDocumentContentType(mime, name)).toBe("application/zip");
+    }
+    expect(chatDocumentContentType("application/zip", "Отчёт.docx")).toBe(DOCX);
+    expect(chatDocumentContentType("image/png", "обманка.zip")).toBeUndefined();
+  });
+});

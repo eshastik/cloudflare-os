@@ -5,7 +5,7 @@ import {
   type GatekeeperUserVerifier, type ObservationActivity, type ObservationAuthorizer, type ResourceDescription,
 } from "@gadgets/workshop-shared/gatekeeper";
 import {
-  MnemosAPIError, type DocumentContent, type DraftDocument, type DraftDownloadTicket, type DraftHead, type DraftState,
+  checkedArchivePath, MnemosAPIError, type DocumentContent, type DraftDocument, type DraftDownloadTicket, type DraftHead, type DraftState,
   type PrivateDocumentPage, type PrivateDocumentCreate, type NodeHistoryPage, type NodePage, type ProjectPage, type ProjectSearchPage, type UploadTicket,
   type PublicationPolicy, type PublicationResult, type PublicationReview,
 } from "./mnemos-api.ts";
@@ -88,7 +88,7 @@ export interface LibraryAccount {
   executeAgentAction?(kind: AgentActionKind, resolved: PreparedAgentAction["resolved"]): Promise<ActionOutcome>;
   readForAgent?(request: AgentReadRequest): Promise<unknown>;
   /** Текст файла из беседы сессией человека: узел — его личная версия. */
-  readChatDocumentText?(project: string, node: string, offset?: number): Promise<ChatDocumentText>;
+  readChatDocumentText?(project: string, node: string, offset?: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
 }
 
 export interface MnemosProject { id: string; name: string; slug: string }
@@ -225,7 +225,7 @@ function release(value: unknown, depth = 0): void {
 interface SessionCalls {
   listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage>;
   readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument>;
-  readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number): Promise<ChatDocumentText>;
+  readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
   proposeAdmin(queue: RpcStub<ApprovalQueue>, requestId: string, request: AdminOperationRequest): Promise<MnemosAdminProposal>;
   createDraft(queue: RpcStub<ApprovalQueue>, project: string, parent: string, name: string, content: string, mediaType: "text/plain" | "text/markdown"): Promise<MnemosDraftProposal>;
   listProjects(queue: RpcStub<ApprovalQueue>): Promise<MnemosProject[]>;
@@ -250,7 +250,7 @@ export class MnemosLibrarySession extends RpcTarget {
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
   async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
   async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
-  async readChatFile(project: string, node: string, offset = 0) { return this.#calls.readChatFile(this.#queue, project, node, offset); }
+  async readChatFile(project: string, node: string, offset = 0, archivePath?: (string | {nameBase64: string})[]) { return this.#calls.readChatFile(this.#queue, project, node, offset, archivePath); }
   async listProjects(): Promise<MnemosProject[]> { return this.#calls.listProjects(this.#queue); }
   async proposeConnectProject(requestId: string, project: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "connect_project", project}); }
   async proposeCreateProject(requestId: string, name: string, slug: string) { return this.#calls.proposeAdmin(this.#queue, requestId, {kind: "create_project", name, slug}); }
@@ -351,7 +351,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return new MnemosLibrarySession({
         listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
         readPersonalDocument: (q, project, node) => this.#readPersonalDocument(q, project, node),
-        readChatFile: (q, project, node, offset) => this.#readChatFile(q, project, node, offset),
+        readChatFile: (q, project, node, offset, archivePath) => this.#readChatFile(q, project, node, offset, archivePath),
         proposeAdmin: (q, id, request) => this.#proposeAdmin(q, id, request),
         listProjects: q => this.#listProjects(q),
         searchProject: (q, project, query) => this.#searchProject(q, project, query),
@@ -680,9 +680,13 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   }
   /** Файл из беседы: текст извлекает Mnemos, агент получает его частями. Чтение — сессией человека,
    * потому что узел — его личная версия; наблюдение видит только владелец. */
-  async #readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number): Promise<ChatDocumentText> {
+  async #readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText> {
     identifier(project, "проект"); identifier(node, "файл");
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Некорректное значение: offset — целое число от 0.");
+    if (archivePath !== undefined) {
+      try { archivePath = checkedArchivePath(archivePath); }
+      catch { throw new Error("Некорректное значение: archivePath — массив имён ZIP или объектов {nameBase64} из описи."); }
+    }
     // Только вложения этой беседы: чтение идёт сессией человека, мимо области агента (ADR 0010).
     // На стабе RPC метод есть всегда; старый хост без проверки отвечает отказом, и чтения не будет.
     const check = (queue as unknown as { authorizeChatDocument?: (project: string, node: string) => Promise<void> }).authorizeChatDocument;
@@ -691,7 +695,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     await this.#authorizePersonal(queue, {kind: "mnemos.chatfile.read", scopeId: project});
     const read = this.#account().readChatDocumentText;
     if (!read) throw new Error(UNSUPPORTED);
-    try { return await this.#account().readChatDocumentText!(project, node, offset); }
+    try { return await this.#account().readChatDocumentText!(project, node, offset, archivePath); }
     catch (error) { throw failure(error); }
   }
   /** Текст личной версии под агентским credential; версия сверяется до и после скачивания. */

@@ -589,10 +589,17 @@ export class MnemosAPI {
     return result;
   }
   /** Извлечённый текст своей личной версии частями. 429 с кодом content.preparing — разбор ещё идёт. */
-  async readDraftText(project: string, node: string, offset: number, maxBytes: number, signal?: AbortSignal): Promise<DraftText> {
+  async readDraftText(project: string, node: string, offset: number, maxBytes: number, signal?: AbortSignal, archivePath: (string | {nameBase64: string})[] = []): Promise<DraftText> {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 262144) throw new MnemosAPIError(400);
-    const out = await this.#request<DraftText>(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/text?offset=${offset}&max_bytes=${maxBytes}`, "GET", signal, undefined, false, 60_000);
+    const requestedPath = checkedArchivePath(archivePath);
+    const binaryPath = requestedPath.some(name => typeof name !== "string");
+    const pathValues = requestedPath.map(name => typeof name === "string" ? (binaryPath ? archiveUTF8Base64(name) : name) : name.nameBase64);
+    const query = new URLSearchParams({offset: String(offset), max_bytes: String(maxBytes)});
+    for (const value of pathValues) query.append(binaryPath ? "archive_path_b64" : "archive_path", value);
+    const out = await this.#request<DraftText>(`/v1/projects/${segment(project)}/draft/nodes/${segment(node)}/text?${query}`, "GET", signal, undefined, false, 60_000);
     if (!validDraftText(out, node, offset)) throw new MnemosAPIError(502);
+    const returnedPath = binaryPath ? out.archive_path_base64 ?? [] : out.archive_path ?? [];
+    if (returnedPath.length !== pathValues.length || returnedPath.some((name,i) => name !== pathValues[i])) throw new MnemosAPIError(502);
     return out;
   }
   /** Перенос своей личной версии в другой проект: создание в цели, удаление в источнике, уведомление владельцу. */
@@ -1328,11 +1335,13 @@ export interface ProjectPage { projects: { id: string; name: string; slug: strin
 export interface NodePage { nodes: { node_id: string; parent_id?: string; name: string; is_dir: boolean; functional_role_id?: string; shared_deleted?: boolean; parse_failure?: string }[]; next_cursor?: string; truncated: boolean }
 export interface DocumentContent { node_id: string; text: string; media_type: string; truncated: boolean; revision?: number; offset?: number; next_offset?: number; total_bytes?: number; text_state?: "ready" | "empty_window" | "no_text" }
 /** Часть извлечённого текста личной версии: смещения — байты UTF-8 текста; no_text — текстового слоя нет. */
-export interface DraftText { node_id: string; head: string; name: string; content_type: string; size_bytes: number; offset: number; next_offset: number; total_bytes: number; text: string; truncated: boolean; no_text?: boolean; failure?: string }
+export interface DraftText { archive_path?: string[]; archive_path_base64?: string[]; node_id: string; head: string; name: string; content_type: string; size_bytes: number; offset: number; next_offset: number; total_bytes: number; text: string; truncated: boolean; no_text?: boolean; failure?: string }
 export function validDraftText(value: unknown, node: string, offset: number): value is DraftText {
   const t = value as DraftText;
   return !!t && typeof t === "object" && t.node_id === node && typeof t.head === "string" && typeof t.name === "string" &&
     typeof t.content_type === "string" && typeof t.text === "string" && typeof t.truncated === "boolean" &&
+    (t.archive_path === undefined || Array.isArray(t.archive_path) && t.archive_path.every(name => typeof name === "string")) &&
+    (t.archive_path_base64 === undefined || Array.isArray(t.archive_path_base64) && t.archive_path_base64.every(canonicalArchiveBase64)) &&
     t.offset === offset && Number.isSafeInteger(t.next_offset) && t.next_offset >= offset && Number.isSafeInteger(t.total_bytes) &&
     Number.isSafeInteger(t.size_bytes) && (t.no_text === undefined || typeof t.no_text === "boolean") && (t.failure === undefined || typeof t.failure === "string");
 }
@@ -1681,3 +1690,23 @@ export interface GitSyncProjectCreate extends GitSyncSettings {name:string;sourc
 export interface GitAppRepository {account?:string;pushed_at?:string;language?:string|null}
 /** Сколько файлов репозитория сейчас лежит в проекте по связи. */
 export interface GitSyncLink {file_count?:number}
+
+function canonicalArchiveBase64(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  try { return btoa(atob(value)) === value; } catch { return false; }
+}
+
+export function checkedArchivePath(value: unknown): (string | {nameBase64: string})[] {
+  if (!Array.isArray(value)) throw new MnemosAPIError(400);
+  return value.map(name => {
+    if (typeof name === "string") return name;
+    if (!name || typeof name !== "object" || !canonicalArchiveBase64(name.nameBase64)) throw new MnemosAPIError(400);
+    return {nameBase64:name.nameBase64};
+  });
+}
+
+function archiveUTF8Base64(value: string): string {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}

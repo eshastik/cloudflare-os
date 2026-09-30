@@ -1241,7 +1241,7 @@ export interface GatekeeperUser extends WorkerEntrypoint {
    * квитанцией отдаёт уже созданный узел. name — имя, под которым файл лёг (при совпадении « (2)» и дальше). */
   finishChatDocument?(project: string, request: string, uploadId: string, file: {name: string; contentType: string}): Promise<{resource: string; name: string; created: boolean}>;
   /** Извлечённый Mnemos текст файла частями (offset — байты UTF-8 текста). preparing — разбор ещё идёт. */
-  readChatDocumentText?(project: string, node: string, offset?: number): Promise<ChatDocumentText>;
+  readChatDocumentText?(project: string, node: string, offset?: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
   /** Перенос личной версии в другой проект средствами Mnemos; Mnemos ставит человеку уведомление. */
   moveChatDocument?(project: string, node: string, target: string, request: string): Promise<{project: string; projectTitle: string; resource: string; name: string; notified: boolean}>;
   /** Гаджет через агента кода (ADR 0028): рабочее место без репозитория с шаблоном гаджета. */

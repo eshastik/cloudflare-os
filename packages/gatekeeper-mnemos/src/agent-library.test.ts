@@ -870,8 +870,8 @@ test("ход работы в беседе: поиск, чтение и обзо�
 test("файл из беседы: читается только вложение этой беседы, иначе отказ до чтения", async () => {
   const { library, state, account } = fixture();
   const reads: unknown[] = [];
-  (account as Record<string, unknown>).readChatDocumentText = async (project: string, node: string, offset: number) => {
-    reads.push([project, node, offset]);
+  (account as Record<string, unknown>).readChatDocumentText = async (project: string, node: string, offset: number, archivePath?: (string | {nameBase64:string})[]) => {
+    reads.push(archivePath ? [project, node, offset, archivePath] : [project, node, offset]);
     return { state: "ready", name: "Отчёт.docx", contentType: "text/plain", text: "Итоги", offset, nextOffset: 5, totalBytes: 5, done: true, noText: false };
   };
   const allowed = new Set(["p-personal\0node-9"]);
@@ -885,13 +885,19 @@ test("файл из беседы: читается только вложение
   const part = await session.readChatFile("p-personal", "node-9", 0);
   assert.equal(part.state, "ready");
   assert.deepEqual(reads, [["p-personal", "node-9", 0]]);
+  await session.readChatFile("p-personal", "node-9", 0, ["пакет.zip", "договор.pdf"]);
+  assert.deepEqual(reads[1], ["p-personal", "node-9", 0, ["пакет.zip", "договор.pdf"]]);
+  await assert.rejects(session.readChatFile("p-personal", "node-9", 0, [4] as unknown as string[]), /archivePath/);
+  await session.readChatFile("p-personal", "node-9", 0, [{nameBase64:"gC50eHQ="}]);
+  assert.deepEqual(reads[2], ["p-personal", "node-9", 0, [{nameBase64:"gC50eHQ="}]]);
+  await assert.rejects(session.readChatFile("p-personal", "node-9", 0, [{nameBase64:"YR=="}]), /archivePath/);
   // Узел из другого проекта, доступный человеку, но не прикреплённый в беседе.
   await assert.rejects(session.readChatFile("p1", "n1", 0), /не файл, прикреплённый/);
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 3);
   // Старый хост без проверки вложений — отказ, чтения нет.
   const old = await library.startSession(authorizer(state) as any);
   await assert.rejects(old.readChatFile("p-personal", "node-9", 0));
-  assert.equal(reads.length, 1);
+  assert.equal(reads.length, 3);
 });
 
 

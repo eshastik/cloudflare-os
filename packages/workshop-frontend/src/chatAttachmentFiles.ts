@@ -1,5 +1,5 @@
 // Правила вложений беседы, общие для выбора файла и показа в ленте. Документы (PDF, Office,
-// txt/md/csv/json) лежат в Mnemos, а не в беседе (ADR 0003): их байты не идут в общий объём
+// txt/md/csv/json и ZIP) лежат в Mnemos, а не в беседе (ADR 0003): их байты не идут в общий объём
 // сообщения, и предел у них свой — как у приёма Mnemos.
 
 export const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
@@ -31,6 +31,10 @@ export function chatDocumentContentType(mimeType: string | undefined, name: stri
   if (TEXT_BY_EXTENSION[extension] && (mime === "application/octet-stream" || mime.startsWith("text/") ||
       mime === "application/vnd.ms-excel" || mime.endsWith("json"))) {
     return TEXT_BY_EXTENSION[extension];
+  }
+  if (mime === "application/zip" || mime === "application/x-zip-compressed" ||
+      extension === "zip" && mime === "application/octet-stream") {
+    return "application/zip";
   }
   return undefined;
 }

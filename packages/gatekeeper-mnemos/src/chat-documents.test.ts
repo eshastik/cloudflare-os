@@ -263,3 +263,11 @@ test("сбой проверки прежнего вложения не созд�
   }
   assert.equal(calls.filter(c => c[0] === "create").length, 1);
 });
+
+test("ZIP получает билет загрузки личного документа больше 15 МиБ", async () => {
+  const {api, calls} = session();
+  const zip = {...file, name: "архив.zip", contentType: "application/zip", size: 200 * 1024 * 1024};
+  const ticket = await beginChatDocument(api, STORAGE, "project", zip);
+  assert.equal(ticket.content_length, zip.size);
+  assert.deepEqual(calls, [["ticket", "project", zip.size, "draft"]]);
+});

@@ -23,7 +23,7 @@ describe("вид документа беседы", () => {
     expect(chatDocumentContentType("image/png", "a.png")).toBeUndefined();
     expect(chatDocumentContentType("text/x-python", "a.py")).toBeUndefined();
     expect(chatDocumentContentType("application/msword", "a.doc")).toBeUndefined();
-    expect(chatDocumentContentType("application/zip", "архив.zip")).toBeUndefined();
+
   });
 });
 
@@ -147,5 +147,15 @@ describe("без подключения Mnemos", () => {
     expect(prepareChatAttachmentUpload({mimeType: "application/pdf", name: "a.pdf", content: pdf}, "anthropic", false).mimeType).toBe("application/pdf");
     expect(() => prepareChatAttachmentUpload({mimeType: "text/plain", name: "big.txt", content: new Uint8Array(1024 * 1024 + 1)}, undefined, false)).toThrow(/1 МиБ/);
     expect(() => prepareChatAttachmentUpload({mimeType: DOCX, name: "Отчёт.docx", content: new Uint8Array([0x50, 0x4b, 3, 4])}, undefined, false)).toThrow(/подключите Mnemos/);
+  });
+});
+
+describe("ZIP как документ Mnemos", () => {
+  it("нормализует тип ZIP и общий тип с расширением, сохраняя Office", () => {
+    for (const [mime, name] of [["application/zip", "архив.zip"], ["application/x-zip-compressed", "архив.ZIP"], ["", "архив.zip"], ["application/octet-stream", "архив.zip"], ["application/zip; charset=binary", "выгрузка"]]) {
+      expect(chatDocumentContentType(mime, name)).toBe("application/zip");
+    }
+    expect(chatDocumentContentType("application/zip", "Отчёт.docx")).toBe(DOCX);
+    expect(chatDocumentContentType("image/png", "обманка.zip")).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ export type ChatDocumentAPI = Pick<MnemosAccountSession,
   "setProjectVisibility" | "readDraftText" | "readDraftDocument" | "transferPrivateDocument">;
 
 export const CHAT_DOCUMENT_CONTENT_TYPES = new Set([
-  "application/pdf",
+  "application/pdf", "application/zip",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -225,10 +225,10 @@ export async function finishChatDocument(api: ChatDocumentAPI, receipts: ChatDoc
 }
 
 /** Часть извлечённого текста. Разбор ещё идёт — не ошибка, а состояние: агент ждёт и повторяет. */
-export async function readChatDocumentText(api: ChatDocumentAPI, project: string, node: string, offset = 0): Promise<ChatDocumentText> {
+export async function readChatDocumentText(api: ChatDocumentAPI, project: string, node: string, offset = 0, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText> {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("смещение должно быть целым неотрицательным числом");
   try {
-    const part = await api.readDraftText(project, node, offset, TEXT_PART_BYTES);
+    const part = await api.readDraftText(project, node, offset, TEXT_PART_BYTES, archivePath);
     return { state: "ready", name: part.name, contentType: part.content_type, text: part.text, offset: part.offset,
       nextOffset: part.next_offset, totalBytes: part.total_bytes, done: !part.truncated, noText: part.no_text === true,
       ...(part.failure ? { failure: part.failure } : {}) };

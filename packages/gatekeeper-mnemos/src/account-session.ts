@@ -435,9 +435,9 @@ export class MnemosAccountSession {
     const result = await this.#client.createPrivateDocument(projectId, request, this.#lifetime.signal);
     this.#check(); return result;
   }
-  async readDraftText(project: string, node: string, offset: number, maxBytes: number) {
+  async readDraftText(project: string, node: string, offset: number, maxBytes: number, archivePath?: (string | {nameBase64: string})[]) {
     this.#check();
-    const result = await this.#client.readDraftText(project, node, offset, maxBytes, this.#lifetime.signal);
+    const result = await this.#client.readDraftText(project, node, offset, maxBytes, this.#lifetime.signal, archivePath);
     this.#check(); return result;
   }
   async transferPrivateDocument(project: string, node: string, request: {request_id: string; target_project_id: string; expected_head: string}) {
