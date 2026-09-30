@@ -40,6 +40,6 @@ test('Read relay preserves the selected calendar and withholds data after revoca
  const invoke=(query=body,auth='Bearer '+token)=>handleCalendarBridge(request(query,auth,base+'/calendar-bridge/read'),base,token,async()=>{throw Error('wrong operation');},read);
  assert.equal((await invoke(body,'wrong'))?.status,403);
  assert.equal((await invoke({...body,owner_id:'other'}))?.status,403);
- const ok=await invoke();assert.equal(ok?.status,200);assert.equal((await ok?.json() as any).events[0].id,'event');
+ const ok=await invoke();assert.ok(ok);assert.equal(ok.status,200);assert.equal((await ok.json()).events[0].id,'event');
  for(mode of ['wrong-calendar','bad-events','revoke'])assert.equal((await invoke())?.status,403);
 });

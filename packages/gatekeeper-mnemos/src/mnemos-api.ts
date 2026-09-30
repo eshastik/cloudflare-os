@@ -13,7 +13,7 @@ import type {CorporateFilePrepared,CorporateUpdateResolution,CorporateRecordUpda
 import type {DatabaseConnection,DatabaseRegistration} from "./database-connections.ts";
 import type {OperationAuditPage} from "./operation-audit.ts";
 import type {GitFile,GitCommit,GitBindingState} from "./git-connections.ts";
-import type {GitProjectRepositoryPage,GitProjectRepository,GitTree,GitBranchPage,GitLogPage,GitComparison} from "./git-connections.ts";
+import type {GitProjectRepositoryPage,GitTree,GitBranchPage,GitLogPage,GitComparison} from "./git-connections.ts";
 import {checkedGitTree,checkedGitBranches,checkedGitLog,checkedGitComparison} from "./git-connections.ts";
 import type {GitConnection,GitConnectionPage,GitRegistration,GitRepositoryPage,GitDisabled} from "./git-connections.ts";
 import type {PersonalWorkTemplateSelection,WorkTemplateResolution} from "./work-templates.ts";

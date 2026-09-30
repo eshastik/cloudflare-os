@@ -3,13 +3,11 @@ import { ArrowClockwise, ArrowLeft, CaretRight, FileText, Folder, Plus, Robot, U
 import type { PickedIntakeFile } from "../src/intake.ts";
 import { groupRefusals, refusedLine } from "../src/upload-progress.ts";
 import type { PolicyDomain, PublicationPolicy } from "../src/mnemos-api.ts";
-import { VISIBILITY_TITLES } from "../src/project-sharing.ts";
 import { useHost, useUi } from "./host.ts";
 import { projectSummary, actorName, agentEnvironment, isAdministrator, looksLikeId, agentNames, documentRows, myApprovals, personName, UNNAMED_DOCUMENT, useLoad, type MemoryData, type ProjectData } from "./data.ts";
 import { SharePanel, VisibilityBadge, VISIBILITY_NOTES } from "./ProjectSharing.tsx";
 import ProjectApproval from "./ProjectApproval.tsx";
 import { useReviewDecision } from "./ApprovalsTab.tsx";
-import { plural } from "./names.ts";
 import PersonAvatar from "./PersonAvatar.tsx";
 import { ActionForm, Block, Button, Card, Chip, ListRow, Notice, PageHeader, SectionTitle, StatusBadge, TextInput, touchOnly } from "./ui.tsx";
 

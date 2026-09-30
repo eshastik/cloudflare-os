@@ -56,8 +56,6 @@ function identity(provider: string, connection: string, repository: string): str
   return provider === "github" ? `github/${repository}` : `${provider}/${connection}/${repository}`;
 }
 
-const SOURCE_TITLE: Record<RepoRow["source"], string> = { github_app: "GitHub", key: "ключ доступа", internal: "внутреннее хранилище Mnemos" };
-
 function attention(r: RepositoryRecord): boolean {
   const l = r.link;
   return !!r.agents_access_revoked || (!!l && (!!l.access_revoked || (!l.paused && (l.state === "error" || l.state === "blocked" || l.state === "conflict"))));
