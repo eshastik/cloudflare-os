@@ -92,6 +92,7 @@ export function validGadgetRequest(value: unknown): value is string {
  * работы: тогда пишется новая версия того же узла; без него создаётся новый узел в проекте.
  * receipts — квитанции создания по ключу request: повтор создания после потерянного ответа даёт
  * тот же узел (и новую версию в нём, если сборка другая), а не второй узел.
+ * currentBodySha256 читает сумму текущей личной версии служебным путём; прежняя сборка не создаёт пустую версию.
  */
 /** Отказ Mnemos при сохранении с этапом и кодом ответа: «Mnemos request failed» не говорит,
  *  что делать, а 29.09 по нему и по журналам нельзя было понять, где упало сохранение. */
@@ -104,16 +105,16 @@ function describeSaveFailure(stage: string, error: unknown): unknown {
   return new Error(`Гаджет не сохранён: Mnemos отказал на шаге «${stage}» (HTTP ${error.status}${error.code ? `, ${error.code}` : ""}); ${why}.`);
 }
 
-export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts): Promise<SavedGadget> {
+export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>): Promise<SavedGadget> {
   const stage = { name: "проверка сборки" };
   try {
-    return await saveGadgetBuildSteps(api, storageOrigin, fetcher, project, build, stage, resource, request, receipts);
+    return await saveGadgetBuildSteps(api, storageOrigin, fetcher, project, build, stage, resource, request, receipts, currentBodySha256);
   } catch (error) {
     throw describeSaveFailure(stage.name, error);
   }
 }
 
-async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, stage: { name: string }, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts): Promise<SavedGadget> {
+async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, stage: { name: string }, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>): Promise<SavedGadget> {
   let text: string, manifest: GadgetAppDocument["manifest"];
   try {
     text = gadgetAppText(gadgetDocumentFromBuild(build));
@@ -128,6 +129,9 @@ async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, f
     // Не заменять чужой файл: только существующий узел приложения.
     stage.name = "чтение прежней версии";
     const doc = await checkGadgetEditable(api, project, node);
+    if (currentBodySha256 && await currentBodySha256(node, doc.head) === summary.bodySha256) {
+      throw new GadgetBuildError("Сборка гаджета не изменилась.");
+    }
     stage.name = "выгрузка файла";
     const uploadId = await upload(api, storageOrigin, fetcher, project, bytes);
     stage.name = "запись новой версии";

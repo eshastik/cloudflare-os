@@ -5,6 +5,7 @@ export function gadgetFailureReason(error: unknown, fallback: string): string {
   let message = typeof error === "string" ? error : typeof record.message === "string" ? record.message : "";
   if (/ModelNotFoundError|model not found/i.test(message)) return "Модель для задачи недоступна.";
   switch (message.trim()) {
+    case "Сборка гаджета не изменилась.": return "Гаджет не изменился: новая версия не создана. Агент не подготовил новую сборку.";
     case "модель OpenCode не найдена": return "Модель для задачи недоступна.";
     case "провайдер модели отклонил ключ доступа": return "Провайдер модели отклонил ключ доступа.";
     case "задача превысила контекст модели": return "Задача превысила контекст модели.";

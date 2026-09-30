@@ -321,7 +321,7 @@ export class UserAccount extends DurableObject<Env> {
   if(!storageOrigin)throw new Error('Хранилище Mnemos не настроено: сохранить гаджет нельзя.');
   const session=this.#account().session();
   let saved;
-  try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined);}
+  try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined,async(node,head)=>(await session.appCode(project,node,"private:"+head,this.env.MNEMOS_SHELL_KEY??"")).sha256_hex);}
   finally{session.dispose();}
   // Узел уже записан: отказ исходников не отменяет сохранения, агент беседы узнаёт причину.
   const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource,saved.bodySha256).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));
