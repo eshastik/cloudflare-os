@@ -18,6 +18,8 @@ export interface PublicationReview {
   stale: boolean;
   /** Whether every required current approval has been recorded. */
   ready: boolean;
+  /** Приложения среди видимых изменённых узлов точной заявки, включая удаления. null или отсутствие поля означает, что состав ещё не получен. */
+  application_node_ids?: string[] | null;
   /** Authorized domains and their required participants. */
   domains: {
     /** Subject area requiring approval. */
@@ -34,4 +36,13 @@ export interface PublicationReview {
       approved: boolean;
     }[];
   }[];
+}
+
+/** Считает документы и приложения один раз, даже если узел согласуют несколько направлений. */
+export function countPublicationNodes(review: PublicationReview, nodeIds = review.domains.flatMap(domain => domain.node_ids)): { documents: number; applications: number } | null {
+  if (!Array.isArray(review.application_node_ids)) return null;
+  const nodes = new Set(nodeIds), applications = new Set(review.application_node_ids);
+  let count = 0;
+  for (const node of nodes) if (applications.has(node)) count++;
+  return { documents: nodes.size - count, applications: count };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RpcStub } from 'capnweb'
 import type { GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
-import type { PublicationReview } from '@gadgets/workshop-shared/publication-review'
+import { countPublicationNodes, type PublicationReview } from '@gadgets/workshop-shared/publication-review'
 import { useAuthenticatedApi } from './AuthContext'
 import { WorkshopButton } from './components/WorkshopControls'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
@@ -106,7 +106,13 @@ function PublicationSection({ initialScope, close }: { initialScope?: string; cl
     {state && !state.personal_exists && <p className="m-0">Личной ветки пока нет. Сохраните документ в этот проект.</p>}
     {review && <div className="my-1">
       <p className="m-0">{review.stale ? 'Согласование устарело. Отправьте актуальные изменения заново.' : ready ? 'Все обязательные согласующие приняли эту версию.' : 'Ожидаются решения согласующих.'}</p>
-      {review.domains.map(domain => <p className="m-0 text-[12px] leading-4 text-kumo-subtle" key={domain.domain_id}>{domain.domain_id}: документов {domain.node_ids.length}; одобрено {domain.approvers.filter(id => domain.decisions.some(d => d.approver_id === id && d.approved)).length} из {domain.approvers.length}{domain.decisions.some(d => !d.approved) ? '; есть отказ' : ''}</p>)}
+      {review.domains.map(domain => {
+        const counts = countPublicationNodes(review, domain.node_ids)
+        return <div key={domain.domain_id} className="text-[12px] leading-4 text-kumo-subtle">
+          <p className="m-0">{domain.domain_id}: {counts ? `документов ${counts.documents}` : `изменённых узлов ${domain.node_ids.length}`}; одобрено {domain.approvers.filter(id => domain.decisions.some(d => d.approver_id === id && d.approved)).length} из {domain.approvers.length}{domain.decisions.some(d => !d.approved) ? '; есть отказ' : ''}</p>
+          <p className="m-0">{counts ? `Приложений: ${counts.applications}.` : 'Приложения проекта также входят в публикацию.'}</p>
+        </div>
+      })}
     </div>}
     <div className="flex flex-wrap gap-2 my-1">
       <WorkshopButton disabled={busy || !state?.personal_exists} onClick={() => { void run(async (selector, signal) => {

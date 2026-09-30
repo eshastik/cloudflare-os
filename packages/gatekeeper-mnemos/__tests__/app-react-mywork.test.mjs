@@ -61,12 +61,21 @@ test("«Входящие»: число строк совпадает с общи
 
 test("«Входящие»: выбор строки открывает подробности, решение из панели идёт тем же методом", async () => {
   const app = await mountMemoryApp({ ...mixed(),
+    async listPublicationReviews() {
+      const page = await defaultMethods([]).listPublicationReviews();
+      return { ...page, reviews: page.reviews.map(review => review.candidate_id === REVIEW_READY ? {
+        ...review, application_node_ids: ["app"], domains: review.domains.map(domain => ({ ...domain, node_ids: ["plan", "app"] })),
+      } : review) };
+    },
     async listCollaborationMessages() { return { messages: [{ sequence: 1, user_id: "carol", agent_id: "", kind: "result", body: "Готовый лендинг", created_at: "2026-09-12T11:00:00Z" }] }; },
     async reviewCollaborationResult(...args) { app.calls.push(["reviewCollaborationResult", ...args]); },
   });
   try {
     await app.until(() => rowsOf(app).length === 5, "список");
     const panel = () => app.document.querySelector('#root aside[aria-label="Подробности"]');
+    rowsOf(app).find(r => r.dataset.inbox === "publish").querySelector("button").click();
+    await app.until(() => panel()?.textContent.includes("Приложений: 1."), "приложения показаны отдельно");
+    assert.ok(panel().textContent.includes("Документов: 1."), "приложение не считается документом");
     rowsOf(app).find(r => r.dataset.inbox === "approval").querySelector("button").click();
     await app.until(() => panel()?.textContent.includes("carol: одобрено"), "подробности согласования");
     [...panel().querySelectorAll("button")].find(b => b.textContent === "Отклонить").click();

@@ -26,6 +26,14 @@ const data = { identity: { capabilities: ["principal.manage"] }, projects: [] };
 const people = [{ userName: "anna", displayName: "Анна Петрова", active: true }, { userName: "ivan", displayName: "Иван Смирнов", active: true }];
 const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
 
+async function waitFor(predicate, timeoutMs = 5000) {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate() && performance.now() < deadline) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1)); });
+  }
+  assert.ok(predicate(), "ожидаемое состояние интерфейса не наступило");
+}
+
 async function render(element, host) {
   const el = document.createElement("div"); document.body.append(el);
   const root = createRoot(el);
@@ -49,7 +57,7 @@ test("«Люди и отделы»: фото вместо инициалов, у
     assert.equal(ivan?.getAttribute("data-avatar"), "initials");
     assert.equal(ivan.textContent, "ИС");
     assert.equal(calls.length, 1, "запросы экрана собраны в один вызов");
-    assert.deepEqual([...calls[0]].sort(), ["anna", "ivan"]);
+    assert.deepEqual([...calls[0]].toSorted(), ["anna", "ivan"]);
   } finally { await view.close(); }
 });
 
@@ -101,12 +109,14 @@ test("цепочка фото: principal_id из principal_photo → мост �
   const STORAGE = "https://objects.example";
   const sum = createHash("sha256").update(JPEG).digest("hex");
   const seen = [];
+  let releaseDownload;
+  const downloadReady = new Promise(resolve => { releaseDownload = resolve; });
   const server = async (input, init = {}) => {
     const url = new URL(String(input)); seen.push(`${init.method ?? "GET"} ${url.origin}${url.pathname}`);
     const json = body => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     if (url.pathname === "/v1/whoami") return json({ subject: { tenant_id: "acme", user_id: "mnemos-owner" }, tenant_name: "Acme" });
     if (url.pathname === "/v1/people/photos") return json({ photos: [{ principal_id: "mnemos-owner", sha256_hex: sum, media_type: "image/jpeg", size_bytes: JPEG.byteLength, updated_at: "2026-09-25T10:00:00Z", url: `${STORAGE}/content/sha256/${sum}?X-Amz-Signature=1`, expires_at: new Date(Date.now() + 15 * 60_000).toISOString() }] });
-    if (url.origin === STORAGE && url.pathname.startsWith("/content/")) return new Response(JPEG, { status: 200 });
+    if (url.origin === STORAGE && url.pathname.startsWith("/content/")) { await downloadReady; return new Response(JPEG, { status: 200 }); }
     return new Response(null, { status: 404 });
   };
   const api = new MnemosAPI("https://mnemos.example", async () => "token", server);
@@ -119,11 +129,14 @@ test("цепочка фото: principal_id из principal_photo → мост �
   const view = await render(h("div", null, h(PersonAvatar, { name: "Александр Егоров", id: "mnemos-owner" }), h(PersonAvatar, { name: "Иван Смирнов", id: "ivan" })), host);
   try {
     const [owner, ivan] = view.el.querySelectorAll("[data-avatar]");
+    assert.equal(owner.getAttribute("data-avatar"), "initials", "пока скачивание не завершено, показаны инициалы");
+    releaseDownload();
+    await waitFor(() => owner.getAttribute("data-avatar") === "photo");
     assert.equal(owner.getAttribute("data-avatar"), "photo", "у владельца фото из Mnemos");
     assert.match(owner.querySelector("img").getAttribute("src"), /^blob:/);
     assert.equal(ivan.getAttribute("data-avatar"), "initials");
     assert.deepEqual(seen.filter(s => s.startsWith("GET https://objects")), [`GET ${STORAGE}/content/sha256/${sum}`], "одно скачивание по presigned GET");
-  } finally { await view.close(); }
+  } finally { releaseDownload(); await view.close(); }
 
   // Байты, не совпавшие с суммой, фрейму не отдаются, а причина уходит в консоль отладочной строкой.
   forgetDownloadedPhotos(); forgetPersonPhotos();

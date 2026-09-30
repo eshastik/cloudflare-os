@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Code, FileText, LockOpen, PaperPlaneTilt, SquaresFour, Stamp, Tray } from "@phosphor-icons/react";
 import type { PublicationReview, SharedDocument } from "../src/mnemos-api.ts";
+import { countPublicationNodes } from "@gadgets/workshop-shared/publication-review";
 import type { ShareRequest } from "../src/project-sharing.ts";
 import { inboxEntries, type InboxAlert, type InboxEntry, type InboxKind } from "../src/inbox-count.ts";
 import { useHost, useUi } from "./host.ts";
@@ -315,11 +316,15 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
         </div>
       </div>;
     }
-    case "publish":
+    case "publish": {
+      const counts = countPublicationNodes(entry.review!);
       return <div className="space-y-3 text-[14px]">
         <p className="m-0 text-kumo-subtle">Все назначенные согласующие одобрили изменения. Публикация переносит их в общую версию проекта.</p>
+        {counts && <p className="m-0">Документов: {counts.documents}.</p>}
+        <p className="m-0">{counts ? `Приложений: ${counts.applications}.` : "Приложения проекта также входят в публикацию."}</p>
         <Button size="sm" disabled={publishing === entry.review!.candidate_id} onClick={() => void publish(entry.review!)}>Опубликовать</Button>
       </div>;
+    }
     case "acceptance":
       return <AcceptanceReview key={entry.key} item={entry.collaboration!} onDone={reloadCollaborations} />;
     case "template":
