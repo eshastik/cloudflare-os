@@ -21,7 +21,7 @@ import type { AuthenticatedApi, GadgetClient } from '@gadgets/workshop-shared/ap
 import type { GatekeeperNativeDocumentSelector, GatekeeperNativeDocumentWriteSelector, GatekeeperUiFrame } from '@gadgets/workshop-shared/gatekeeper'
 import {
   GADGET_APP_FORMAT, gadgetAppText, parseGadgetAppText,
-  type GadgetAppPermission, type MnemosAppBinding, type MnemosAppConnection, type MnemosAppCopies, type MnemosAppCopyState, type MnemosAppInfo,
+  type GadgetAppPermission, type MnemosAppBinding, type MnemosAppConnection, type MnemosAppCopyState, type MnemosAppInfo,
   type MnemosAppOffer, type MnemosAppRelease, type MnemosAppState,
 } from '@gadgets/workshop-shared/gadget-app'
 import { DocumentStatusView, DOCUMENT_SHARE_EVENT, DOCUMENT_VERSIONS_EVENT, formatAgo, type DocumentStatusModel, type PrimaryKind } from './DocumentStatus'
@@ -38,7 +38,7 @@ type Downloads = RpcStub<GatekeeperNativeDocumentSelector>
 type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp' | 'openMnemosApp' | 'openMnemosAppPreview'>
 type Gadget = Pick<RpcStub<GadgetClient>, 'getId' | 'getMnemosApp' | 'setMnemosApp' | 'exportAppModules'>
 type Source = { accountId: number; writes: Writes; downloads: Downloads; origin: string; frame: GatekeeperUiFrame }
-type Connection = RpcStub<MnemosAppConnection & MnemosAppCopies>
+type Connection = RpcStub<MnemosAppConnection>
 /** serial — номер связи: экран приложения пересоздаётся с каждой новой связью, старую он не трогает. */
 type Live = { connection: Connection; info: MnemosAppInfo; serial: number }
 /** Право на узел: владелец личной версии, правка по приглашению или проекту, только просмотр. */

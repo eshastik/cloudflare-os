@@ -259,7 +259,7 @@ export type MnemosAppManifestInfo = GadgetAppManifest;
  * Связь страницы с общим экземпляром приложения одного узла Mnemos. Права Mnemos проверяются на каждом
  * вызове (не реже раза в 30 с); отзыв закрывает связь.
  */
-export interface MnemosAppConnection {
+export interface MnemosAppConnection extends MnemosAppCopies {
   /** Право и работающая версия. */
   describe(): Promise<MnemosAppInfo>;
   /** Код экрана работающей версии для фрейма-песочницы; null — версии ещё нет. */
