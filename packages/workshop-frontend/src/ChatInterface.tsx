@@ -3460,6 +3460,14 @@ export const ChatInput = ({
           </div>
         </div>
 
+        {models.length > 0 && selectedModel === null && !isAgentActive && (
+          <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-2 text-[13px] text-kumo-subtle">
+            <span>Выбран режим «Без агента». Сообщение сохранится без ответа.</span>
+            <button type="button" disabled={isSending || isBlocked} onClick={() => onModelChange(models[0].id)}
+              className="text-kumo-brand hover:underline disabled:opacity-50">Включить агента</button>
+          </div>
+        )}
+
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-3 pb-2 pt-1">
             {pendingAttachments.map((attachment) => (
