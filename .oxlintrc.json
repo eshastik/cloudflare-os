@@ -62,6 +62,8 @@
     {
       "files": ["packages/workshop-frontend/**/*.{ts,tsx}"],
       "plugins": ["typescript", "unicorn", "oxc", "import", "react", "jsx-a11y"],
+      // Автоматический JSX использует react/jsx-runtime, а не переменную React.
+      "rules": { "react/react-in-jsx-scope": "off" },
       "env": {
         "browser": true,
         "es2024": true
