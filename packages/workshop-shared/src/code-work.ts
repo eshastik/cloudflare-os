@@ -179,6 +179,11 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
   if (output.interrupted) {
     lines.push("", "Человек остановил ответ агента кода. Работа с кодом не закрыта и продолжится по следующему сообщению человека. Сам работу не продолжай: коротко скажи, на чём остановились.");
   }
+
+  if (output.state === "failed" || output.state === "stopped") {
+    const reason = output.steps.filter(step => step.kind === "state").at(-1)?.title;
+    if (reason) lines.push("", reason);
+  }
   if (output.answer.trim()) lines.push("", "Ответ агента кода:", output.answer.trim());
   let steps = output.steps.filter(s => s.kind !== "state");
   if (steps.length) {
@@ -186,7 +191,7 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
     for (let s of steps.slice(-MAX_SUMMARY_STEPS)) lines.push(`- ${s.title}${s.status === "error" ? " — ошибка" : ""}`);
   }
   if (output.gadget) {
-    lines.push("", ...gadgetResultLines(output.gadget, output.projectTitle));
+    lines.push("", ...gadgetResultLines(output.gadget, output.projectTitle, output.state));
     return lines.join("\n");
   }
   if (output.changedFiles.length) {
@@ -199,10 +204,12 @@ export function formatCodeWorkResult(output: CodeWorkOutput): string {
   return lines.join("\n");
 }
 
-function gadgetResultLines(result: GadgetWorkResult, projectTitle: string): string[] {
+function gadgetResultLines(result: GadgetWorkResult, projectTitle: string, state: CodeWorkOutput["state"]): string[] {
   if (!result.saved) {
     return [`Гаджет не сохранён: ${result.error}`,
-      "Скажи человеку об этом прямо. Если сборки нет или она не годится, снова вызови gadgetWork и попроси агента кода исправить и пересобрать (pnpm build)."];
+      state === "failed" || state === "stopped"
+        ? "Не повторяй запуск автоматически. Передай человеку причину. Новая попытка — только после нового сообщения человека."
+        : "Скажи человеку об этом прямо. Если сборки нет или она не годится, снова вызови gadgetWork и попроси агента кода исправить и пересобрать (pnpm build)."];
   }
   let lines = [
     `Гаджет «${result.title}» сохранён ${result.created ? "новым файлом" : "новой версией того же файла"} в проект «${projectTitle}» — личной версией: пока человек не опубликует, его видит только он.`,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { AiChatMetadata } from "@gadgets/workshop-shared/api";
+import type { AiChatMessage, AiChatMetadata } from "@gadgets/workshop-shared/api";
 import { formatCodeWorkResult } from "@gadgets/workshop-shared/code-work";
 import type { CodeWorkEvent } from "../src/code-work-timeline";
 import { gadgetLink, runChatCodeWork, type ChatCodeWorkHost, type CodeWorkUser } from "../src/chat-code-work";
@@ -234,4 +234,40 @@ describe("результат работы гаджета без исходник
         expect(emitted.filter(e => (e as {type: string}).type === "toolOutputDelta")).toEqual([]);
       }
     });
+});
+
+
+const failureMessage = (sequence: number, author: "user" | "agent"): AiChatMessage =>
+  ({chatId: 1, sequence, timestamp: new Date(0), author: {type: author, id: author, name: "Анна"}, type: "message", message: "Попробуй снова"} as AiChatMessage);
+
+describe("отказ запуска гаджета", () => {
+  it("причина модели доходит до итога и не предлагает автоматический повтор", async () => {
+    const {user, calls, setPages} = fakeUser();
+    const {host: h} = host(user, chat());
+    setPages([{events: [{seq: 1, type: "workspace.state", data: {state: "failed", reason: "модель OpenCode не найдена"}}], state: "failed"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.gadget).toMatchObject({saved: false, error: expect.stringContaining("Модель для задачи недоступна")});
+    expect(formatCodeWorkResult(out)).toContain("Модель для задачи недоступна");
+    expect(formatCodeWorkResult(out)).toContain("Не повторяй запуск автоматически");
+    expect(calls.filter(c => c[0] === "startGadget")).toHaveLength(1);
+    expect(calls.some(c => c[0] === "save")).toBe(false);
+  });
+  it("после отказа новые аргументы и ответы агента не запускают задачу до нового сообщения человека", async () => {
+    const {user, calls, setPages} = fakeUser();
+    const {host: h} = host(user, chat());
+    const messages = [failureMessage(0, "user")];
+    h.chatMessages = (_id, after) => messages.filter(m => m.sequence > after);
+    const request = {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()};
+    setPages([{events: [], state: "failed"}]);
+    await runChatCodeWork(h, request);
+    await expect(runChatCodeWork(h, {...request, toolCallId: "c2", prompt: "другой текст", newGadget: true})).rejects.toThrow("нового сообщения человека");
+    messages.push(failureMessage(1, "agent"));
+    await expect(runChatCodeWork(h, {...request, toolCallId: "c3"})).rejects.toThrow("нового сообщения человека");
+    expect(calls.filter(c => c[0] === "startGadget")).toHaveLength(1);
+    messages.push(failureMessage(2, "user"));
+    setPages([{events: [role(2, "a")], state: "idle"}]);
+    const retried = await runChatCodeWork(h, {...request, toolCallId: "c4"});
+    expect(retried.gadget?.saved).toBe(true);
+    expect(calls.filter(c => c[0] === "startGadget")).toHaveLength(2);
+  });
 });

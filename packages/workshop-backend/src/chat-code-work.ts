@@ -339,6 +339,11 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let slot: "codeWork" | "gadgetWork" = gadget ? "gadgetWork" : "codeWork";
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
   let work = meta[slot];
+  // Ответы агента и новые аргументы не заменяют новую просьбу человека после сбоя запуска.
+  if (gadget && work?.state === "failed" && work.contextSeq !== undefined &&
+      !host.chatMessages(request.chatId, work.contextSeq).some(m => m.author.type === "user")) {
+    throw new Error("Задача гаджета завершилась с ошибкой. Запуск не повторяется до нового сообщения человека.");
+  }
   let sameProject = !!work && (!request.projectId || request.projectId === work.projectId ||
     request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase());
   let newGadget = gadget && request.newGadget === true;
@@ -495,7 +500,10 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
 async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId: number, projectId: string, output: CodeWorkOutput,
     previous: ChatCodeWork["gadget"], request?: string): Promise<{result: GadgetWorkResult; head: string}> {
   let refused = (error: string) => ({result: {saved: false as const, error}, head: ""});
-  if (output.state === "failed" || output.state === "stopped") return refused("работа над гаджетом остановлена, сборка не забрана");
+  if (output.state === "failed" || output.state === "stopped") {
+    const reason = output.steps.filter(step => step.kind === "state").at(-1)?.title;
+    return refused(reason || "работа над гаджетом остановлена, сборка не забрана");
+  }
   if (output.interrupted) return refused("ход остановлен человеком, сборка не забрана");
   let saved: CodeWorkSavedGadget & {vendorId?: string};
   try {
