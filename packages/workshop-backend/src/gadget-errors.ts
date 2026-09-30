@@ -18,6 +18,12 @@ export function gadgetFailureReason(error: unknown, fallback: string): string {
   }
   const status = /^провайдер модели вернул HTTP ([45]\d\d)$/.exec(message.trim());
   if (status) return `Провайдер модели вернул HTTP ${status[1]}.`;
+  const stageStatus = /^(OpenCode не ответил|сессия OpenCode не создана|задача не передана агенту): HTTP ([45]\d\d)$/.exec(message.trim());
+  if (stageStatus) {
+    const title = stageStatus[1] === "сессия OpenCode не создана" ? "Не удалось создать сессию OpenCode"
+      : stageStatus[1] === "задача не передана агенту" ? "Не удалось передать задачу агенту" : "OpenCode не ответил";
+    return `${title}: HTTP ${stageStatus[2]}.`;
+  }
   switch (code) {
     case "scope": return "Нет права на работу с гаджетом в этом проекте.";
     case "no_build": return "Задача не подготовила сборку гаджета.";

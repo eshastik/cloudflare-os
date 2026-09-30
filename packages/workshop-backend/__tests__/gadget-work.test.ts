@@ -241,6 +241,34 @@ const failureMessage = (sequence: number, author: "user" | "agent"): AiChatMessa
   ({chatId: 1, sequence, timestamp: new Date(0), author: {type: author, id: author, name: "Анна"}, type: "message", message: "Попробуй снова"} as AiChatMessage);
 
 describe("отказ запуска гаджета", () => {
+  it.each([
+    "OpenCode не ответил: HTTP 399",
+    "сессия OpenCode не создана: HTTP 600",
+    "secret-prefix OpenCode не ответил: HTTP 503",
+    "задача не передана агенту: HTTP 429 secret-suffix",
+    "сессия OpenCode не создана: HTTP 401\nsecret-password",
+    "другой этап: HTTP 401",
+  ])("неизвестный или дополненный текст причины %s не попадает в беседу", async (reason) => {
+    const {user, setPages} = fakeUser();
+    const {host: h} = host(user, chat());
+    setPages([{events: [{seq: 1, type: "workspace.state", data: {state: "failed", reason}}], state: "failed"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.gadget?.error).toBe("Работа над гаджетом прервалась");
+    expect(formatCodeWorkResult(out)).not.toContain(reason);
+    expect(formatCodeWorkResult(out)).not.toContain("secret-");
+  });
+  it.each([
+    ["OpenCode не ответил: HTTP 503", "OpenCode не ответил: HTTP 503."],
+    ["сессия OpenCode не создана: HTTP 401", "Не удалось создать сессию OpenCode: HTTP 401."],
+    ["задача не передана агенту: HTTP 429", "Не удалось передать задачу агенту: HTTP 429."],
+  ])("HTTP-причина %s доходит до результата беседы", async (reason, expected) => {
+    const {user, setPages} = fakeUser();
+    const {host: h} = host(user, chat());
+    setPages([{events: [{seq: 1, type: "workspace.state", data: {state: "failed", reason}}], state: "failed"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.gadget?.error).toBe(`Работа над гаджетом прервалась: ${expected}`);
+    expect(formatCodeWorkResult(out)).toContain(expected);
+  });
   it("причина модели доходит до итога и не предлагает автоматический повтор", async () => {
     const {user, calls, setPages} = fakeUser();
     const {host: h} = host(user, chat());
