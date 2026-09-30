@@ -84,6 +84,19 @@ describe("гаджет через агента кода", () => {
     expect(formatCodeWorkResult(second)).toContain("новой версией того же файла");
   });
 
+  it("прежняя сборка после неудачной правки не выдаётся за новую версию", async () => {
+    const {user, setPages} = fakeUser();
+    const {host: h, meta} = host(user, chat());
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "создай счётчик", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    user.codeWorkSaveGadget = async () => ({resource: "node-7", head: HEAD1, title: "Отпуска", collaborative: true, session: true, created: false});
+    setPages([{events: [role(2, "b")], state: "idle"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "измени кнопку", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(out.gadget).toEqual({saved: false, error: "Гаджет не изменился: новая версия не создана. Агент не подготовил новую сборку."});
+    expect(meta().gadgetWork?.gadget?.head).toBe(HEAD1);
+    expect(formatCodeWorkResult(out)).not.toContain("новой версией того же файла");
+  });
+
   it("битая сборка не сохраняется: ход не падает, агент узнаёт причину, прежний узел остаётся", async () => {
     const {user, calls, setPages, failSave} = fakeUser();
     const {host: h, meta} = host(user, chat());

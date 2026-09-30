@@ -20,7 +20,7 @@ export function useCodeWorkAllowed(load: () => Promise<boolean>): boolean {
 const OPTIONS: { mode: ChatCodeMode; label: string; hint: string }[] = [
   { mode: "off", label: "Выкл", hint: "Отвечает только агент беседы. С кодом проекта он не работает." },
   { mode: "auto", label: "Авто", hint: "Каждое сообщение разбирается по смыслу: просьбы про код уходят агенту кода, остальное — агенту беседы." },
-  { mode: "on", label: "Вкл", hint: "Каждое сообщение сразу уходит агенту кода в проекте беседы с кодом." },
+  { mode: "on", label: "Вкл", hint: "Сообщения уходят агенту кода в проекте беседы. Просьбы о гаджетах остаются работой над гаджетом." },
 ];
 
 export type CodeModeSwitchProps = {

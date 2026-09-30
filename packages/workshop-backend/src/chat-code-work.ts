@@ -512,6 +512,9 @@ async function saveGadget(host: ChatCodeWorkHost, user: CodeWorkUser, accountId:
   } catch (error) {
     return refused(gadgetFailureReason(error, "Не удалось сохранить сборку гаджета."));
   }
+  if (previous && saved.head === previous.head) {
+    return refused("Гаджет не изменился: новая версия не создана. Агент не подготовил новую сборку.");
+  }
   let link = gadgetLink(host.publicBase, saved.vendorId, accountId, projectId, saved.resource);
   return {head: saved.head, result: {saved: true, accountId, projectId, resource: saved.resource, title: saved.title, ...(saved.description?.trim() ? {description: saved.description.trim().slice(0, 300)} : {}), collaborative: saved.collaborative,
     created: saved.created, ...(link ? {link} : {}),
