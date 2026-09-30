@@ -20,7 +20,7 @@ class FakeControl implements WorkspaceControl {
   async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })),
     ...(input.gadget_resource ? { gadget_resource: input.gadget_resource, gadget_restored: this.sources.has(input.gadget_resource) } : {}) }); }
   sourcesError: WorkspaceError | null = null;
-  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource, bodySha256]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
+  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string, agentToken: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource, bodySha256, agentToken]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
   forkError: WorkspaceError | null = null;
   async forkGadgetSources(input: Parameters<WorkspaceControl["forkGadgetSources"]>[0]) { this.calls.push(["forkGadgetSources", input]); if (this.forkError) throw this.forkError; }
   interruptError: WorkspaceError | null = null;
@@ -581,7 +581,7 @@ test("Задача гаджета над сохранённым узлом: сл
   assert.equal(first.restored, false);
   assert.equal("gadget_resource" in (control.calls.find(c => c[0] === "create")![1] as object), false, "новый гаджет — без узла");
   await tasks.saveGadgetSources("p", TASK, "node-7", "e".repeat(64));
-  assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7", "e".repeat(64)]);
+  assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7", "e".repeat(64), "token-2"]);
   await assert.rejects(tasks.saveGadgetSources("p", TASK, "node-8", "e".repeat(64)), (e: WorkspaceError) => e.code === "invalid", "первый узел закрепляется за задачей");
 
   const again = await tasks.startGadget("p", "поправь", { resource: "node-7" });
@@ -605,17 +605,17 @@ test("Клиент службы: исходники сохраняются с п
   const make = (respond: () => Response) => new WorkspaceClient("https://ws.example", "service-token", (async (url: string, init: RequestInit) => {
     seen.push({ url, body: JSON.parse(String(init.body)) }); return respond();
   }) as unknown as typeof fetch);
-  await make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "bind/1", "node-7", SUM);
-  assert.deepEqual(seen[0], { url: `https://ws.example/v1/workspace/tasks/${TASK}/gadget/sources`, body: { binding_id: "bind/1", resource: "node-7", body_sha256: SUM } });
-  await assert.rejects(make(() => Response.json({ error: "sources_too_large", message: "исходники гаджета больше 8 МиБ в архиве" }, { status: 409 })).saveGadgetSources(TASK, "b", "n", SUM),
+  await make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "bind/1", "node-7", SUM, "fresh-agent");
+  assert.deepEqual(seen[0], { url: `https://ws.example/v1/workspace/tasks/${TASK}/gadget/sources`, body: { binding_id: "bind/1", resource: "node-7", body_sha256: SUM, agent_token: "fresh-agent" } });
+  await assert.rejects(make(() => Response.json({ error: "sources_too_large", message: "исходники гаджета больше 8 МиБ в архиве" }, { status: 409 })).saveGadgetSources(TASK, "b", "n", SUM, "fresh-agent"),
     (e: WorkspaceError) => e.code === "sources" && e.message.includes("8 МиБ"));
-  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).saveGadgetSources(TASK, "b", "n", SUM),
+  await assert.rejects(make(() => Response.json({ error: "sources_unavailable" }, { status: 503 })).saveGadgetSources(TASK, "b", "n", SUM, "fresh-agent"),
     (e: WorkspaceError) => e.code === "sources" && e.message.includes("Хранилище исходников"));
   // Сумма версии — ровно 64 строчных hex, иначе запрос не уходит.
   const before = seen.length;
-  await assert.rejects(make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "b", "n", "ABC"), (e: WorkspaceError) => e.code === "invalid");
+  await assert.rejects(make(() => new Response(null, { status: 204 })).saveGadgetSources(TASK, "b", "n", "ABC", "fresh-agent"), (e: WorkspaceError) => e.code === "invalid");
   assert.equal(seen.length, before);
-  await assert.rejects(make(() => new Response("", { status: 404 })).saveGadgetSources(TASK, "b", "n", SUM), (e: WorkspaceError) => e.code === "not_found");
+  await assert.rejects(make(() => new Response("", { status: 404 })).saveGadgetSources(TASK, "b", "n", SUM, "fresh-agent"), (e: WorkspaceError) => e.code === "not_found");
 });
 
 test("Клиент службы: «Сделать своей» переносит исходники версии оригинала к копии; no_sources и 503 — словами", async () => {

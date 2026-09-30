@@ -158,7 +158,7 @@ export interface WorkspaceControl {
   /** Сборка задачи гаджета; bindingId — привязка агента человека: чужую задачу служба не отдаёт. */
   gadgetBuild(id: string, bindingId: string): Promise<WorkspaceGadgetBuild>;
   /** Сохранить исходники последней прочитанной сборки к узлу гаджета (после записи узла правами человека). */
-  saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string): Promise<void>;
+  saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string, agentToken: string): Promise<void>;
   /** Исходники версии оригинала — к копии получателя («Сделать своей»). */
   forkGadgetSources(input: GadgetSourcesFork): Promise<void>;
 }
@@ -260,10 +260,10 @@ export class WorkspaceClient implements WorkspaceControl {
       new WorkspaceError("unavailable", "Сборка гаджета не прочитана из рабочего места."));
     return gadgetBuildOf(await response.json());
   }
-  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string): Promise<void> {
+  async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string, agentToken: string): Promise<void> {
     if (!/^[0-9a-f]{64}$/.test(bodySha256)) throw new WorkspaceError("invalid", "Неверная сумма версии гаджета.");
     try {
-      await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/gadget/sources`, "POST", { binding_id: bindingId, resource, body_sha256: bodySha256 }, undefined,
+      await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/gadget/sources`, "POST", { binding_id: bindingId, resource, body_sha256: bodySha256, agent_token: agentToken }, undefined,
         (code, message) => code === "no_sources" || code === "sources_too_large" ? new WorkspaceError("sources", message || "Исходники гаджета не сохранены.")
           : new WorkspaceError("stopped", "Работа над гаджетом уже остановлена."),
         new WorkspaceError("sources", "Исходники гаджета не прочитаны из рабочего места."),
@@ -533,7 +533,8 @@ export class WorkspaceTasks {
     if (task.kind !== "gadget") throw new WorkspaceError("not_gadget", "Эта работа не делает гаджет.");
     if (!validGadgetResource(resource) || (task.gadget_resource && task.gadget_resource !== resource)) throw new WorkspaceError("invalid", "Неизвестный файл гаджета.");
     const { bindingId } = await this.#deps.agent();
-    await this.#control().saveGadgetSources(id, bindingId, resource, bodySha256);
+    const token = await this.#credential(bindingId);
+    await this.#control().saveGadgetSources(id, bindingId, resource, bodySha256, token);
     if (!task.gadget_resource) this.#save({ ...(this.#get(id) ?? task), gadget_resource: resource });
   }
 
