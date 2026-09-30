@@ -7,7 +7,7 @@ import { gadgetAppSha256, gadgetAppText, type GadgetAppDocument } from "@gadgets
 import type { GatekeeperAppAccess } from "@gadgets/workshop-shared/gatekeeper";
 import { expect, it } from "vitest";
 import {
-  APP_ACCESS_CLOSED, APP_COPY_REQUIRED, APP_NO_RELEASE, APP_ORIGIN_CLOSED, APP_UPDATE_CHANGED, openMnemosAppConnection,
+  APP_ACCESS_CLOSED, APP_COPY_REQUIRED, APP_NO_RELEASE, APP_ORIGIN_CLOSED, APP_UPDATE_CHANGED, APP_VERSION_UNAVAILABLE, openMnemosAppConnection,
   type AppNodePorts, type AppObjectPort, type MnemosAppPorts,
 } from "../src/mnemos-app-api";
 import { mnemosAppObjectName, mnemosAppReleaseName } from "../src/mnemos-app";
@@ -46,6 +46,8 @@ function world(denial: () => Error = () => Object.assign(new Error(DENIED), { co
   const writes: { principal: string; project: string; node: string }[] = [];
   const forks: { principal: string; from: { project: string; node: string }; to: { project: string; node: string }; sha: string }[] = [];
   let forkError: Error | null = null;
+  const versionFailures = new Map<string, Error>();
+  const versionReceipts = new Map<string, { sha256: string; contentType: string }>();
   const key = (project: string, node: string) => `${project}/${node}`;
   const addNode = (project: string, node: string, owner: string) => { nodes.set(key(project, node), { project, owner, heads: [], texts: new Map(), published: [], readers: new Set(), history: new Set() }); return node; };
   const save = (project: string, node: string, text: string) => {
@@ -66,11 +68,13 @@ function world(denial: () => Error = () => Object.assign(new Error(DENIED), { co
     const right = (): "edit" | "read" | null => { const n = find(); return !n ? null : n.owner === principal ? "edit" : n.readers.has(principal) || n.history.has(principal) ? "read" : null; };
     const canRead = (version: string) => {
       const n = find(); if (!n || !right()) return false;
-      // Приглашённый читает голову ветки владельца; опубликованное — только тот, кому видна история.
+      // app-code проверяет право чтения узла; право листать историю проверяется отдельно.
       if (version.startsWith("private:")) return n.owner === principal || n.heads[0] === version.slice(8);
-      return n.owner === principal || n.history.has(principal);
+      return n.published.some(p => p.id === version);
     };
     const read = async (version: string) => {
+      const failure = versionFailures.get(`${principal}/${project}/${node}/${version}`);
+      if (failure) throw failure;
       const text = find()?.texts.get(version);
       if (!text || !canRead(version)) throw new Error("403");
       return { text, sha256: await gadgetAppSha256(text), contentType: "application/vnd.cloudflareos.app+json" };
@@ -82,7 +86,7 @@ function world(denial: () => Error = () => Object.assign(new Error(DENIED), { co
         if (!access) throw denial();
         return { access, principal, tenant: opening ? "org-1" : "", name: principal, project, node, installation: INSTALLATION } satisfies GatekeeperAppAccess;
       },
-      version: async version => { const { sha256, contentType } = await read(version); return { sha256, contentType }; },
+      version: async version => { const overridden = versionReceipts.get(`${principal}/${project}/${node}/${version}`); if (overridden) return overridden; const { sha256, contentType } = await read(version); return { sha256, contentType }; },
       text: read,
       latestPublished: async () => head()?.id ?? null,
       publishedHead: async () => head(),
@@ -112,7 +116,7 @@ function world(denial: () => Error = () => Object.assign(new Error(DENIED), { co
     release: () => {},
   });
   const open = (principal: string, project: string, node: string, personal = true) => openMnemosAppConnection(ports(principal, project, node), personal);
-  return { nodes, writes, forks, failFork: (error: Error | null) => { forkError = error; }, addNode, save, publish, open, share: (project: string, node: string, who: string) => nodes.get(key(project, node))!.readers.add(who),
+  return { nodes, writes, forks, versionReceipt: (principal: string, project: string, node: string, version: string, receipt: { sha256: string; contentType: string }) => versionReceipts.set(`${principal}/${project}/${node}/${version}`, receipt), denyVersion: (principal: string, project: string, node: string, version: string, error: Error) => versionFailures.set(`${principal}/${project}/${node}/${version}`, error), failFork: (error: Error | null) => { forkError = error; }, addNode, save, publish, open, share: (project: string, node: string, who: string) => nodes.get(key(project, node))!.readers.add(who),
     revoke: (project: string, node: string, who: string) => { const n = nodes.get(key(project, node))!; n.readers.delete(who); n.history.delete(who); } };
 }
 
@@ -299,4 +303,45 @@ it("код отказа оригинала сохраняет смысл при 
   expect(await mine.copyState()).toMatchObject({ origin: "closed", update: null });
   expect(await refused(mine.applyUpdate("event-новый"))).toBe(APP_ORIGIN_CLOSED);
   expect(w.forks).toEqual([]);
+});
+
+it("отказ Mnemos в опубликованной версии после предложения копии не обходится кэшем", async () => {
+  const { w, project, node, v1, borisProject } = await authored();
+  const original = await w.open("boris", project, node);
+  expect((await original.offer()).release?.version).toBe(v1);
+  w.denyVersion("boris", project, node, v1, Object.assign(new Error("Чтение этой публикации отозвано."), { code: "app_version_denied" }));
+  await expect(original.makeCopy(borisProject, false)).rejects.toThrow("Чтение этой публикации отозвано.");
+  expect(w.writes).toEqual([]);
+});
+
+it("недоступная версия обновления не меняет личную копию и её данные", async () => {
+  const { w, project, node, v1, borisProject } = await authored();
+  const original = await w.open("boris", project, node);
+  const created = await original.makeCopy(borisProject, false);
+  const mine = await w.open("boris", created.scope, created.resource);
+  await (await mine.connectToGadget() as Session).add("Моя правка");
+  const v2 = w.publish(project, node, gadgetAppText(doc("v2")), "anna");
+  const author = await w.open("anna", project, node);
+  await author.offer();
+  expect((await mine.copyState())?.update?.version).toBe(v2);
+  const savedWrites = [...w.writes];
+  w.denyVersion("boris", project, node, v2, Object.assign(new Error("Чтение обновления отозвано."), { code: "app_version_denied" }));
+  await expect(mine.applyUpdate(v2)).rejects.toThrow("Чтение обновления отозвано.");
+  expect(w.writes).toEqual(savedWrites);
+  expect((await mine.copyState())?.version).toBe(v1);
+  const after = await mine.connectToGadget() as Session;
+  expect(await after.version()).toBe("v1");
+  expect((await after.list()).map(item => item.text)).toEqual(["Моя правка"]);
+});
+
+it.each(["сумма", "формат"])("неверная %s билета публикации не записывает новую копию", async kind => {
+  const { w, project, node, v1, borisProject } = await authored();
+  const original = await w.open("boris", project, node);
+  const sha256 = await gadgetAppSha256(gadgetAppText(doc("v1")));
+  w.versionReceipt("boris", project, node, v1, {
+    sha256: kind === "сумма" ? "0".repeat(64) : sha256,
+    contentType: kind === "формат" ? "text/plain" : "application/vnd.cloudflareos.app+json",
+  });
+  await expect(original.makeCopy(borisProject, false)).rejects.toThrow(APP_VERSION_UNAVAILABLE);
+  expect(w.writes).toEqual([]);
 });

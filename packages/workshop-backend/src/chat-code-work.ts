@@ -281,10 +281,10 @@ export async function routeChatMessage(input: ChatRouteInput): Promise<{route: C
   const target = chatCodeTarget(meta);
   if (!target) return done({target: "chat", reason: "no_code_project"});
   let toCode = (reason: ChatRouteReason): ChatRoute => ({target: "code", projectId: target.projectId, continuing: target.continuing, reason});
-  if (input.mode === "on") return done(toCode("on"));
   // Jev видит только «код или разговор»: «собери гаджет заново» он отдавал агенту кода в репозиторий,
   // и гаджет оказывался файлами репозитория, а не приложением в проекте (29.09).
   if (gadgetMessage(input.message, meta)) return done({target: "chat", reason: "gadget"});
+  if (input.mode === "on") return done(toCode("on"));
 
   let answer: JevResult = jev ?? {ok: false, error: "no_key"};
   if (!answer.ok) {

@@ -364,6 +364,16 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     return release.setRelease(head.id, read.sha256, read.text, head.recordedAt, author).catch(() => current);
   }
 
+  async #requireReleaseReadable(node: AppNodePorts, release: AppReleaseMeta): Promise<void> {
+    // Кэш хранит текст; право на конкретную публикацию и её сумму подтверждает Mnemos сейчас.
+    const ticket = await node.version(release.version).catch((error: unknown) => {
+      if (isSetupFailure(error) || isVersionDenied(error)) throw error;
+      logVersionFailure("version", error);
+      return null;
+    });
+    if (!ticket || ticket.sha256 !== release.sha256 || ticket.contentType !== GADGET_APP_MIME) throw new Error(APP_VERSION_UNAVAILABLE);
+  }
+
   /** Доступ к оригиналу копии правами владельца копии и версия для копий. */
   async #reachOrigin(origin: AppOrigin): Promise<{ state: "open" | "closed" | "unknown"; release: AppReleaseMeta | null }> {
     const node = this.ports.node(origin.project, origin.node);
@@ -394,6 +404,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     const stored = await this.#releaseObject(this.identity).releaseText();
     if (!stored) throw new Error(APP_NO_RELEASE);
     const { release, text } = stored;
+    await this.#requireReleaseReadable(this.ports, release);
     const title = parseGadgetAppText(text).document.manifest.title;
     const created = await this.ports.createApp(scope, copyNodeName(title), text);
     // Ключ экземпляра копии — из ответа Mnemos о праве на новый узел, как при любом открытии.
@@ -437,6 +448,7 @@ export class MnemosAppConnectionImpl extends RpcTarget implements MnemosAppConne
     const stored = await this.#releaseObject(origin).releaseText();
     // Ставится ровно та версия, которую человек видел в шапке.
     if (!stored || stored.release.version !== version) throw new Error(APP_UPDATE_CHANGED);
+    await this.#requireReleaseReadable(this.ports.node(origin.project, origin.node), stored.release);
     // Пишется только свой узел копии; оригинал только читается.
     const head = await this.ports.saveApp(this.identity.project, this.identity.node, stored.text);
     const next = `private:${head}`;
