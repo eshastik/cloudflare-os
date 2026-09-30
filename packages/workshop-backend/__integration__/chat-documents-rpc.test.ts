@@ -86,13 +86,14 @@ it('документ беседы: билет, узел в проекте или
 
   // Хост пускает агента беседы читать только её вложения (ADR 0010), не другие узлы человека.
   const stub = exports.OverseerDurableObject.get(exports.OverseerDurableObject.idFromString((await workspace.getMetadata()).id));
-  type Grants = {impl: {authorizeChatDocument(caller: unknown, project: string, node: string): void}};
-  const allowed = (project: string, node: string, chatId = chat) => runInDurableObject(stub, (instance: unknown) => {
-    try { (instance as Grants).impl.authorizeChatDocument({from: 'agent', chatId}, project, node); return true; } catch { return false; }
+  type Grants = {impl: {authorizeChatDocument(caller: unknown, project: string, node: string, accountId: number): void}};
+  const allowed = (project: string, node: string, chatId = chat, accountId = 3) => runInDurableObject(stub, (instance: unknown) => {
+    try { (instance as Grants).impl.authorizeChatDocument({from: 'agent', chatId}, project, node, accountId); return true; } catch { return false; }
   });
   expect(await allowed('project-a', 'node-project-a')).toBe(true);
   expect(await allowed('project-a', 'node-other')).toBe(false);
   expect(await allowed('project-a', 'node-project-a', chat + 1000)).toBe(false);
+  expect(await allowed('project-a', 'node-project-a', chat, 4)).toBe(false);
 
   const moved = await workspace.moveChatDocument(chat, uploaded.id, 'project-b');
   expect(moved).toMatchObject({projectId: 'project-b', projectTitle: 'Склад', personal: false, resource: 'moved-1'});
@@ -117,4 +118,3 @@ it('документ беседы: билет, узел в проекте или
   // Файлы не проходили через соединение беседы: всё отправленное клиентом меньше одного файла.
   expect(sent).toBeLessThan(SIZE / 10);
 });
-

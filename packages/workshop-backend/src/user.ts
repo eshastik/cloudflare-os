@@ -2370,7 +2370,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   /** Есть ли подключение, из которого беседа может брать проекты; без обращения к самим подключениям. */
   async hasChatProjectSource(): Promise<boolean> {
     for (const record of this.storage.connectedAccounts.list()) {
-      if (areCredentialsValid(record) && record.description?.providesUi) return true;
+      if (record.vendorId === MNEMOS_VENDOR_ID && areCredentialsValid(record) && record.description?.providesUi) return true;
     }
     return false;
   }
@@ -2431,12 +2431,15 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   /** Подключение памяти для документа из беседы: названное, иначе первое действующее, которое это умеет. */
   #chatDocumentAccount(accountId: number | null): {id: number; account: GatekeeperUser} {
     if (accountId !== null) {
+      if (this.storage.connectedAccounts.get(accountId)?.vendorId !== MNEMOS_VENDOR_ID) {
+        throw new Error("Подключение Mnemos недоступно.");
+      }
       const account = this.#codeWorkAccount(accountId) as unknown as GatekeeperUser;
       if (!account.beginChatDocument) throw new Error("подключение Mnemos не умеет принимать файлы из беседы — обновите его");
       return {id: accountId, account};
     }
     for (const record of [...this.storage.connectedAccounts.list()]) {
-      if (!areCredentialsValid(record) || !record.description?.providesUi) continue;
+      if (record.vendorId !== MNEMOS_VENDOR_ID || !areCredentialsValid(record) || !record.description?.providesUi) continue;
       // Метод на стабе RPC есть всегда; наличие проверяет сам вызов, отказ — понятной ошибкой ниже.
       return {id: record.id, account: record.account as unknown as GatekeeperUser};
     }

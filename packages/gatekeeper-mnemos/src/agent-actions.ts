@@ -415,7 +415,13 @@ export async function executeAgentAction(session: AgentActionSession, kind: Agen
     }
     case "move_file": {
       const moved = await moveChatDocument(session, str(r, "project"), str(r, "node"), str(r, "target"), str(r, "request"));
-      return { summary: `Файл «${moved.name}» перенесён в проект «${str(r, "targetName")}»${moved.notified ? "" : " (уведомление не поставлено)"}` };
+      return {
+        summary: `Файл «${moved.name}» перенесён в проект «${str(r, "targetName")}»${moved.notified ? "" : " (уведомление не поставлено)"}`,
+        chatDocumentMove: {
+          from: {projectId: str(r, "project"), resource: str(r, "node")},
+          to: {projectId: moved.project, resource: moved.resource, name: moved.name, projectTitle: str(r, "targetName")},
+        },
+      };
     }
     case "request_review": {
       const project = str(r, "project"), state = await session.draftState(project);

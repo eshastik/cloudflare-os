@@ -2002,6 +2002,11 @@ export type ActionCardOpen = {
 export type ActionOutcome = {
   summary: string;
   url?: string;
+  /** Подтверждённый перенос документа: обновляет существующие вложения этого подключения. */
+  chatDocumentMove?: {
+    from: {projectId: string; resource: string};
+    to: {projectId: string; resource: string; name: string; projectTitle: string};
+  };
 };
 
 // Describes a registered hook, for display purposes (e.g. so the user can see what hooks are

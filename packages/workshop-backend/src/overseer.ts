@@ -785,6 +785,10 @@ async function computeSessionAffinity(gadgetId: string, chatId: number): Promise
   return new Uint8Array(hash).toHex();
 }
 
+function actionMoveIdentifier(part: unknown): part is string {
+  return typeof part === "string" && !!part.trim() && part.length <= 255;
+}
+
 /** Итог от ресурса попадает в ленту и в подсказку агенту: только короткий текст и https-ссылка. */
 export function checkedActionOutcome(value: unknown): ActionOutcome | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -793,6 +797,16 @@ export function checkedActionOutcome(value: unknown): ActionOutcome | undefined 
   let result: ActionOutcome = {summary: summary.trim().slice(0, 500)};
   if (typeof url === "string" && url.length <= 2048) {
     try { if (new URL(url).protocol === "https:") result.url = url; } catch { /* ссылка отбрасывается */ }
+  }
+  let move = (value as ActionOutcome).chatDocumentMove;
+  if (move && typeof move === "object" && move.from && move.to &&
+      actionMoveIdentifier(move.from.projectId) && actionMoveIdentifier(move.from.resource) &&
+      actionMoveIdentifier(move.to.projectId) && actionMoveIdentifier(move.to.resource) && actionMoveIdentifier(move.to.name) &&
+      typeof move.to.projectTitle === "string" && move.to.projectTitle.length <= 300) {
+    result.chatDocumentMove = {
+      from: {projectId: move.from.projectId, resource: move.from.resource},
+      to: {projectId: move.to.projectId, resource: move.to.resource, name: move.to.name, projectTitle: move.to.projectTitle},
+    };
   }
   return result;
 }
@@ -2827,8 +2841,16 @@ class OverseerImpl implements AgentHooks {
     if (record.description.ownerApprovalRequired && (autoApproved || !approvedByOwner || this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type !== "ambient")) {
       throw new Error("Это действие должен подтвердить владелец разговора.");
     }
+    let binding = this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec;
     let gatekeeper = this.getGatekeeperFacet(record.gatekeeperId);
     let outcome = checkedActionOutcome(await gatekeeper.applyAction(record.action));
+    let currentBinding = this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec;
+    if (outcome?.chatDocumentMove && binding?.type === "ambient" && binding.vendorId === "mnemos" &&
+        currentBinding?.type === "ambient" && currentBinding.vendorId === binding.vendorId && currentBinding.accountId === binding.accountId &&
+        record.description.ownerApprovalRequired && approvedByOwner && !autoApproved &&
+        record.description.actionKind?.tag === "mnemos.move_file") {
+      this.relocateChatDocument(binding.accountId, outcome.chatDocumentMove);
+    }
     if (outcome) record.outcome = outcome;
     record.state = "approved";
     record.appliedAt = new Date();
@@ -3278,11 +3300,14 @@ class OverseerImpl implements AgentHooks {
   // Чтение файла из беседы агентом: только документы, прикреплённые в этой же беседе. Любой другой
   // узел — отказ, даже если человеку он доступен: подложенная в файл инструкция не выведет агента
   // за пределы его области.
-  authorizeChatDocument(caller: GatekeeperCaller, project: string, node: string): void {
+  authorizeChatDocument(caller: GatekeeperCaller, project: string, node: string, accountId: number): void {
     // Только агент беседы: гаджет, открытый в беседе, прочитал бы её вложения правами человека.
     let chatId = caller.from === "agent" ? caller.chatId : undefined;
-    if (chatId === undefined || typeof project !== "string" || typeof node !== "string" ||
-        !this.storage.chatDocumentGrants.get(chatDocumentGrantKey(chatId, project, node))) {
+    if (chatId === undefined || !Number.isSafeInteger(accountId) || typeof project !== "string" || typeof node !== "string" ||
+        !this.storage.chatDocumentGrants.get(chatDocumentGrantKey(chatId, project, node)) ||
+        !Array.from(this.storage.chatAttachmentContent.list()).some(content => content.state.type === "committed" &&
+          content.state.chatId === chatId && content.state.document?.accountId === accountId &&
+          content.state.document.projectId === project && content.state.document.resource === node)) {
       throw new Error("Это не файл, прикреплённый в этой беседе: читать его так нельзя. Для остальных документов — search() и readDocument().");
     }
   }
@@ -3291,6 +3316,31 @@ class OverseerImpl implements AgentHooks {
   getChatAttachmentDocument(id: string): ChatDocumentRef | undefined {
     let content = this.storage.chatAttachmentContent.get(validateChatAttachmentId(id));
     return content?.state.document;
+  }
+
+  relocateChatDocument(accountId: number, move: NonNullable<ActionOutcome["chatDocumentMove"]>): void {
+    this.ctx.storage.transactionSync(() => {
+      for (let content of Array.from(this.storage.chatAttachmentContent.list())) {
+        let document = content.state.document;
+        if (content.state.type !== "committed" || !document || document.accountId !== accountId ||
+            document.projectId !== move.from.projectId || document.resource !== move.from.resource) continue;
+        let chatId = content.state.chatId;
+        let next: ChatDocumentRef = {...document, projectId: move.to.projectId, projectTitle: move.to.projectTitle,
+          resource: move.to.resource, name: move.to.name, personal: false};
+        this.storage.chatAttachmentContent.put({...content, state: {...content.state, document: next}});
+        let oldGrant = chatDocumentGrantKey(chatId, document.projectId, document.resource);
+        if (this.storage.chatDocumentGrants.get(oldGrant)) {
+          // Старый ключ общий для подключений. Он нужен оставшемуся
+          // вложению другой организации с теми же project/node.
+          if (!Array.from(this.storage.chatAttachmentContent.list()).some(other => other.state.type === "committed" &&
+              other.state.chatId === chatId && other.state.document?.projectId === document.projectId &&
+              other.state.document.resource === document.resource)) {
+            this.storage.chatDocumentGrants.delete(oldGrant);
+          }
+          this.grantChatDocument(chatId, next);
+        }
+      }
+    });
   }
 
   async getChatAttachmentData(chatId: number, id: string): Promise<Uint8Array> {
@@ -9335,10 +9385,11 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       personal: false, resource: moved.resource, name: moved.name};
     // Запись перечитывается: за время переноса её могли удалить вместе с беседой.
     let latest = this.impl.storage.chatAttachmentContent.get(id);
-    if (latest && latest.state.type === "committed") {
-      this.impl.storage.chatAttachmentContent.put({...latest, state: {...latest.state, document: next}});
-      this.impl.storage.chatDocumentGrants.delete(chatDocumentGrantKey(chatId, document.projectId, document.resource));
-      this.impl.grantChatDocument(chatId, next);
+    if (latest?.state.type === "committed" && latest.state.chatId === chatId) {
+      this.impl.relocateChatDocument(document.accountId, {
+        from: {projectId: document.projectId, resource: document.resource},
+        to: {projectId: next.projectId, resource: next.resource, name: next.name, projectTitle: next.projectTitle},
+      });
     }
     return next;
   }
@@ -11167,7 +11218,9 @@ class ApprovalQueueImpl extends RpcTarget implements ApprovalQueue {
   }
 
   async authorizeChatDocument(project: string, node: string): Promise<void> {
-    this.impl.authorizeChatDocument(this.caller, project, node);
+    let binding = this.impl.storage.gatekeepers.get(this.gatekeeperId)?.creationSpec;
+    if (binding?.type !== "ambient" || binding.vendorId !== "mnemos") throw new Error("Подключение Mnemos недоступно.");
+    this.impl.authorizeChatDocument(this.caller, project, node, binding.accountId);
   }
 
   bindHook<Hook extends RpcTarget>(

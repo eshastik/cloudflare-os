@@ -216,6 +216,10 @@ test("действие агента «перенести файл»: карто�
   assert.match(String(prepared.resolved.request), /^move-[0-9a-f-]{36}$/);
   const outcome = await executeAgentAction(s, "move_file", prepared.resolved);
   assert.equal(outcome.summary, "Файл «Отчёт.docx» перенесён в проект «Стройка»");
+  assert.deepEqual(outcome.chatDocumentMove, {
+    from: {projectId: "p-personal", resource: "n1"},
+    to: {projectId: "p-team", resource: "moved-1", name: "Отчёт.docx", projectTitle: "Стройка"},
+  });
   assert.deepEqual(transfers, [["p-personal", "n1", "p-team", HEAD]]);
   await assert.rejects(prepareAgentAction(s, scope, checkedAgentAction({ kind: "move_file", project: "Стройка", document: "Отчёт", target: "Стройка" })), /уже в проекте/);
   // Ревью 29.09: проект вне области агента не отдаёт ему даже имена личных документов.
