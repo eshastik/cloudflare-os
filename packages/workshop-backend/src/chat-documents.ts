@@ -6,8 +6,8 @@
 import type {AiChatMetadata, ChatAttachmentProjectSave, ChatDocumentRef, ChatDocumentUploadRequest} from "@gadgets/workshop-shared/api";
 import {mnemosProjectForChat} from "./native-mnemos-binding";
 
-/** Тот же потолок, что у приёма Mnemos: файл идёт одной выгрузкой, тело сервер читает целиком. */
-export const MAX_CHAT_DOCUMENT_BYTES = 64 * 1024 * 1024;
+/** Протокольный предел прямой загрузки одним PUT; тело читает потоковый импорт ядра. */
+export const MAX_CHAT_DOCUMENT_BYTES = 5 * 1024 * 1024 * 1024;
 
 const OFFICE_TYPES: Record<string, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -45,7 +45,7 @@ export function checkedChatDocument(file: ChatDocumentUploadRequest): {name: str
   let contentType = chatDocumentContentType(file.mimeType, name);
   if (!contentType) throw new Error("Этот файл нельзя прикрепить как документ.");
   if (!Number.isSafeInteger(file.size) || file.size <= 0) throw new Error("Файл пустой.");
-  if (file.size > MAX_CHAT_DOCUMENT_BYTES) throw new Error("Документ больше 64 МБ: столько Mnemos за один раз не принимает.");
+  if (file.size > MAX_CHAT_DOCUMENT_BYTES) throw new Error("Прямая загрузка одним PUT ограничена 5 ГиБ.");
   if (typeof file.checksum !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(file.checksum)) throw new Error("Неверная контрольная сумма файла.");
   return {name, contentType, size: file.size, checksum: file.checksum};
 }

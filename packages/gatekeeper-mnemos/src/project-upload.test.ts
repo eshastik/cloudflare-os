@@ -31,3 +31,16 @@ test("Отказ проекта не превращается в приём бе
   assert.throws(() => api.beginProjectUpload("project", 64 * 1024 * 1024 + 1, "a".repeat(43) + "="));
   assert.equal(requests, 1);
 });
+
+
+test("PDF больше 100 МиБ запрашивает потоковую загрузку личного документа", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const api = new MnemosAPI("https://memory.example", async () => "token", async (_url, init) => {
+    calls.push(JSON.parse(String(init?.body)));
+    return Response.json({upload_id: "ticket"});
+  });
+  await api.beginProjectUpload("project", 200 * 1024 * 1024, "a".repeat(43) + "=", undefined, "draft");
+  assert.deepEqual(calls, [{project_id: "project", size_bytes: 200 * 1024 * 1024, checksum_sha256: "a".repeat(43) + "=", purpose: "draft"}]);
+  assert.throws(() => api.beginProjectUpload("project", 5 * 1024 * 1024 * 1024 + 1, "a".repeat(43) + "=", undefined, "draft"));
+  assert.equal(calls.length, 1);
+});

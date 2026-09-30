@@ -674,16 +674,16 @@ export class MnemosAPI {
   beginImportUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
     return this.#beginUpload(projectId, size, checksum, 16 * 1024 * 1024, signal);
   }
-  beginProjectUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
-    return this.#beginUpload(projectId, size, checksum, 64 * 1024 * 1024, signal);
+  beginProjectUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal, purpose?: "draft"): Promise<UploadTicket> {
+    return this.#beginUpload(projectId, size, checksum, purpose === "draft" ? 5 * 1024 * 1024 * 1024 : 64 * 1024 * 1024, signal, purpose);
   }
   beginNativeUpload(projectId: string, size: number, checksum: string, signal?: AbortSignal): Promise<UploadTicket> {
     return this.#beginUpload(projectId, size, checksum, 4 * 1024 * 1024, signal);
   }
-  #beginUpload(projectId: string, size: number, checksum: string, maxBytes: number, signal?: AbortSignal): Promise<UploadTicket> {
+  #beginUpload(projectId: string, size: number, checksum: string, maxBytes: number, signal?: AbortSignal, purpose?: "draft"): Promise<UploadTicket> {
     segment(projectId);
     if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes || typeof checksum !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(checksum)) throw new MnemosAPIError(400);
-    return this.#request("/v1/uploads", "POST", signal, { project_id: projectId, size_bytes: size, checksum_sha256: checksum });
+    return this.#request("/v1/uploads", "POST", signal, { project_id: projectId, size_bytes: size, checksum_sha256: checksum, purpose });
   }
   searchProject(projectId: string, query: string, limit = 20, signal?: AbortSignal): Promise<ProjectSearchPage> {
     segment(projectId);

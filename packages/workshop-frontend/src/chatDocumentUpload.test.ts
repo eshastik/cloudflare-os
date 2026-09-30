@@ -134,3 +134,20 @@ describe('без подключённого Mnemos', () => {
     expect(calls.filter(c => c.method === 'uploadChatAttachment').length).toBe(1)
   })
 })
+
+
+describe('PDF больше 100 МиБ', () => {
+  it('вычисляет сумму потоком и передаёт File напрямую в PUT', async () => {
+    const chunk = new Uint8Array(1024 * 1024)
+    const file = new File(Array.from({ length: 101 }, () => chunk), 'large.pdf', { type: 'application/pdf' })
+    vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('чтение целиком запрещено'))
+    const { overseer } = fakeOverseer()
+    const send = vi.fn<typeof fetch>(async () => new Response(null, { status: 200 }))
+    await uploadChatDocument(overseer, file, { send: send as unknown as typeof fetch })
+    expect(overseer.beginChatDocumentUpload.mock.calls[0][0].size).toBe(101 * 1024 * 1024)
+    expect(overseer.beginChatDocumentUpload.mock.calls[0][0].checksum).toBe('8XU6A0u9JulFiSGxIcMtR1C59+Xvitu7M33Mlig+9Ao=')
+    expect(file.arrayBuffer).not.toHaveBeenCalled()
+    expect((send.mock.calls[0] as unknown as [string, RequestInit])[1].body).toBe(file)
+    expect(overseer.finishChatDocumentUpload).toHaveBeenCalledTimes(1)
+  })
+})

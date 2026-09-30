@@ -18,8 +18,8 @@ export const CHAT_DOCUMENT_CONTENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "text/plain", "text/markdown", "text/csv", "application/json",
 ]);
-/** Тот же потолок, что у приёма Mnemos: одна выгрузка, тело сервер читает целиком (частями выгрузка пока не идёт). */
-export const MAX_CHAT_DOCUMENT_BYTES = 64 * 1024 * 1024;
+/** Предел S3 для прямой загрузки одним PUT. */
+export const MAX_CHAT_DOCUMENT_BYTES = 5 * 1024 * 1024 * 1024;
 export const PERSONAL_SPACE_NAME = "Личное пространство";
 const MAX_NAME_PAGES = 5;
 const TEXT_PART_BYTES = 48 * 1024;
@@ -92,7 +92,7 @@ export function validChatDocumentFile(file: unknown): file is ChatDocumentFile {
 export async function beginChatDocument(api: ChatDocumentAPI, storageOrigin: string, project: string, file: ChatDocumentFile): Promise<UploadTicket> {
   if (!validChatDocumentFile(file)) throw new Error("файл этого вида в Mnemos из беседы не кладётся");
   let ticket: UploadTicket;
-  try { ticket = await api.beginProjectUpload(project, file.size, file.checksum); }
+  try { ticket = await api.beginProjectUpload(project, file.size, file.checksum, "draft"); }
   catch (error) { throw describeFailure(error); }
   const url = new URL(ticket.url), origin = new URL(storageOrigin);
   if (origin.protocol !== "https:" || origin.origin !== storageOrigin || url.origin !== origin.origin || url.username || url.password || url.hash ||

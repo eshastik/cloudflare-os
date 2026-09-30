@@ -583,9 +583,9 @@ export class MnemosAccountSession {
     if (!identity.capabilities?.includes("project.create")) throw new MnemosAPIError(403);
   }
   async beginInboxUpload(size: number, checksum: string) {await this.requireIntakeManager();const result=await this.#client.beginInboxUpload(size,checksum,this.#lifetime.signal);this.#check();return result;}
-  async beginProjectUpload(projectId: string, size: number, checksum: string) {
+  async beginProjectUpload(projectId: string, size: number, checksum: string, purpose?: "draft") {
     this.#check();
-    const ticket = await this.#client.beginProjectUpload(projectId, size, checksum, this.#lifetime.signal);
+    const ticket = await this.#client.beginProjectUpload(projectId, size, checksum, this.#lifetime.signal, purpose);
     this.#check();
     return ticket;
   }

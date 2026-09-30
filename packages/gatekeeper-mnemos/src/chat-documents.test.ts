@@ -28,8 +28,8 @@ function session(opts: { names?: string[]; projects?: Project[]; create?: ChatDo
   const api = {
     async openDraft(project: string) { calls.push(["openDraft", project]); return { head: HEAD }; },
     async listPrivateDocuments(project: string) { calls.push(["list", project]); return { documents: (opts.names ?? []).map((name, i) => ({ node_id: `n${i}`, name, content_type: DOCX, conflicted: false })), head: HEAD, next_cursor: "" }; },
-    async beginProjectUpload(project: string, size: number, checksum: string) {
-      calls.push(["ticket", project, size]);
+    async beginProjectUpload(project: string, size: number, checksum: string, purpose?: "draft") {
+      calls.push(["ticket", project, size, purpose]);
       return { upload_id: "up-1", url: opts.ticketUrl ?? STORAGE + "/b/o?sig=1", method: "PUT", checksum_header: "x-amz-checksum-sha256", checksum_value: checksum, content_length: size };
     },
     createPrivateDocument: opts.create ?? (async (project: string, request: { request_id: string }) => {
@@ -122,12 +122,12 @@ test("билет выгрузки: только адрес хранилища у
   const ticket = await beginChatDocument(ok.api, STORAGE, "p", file);
   assert.equal(ticket.upload_id, "up-1");
   assert.equal(ticket.checksum_value, CHECKSUM);
-  assert.deepEqual(ok.calls[0], ["ticket", "p", 7]);
+  assert.deepEqual(ok.calls[0], ["ticket", "p", 7, "draft"]);
 
   const foreign = session({ ticketUrl: "https://evil.example/b/o" });
   await assert.rejects(beginChatDocument(foreign.api, STORAGE, "p", file), /неожиданный адрес/);
   await assert.rejects(beginChatDocument(ok.api, STORAGE, "p", { ...file, contentType: "image/png" }), /не кладётся/);
-  await assert.rejects(beginChatDocument(ok.api, STORAGE, "p", { ...file, size: 64 * 1024 * 1024 + 1 }), /не кладётся/);
+  await assert.rejects(beginChatDocument(ok.api, STORAGE, "p", { ...file, size: 5 * 1024 * 1024 * 1024 + 1 }), /не кладётся/);
 });
 
 test("узел из выгруженного файла: личная версия с исходным видом, повтор не создаёт второй", async () => {

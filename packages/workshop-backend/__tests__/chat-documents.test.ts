@@ -28,10 +28,10 @@ describe("вид документа беседы", () => {
 });
 
 describe("описание документа для билета", () => {
-  it("предел — как у приёма Mnemos, 64 МБ; пустой файл и неверная сумма отвергаются", () => {
-    expect(checkedChatDocument({name: " Отчёт.docx ", mimeType: DOCX, size: 64 * 1024 * 1024, checksum: CHECKSUM}))
-      .toEqual({name: "Отчёт.docx", contentType: DOCX, size: 64 * 1024 * 1024, checksum: CHECKSUM});
-    expect(() => checkedChatDocument({name: "a.pdf", mimeType: "application/pdf", size: 64 * 1024 * 1024 + 1, checksum: CHECKSUM})).toThrow(/64 МБ/);
+  it("PDF больше 100 МиБ принимается; предел одного PUT — 5 ГиБ; пустой файл и неверная сумма отвергаются", () => {
+    expect(checkedChatDocument({name: " Отчёт.docx ", mimeType: DOCX, size: 200 * 1024 * 1024, checksum: CHECKSUM}))
+      .toEqual({name: "Отчёт.docx", contentType: DOCX, size: 200 * 1024 * 1024, checksum: CHECKSUM});
+    expect(() => checkedChatDocument({name: "a.pdf", mimeType: "application/pdf", size: 5 * 1024 * 1024 * 1024 + 1, checksum: CHECKSUM})).toThrow(/5 ГиБ/);
     expect(() => checkedChatDocument({name: "a.pdf", mimeType: "application/pdf", size: 0, checksum: CHECKSUM})).toThrow(/пустой/);
     expect(() => checkedChatDocument({name: "a.pdf", mimeType: "application/pdf", size: 5, checksum: "abc"})).toThrow(/сумма/);
     expect(() => checkedChatDocument({name: "фото.png", mimeType: "image/png", size: 5, checksum: CHECKSUM})).toThrow(/нельзя прикрепить как документ/);

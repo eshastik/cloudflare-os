@@ -3,7 +3,7 @@
 // сообщения, и предел у них свой — как у приёма Mnemos.
 
 export const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
-export const MAX_CHAT_DOCUMENT_BYTES = 64 * 1024 * 1024;
+export const MAX_CHAT_DOCUMENT_BYTES = 5 * 1024 * 1024 * 1024;
 
 const OFFICE_TYPES: Record<string, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

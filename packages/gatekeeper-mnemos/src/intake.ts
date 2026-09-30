@@ -35,16 +35,16 @@ export function checkedIntakeSubmit(uploadId:string,sourcePath:string,modifiedAt
  return {upload_id:uploadId,source_path:sourcePath,marks:parts.some(p=>p.startsWith("."))?["hidden"]:[],...(modifiedAt===undefined?{}:{modified_at:new Date(modifiedAt).toISOString()})};
 }
 /** Исполняется в доверенном браузере: содержимое файла уходит только по подписанному URL. */
-export async function uploadIntakeFile(file:File,begin:(size:number,checksum:string)=>Promise<IntakeUploadTicket>,send:typeof fetch=fetch):Promise<string> {
- if(file.size>64*1024*1024) throw Error("Файл больше 64 МБ: текущая приёмная не может обработать его целиком");
- const digest=new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer()));
+export async function uploadIntakeFile(file:File,begin:(size:number,checksum:string)=>Promise<IntakeUploadTicket>,send:typeof fetch=fetch, options: {maxBytes?:number;digest?:(file:File)=>Promise<Uint8Array>}={}):Promise<string> {
+ if(file.size>(options.maxBytes??64*1024*1024)) throw Error("Файл больше 64 МБ: текущая приёмная не может обработать его целиком");
+ const digest=options.digest?await options.digest(file):new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer()));
  const checksum=btoa(String.fromCharCode(...digest));
  const ticket=await begin(file.size,checksum);
  const url=new URL(ticket.url);
  if(url.protocol!=="https:" && !(url.protocol==="http:" && ["127.0.0.1","localhost","[::1]"].includes(url.hostname))) throw Error("Небезопасный адрес хранилища");
  if(ticket.method!=="PUT" || ticket.content_length!==file.size || ticket.checksum_value!==checksum || ticket.checksum_header.toLowerCase()!=="x-amz-checksum-sha256" || !ticket.upload_id) throw Error("Билет загрузки не соответствует файлу");
- const options = {method:"PUT",body:file,headers:{[ticket.checksum_header]:checksum},credentials:"omit" as const,redirect:"error" as const,referrerPolicy:"no-referrer" as const};
- const response=await send(ticket.url,options);
+ const requestOptions = {method:"PUT",body:file,headers:{[ticket.checksum_header]:checksum},credentials:"omit" as const,redirect:"error" as const,referrerPolicy:"no-referrer" as const};
+ const response=await send(ticket.url,requestOptions);
  if(!response.ok) throw Error("Хранилище не приняло файл. Повторите загрузку");
  return ticket.upload_id;
 }
