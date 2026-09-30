@@ -131,13 +131,14 @@ describe("гаджет через агента кода", () => {
     setPages([{events: [role(1, "a")], state: "idle"}]);
     await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "Учёт отпусков", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
     expect(meta().gadgetWork?.gadget?.resource).toBe("node-7");
-    // Ключ агента не обновлялся — служба остановила задачу.
-    h.putChatMeta({...meta(), gadgetWork: {...meta().gadgetWork!, state: "stopped"}});
+    // Контейнер уже удалён, но беседа ещё хранит idle предыдущего хода.
+    expect(meta().gadgetWork?.state).toBe("idle");
     const steps: string[] = [];
     h.emit = (_id, event) => { if (event.type === "toolStep") steps.push(event.step.title); };
-    setPages([{events: [role(2, "b")], state: "idle"}]);
+    setPages([{events: [], state: "stopped"}, {events: [role(2, "b")], state: "idle"}]);
     const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "Добавь поле «замещающий»", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
     expect(starts).toEqual([undefined, {resource: "node-7"}]);
+    expect(calls.some(c => c[0] === "message")).toBe(false);
     expect(calls.filter(c => c[0] === "save").at(-1)).toEqual(["save", 3, "hr", "g2", "node-7"]);
     expect(out.gadget).toMatchObject({saved: true, resource: "node-7", created: false});
     expect(meta().gadgetWork).toMatchObject({taskId: "g2", gadget: {resource: "node-7", head: HEAD2}});

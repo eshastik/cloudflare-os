@@ -339,6 +339,12 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let slot: "codeWork" | "gadgetWork" = gadget ? "gadgetWork" : "codeWork";
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
   let work = meta[slot];
+  if (gadget && work?.gadget && codeWorkAlive(work.state) && !request.newGadget &&
+      (!request.projectId || request.projectId === work.projectId || request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase())) {
+    const remote = await user.codeWorkEvents(work.accountId, work.projectId, work.taskId, work.cursor, 0);
+    // Запись беседы переживает контейнер; новую просьбу выполняет новая задача с сохранёнными исходниками.
+    work = {...work, state: remote.state};
+  }
   // Ответы агента и новые аргументы не заменяют новую просьбу человека после сбоя запуска.
   if (gadget && work?.state === "failed" && work.contextSeq !== undefined &&
       !host.chatMessages(request.chatId, work.contextSeq).some(m => m.author.type === "user")) {
