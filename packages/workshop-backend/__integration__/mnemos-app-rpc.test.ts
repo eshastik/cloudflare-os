@@ -314,7 +314,7 @@ it("служебный путь кода не настроен или отказ
   const missing = await connectAs("anna", node, texts, { textError: new Error("Запуск гаджетов не настроен: нет ключа оболочки.") });
   expect(await refused(missing.connection.deploy("event-1"))).toBe("Запуск гаджетов не настроен: нет ключа оболочки.");
   expect(await refused(missing.connection.manifest("event-1"))).toBe("Запуск гаджетов не настроен: нет ключа оболочки.");
-  const denied = await connectAs("anna", node, texts, { textError: new Error("Приложение вам недоступно: нет доступа к этой версии файла.") });
+  const denied = await connectAs("anna", node, texts, { textError: Object.assign(new Error("Приложение вам недоступно: нет доступа к этой версии файла."), { code: "app_version_denied" }) });
   expect(await refused(denied.connection.deploy("event-1"))).toBe("Приложение вам недоступно: нет доступа к этой версии файла.");
   // Прочие сбои (сеть, повреждение) — прежним общим текстом без подробностей.
   const other = await connectAs("anna", node, texts, { textError: new Error("Mnemos request failed") });
@@ -350,4 +350,13 @@ it("предпросмотр личной версии: отдельный эк�
   const solo = new Map([["event-1", gadgetAppText(doc("v1", { collaborative: false }))]]);
   const soloPreview = await connectAs("anna", "node-" + crypto.randomUUID(), solo, { preview: true });
   expect(await refused(soloPreview.connection.deploy("event-1"))).toMatch(/предпросмотр ему не нужен/);
+});
+
+it("код отказа версии сохраняет причину при изменении текста для человека", async () => {
+  const node = "node-" + crypto.randomUUID();
+  const texts = new Map([["event-1", gadgetAppText(doc("v1"))]]);
+  const message = "Владелец отозвал чтение этой сборки.";
+  const denied = await connectAs("anna", node, texts, { textError: Object.assign(new Error(message), { code: "app_version_denied" }) });
+  expect(await refused(denied.connection.deploy("event-1"))).toBe(message);
+  expect(await refused(denied.connection.manifest("event-1"))).toBe(message);
 });

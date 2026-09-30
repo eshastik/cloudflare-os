@@ -15,6 +15,19 @@ export const GADGET_APP_MIME = "application/vnd.cloudflareos.app+json" as const;
  *  Тело читает только сервер оболочки для запуска; правка — через агента кода. */
 export const APP_CODE_CLOSED = "Код приложения закрыт: платформа не выдаёт его ни странице, ни агенту беседы. Изменить приложение можно через агента кода в беседе." as const;
 
+export const APP_ACCESS_DENIED_CODE = "app_access_denied" as const;
+export const APP_VERSION_DENIED_CODE = "app_version_denied" as const;
+type AppAccessErrorCode = typeof APP_ACCESS_DENIED_CODE | typeof APP_VERSION_DENIED_CODE;
+
+// RPC сохраняет собственное поле code; текст сообщения может меняться независимо от причины.
+export function gadgetAccessError(code: AppAccessErrorCode, message: string): Error & { code: AppAccessErrorCode } {
+  return Object.assign(new Error(message), { code });
+}
+
+export function isGadgetAccessError(error: unknown, code: AppAccessErrorCode): error is Error & { code: AppAccessErrorCode } {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
 /** Разрешения, которые гаджет может запросить в манифесте. `directory` — справочник людей и отделов. */
 export const GADGET_APP_PERMISSIONS = ["directory"] as const;
 export type GadgetAppPermission = typeof GADGET_APP_PERMISSIONS[number];

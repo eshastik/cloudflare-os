@@ -3,7 +3,7 @@
 // участник проекта с правом записи) и общая версия проекта (отдел или организация читают
 // опубликованное). Каждый ответ — от Mnemos сессией самого человека; здесь только сведение.
 
-import { APP_CODE_CLOSED } from "@gadgets/workshop-shared/gadget-app";
+import { APP_ACCESS_DENIED_CODE, APP_CODE_CLOSED, gadgetAccessError } from "@gadgets/workshop-shared/gadget-app";
 import { HISTORY_PREPARING } from "./history-preparing.ts";
 import { MnemosAPIError, type DraftDocument, type InvitedDocumentPage, type NodeHistoryPage, type OrgUnit, type SharedDocument, type WhoAmI } from "./mnemos-api.ts";
 
@@ -40,7 +40,7 @@ const expected = (error: unknown, statuses: number[]) => error instanceof Mnemos
  * при открытии документа), а имя и организация читаются. Нет доступа — ошибка APP_ACCESS_DENIED.
  */
 export async function appAccess(session: AppAccessSession, project: string, node: string, opening: boolean): Promise<AppAccess> {
-  if (typeof project !== "string" || typeof node !== "string" || !project || !node || project.length > 255 || node.length > 255) throw new Error(APP_ACCESS_DENIED);
+  if (typeof project !== "string" || typeof node !== "string" || !project || !node || project.length > 255 || node.length > 255) throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
   const identity = await session.whoAmI();
   const principal = identity.subject.user_id;
   const tenant = opening ? identity.subject.tenant_id : "";
@@ -55,9 +55,9 @@ export async function appAccess(session: AppAccessSession, project: string, node
   // 1. Приглашение к узлу: право — из «Поделились с вами» (правка или чтение).
   const invited = (await session.listInvitedDocuments(project, "", node)).documents;
   if (invited.length) {
-    if (invited.length !== 1 || invited[0].content_type !== APP_MIME) throw new Error(APP_ACCESS_DENIED);
+    if (invited.length !== 1 || invited[0].content_type !== APP_MIME) throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
     const shared = (await session.listSharedDocuments()).find(d => d.project_id === project && d.node_id === node && d.owner_id === invited[0].owner_id);
-    if (!shared) throw new Error(APP_ACCESS_DENIED);
+    if (!shared) throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
     return { access: shared.mode === "write" ? "edit" : "read", principal, tenant, name: await name(), project: shared.project_id, node: invited[0].node_id };
   }
 
@@ -71,7 +71,7 @@ export async function appAccess(session: AppAccessSession, project: string, node
   catch (error) { if (!expected(error, [403, 404])) throw error; }
   if (draft?.exists && !draft.conflicted && draft.content_type === APP_MIME) {
     const canonical = await canonicalProject();
-    if (!canonical) throw new Error(APP_ACCESS_DENIED);
+    if (!canonical) throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
     return { access: "edit", principal, tenant, name: await name(), project: canonical, node: draft.node_id };
   }
 
@@ -82,11 +82,11 @@ export async function appAccess(session: AppAccessSession, project: string, node
   const last = history?.events[0];
   if (last?.exists && last.content_type === APP_MIME) {
     const canonical = await canonicalProject();
-    if (!canonical) throw new Error(APP_ACCESS_DENIED);
+    if (!canonical) throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
     // История узла не называет узел: Mnemos нашёл его ровно по этому опознавателю.
     return { access: "read", principal, tenant, name: await name(), project: canonical, node };
   }
-  throw new Error(APP_ACCESS_DENIED);
+  throw gadgetAccessError(APP_ACCESS_DENIED_CODE, APP_ACCESS_DENIED);
 }
 
 /** Справочник для приложения: отделы и люди из них, только имена (как в «Поделиться»). */

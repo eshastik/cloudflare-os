@@ -7,7 +7,7 @@ import { gadgetAppSha256, gadgetAppText, type GadgetAppDocument } from "@gadgets
 import type { GatekeeperAppAccess } from "@gadgets/workshop-shared/gatekeeper";
 import { expect, it } from "vitest";
 import {
-  APP_COPY_REQUIRED, APP_NO_RELEASE, APP_ORIGIN_CLOSED, APP_UPDATE_CHANGED, openMnemosAppConnection,
+  APP_ACCESS_CLOSED, APP_COPY_REQUIRED, APP_NO_RELEASE, APP_ORIGIN_CLOSED, APP_UPDATE_CHANGED, openMnemosAppConnection,
   type AppNodePorts, type AppObjectPort, type MnemosAppPorts,
 } from "../src/mnemos-app-api";
 import { mnemosAppObjectName, mnemosAppReleaseName } from "../src/mnemos-app";
@@ -40,7 +40,7 @@ const hex = (n: number) => n.toString(16).padStart(64, "0");
 type Node = { project: string; owner: string; heads: string[]; texts: Map<string, string>; published: { id: string; recordedAt: string; actor: string }[]; readers: Set<string>; history: Set<string> };
 
 /** Подделка установки Mnemos: несколько людей, узлы в проектах, права как у настоящего моста. */
-function world() {
+function world(denial: () => Error = () => Object.assign(new Error(DENIED), { code: "app_access_denied" })) {
   const nodes = new Map<string, Node>();
   let counter = 0;
   const writes: { principal: string; project: string; node: string }[] = [];
@@ -79,7 +79,7 @@ function world() {
     return {
       access: async opening => {
         const access = right();
-        if (!access) throw new Error(DENIED);
+        if (!access) throw denial();
         return { access, principal, tenant: opening ? "org-1" : "", name: principal, project, node, installation: INSTALLATION } satisfies GatekeeperAppAccess;
       },
       version: async version => { const { sha256, contentType } = await read(version); return { sha256, contentType }; },
@@ -119,8 +119,8 @@ function world() {
 const refused = (promise: Promise<unknown>) => promise.then(() => "принято", (error: Error) => error.message);
 
 /** Автор публикует v1 и открывает приложение: версия для копий записана; Борис приглашён на чтение. */
-async function authored() {
-  const w = world();
+async function authored(denial?: () => Error) {
+  const w = world(denial);
   const project = "anna-" + crypto.randomUUID(), node = w.addNode(project, "app-" + crypto.randomUUID(), "anna");
   const v1 = w.publish(project, node, gadgetAppText(doc("v1")), "anna");
   const author = await w.open("anna", project, node);
@@ -279,5 +279,24 @@ it("«Сделать своей» без доступа к оригиналу: �
   const mine = await w.open("boris", copy.scope, copy.resource);
   w.revoke(project, node, "boris");
   expect(await refused(mine.makeOwn())).toMatch(/закрыл вам доступ к оригиналу/);
+  expect(w.forks).toEqual([]);
+});
+
+it("отзыв права после предложения копии не позволяет взять старый код из кэша", async () => {
+  const { w, project, node, borisProject } = await authored();
+  const original = await w.open("boris", project, node);
+  expect((await original.offer()).release).not.toBeNull();
+  w.revoke(project, node, "boris");
+  expect(await refused(original.makeCopy(borisProject, false))).toBe(APP_ACCESS_CLOSED);
+  expect(w.writes).toEqual([]);
+});
+
+it("код отказа оригинала сохраняет смысл при изменении текста для человека", async () => {
+  const { w, project, node, borisProject } = await authored(() => Object.assign(new Error("Владелец отозвал чтение."), { code: "app_access_denied" }));
+  const copy = await (await w.open("boris", project, node)).makeCopy(borisProject, false);
+  const mine = await w.open("boris", copy.scope, copy.resource);
+  w.revoke(project, node, "boris");
+  expect(await mine.copyState()).toMatchObject({ origin: "closed", update: null });
+  expect(await refused(mine.applyUpdate("event-новый"))).toBe(APP_ORIGIN_CLOSED);
   expect(w.forks).toEqual([]);
 });

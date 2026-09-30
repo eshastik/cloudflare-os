@@ -4,6 +4,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Miniflare } from "miniflare";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { parse } from "jsonc-parser";
+
+const gatekeeperConfig = parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+const backendConfig = parse(readFileSync(new URL("../../workshop-backend/wrangler.jsonc", import.meta.url), "utf8"));
 
 const APP = "application/vnd.cloudflareos.app+json";
 const H = "a".repeat(64), D = "d".repeat(64);
@@ -17,7 +22,7 @@ function fixture({ key = KEY, appCodeRefusal = null } = {}) {
         name: "mnemos", modules: true,
         modulesRules: [{ type: "Text", include: ["**/*.txt"] }],
         scriptPath: fileURLToPath(new URL("../dist/mnemos.js", import.meta.url)),
-        compatibilityDate: "2026-02-02", compatibilityFlags: ["allow_irrevocable_stub_storage", "nodejs_compat"],
+        compatibilityDate: gatekeeperConfig.compatibility_date, compatibilityFlags: gatekeeperConfig.compatibility_flags,
         bindings: { MNEMOS_API_ORIGIN: "https://memory.example", MNEMOS_STORAGE_ORIGIN: "https://objects.example", ...(key ? { MNEMOS_SHELL_KEY: key } : {}) },
         durableObjects: { ACCOUNTS: { className: "UserAccount", useSQLite: true } },
         outboundService: async request => {
@@ -43,7 +48,7 @@ function fixture({ key = KEY, appCodeRefusal = null } = {}) {
         },
       },
       {
-        name: "driver", modules: true, compatibilityDate: "2026-02-02", compatibilityFlags: ["allow_irrevocable_stub_storage", "nodejs_compat"],
+        name: "driver", modules: true, compatibilityDate: backendConfig.compatibility_date, compatibilityFlags: backendConfig.compatibility_flags,
         durableObjects: { ACCOUNTS: { className: "UserAccount", scriptName: "mnemos", useSQLite: true } },
         script: `export default { async fetch(request, env) {
           const account = env.ACCOUNTS.get(env.ACCOUNTS.idFromName("owner"));
@@ -61,8 +66,8 @@ function fixture({ key = KEY, appCodeRefusal = null } = {}) {
             hostText: await refusal(() => host.textDownloads.issuer.issue("project", "app", "private:${H}", 0)),
             hostSelect: await refusal(async () => (await host.nativeDownloads.selector.select("project", "app", "ev")).issue()),
             hostPublication: await refusal(async () => JSON.stringify(await hostTicket("ev"))),
-            hostPublicationTicket: await hostTicket("ev").catch(error => ({ error: error.message })),
-            hostPrivate: await hostTicket("private:${H}").catch(error => ({ error: error.message })),
+            hostPublicationTicket: await hostTicket("ev").catch(error => ({ error: error.message, code: error.code })),
+            hostPrivate: await hostTicket("private:${H}").catch(error => ({ error: error.message, code: error.code })),
             docDraft: (await page.textDownloads.issuer.issue("project", "doc", "${D}", 0)).node_id,
             docNative: (await (await page.nativeDownloads.selector.select("project", "doc", "docev")).issue()).content_type,
           };
@@ -103,6 +108,7 @@ test("app-code: без ключа у gatekeeper и при отказах Mnemos 
     try {
       const out = await run();
       assert.equal(out.hostPublicationTicket.error, expected);
+      assert.equal(out.hostPublicationTicket.code, options.appCodeRefusal?.[1] === "authz.access_denied" ? "app_version_denied" : undefined);
       if (!options.appCodeRefusal) assert.equal(appCodeCalls.length, 0);
     } finally { await mf.dispose(); }
   }

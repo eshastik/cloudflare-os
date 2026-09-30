@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { APP_ACCESS_DENIED_CODE, isGadgetAccessError } from "@gadgets/workshop-shared/gadget-app";
 import { MnemosAPIError } from "./mnemos-api.ts";
 import { APP_ACCESS_DENIED, APP_MIME, appAccess, appDirectory, type AppAccessSession } from "./app-access.ts";
 import { mnemosNodeFormatOfMime } from "@gadgets/workshop-shared/native-document";
@@ -81,4 +82,13 @@ test("ключ экземпляра — из ответа Mnemos: проект �
   await assert.rejects(appAccess(reader.session, "p", "n", true), new RegExp(APP_ACCESS_DENIED));
   const byInvite = await appAccess(session(invited("read")).session, "p", "n", true);
   assert.deepEqual([byInvite.project, byInvite.node], ["p", "n"]);
+});
+
+test("отзыв доступа к приложению передаёт код причины", async () => {
+  const revoked = session({ ...invited("write"), listSharedDocuments: async () => [] });
+  await assert.rejects(appAccess(revoked.session, "p", "n", false), error => {
+    assert.ok(isGadgetAccessError(error, APP_ACCESS_DENIED_CODE));
+    assert.equal(error.message, APP_ACCESS_DENIED);
+    return true;
+  });
 });

@@ -4,6 +4,6 @@
   "main": "src/mnemos.ts",
   "rules": [{"type":"Text","globs":["**/*.txt"],"fallthrough":true}],
   "compatibility_date": "2026-02-02",
-  "compatibility_flags": ["allow_irrevocable_stub_storage", "nodejs_compat"],
+  "compatibility_flags": ["allow_irrevocable_stub_storage", "enhanced_error_serialization", "nodejs_compat"],
   "migrations": [{"tag": "v0", "new_sqlite_classes": ["UserAccount"]}, {"tag": "v1", "new_sqlite_classes": ["MnemosNativeDocumentSource"]}, {"tag": "v2", "new_sqlite_classes": ["TelegramBot"]}, {"tag":"v3","new_sqlite_classes":["TelegramPoller"]}, {"tag":"v4","new_sqlite_classes":["MnemosLibrary"]}, {"tag":"v5","deleted_classes":["TelegramBot","TelegramPoller"]}]
 }

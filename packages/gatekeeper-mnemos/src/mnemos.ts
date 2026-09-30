@@ -58,7 +58,7 @@ import { NativeCreationRecovery } from "./native-creation-recovery.ts";
 import { acknowledgeNotificationPage, decideNotification, prepareNotificationDecision, readNotificationPage, readNotificationSettings, saveNotificationSettings, type NotificationSession } from "./telegram-notifications.ts";
 import { NativeWriteSelector, listNativeDocuments } from "./native-writer.ts";
 import type { NativeDocumentFormat } from "@gadgets/workshop-shared/native-document";
-import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
+import { APP_CODE_CLOSED, APP_VERSION_DENIED_CODE, GADGET_APP_MIME, gadgetAccessError } from "@gadgets/workshop-shared/gadget-app";
 import { appAccess, refuseAppCode } from "./app-access.ts";
 
 import { LoginFlow, type LoginConfig } from "./login-flow.ts";
@@ -1244,7 +1244,7 @@ const SHELL_KEY_MISSING = "Запуск гаджетов не настроен: 
 function appCodeFailure(error: unknown): Error {
   if (!(error instanceof MnemosAPIError)) return error instanceof Error ? error : new Error("Версия приложения недоступна.");
   if (error.code === "shell_key_rejected") return new Error("Запуск гаджетов не настроен: Mnemos не принял ключ оболочки.");
-  if (error.code === "authz.access_denied" || error.status === 403 && error.code !== "gadget_code_closed") return new Error("Приложение вам недоступно: нет доступа к этой версии файла.");
+  if (error.code === "authz.access_denied" || error.status === 403 && error.code !== "gadget_code_closed") return gadgetAccessError(APP_VERSION_DENIED_CODE, "Приложение вам недоступно: нет доступа к этой версии файла.");
   if (error.code === "gadget_code_closed") return new Error(APP_CODE_CLOSED);
   if (error.code === "not_a_gadget") return new Error("Этот файл или версия — не приложение.");
   if (error.status === 401) return new Error("Вход в Mnemos устарел: войдите заново, чтобы открыть приложение.");

@@ -202,6 +202,10 @@ test("Worker login installs the verified human and revocation fences an in-fligh
       async complete(user, expiresAt) { await this.receipt().complete(user, expiresAt); }
       async credentialsRestored(expiresAt) { await this.receipt().restored(expiresAt); }
       async credentialsExpired() {}
+      async confirmBrowser(proof) {
+        if (proof.connect !== "fixture-browser") return null;
+        return { returnPath: "/api/connect/finish?handle=fixture-connect" };
+      }
     }
     export default { async fetch(request, env, ctx) {
       const account = env.ACCOUNTS.get(env.ACCOUNTS.idFromName("login-owner"));
@@ -255,10 +259,10 @@ test("Worker login installs the verified human and revocation fences an in-fligh
     const callbackUrl = login.callbackUrl + "?state=proof-state&code=provider-code";
     assert.equal((await publicWorker.fetch(callbackUrl)).status, 403);
     const completed = await publicWorker.fetch(callbackUrl, { headers: { Cookie: cookie } });
-    assert.equal(completed.status, 200);
+    assert.equal(completed.status, 403);
     assert.equal((await publicWorker.fetch(callbackUrl, { headers: { Cookie: cookie } })).status, 403);
-    assert.equal((await (await call("/identity")).json()).subject.user_id, "alice");
-    assert.equal(exchanges, 3);
+    assert.equal((await call("/identity")).status, 403);
+    assert.equal(exchanges, 2);
     const connect = await (await call("/vendor")).json();
     assert.equal(connect.error, undefined);
     assert.ok(connect.url);
@@ -266,17 +270,17 @@ test("Worker login installs the verified human and revocation fences an in-fligh
       const started = await publicWorker.fetch(url, { redirect: "manual" });
       assert.equal(started.status, 302);
       const cookie = started.headers.get("Set-Cookie").split(";")[0];
-      return publicWorker.fetch(callbackUrl, { headers: { Cookie: cookie } });
+      return publicWorker.fetch(callbackUrl, { redirect: "manual", headers: { Cookie: cookie + "; __Host-os-connect=fixture-browser" } });
     };
-    assert.equal((await finish(connect.url)).status, 200);
+    assert.equal((await finish(connect.url)).status, 303);
     const receipt = await (await call("/receipt")).json();
-    assert.equal(receipt.description.providesUi.title, "Память");
+    assert.equal(receipt.description.providesUi.title, "Mnemos");
     assert.equal(receipt.identity.subject.user_id, "alice");
     assert.equal(receipt.completions, 1);
     assert.ok(Date.parse(receipt.expiresAt) > Date.now());
     assert.ok(Date.parse(receipt.expiresAt) <= Date.now() + 900000);
     const reconnect = await (await call("/reconnect")).json();
-    assert.equal((await finish(reconnect.url)).status, 200);
+    assert.equal((await finish(reconnect.url)).status, 303);
     const restored = await (await call("/receipt")).json();
     assert.equal(restored.completions, 1); assert.equal(restored.restored, true);
     await call("/disconnect");
@@ -304,6 +308,7 @@ test("native writer scopes saves to one personal document and fences head and ac
       if (path === '/v1/whoami') return Response.json({ subject: { tenant_id: 'org', user_id: 'alice' } });
       if (path === '/v1/projects') return Response.json({ projects: [{ id: 'project', name: 'Team' }] });
       if (path === '/v1/projects/project/draft/documents') return Response.json({head, documents:[{node_id:'doc',name:'Native',content_type:'application/vnd.cloudflareos.document+json',conflicted:false}],next_cursor:''});
+      if (path === '/v1/projects/project/draft/invitations') return Response.json({ documents: [], next_cursor: '' });
       if (path === '/v1/projects/project/nodes') return Response.json({ nodes: [{ node_id: 'doc', name: 'Native', is_dir: false }], truncated: false });
       if (path === '/v1/projects/project/nodes/doc/history') return Response.json({ events: [] });
       if (path === '/v1/projects/project/draft/open') return Response.json({ head });
@@ -314,9 +319,11 @@ test("native writer scopes saves to one personal document and fences head and ac
         uploads++;
         return Response.json({ upload_id: 'native-upload', url: 'https://objects.example/native', method: 'PUT', checksum_header: 'x-amz-checksum-sha256', checksum_value: body.checksum_sha256, content_length: 300000 });
       }
-      if (path === '/v1/projects/project/draft/save') {
+      if (path === '/v1/projects/project/draft/nodes/doc/shared-save') {
         const body = await request.json();
-        assert.deepEqual(body, { expected_head: head, message: 'Edit document', changes: [{ node_id: 'doc', upload_id: 'native-upload' }] });
+        assert.equal(body.owner_id, 'alice');
+        assert.equal(body.upload_id, 'native-upload');
+        if (body.base_head !== head) return Response.json({ code: 'document_changed' }, { status: 409 });
         saves++; head = 'b'.repeat(64); return Response.json({ head });
       }
       assert.fail('Unexpected access or publication');

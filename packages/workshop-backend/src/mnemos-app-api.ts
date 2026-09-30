@@ -13,7 +13,7 @@
 import { RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import {
-  GADGET_APP_MIME, gadgetAppSha256, parseGadgetAppText,
+  APP_ACCESS_DENIED_CODE, APP_VERSION_DENIED_CODE, GADGET_APP_MIME, gadgetAppSha256, isGadgetAccessError, parseGadgetAppText,
   type GadgetAppAccess, type GadgetAppCaller, type GadgetAppDirectory, type GadgetAppManifest, type MnemosAppConnection, type MnemosAppInfo,
   type MnemosAppCopies, type MnemosAppCopyState, type MnemosAppOffer, type MnemosAppRelease,
 } from "@gadgets/workshop-shared/gadget-app";
@@ -217,13 +217,13 @@ export function copyNodeName(title: string): string {
 }
 
 const releaseInfo = (release: AppReleaseMeta): MnemosAppRelease => ({ version: release.version, title: release.title, publishedAt: release.publishedAt, authorName: release.authorName });
-/** Отказ Mnemos в доступе к узлу приложения (текст APP_ACCESS_DENIED моста) — отзыв, а не сбой связи. */
-const isAccessDenied = (error: unknown) => error instanceof Error && /нет доступа к этому файлу/.test(error.message);
+/** Отказ Mnemos в доступе к узлу приложения — отзыв, а не сбой связи. */
+const isAccessDenied = (error: unknown) => isGadgetAccessError(error, APP_ACCESS_DENIED_CODE);
 
 /** Запуск гаджетов не настроен (ключ оболочки): это не «версия недоступна», человеку нужен настоящий текст. */
 const isSetupFailure = (error: unknown): error is Error => error instanceof Error && /^Запуск гаджетов не настроен/.test(error.message);
-/** Mnemos отказал в праве на эту версию (текст gatekeeper-mnemos для 403 служебного пути). */
-const isVersionDenied = (error: unknown): error is Error => error instanceof Error && /^Приложение вам недоступно: нет доступа к этой версии/.test(error.message);
+/** Mnemos отказал в праве на эту версию. */
+const isVersionDenied = (error: unknown): error is Error => isGadgetAccessError(error, APP_VERSION_DENIED_CODE);
 
 /** Справочник только с именами и служебными ключами. */
 function cleanDirectory(directory: Awaited<ReturnType<MnemosAppPorts["directory"]>>): GadgetAppDirectory {
