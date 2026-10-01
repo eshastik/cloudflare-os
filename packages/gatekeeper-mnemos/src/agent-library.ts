@@ -689,9 +689,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     }
     // Только вложения этой беседы: чтение идёт сессией человека, мимо области агента (ADR 0010).
     // На стабе RPC метод есть всегда; старый хост без проверки отвечает отказом, и чтения не будет.
-    const check = (queue as unknown as { authorizeChatDocument?: (project: string, node: string) => Promise<void> }).authorizeChatDocument;
-    if (typeof check !== "function") throw new Error(UNSUPPORTED);
-    await check.call(queue, project, node);
+    const access = queue as unknown as { authorizeChatDocument?: (project: string, node: string) => Promise<void> };
+    if (typeof access.authorizeChatDocument !== "function") throw new Error(UNSUPPORTED);
+    await access.authorizeChatDocument(project, node);
     await this.#authorizePersonal(queue, {kind: "mnemos.chatfile.read", scopeId: project});
     const read = this.#account().readChatDocumentText;
     if (!read) throw new Error(UNSUPPORTED);
