@@ -20,6 +20,8 @@ export interface PublicationReview {
   ready: boolean;
   /** Приложения среди видимых изменённых узлов точной заявки, включая удаления. null или отсутствие поля означает, что состав ещё не получен. */
   application_node_ids?: string[] | null;
+  /** Названия видимых узлов из точных версий заявки; удалённые — из общей версии до удаления. */
+  node_names?: Record<string, string>;
   /** Authorized domains and their required participants. */
   domains: {
     /** Subject area requiring approval. */

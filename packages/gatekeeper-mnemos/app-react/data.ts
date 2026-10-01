@@ -180,7 +180,7 @@ export function documentNames(projects: ProjectData[]): Map<string, string> {
 export const UNNAMED_DOCUMENT = "Документ без названия";
 
 export function publicationNodeName(review: PublicationReview, names: Map<string, string>, node: string): string {
-  const name = names.get(`${review.project_id}/${node}`);
+  const name = review.node_names?.[node] || names.get(`${review.project_id}/${node}`);
   if (review.application_node_ids?.includes(node)) return name ? `Приложение «${name}»` : "Приложение";
   return name || UNNAMED_DOCUMENT;
 }

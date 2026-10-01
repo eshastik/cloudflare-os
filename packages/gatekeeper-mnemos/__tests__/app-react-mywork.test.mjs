@@ -64,7 +64,7 @@ test("«Входящие»: выбор строки открывает подр�
     async listPublicationReviews() {
       const page = await defaultMethods([]).listPublicationReviews();
       return { ...page, reviews: page.reviews.map(review => [REVIEW_READY, REVIEW_MINE].includes(review.candidate_id) ? {
-        ...review, application_node_ids: ["app"], domains: review.domains.map(domain => ({ ...domain, node_ids: ["plan", "app"] })),
+        ...review, node_names: { app: "Счётчик" }, application_node_ids: ["app"], domains: review.domains.map(domain => ({ ...domain, node_ids: ["plan", "app"] })),
       } : review) };
     },
     async listCollaborationMessages() { return { messages: [{ sequence: 1, user_id: "carol", agent_id: "", kind: "result", body: "Готовый лендинг", created_at: "2026-09-12T11:00:00Z" }] }; },
@@ -79,7 +79,7 @@ test("«Входящие»: выбор строки открывает подр�
     rowsOf(app).find(r => r.dataset.inbox === "approval").querySelector("button").click();
     await app.until(() => panel()?.textContent.includes("carol: одобрено"), "подробности согласования");
     assert.ok(panel().textContent.includes("Приложений: 1.") && panel().textContent.includes("Документов: 1."), "согласующий видит состав публикации");
-    assert.ok([...panel().querySelectorAll("button")].some(button => button.textContent === "Приложение"), "приложение не названо документом");
+    assert.ok([...panel().querySelectorAll("button")].some(button => button.textContent === "Приложение «Счётчик»"), "приложение не названо документом");
     [...panel().querySelectorAll("button")].find(b => b.textContent === "Отклонить").click();
     await app.until(() => app.calls.some(([m]) => m === "recordReviewDecision"), "отказ записан");
     assert.deepEqual(app.calls.find(([m]) => m === "recordReviewDecision"), ["recordReviewDecision", REVIEW_MINE, "Инженерия", 3, false]);
