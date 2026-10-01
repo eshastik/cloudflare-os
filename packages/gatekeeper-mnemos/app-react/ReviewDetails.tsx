@@ -8,18 +8,19 @@ import { personName, publicationNodeName } from "./data.ts";
 export default function ReviewDetails({ review, names }: { review: PublicationReview; names: Map<string, string> }) {
   const host = useHost();
   const counts = countPublicationNodes(review);
+  const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<{ node: string; before: string | null; after: string | null; loading: boolean; error: string } | null>(null);
   async function open(node: string) {
+    if (loading) return;
+    setLoading(true);
     setPreview({ node, before: null, after: null, loading: true, error: "" });
     try {
-      const [before, after] = await Promise.all([
-        host.downloadReviewText(review.candidate_id, node, review.decision_version, "before"),
-        host.downloadReviewText(review.candidate_id, node, review.decision_version, "after"),
-      ]);
+      const before = await host.downloadReviewText(review.candidate_id, node, review.decision_version, "before");
+      const after = await host.downloadReviewText(review.candidate_id, node, review.decision_version, "after");
       setPreview(current => current?.node === node ? { node, before, after, loading: false, error: "" } : current);
     } catch {
       setPreview(current => current?.node === node ? { ...current, loading: false, error: "Не удалось открыть эту версию. Обновите согласование и проверьте доступ." } : current);
-    }
+    } finally { setLoading(false); }
   }
   return <div className="space-y-3 text-[14px] leading-5">
     <p className="m-0 text-kumo-subtle">Нужны решения всех назначенных согласующих: одобрение одного направления не заменяет остальные.</p>
@@ -31,7 +32,7 @@ export default function ReviewDetails({ review, names }: { review: PublicationRe
           const decision = domain.decisions.find(item => item.approver_id === person);
           return <div key={person}>{personName(person)}: {decision ? decision.approved ? "одобрено" : "отклонено" : "ожидает решения"}</div>;
         })}</div>
-        <div className="mt-1 flex flex-wrap gap-1">{domain.node_ids.map(node => <Button key={node} variant="secondary" size="sm" onClick={() => void open(node)}>{publicationNodeName(review, names, node)}</Button>)}</div>
+        <div className="mt-1 flex flex-wrap gap-1">{domain.node_ids.map(node => <Button key={node} variant="secondary" size="sm" disabled={loading} onClick={() => void open(node)}>{publicationNodeName(review, names, node)}</Button>)}</div>
       </li>)}
     </ul>
     {preview && <section aria-label="Изменения документа" className="rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">

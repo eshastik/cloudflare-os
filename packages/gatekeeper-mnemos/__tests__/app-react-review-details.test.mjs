@@ -13,7 +13,19 @@ const review = {
 };
 
 test("согласующий проверяет точную версию и видит решения всех доступных областей", async () => {
-  const app = await mountMemoryApp({ async listPublicationReviews() { return { reviews: [review], next_cursor: "" }; } }, { section: "approvals" });
+  let downloading = false;
+  const app = await mountMemoryApp({
+    async listPublicationReviews() { return { reviews: [review], next_cursor: "" }; },
+    async downloadReviewText(...args) {
+      assert.equal(downloading, false, "хост принимает только одну загрузку за раз");
+      downloading = true;
+      try {
+        app.calls.push(["downloadReviewText", ...args]);
+        await Promise.resolve();
+        return args[3] === "before" ? "Исходный текст" : "Новая версия";
+      } finally { downloading = false; }
+    },
+  }, { section: "approvals" });
   try {
     // Строка списка открывает подробности предложения в панели справа.
     await app.until(() => app.document.querySelector('#root [data-inbox="approval"]'), "строка согласования");
