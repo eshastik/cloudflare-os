@@ -1809,14 +1809,15 @@ const ToolGroupRow = memo(function ToolGroupRow({
   const codeCall = group.calls.length === 1 && group.observations.length === 0 && isCodeWorkCall(group.calls[0])
     ? group.calls[0] : null;
   if (codeCall) {
+    const workError = codeCall.error || (codeCall.output?.gadget?.saved === false ? codeCall.output.gadget.error : undefined);
     const row = (
       <CodeWorkRow
-        title={group.label}
+        title={workError && codeCall.toolName === "gadgetWork" ? "Гаджет не сохранён" : group.label}
         steps={codeCall.output?.steps ?? []}
         running={false}
         durationMs={codeCall.output?.durationMs}
         changedFiles={codeCall.output?.changedFiles}
-        error={codeCall.error}
+        error={workError}
       />
     );
     // Сохранённый гаджет — отдельной карточкой под ходом агента кода.

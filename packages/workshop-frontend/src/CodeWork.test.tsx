@@ -56,6 +56,12 @@ describe("шаги агента", () => {
     act(() => button(view, "Выполнил команду").click());
     expect(view.textContent).toContain("go test ./...");
   });
+  it("причина сбоя видна без раскрытия карточки", () => {
+    const view = render(<CodeWorkRow title="Гаджет не сохранён" steps={[]} running={false}
+      error="Провайдер не знает выбранную модель." />);
+    expect(view.querySelector('[data-testid="code-work-steps"]')).toBeNull();
+    expect(view.querySelector('[role="alert"]')?.textContent).toBe("Провайдер не знает выбранную модель.");
+  });
   it("во время работы шаги видны сразу", () => {
     const view = render(<CodeWorkRow title="Работаю с кодом проекта" steps={[]} running />);
     expect(view.textContent).toContain("Готовлю рабочее место…");

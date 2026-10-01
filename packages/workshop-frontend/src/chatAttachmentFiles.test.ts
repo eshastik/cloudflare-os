@@ -13,6 +13,8 @@ describe('вложения беседы: какой файл — докумен�
   })
 
   it('при пустом или общем типе смотрит на расширение, как сервер', () => {
+    expect(chatDocumentContentType('', 'Большой отчёт.PDF')).toBe('application/pdf')
+    expect(chatDocumentContentType('application/octet-stream', 'Большой отчёт.pdf')).toBe('application/pdf')
     expect(chatDocumentContentType('', 'Продажи.XLSX')).toBe(XLSX)
     expect(chatDocumentContentType('application/zip', 'План.pptx')).toBe(PPTX)
     expect(chatDocumentContentType('application/octet-stream', 'Отчёт.docx')).toBe(DOCX)

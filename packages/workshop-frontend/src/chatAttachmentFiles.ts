@@ -24,6 +24,7 @@ export function chatDocumentContentType(mimeType: string | undefined, name: stri
   if (mime.startsWith("image/")) return undefined;
   if (DOCUMENT_TYPES.has(mime)) return mime;
   const extension = /\.([A-Za-z0-9]+)$/.exec(name ?? "")?.[1]?.toLowerCase() ?? "";
+  if (extension === "pdf" && mime === "application/octet-stream") return "application/pdf";
   // Браузеры отдают docx пустым типом или zip, md — пустым, csv — типом Excel, json — text/json.
   if (OFFICE_TYPES[extension] && ["application/octet-stream", "application/zip", "application/x-zip-compressed"].includes(mime)) {
     return OFFICE_TYPES[extension];

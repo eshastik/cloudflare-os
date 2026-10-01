@@ -19,6 +19,12 @@ describe("вид документа беседы", () => {
     expect(chatDocumentContentType("text/json", "a.json")).toBe("application/json");
     expect(chatDocumentContentType("text/plain", "a.txt")).toBe("text/plain");
   });
+  it("PDF больше 100 МиБ с пустым MIME принимается как документ", () => {
+    expect(checkedChatDocument({ name: "Большой отчёт.PDF", mimeType: "", size: 101 * 1024 * 1024, checksum: CHECKSUM })).toMatchObject({
+      contentType: "application/pdf", size: 101 * 1024 * 1024,
+    });
+    expect(chatDocumentContentType("application/octet-stream", "отчёт.pdf")).toBe("application/pdf");
+  });
   it("картинки, код и старые форматы — не документы этого пути", () => {
     expect(chatDocumentContentType("image/png", "a.png")).toBeUndefined();
     expect(chatDocumentContentType("text/x-python", "a.py")).toBeUndefined();

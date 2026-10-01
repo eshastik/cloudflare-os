@@ -156,16 +156,12 @@ export const CodeWorkRow = memo(function CodeWorkRow({
         </button>
       )}
       </div>
+      {error && <p role="alert" className="mt-2 mb-0 pl-[26px] text-[14px] leading-5 text-kumo-danger whitespace-pre-wrap">{error}</p>}
       {open && (
         <div className="mt-2 space-y-1 pl-[26px]" data-testid="code-work-steps">
           {steps.map((step) => <StepRow key={step.id} step={step} />)}
           {running && steps.length === 0 && (
             <div className={`py-0.5 text-[14px] leading-5 ${styles.thinkingShimmer}`}>Готовлю рабочее место…</div>
-          )}
-          {error && (
-            <pre className="rounded-xl border border-kumo-danger/20 bg-kumo-danger-tint/40 p-2.5 font-mono text-[12px] leading-[18px] text-kumo-danger whitespace-pre-wrap">
-              {error}
-            </pre>
           )}
           {!running && changedFiles && changedFiles.length > 0 && (
             <div className="pt-1 text-[14px] leading-5 text-kumo-default">
