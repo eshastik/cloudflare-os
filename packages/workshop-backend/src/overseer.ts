@@ -6982,7 +6982,7 @@ class OverseerImpl implements AgentHooks {
   }
 
   async runCodeWork(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean; newGadget?: boolean;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean; newGadget?: boolean; resource?: string;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput> {
     let userId = this.#codeWorkUserId(chatId, initiator);
@@ -6992,13 +6992,12 @@ class OverseerImpl implements AgentHooks {
     let emit = host.emit;
     host.emit = (id, event) => {
       if (id !== chatId) return emit(id, event);
-      if (event.type === "toolStep") request.onStep(event.step);
-      else if (event.type === "toolOutputDelta") request.onText(event.delta);
+      if (event.type === "toolStep") onStep(event.step);
+      else if (event.type === "toolOutputDelta") onText(event.delta);
       else emit(id, event);
     };
-    return runChatCodeWork(host, {chatId, toolCallId: request.toolCallId, prompt: request.prompt,
-      projectId: request.projectId, continueOnly: request.continueOnly, promptSequence: request.promptSequence,
-      ...(request.gadget ? {gadget: true} : {}), ...(request.newGadget ? {newGadget: true} : {}), userId, profileId: initiator.id, signal: request.signal});
+    const {onStep, onText, ...workRequest} = request;
+    return runChatCodeWork(host, {...workRequest, chatId, userId, profileId: initiator.id});
   }
 
   // Кому отвечать на сообщение человека (переключатель «Код» и маршрутизатор Jev). Если агенту

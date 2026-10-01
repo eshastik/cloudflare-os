@@ -397,7 +397,7 @@ export interface AgentHooks {
   // gadget — работа над гаджетом (ADR 0028): задача агента кода с шаблоном гаджета, сборка
   // сохраняется личной версией узла приложения в проекте. newGadget — новый гаджет вместо правки прежнего.
   runCodeWork?(chatId: number, initiator: AiChatAuthorInfo, request: {
-    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean; newGadget?: boolean;
+    toolCallId: string; prompt: string; projectId?: string; continueOnly?: boolean; promptSequence?: number; gadget?: boolean; newGadget?: boolean; resource?: string;
     signal: AbortSignal; onStep(step: AgentStep): void; onText(delta: string): void;
   }): Promise<CodeWorkOutput>;
 }
@@ -3045,7 +3045,7 @@ export async function runAgent(
 
   if (codeWorkInfo && codeWorkToolsAvailable(codeWorkInfo) && hooks.runCodeWork) {
     let runCodeWork = hooks.runCodeWork.bind(hooks);
-    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean; gadget?: boolean; newGadget?: boolean}) => {
+    let codeTurn = async (toolCallId: string, request: {prompt: string; projectId?: string; continueOnly?: boolean; gadget?: boolean; newGadget?: boolean; resource?: string}) => {
       try {
         let output = await runCodeWork(chatId, initiator, {
           toolCallId, ...request, signal: abortSignal,
