@@ -247,9 +247,13 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     try {
       let version: string;
       if (row.privateOnly) {
-        const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
-        if (!doc.exists || doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("Личная версия недоступна или содержит конфликт.");
-        version = "private:" + doc.head;
+        if (opened?.row === row && opened.textHead) {
+          version = "private:" + opened.textHead;
+        } else {
+          const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
+          if (!doc.exists || doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("Личная версия недоступна или содержит конфликт.");
+          version = "private:" + doc.head;
+        }
       } else {
         const event = (await ui.nodeHistory(row.projectId, row.nodeId, "")).events[0];
         if (!event?.exists) throw new Error("Опубликованная версия недоступна.");
