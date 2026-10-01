@@ -22,7 +22,7 @@ export const MIN_QUERY_LENGTH = 2;
 const VISIBLE_PROJECTS = 6;
 
 type SearchHit = ProjectSearchPage["hits"][number];
-type Opened = { row: DocumentRow; content: DocumentContent | null; error: string };
+type Opened = { row: DocumentRow; content: DocumentContent | null; error: string; textHead?: string };
 type Search = { query: string; hits: SearchHit[]; pending: boolean; failed: number; busy: boolean };
 
 const keyOf = (projectId: string, nodeId: string) => `${projectId}/${nodeId}`;
@@ -69,6 +69,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   const [moved, setMoved] = useState("");
   const [uploading, setUploading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [readingMore, setReadingMore] = useState(false);
   const openedLink = useRef<number | null>(null);
   const requested = useRef(new Set<string>());
   const searchGeneration = useRef(0);
@@ -163,20 +164,23 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     try {
       // Документ со своим редактором открывается в оболочке; просмотр здесь не нужен.
       if (await host.openNativeDocument(row.projectId, row.nodeId)) { setOpened(current => current?.row === row ? null : current); return; }
-      let content: DocumentContent;
+      let content: DocumentContent, textHead: string | undefined;
       if (row.privateOnly) {
         const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
         if (!doc.exists) throw new Error("Документ больше не найден в личном черновике.");
         if (doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("У документа конфликт версий. Откройте личный черновик, чтобы выбрать вариант.");
-        if (!/^(text\/|application\/(json|xml|javascript|x-yaml|yaml)(;|$))/.test(doc.content_type ?? "")) throw new Error("Этот формат нельзя показать как текст. Откройте личный черновик для работы с файлом.");
-        const text = await host.downloadText(row.projectId, row.nodeId, doc.head, 0);
-        content = {node_id: row.nodeId, text, media_type: doc.content_type ?? "text/plain", truncated: false};
+        const page = await ui.readDraftText(row.projectId, row.nodeId, 0, 262144);
+        if (page.head !== doc.head) throw new Error("Документ изменился. Откройте его заново.");
+        if (page.failure) throw new Error("Не удалось извлечь текст. Исходный файл можно скачать.");
+        textHead = page.head;
+        content = {node_id: row.nodeId, text: page.text, media_type: page.content_type, truncated: page.truncated,
+          offset: page.offset, next_offset: page.next_offset, total_bytes: page.total_bytes, text_state: page.no_text ? "no_text" : "ready"};
       } else {
         content = await ui.readProjectDocument(row.projectId, row.nodeId);
       }
-      setOpened(current => current?.row === row ? { row, content, error: "" } : current);
+      setOpened(current => current?.row === row ? { row, content, error: "", textHead } : current);
     } catch (error) {
-      const localMessage = error instanceof Error && /^(Документ больше|У документа конфликт|Этот формат)/.test(error.message) ? error.message : "Не удалось загрузить содержимое. Повторите попытку; если ошибка сохраняется, проверьте состояние подключения.";
+      const localMessage = error instanceof Error && /^(Документ больше|Документ изменился|У документа конфликт|Не удалось извлечь)/.test(error.message) ? error.message : "Не удалось загрузить содержимое. Повторите попытку; если ошибка сохраняется, проверьте состояние подключения.";
       setOpened(current => current?.row === row ? { row, content: null, error: localMessage } : current);
     }
   }
@@ -188,6 +192,29 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     openedLink.current = linkedDocument.seq;
     void open(row);
   }, [linkedDocument, initialProject, rows]);
+
+  async function readMore() {
+    const before = opened, content = before?.content;
+    if (!before || !content?.truncated || readingMore || !content.next_offset) return;
+    setReadingMore(true); setNotice("");
+    try {
+      let page: DocumentContent;
+      const row = before.row;
+      if (row.privateOnly) {
+        const next = await ui.readDraftText(row.projectId, row.nodeId, content.next_offset, 262144);
+        if (next.head !== before.textHead) throw new Error("Документ изменился. Откройте его заново.");
+        if (next.failure) throw new Error("Продолжение не прочитано. Исходный файл можно скачать.");
+        page = {node_id: row.nodeId, text: next.text, media_type: next.content_type, truncated: next.truncated,
+          offset: next.offset, next_offset: next.next_offset, total_bytes: next.total_bytes};
+      } else {
+        page = await ui.readProjectDocumentPage(row.projectId, row.nodeId, content.next_offset, content.revision!);
+        if (page.revision !== content.revision) throw new Error("Документ изменился. Откройте его заново.");
+      }
+      setOpened(current => current === before ? { ...before, content: { ...page, text: content.text + page.text, offset: content.offset ?? 0 } } : current);
+    } catch (error) {
+      setNotice(error instanceof Error && /^(Документ изменился|Продолжение не прочитано)/.test(error.message) ? error.message : "Продолжение не загрузилось. Повторите попытку или откройте документ заново.");
+    } finally { setReadingMore(false); }
+  }
 
   async function download(row: DocumentRow) {
     if (downloading) return;
@@ -366,7 +393,9 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
               {!opened.error && !opened.content && <p className="m-0 text-[14px] text-kumo-subtle">Загружаю…</p>}
               {opened.content && (opened.content.text && isMarkdown(opened.content.media_type, opened.row.name)
                 ? <Markdown text={opened.content.text} className="text-[14px] leading-5 text-kumo-default" />
-                : <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-5 text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>)}
+                : <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-5 text-kumo-default">{opened.content.text || (opened.content.text_state === "no_text" ? "В файле нет извлечённого текста. Вы можете скачать оригинал." : "(Пустой файл)")}</pre>)}
+              {opened.content?.truncated && !!opened.content.next_offset && (!!opened.textHead || !!opened.content.revision) &&
+                <div className="mt-3"><Button variant="secondary" size="sm" disabled={readingMore} onClick={() => void readMore()}>{readingMore ? "Читаю…" : "Показать ещё"}</Button></div>}
               {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа. Полный файл доступен по кнопке «Скачать оригинал».</p>}
             </div>
           </aside>

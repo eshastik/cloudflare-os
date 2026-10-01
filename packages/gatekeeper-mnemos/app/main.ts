@@ -228,6 +228,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   finishManagedAgentRequest(id: string): Promise<void>;
   openDraft(project: string): Promise<DraftHead>;
   readDraftDocument(project: string, node: string): Promise<DraftDocument>;
+  readDraftText: MnemosAccountSession["readDraftText"];
   draftState(project: string): Promise<DraftState>;
   readPublishedHead: MnemosAccountSession["readPublishedHead"];
   readPrivateVersionDigest: MnemosAccountSession["readPrivateVersionDigest"];
@@ -242,6 +243,7 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
   publishDraft(project: string, head: string, shared: string, message: string): Promise<PublicationResult>;
   browseProject(project: string, cursor: string): Promise<NodePage>;
   readProjectDocument(project: string, node: string): Promise<DocumentContent>;
+  readProjectDocumentPage: MnemosAccountSession["readProjectDocumentPage"];
   searchProject(project: string, query: string): Promise<ProjectSearchPage>;
   nodeHistory(project: string, node: string, cursor: string): Promise<NodeHistoryPage>;
   /** Public setup parameters for connecting an external CLI to this organization. */

@@ -1530,6 +1530,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async nodeHistory(projectId: string, nodeId: string, cursor: string) { return this.#session.nodeHistory(projectId, nodeId, cursor, 50); }
   async searchProject(projectId: string, query: string) { return this.#session.searchProject(projectId, query); }
   async searchAll(query: string, limit = 20) { return this.#session.searchAll(query, limit); }
+  async readDraftText(project: string, node: string, offset: number, maxBytes: number) { return this.#session.readDraftText(project, node, offset, maxBytes); }
   async readProjectDocument(projectId: string, nodeId: string) { return this.#session.readProjectDocument(projectId, nodeId); }
   async readProjectDocumentWindow(projectId: string, nodeId: string, ordinal: number, radius: number, maxBytes = 262144) { return this.#session.readProjectDocumentWindow(projectId, nodeId, ordinal, radius, maxBytes); }
   async readProjectDocumentPage(projectId: string, nodeId: string, offset: number, expectedRevision: number, ordinal?: number, radius?: number, maxBytes = 262144) { return this.#session.readProjectDocumentPage(projectId, nodeId, offset, expectedRevision, ordinal, radius, maxBytes); }
