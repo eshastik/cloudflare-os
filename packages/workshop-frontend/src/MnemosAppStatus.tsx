@@ -664,7 +664,7 @@ function AppVersionsPanel({ handle, onClose }: { handle: MnemosAppHandle; onClos
             </span>
             <span className="flex shrink-0 flex-col items-end gap-1.5">
               {!row.personal && <span className="rounded-full bg-selection-bg px-2.5 py-0.5 text-[12px] leading-4 font-medium text-selection-text">опубликована</span>}
-              {running && <span className="rounded-full bg-kumo-tint px-2.5 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">работает у всех</span>}
+              {running && <span className="rounded-full bg-kumo-tint px-2.5 py-0.5 text-[12px] leading-4 font-medium text-kumo-subtle">{handle.previewMode ? 'предпросмотр' : handle.binding?.collaborative ? 'работает у всех' : 'работает у вас'}</span>}
               {canEdit && index > 0 && <button type="button" className={pillButton} disabled={handle.busy} onClick={() => { void handle.restoreVersion(row) }}>Вернуть</button>}
             </span>
           </li>
