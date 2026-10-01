@@ -60,8 +60,9 @@ it('документ беседы: билет, узел в проекте или
   const context = {accountId: 3, projectId: 'project-a', title: 'Проект А'};
 
   // Беседы ещё нет: документ ложится в проект, выбранный для неё.
+  const retryId = crypto.randomUUID();
   const ticket = await workspace.beginChatDocumentUpload({name: 'Отчёт.docx', mimeType: DOCX, size: SIZE, checksum: CHECKSUM}, undefined,
-    {accountId: 3, projectId: 'project-a'});
+    {accountId: 3, projectId: 'project-a'}, retryId);
   expect(ticket.upload.url).toBe('https://storage.example/staging/up-1?sig=1');
   expect(ticket.storageOrigin).toBe('https://storage.example');
   expect(ticket.place).toEqual({projectTitle: 'Проект А', personal: false});
@@ -73,8 +74,13 @@ it('документ беседы: билет, узел в проекте или
     resource: 'node-project-a', name: 'Отчёт.docx', contentType: DOCX, size: SIZE});
   const finish = calls.find(c => c[0] === 'finish')!;
   expect(finish.slice(1, 3)).toEqual([3, 'project-a']);
-  expect(finish[3]).toMatch(/^chat-[0-9a-f]{32}$/);
+  expect(finish[3]).toMatch(/^chat-[0-9a-f]{48}$/);
   expect(finish[4]).toBe('up-1');
+  const repeated = await workspace.beginChatDocumentUpload({name: 'Отчёт.docx', mimeType: DOCX, size: SIZE, checksum: CHECKSUM}, undefined,
+    {accountId: 3, projectId: 'project-a'}, retryId);
+  await workspace.finishChatDocumentUpload(repeated.token);
+  expect(calls.filter(c => c[0] === 'finish').at(-1)![3]).toBe(finish[3]);
+
 
   const chat = await workspace.newChat('Посмотри файл', null, undefined, [{id: uploaded.id}], undefined, context);
   const history = await workspace.getChatHistory(chat);

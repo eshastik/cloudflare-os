@@ -2265,6 +2265,7 @@ export const ChatInput = ({
       const overseer = await getOverseer();
       if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) return;
       const ref = await uploadPreparedAttachment(overseer, { blob, mimeType, name }, {
+        retryId: id,
         modelId: selectedModel,
         chatId: chatKey ?? undefined,
         project: chatKey == null ? documentProject : undefined,
@@ -2345,6 +2346,15 @@ export const ChatInput = ({
       setPendingAttachments((prev) => [...prev, pending]);
       void uploadPendingAttachment(id, blob, mimeType, file.name || undefined);
     }
+  };
+
+  const retryAttachment = (id: string) => {
+    const attachment = pendingAttachmentsRef.current.find(item => item.id === id);
+    if (!attachment || attachment.uploadState !== "error") return;
+    const next = pendingAttachmentsRef.current.map(item => item.id === id ? { ...item, uploadState: "uploading" as const, error: undefined } : item);
+    pendingAttachmentsRef.current = next;
+    setPendingAttachments(next);
+    void uploadPendingAttachment(id, attachment.blob, attachment.mimeType, attachment.name);
   };
 
   const removeAttachment = (id: string) => {
@@ -3491,7 +3501,9 @@ export const ChatInput = ({
                   <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Загрузка</div>
                 )}
                 {attachment.uploadState === "error" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Ошибка</div>
+                  <button type="button" onClick={() => retryAttachment(attachment.id)}
+                    aria-label={`Повторить загрузку «${attachment.name ?? "Файл"}»`} title={attachment.error}
+                    className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Повторить</button>
                 )}
                 <button
                   type="button"

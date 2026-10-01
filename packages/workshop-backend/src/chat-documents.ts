@@ -96,12 +96,14 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 /**
  * Квитанция создания узла: для того же файла в той же беседе и том же проекте — одна и та же, поэтому
- * повторное прикрепление не заводит второй файл. Без беседы — случайная.
+ * повторное прикрепление не заводит второй файл. Без беседы повтор привязан к попытке загрузки.
  */
 export async function chatDocumentRequestId(
-    chat: {creatorId: string; chatId: number; started: number} | undefined, projectId: string, checksum: string): Promise<string> {
-  if (!chat) return "chat-" + crypto.randomUUID().replaceAll("-", "");
-  let key = `${chat.creatorId}\0${chat.chatId}\0${chat.started}\0${projectId}\0${checksum}`;
+    chat: {creatorId: string; chatId: number; started: number} | undefined, projectId: string, checksum: string,
+    upload?: {creatorId: string; id: string}): Promise<string> {
+  if (!chat && !upload) return "chat-" + crypto.randomUUID().replaceAll("-", "");
+  let key = chat ? `${chat.creatorId}\0${chat.chatId}\0${chat.started}\0${projectId}\0${checksum}`
+    : `${upload!.creatorId}\0upload\0${upload!.id}\0${projectId}\0${checksum}`;
   return "chat-" + (await sha256Hex(new TextEncoder().encode(key))).slice(0, 48);
 }
 

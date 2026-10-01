@@ -10,6 +10,8 @@ type DocumentOverseer = Pick<Overseer, 'beginChatDocumentUpload' | 'finishChatDo
 export type ChatDocumentUploadOptions = {
   /** Беседа, в которую прикрепляется файл; без неё — новая беседа. */
   chatId?: number
+  /** Одна попытка прикрепления сохраняет ключ при повторе после ошибки. */
+  retryId?: string
   /** Для ещё не созданной беседы — первый выбранный в ней проект, иначе личное пространство. */
   project?: { accountId: number; projectId: string }
   send?: typeof fetch
@@ -25,10 +27,11 @@ export async function uploadChatDocument(
   let token = ''
   const send = options.send ?? fetch
   await uploadIntakeFile(file, async (size, checksum) => {
-    const ticket = await overseer.beginChatDocumentUpload(
-      { name: file.name, mimeType: contentType, size, checksum },
-      options.chatId,
-      options.chatId === undefined ? options.project : undefined)
+    const info = { name: file.name, mimeType: contentType, size, checksum }
+    const project = options.chatId === undefined ? options.project : undefined
+    const ticket = options.retryId
+      ? await overseer.beginChatDocumentUpload(info, options.chatId, project, options.retryId)
+      : await overseer.beginChatDocumentUpload(info, options.chatId, project)
     if (new URL(ticket.upload.url).origin !== new URL(ticket.storageOrigin).origin) {
       throw new Error('Адрес хранилища не совпадает с настройкой установки')
     }

@@ -5,7 +5,8 @@ import { expect, test, vi } from "vitest";
 vi.mock("./AuthContext", () => ({ useAuthenticatedApi: () => ({ authenticatedApi: {} }) }));
 vi.mock("./useVendorBranding", () => ({ useVendorBranding: () => ({}) }));
 vi.mock("./components/chat/FolderProjectCard", () => ({ FolderProjectCard: () => null, useFolderProject: () => ({ offer: () => {} }) }));
-vi.mock("./chatDocumentUpload", () => ({ uploadPreparedAttachment: async (_api: unknown, file: {name: string}) => ({id: file.name, name: file.name, mimeType: "application/pdf"}) }));
+const { upload } = vi.hoisted(() => ({ upload: vi.fn(async (_api: unknown, file: {name: string; blob?: Blob}, _options: {retryId?: string}) => ({id: file.name, name: file.name, mimeType: "application/pdf"})) }));
+vi.mock("./chatDocumentUpload", () => ({ uploadPreparedAttachment: upload }));
 vi.mock("@cloudflare/kumo", async importOriginal => ({ ...await importOriginal<object>(), useKumoToastManager: () => ({ add: () => {} }) }));
 import { ChatInput } from "./ChatInterface";
 (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,5 +48,32 @@ test("Следующий текст и файл переживают завер�
     expect(host.querySelector('[title="first.pdf"]')).toBeNull();
     expect((host.querySelector('button[aria-label="Удалить вложение"]') as HTMLButtonElement).disabled).toBe(false);
     expect(onSend.mock.calls[0]?.[0]).toBe("Первое сообщение");
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); }
+});
+
+test("Ошибку загрузки можно повторить для того же файла и той же операции", async () => {
+  upload.mockClear();
+  upload.mockRejectedValueOnce(new Error("Связь с хранилищем прервалась"));
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<ChatInput createCapsuleGatekeeper={async () => null} getOverseer={async () => ({}) as never}
+      onSend={async () => {}} isAgentActive={false} models={[]} selectedModel={null} onModelChange={() => {}} />));
+    const file = new File(["pdf"], "big.pdf", {type: "application/pdf"});
+    const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {configurable: true, value: [file]});
+    await act(async () => input.dispatchEvent(new Event("change", {bubbles: true})));
+    await flush();
+    const retry = host.querySelector('button[aria-label="Повторить загрузку «big.pdf»"]') as HTMLButtonElement;
+    expect(retry).not.toBeNull();
+    const first = upload.mock.calls[0];
+    await act(async () => retry.click()); await flush();
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(upload.mock.calls[1][1].blob).toBe(file);
+    expect(upload.mock.calls[1][2].retryId).toBe(first[2].retryId);
+    expect(first[2].retryId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(host.querySelector('button[aria-label^="Повторить загрузку"]')).toBeNull();
+    expect((host.querySelector('button[aria-label="Отправить сообщение"]') as HTMLButtonElement).disabled).toBe(false);
   } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); }
 });

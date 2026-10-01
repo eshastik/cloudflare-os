@@ -165,3 +165,13 @@ describe("ZIP как документ Mnemos", () => {
     expect(chatDocumentContentType("image/png", "обманка.zip")).toBeUndefined();
   });
 });
+
+it("повтор вложения до создания беседы сохраняет квитанцию, разные попытки и люди разделены", async () => {
+  const upload = {creatorId: "alice", id: "f".repeat(36)};
+  const first = await chatDocumentRequestId(undefined, "p", "sum", upload);
+  expect(await chatDocumentRequestId(undefined, "p", "sum", upload)).toBe(first);
+  for (const changed of [{...upload, creatorId: "bob"}, {...upload, id: "e".repeat(36)}])
+    expect(await chatDocumentRequestId(undefined, "p", "sum", changed)).not.toBe(first);
+  expect(await chatDocumentRequestId(undefined, "q", "sum", upload)).not.toBe(first);
+  expect(await chatDocumentRequestId(undefined, "p", "other", upload)).not.toBe(first);
+});

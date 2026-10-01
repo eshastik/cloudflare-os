@@ -9313,7 +9313,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   #pendingChatDocuments = new Map<string, PendingChatDocument>();
 
   async beginChatDocumentUpload(file: ChatDocumentUploadRequest, chatId?: number,
-      project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket> {
+      project?: {accountId: number; projectId: string}, retryId?: string): Promise<ChatDocumentUploadTicket> {
+    if (retryId !== undefined && (typeof retryId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(retryId))) throw new Error("Неверная попытка загрузки файла.");
     if (chatId !== undefined && !Number.isSafeInteger(chatId)) throw new Error("Неверная беседа.");
     let checked = checkedChatDocument(file);
     let userId = this.clientUser.id.toString();
@@ -9324,7 +9325,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     let ticket = issued.ticket;
     let storage = checkedChatDocumentTicket(issued, checked);
     let request = await chatDocumentRequestId(meta && {creatorId: userId, chatId: meta.id, started: new Date(meta.started).valueOf()},
-        issued.project, checked.checksum);
+        issued.project, checked.checksum, retryId ? {creatorId: userId, id: retryId} : undefined);
     let now = Date.now();
     for (let [key, pending] of this.#pendingChatDocuments) if (pending.expiresAt < now) this.#pendingChatDocuments.delete(key);
     let token = crypto.randomUUID();
@@ -10479,7 +10480,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
     _modelId: string | null,
   ): Promise<ChatAttachmentHandle> { this.#deny(); }
   async beginChatDocumentUpload(_file: ChatDocumentUploadRequest, _chatId?: number,
-      _project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket> { this.#deny(); }
+      _project?: {accountId: number; projectId: string}, _retryId?: string): Promise<ChatDocumentUploadTicket> { this.#deny(); }
   async finishChatDocumentUpload(_token: string): Promise<ChatAttachmentUploaded> { this.#deny(); }
   async chatDocumentsAvailable(): Promise<boolean> { this.#deny(); }
   async moveChatDocument(_chatId: number, _attachmentId: string, _targetProjectId: string): Promise<ChatDocumentRef> { this.#deny(); }

@@ -48,7 +48,7 @@ describe('выгрузка документа беседы', () => {
     const send = vi.fn(async () => new Response(null, { status: 200 }))
 
     const ref = await uploadPreparedAttachment(overseer, { blob: file, mimeType: DOCX, name: file.name },
-      { modelId: 'm', chatId: 42, send: send as unknown as typeof fetch })
+      { modelId: 'm', chatId: 42, retryId: '11111111-1111-4111-8111-111111111111', send: send as unknown as typeof fetch })
 
     expect(ref).toEqual(expect.objectContaining({ id: 'att-1' }))
     expect(calls.map(c => c.method)).toEqual(['beginChatDocumentUpload', 'finishChatDocumentUpload'])
@@ -57,7 +57,7 @@ describe('выгрузка документа беседы', () => {
 
     const checksum = await base64Sha256(bytes)
     expect(overseer.beginChatDocumentUpload).toHaveBeenCalledWith(
-      { name: 'Отчёт.docx', mimeType: DOCX, size: 5, checksum }, 42, undefined)
+      { name: 'Отчёт.docx', mimeType: DOCX, size: 5, checksum }, 42, undefined, '11111111-1111-4111-8111-111111111111')
     expect(overseer.finishChatDocumentUpload).toHaveBeenCalledWith('tok-1')
 
     expect(send).toHaveBeenCalledTimes(1)

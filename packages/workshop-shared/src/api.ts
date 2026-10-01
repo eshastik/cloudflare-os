@@ -1727,7 +1727,7 @@ export interface Overseer extends RpcTarget {
   // личное пространство человека. Шаг 2 — браузер сам кладёт файл по билету в хранилище Mnemos.
   // Шаг 3 — finishChatDocumentUpload создаёт узел (личную версию) и отдаёт handle вложения без байтов.
   beginChatDocumentUpload(file: ChatDocumentUploadRequest, chatId?: number,
-      project?: {accountId: number; projectId: string}): Promise<ChatDocumentUploadTicket>;
+      project?: {accountId: number; projectId: string}, retryId?: string): Promise<ChatDocumentUploadTicket>;
   finishChatDocumentUpload(token: string): Promise<ChatAttachmentUploaded>;
   // Есть ли подключение Mnemos для документов. Нет — txt/md/csv/json и PDF прикрепляются прежним
   // путём (байтами, до 1 МиБ), а Office не прикрепляется.
