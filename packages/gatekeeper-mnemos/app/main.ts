@@ -329,7 +329,7 @@ export interface Host extends RpcTarget {
   /** Загрузка файлов, не начатых из-за остановки. */
   resumeUpload(id: number): Promise<void>;
   dismissUpload(id: number): Promise<void>;
-  openSection(section: string, project?: string): void;
+  openSection(section: string, project?: string, document?: string): void;
   /** Экран «Telegram» в личных настройках оболочки: бот подключается там. Старый хост — отказ. */
   openTelegramSettings(): Promise<void>;
   openApprovals(): Promise<void>;

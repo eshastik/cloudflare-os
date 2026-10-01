@@ -118,7 +118,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async dismissUpload(id) { calls.push(["dismissUpload", id]); }
     async pickInboxFiles(directory, project) { calls.push(project === undefined ? ["pickInboxFiles",directory] : ["pickInboxFiles",directory,project]); return options.pickedFiles ?? []; }
     // Как оболочка: адрес меняется, фрейм не перезагружается и получает сигнал перечитать выбор.
-    async openSection(section,project) { calls.push(["openSection",section,project]); setTimeout(() => { selectedSection=section; selectedView=""; if(project!==undefined) selectedProject=project; locationChanged(); },0); }
+    async openSection(section,project,node) { calls.push(node === undefined ? ["openSection",section,project] : ["openSection",section,project,node]); setTimeout(() => { selectedSection=section; selectedView=""; selectedDocument=node??""; if(project!==undefined) selectedProject=project; locationChanged(); },0); }
     async openTemplateProposal(...args) { calls.push(["openTemplateProposal",...args]); }
     async openNativeDocument(project, resource) { calls.push(["openNativeDocument", project, resource]); return options.nativeOpen ?? false; }
     async openSharedDocument(project, owner, resource) { calls.push(["openSharedDocument", project, owner, resource]); if (options.sharedOpenError) throw new Error(options.sharedOpenError); return options.sharedOpen ?? options.nativeOpen ?? false; }

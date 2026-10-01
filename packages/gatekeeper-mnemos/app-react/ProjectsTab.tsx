@@ -237,7 +237,7 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
   }
   function openDocument(nodeId: string) {
     setActionError("");
-    void host.openNativeDocument(project.id, nodeId).then(opened => { if (!opened) void host.openSection("documents", project.id); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
+    void host.openNativeDocument(project.id, nodeId).then(opened => { if (!opened) return host.openSection("documents", project.id, nodeId); }).catch(() => setActionError("Не удалось открыть документ. Проверьте подключение и повторите попытку."));
   }
   // Ссылка на документ (из хода агента в беседе) открывает его так же, как щелчок в списке, — один раз
   // на переход. Строка документа выделяется и прокручивается в видимую часть, если она показана.

@@ -176,7 +176,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     nativeDownloads?: GatekeeperUiFrame['nativeDownloads'],
     mailDraftSender?:GatekeeperUiFrame['mailDraftSender'],
     calendarDraftCreator?:GatekeeperUiFrame['calendarDraftCreator'],
-    private readonly navigateSection: (section: string, project?: string) => void = () => {},
+    private readonly navigateSection: (section: string, project?: string, document?: string) => void = () => {},
     private readonly navigateApprovals: () => void = () => {},
     inboxUploads?: GatekeeperUiFrame['inboxUploads'],
     private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
@@ -275,11 +275,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
   getPresentationMode(): string { return this.embeddedIntake ? "panel" : "page" }
 
   /** Переход остаётся в текущем приложении и подключении. */
-  openSection(section: string, project?: string): void {
+  openSection(section: string, project?: string, document?: string): void {
     this.#uploadLifetime.signal.throwIfAborted()
     const target = parseGatekeeperAppSection(section)
     if (!target || (project !== undefined && (typeof project !== 'string' || project.length > 255))) throw new TypeError('Некорректный раздел')
-    this.navigateSection(target, project)
+    if (document !== undefined && (target !== "documents" || !project || typeof document !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(document))) throw new TypeError("Некорректный документ")
+    this.navigateSection(target, project, document)
   }
 
   /** Личный экран «Telegram» в настройках оболочки: адрес постоянный, из фрейма приходит только нажатие. */
@@ -821,7 +822,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.mailDraftSender,
         frame.calendarDraftCreator,
         // Выбор проекта внутри раздела заменяет адрес, переход в другой раздел — новая запись истории.
-        (section, project) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, view: undefined, document: undefined, ...(project === undefined ? {} : { project }) }), replace: new URLSearchParams(window.location.search).get('section') === section }) },
+        (section, project, document) => { void navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, section, view: undefined, document, ...(project === undefined ? {} : { project }) }), replace: new URLSearchParams(window.location.search).get('section') === section }) },
         () => { void navigate({ to: '/workspaces', search: { approvals: true } }) },
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },

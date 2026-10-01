@@ -48,7 +48,7 @@ export function mergeHits(pages: SearchHit[][]): SearchHit[] {
 }
 
 /** «Материалы»: поиск ищет сам при вводе, проект выбирается чипом, просмотр справа; вопрос и задача уводят в беседу. */
-export default function DocumentsTab({ data, initialProject = "" }: { data: MemoryData; initialProject?: string }) {
+export default function DocumentsTab({ data, initialProject = "", linkedDocument = null }: { data: MemoryData; initialProject?: string; linkedDocument?: { node: string; seq: number } | null }) {
   const ui = useUi();
   const host = useHost();
   const [administrative, setAdministrative] = useState(false);
@@ -68,6 +68,7 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
   const [notice, setNotice] = useState("");
   const [moved, setMoved] = useState("");
   const [uploading, setUploading] = useState(false);
+  const openedLink = useRef<number | null>(null);
   const requested = useRef(new Set<string>());
   const searchGeneration = useRef(0);
   const searchAbort = useRef<AbortController | null>(null);
@@ -178,6 +179,14 @@ export default function DocumentsTab({ data, initialProject = "" }: { data: Memo
       setOpened(current => current?.row === row ? { row, content: null, error: localMessage } : current);
     }
   }
+
+  useEffect(() => {
+    if (!linkedDocument || openedLink.current === linkedDocument.seq) return;
+    const row = rows.find(r => r.projectId === initialProject && r.nodeId === linkedDocument.node);
+    if (!row) return;
+    openedLink.current = linkedDocument.seq;
+    void open(row);
+  }, [linkedDocument, initialProject, rows]);
 
   function chat(row: DocumentRow, action: MaterialAction) {
     setNotice("");

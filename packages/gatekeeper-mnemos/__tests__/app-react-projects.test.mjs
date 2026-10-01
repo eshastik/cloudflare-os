@@ -336,3 +336,21 @@ test("«Файлы»: принятый, но не разобранный фай�
     assert.equal(marks[0].textContent, why);
   } finally { app.dispose(); }
 });
+
+
+test("Текстовый файл проекта сразу открывает выбранное содержимое в материалах", async () => {
+  const reads = [];
+  const app = await mountMemoryApp({
+    async readProjectDocument(project, node) {
+      reads.push([project, node]);
+      return { node_id: node, text: "Именно выбранный документ", media_type: "text/plain", truncated: false };
+    },
+  }, {section: "projects", project: "one", nativeOpen: false});
+  try {
+    await app.until(() => app.button("Заметка команды"), "файл проекта");
+    app.button("Заметка команды").click();
+    await app.until(() => app.text().includes("Именно выбранный документ"), "выбранный файл открыт");
+    assert.deepEqual(reads, [["one", app.calls.find(c => c[0] === "openNativeDocument")[2]]]);
+    assert.equal(app.calls.filter(c => c[0] === "openSection" && c[1] === "documents").length, 1);
+  } finally { app.dispose(); }
+});
