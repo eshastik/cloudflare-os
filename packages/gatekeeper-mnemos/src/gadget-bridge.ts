@@ -105,16 +105,16 @@ function describeSaveFailure(stage: string, error: unknown): unknown {
   return new Error(`Гаджет не сохранён: Mnemos отказал на шаге «${stage}» (HTTP ${error.status}${error.code ? `, ${error.code}` : ""}); ${why}.`);
 }
 
-export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>): Promise<SavedGadget> {
+export async function saveGadgetBuild(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>, keepUnchangedSources?: (node: string, bodySha256: string) => Promise<void>): Promise<SavedGadget> {
   const stage = { name: "проверка сборки" };
   try {
-    return await saveGadgetBuildSteps(api, storageOrigin, fetcher, project, build, stage, resource, request, receipts, currentBodySha256);
+    return await saveGadgetBuildSteps(api, storageOrigin, fetcher, project, build, stage, resource, request, receipts, currentBodySha256, keepUnchangedSources);
   } catch (error) {
     throw describeSaveFailure(stage.name, error);
   }
 }
 
-async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, stage: { name: string }, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>): Promise<SavedGadget> {
+async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, fetcher: typeof fetch, project: string, build: WorkspaceGadgetBuild, stage: { name: string }, resource?: string, request: string = crypto.randomUUID(), receipts?: GadgetReceipts, currentBodySha256?: (node: string, head: string) => Promise<string>, keepUnchangedSources?: (node: string, bodySha256: string) => Promise<void>): Promise<SavedGadget> {
   let text: string, manifest: GadgetAppDocument["manifest"];
   try {
     text = gadgetAppText(gadgetDocumentFromBuild(build));
@@ -130,6 +130,8 @@ async function saveGadgetBuildSteps(api: GadgetSaveAPI, storageOrigin: string, f
     stage.name = "чтение прежней версии";
     const doc = await checkGadgetEditable(api, project, node);
     if (currentBodySha256 && await currentBodySha256(node, doc.head) === summary.bodySha256) {
+      // Исходники могли измениться без изменения сборки или не сохраниться при прежнем отказе.
+      await keepUnchangedSources?.(node, summary.bodySha256);
       throw new GadgetBuildError("Сборка гаджета не изменилась.");
     }
     stage.name = "выгрузка файла";

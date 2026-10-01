@@ -300,14 +300,18 @@ export class UserAccount extends DurableObject<Env> {
   *  исходники узла попали бы в рабочее место того, кто узел только читает. */
  async codeWorkStartGadget(project:string,prompt:string,options?:{resource?:string}){
   const resource=options?.resource;
+  let bodySha256:string|undefined;
   if(resource!==undefined){
    if(!validGadgetResource(resource))throw new WorkspaceError('invalid','Неизвестный файл гаджета.');
    const session=this.#account().session();
-   try{await checkGadgetEditable(session,project,resource);}
-   catch{throw new WorkspaceError('invalid','Прежний файл гаджета удалён, в конфликте или недоступен для правки: продолжить его нельзя, можно начать новый гаджет.');}
+   try{
+    const editable=await checkGadgetEditable(session,project,resource);
+    bodySha256=(await session.appCode(project,resource,"private:"+editable.head,this.env.MNEMOS_SHELL_KEY??"")).sha256_hex;
+   }
+   catch{throw new WorkspaceError('invalid','Не удалось открыть редактируемую версию гаджета. Проверьте доступ к файлу и повторите запуск.');}
    finally{session.dispose();}
   }
-  const out=await this.#workspace().startGadget(project,prompt,{agentName:'chat',...(resource?{resource}:{})});
+  const out=await this.#workspace().startGadget(project,prompt,{agentName:'chat',...(resource?{resource,bodySha256}:{})});
   return {taskId:out.task.task_id,state:out.task.state,scopeExtended:out.scopeExtended,...(resource?{sourcesRestored:out.restored}:{})};
  }
  /** Сборка задачи гаджета → личная версия узла приложения правами человека, затем исходники сборки —
@@ -321,7 +325,7 @@ export class UserAccount extends DurableObject<Env> {
   if(!storageOrigin)throw new Error('Хранилище Mnemos не настроено: сохранить гаджет нельзя.');
   const session=this.#account().session();
   let saved;
-  try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined,async(node,head)=>(await session.appCode(project,node,"private:"+head,this.env.MNEMOS_SHELL_KEY??"")).sha256_hex);}
+  try{saved=await saveGadgetBuild(session,storageOrigin,fetch.bind(globalThis),project,build,resource,request,request?gadgetReceipts(this.ctx.storage.kv):undefined,async(node,head)=>(await session.appCode(project,node,"private:"+head,this.env.MNEMOS_SHELL_KEY??"")).sha256_hex,async(node,sum)=>this.#workspace().saveGadgetSources(project,task,node,sum));}
   finally{session.dispose();}
   // Узел уже записан: отказ исходников не отменяет сохранения, агент беседы узнаёт причину.
   const sources=await this.#workspace().saveGadgetSources(project,task,saved.resource,saved.bodySha256).then(()=>({sourcesKept:true}),(e:unknown)=>({sourcesKept:false,sourcesNote:(e as Error)?.message||'исходники не сохранены'}));

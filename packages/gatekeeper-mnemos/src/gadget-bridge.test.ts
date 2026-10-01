@@ -242,11 +242,13 @@ test("Отказ Mnemos при сохранении называет этап и
 test("Прежняя сборка после неудачной правки не выгружается и не создаёт пустую версию", async () => {
   const { api: session, calls, fetcher } = api({ content_type: GADGET_APP_MIME });
   const checksum = await gadgetAppSha256(gadgetAppText(gadgetDocumentFromBuild(build())));
+  const kept: unknown[][] = [];
   await assert.rejects(saveGadgetBuild(session, STORAGE, fetcher, "p", build(), "node-1", undefined, undefined, async (node, head) => {
     assert.equal(node, "node-1");
     assert.equal(head, HEAD);
     return checksum;
-  }), /Сборка гаджета не изменилась/);
+  }, async (node, sum) => { kept.push([node, sum]); }), /Сборка гаджета не изменилась/);
+  assert.deepEqual(kept, [["node-1", checksum]], "исходники сохраняются и без новой версии сборки");
   assert.equal(calls.some(c => c[0] === "beginNativeUpload" || c[0] === "saveDraftDocument" || c[0] === "PUT"), false);
   const saved = await saveGadgetBuild(session, STORAGE, fetcher, "p", build(), "node-1", undefined, undefined, async () => "0".repeat(64));
   assert.equal(saved.head, NEW_HEAD);

@@ -27,6 +27,8 @@ export function gadgetFailureReason(error: unknown, fallback: string): string {
   }
   switch (code) {
     case "scope": return "Нет права на работу с гаджетом в этом проекте.";
+    case "no_sources": return "Исходники этой версии гаджета не сохранились. Запуск с шаблоном отменён, чтобы не заменить файл.";
+    case "sources_unavailable": return "Хранилище исходников гаджета недоступно.";
     case "no_build": return "Задача не подготовила сборку гаджета.";
     case "bad_build": return "Сборка гаджета не прошла проверку формата.";
     case "stopped": return "Задача гаджета остановлена.";

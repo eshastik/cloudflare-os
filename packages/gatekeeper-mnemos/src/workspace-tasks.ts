@@ -138,7 +138,7 @@ function humanGitError(error: unknown): unknown {
 
 export interface WorkspaceControl {
   /** repositories — до пяти, пусто — задача без репозитория; agent_name — короткое имя агента для ветки. */
-  create(input: { binding_id: string; agent_credential: string; project_id: string; repositories: WorkspaceRepositoryRef[]; agent_name?: string; prompt: string; title: string; kind?: "gadget"; gadget_resource?: string }): Promise<RemoteTask>;
+  create(input: { binding_id: string; agent_credential: string; project_id: string; repositories: WorkspaceRepositoryRef[]; agent_name?: string; prompt: string; title: string; kind?: "gadget"; gadget_resource?: string; gadget_body_sha256?: string }): Promise<RemoteTask>;
   status(id: string): Promise<RemoteTask>;
   credential(id: string, token: string): Promise<void>;
   events(id: string): Promise<WorkspaceEvent[]>;
@@ -504,7 +504,7 @@ export class WorkspaceTasks {
 
   /** Задача гаджета (ADR 0028): рабочее место без репозитория с шаблоном гаджета; проект — куда потом
    * сохранится узел приложения. Права задачи — как у работы с кодом: человек ∩ область агента. */
-  async startGadget(project: string, prompt: string, options: { agentName?: string; resource?: string } = {}): Promise<{ task: WorkspaceTaskView; scopeExtended: boolean; restored: boolean }> {
+  async startGadget(project: string, prompt: string, options: { agentName?: string; resource?: string; bodySha256?: string } = {}): Promise<{ task: WorkspaceTaskView; scopeExtended: boolean; restored: boolean }> {
     const control = this.#control();
     const body = typeof prompt === "string" ? prompt.trim() : "";
     if (!body || body.length > MAX_PROMPT || typeof project !== "string" || !project || project.length > 255) throw new WorkspaceError("invalid", "Опишите гаджет для агента.");
@@ -518,11 +518,11 @@ export class WorkspaceTasks {
     finally { human.dispose(); }
     const token = await this.#credential(bindingId);
     const title = body.split("\n").find(line => line.trim())!.trim().slice(0, 120);
-    const remote = await control.create({ binding_id: bindingId, agent_credential: token, project_id: project, repositories: [], ...(agentName ? { agent_name: agentName } : {}), prompt: body, title, kind: "gadget", ...(resource ? { gadget_resource: resource } : {}) });
+    const remote = await control.create({ binding_id: bindingId, agent_credential: token, project_id: project, repositories: [], ...(agentName ? { agent_name: agentName } : {}), prompt: body, title, kind: "gadget", ...(resource ? { gadget_resource: resource, ...(options.bodySha256 ? {gadget_body_sha256: options.bodySha256} : {}) } : {}) });
     const task: WorkspaceTaskView = { task_id: remote.task_id, project_id: project, connection_id: "", repository_id: "", repository_name: "", title, prompt: body, branch: remote.branch, state: remote.state, reason: remote.reason ?? "", cost_usd: remote.cost_usd, created_at: remote.created_at, finished_at: "", repositories: [], kind: "gadget", ...(resource ? { gadget_resource: resource } : {}) };
     this.#save(task);
     await this.#arm();
-    // Служба сама говорит, нашлись ли исходники: восстановить можно только свои.
+    // Служба подтверждает восстановление выбранной версии.
     return { task, scopeExtended, restored: !!resource && remote.gadget_resource === resource && remote.gadget_restored === true };
   }
 

@@ -17,7 +17,7 @@ class FakeControl implements WorkspaceControl {
   calls: unknown[][] = []; state: RemoteTask["state"] = "running"; missing = false;
   /** Исходники каких узлов есть у службы (ответ gadget_restored). */
   sources = new Set<string>();
-  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })),
+  async create(input: Parameters<WorkspaceControl["create"]>[0]) { this.calls.push(["create", input]); if(input.gadget_resource && !this.sources.has(input.gadget_resource)) throw new WorkspaceError("no_sources", "Исходники версии не сохранились."); return remote("starting", { repositories: input.repositories.map((r, i) => ({ connection_id: r.connection_id, repository_id: r.repository_id, dir: r.name ?? `repo-${i + 1}` })),
     ...(input.gadget_resource ? { gadget_resource: input.gadget_resource, gadget_restored: this.sources.has(input.gadget_resource) } : {}) }); }
   sourcesError: WorkspaceError | null = null;
   async saveGadgetSources(id: string, bindingId: string, resource: string, bodySha256: string, agentToken: string) { this.calls.push(["saveGadgetSources", id, bindingId, resource, bodySha256, agentToken]); if (this.sourcesError) throw this.sourcesError; this.sources.add(resource); }
@@ -584,12 +584,12 @@ test("Задача гаджета над сохранённым узлом: сл
   assert.deepEqual(control.calls.at(-1), ["saveGadgetSources", TASK, "binding", "node-7", "e".repeat(64), "token-2"]);
   await assert.rejects(tasks.saveGadgetSources("p", TASK, "node-8", "e".repeat(64)), (e: WorkspaceError) => e.code === "invalid", "первый узел закрепляется за задачей");
 
-  const again = await tasks.startGadget("p", "поправь", { resource: "node-7" });
+  const again = await tasks.startGadget("p", "поправь", { resource: "node-7", bodySha256: "e".repeat(64) });
   assert.equal(again.restored, true);
   assert.equal((control.calls.filter(c => c[0] === "create").at(-1)![1] as Record<string, unknown>).gadget_resource, "node-7");
+  assert.equal((control.calls.filter(c => c[0] === "create").at(-1)![1] as Record<string, unknown>).gadget_body_sha256, "e".repeat(64));
   assert.equal(again.task.gadget_resource, "node-7");
-  const missing = await tasks.startGadget("p", "поправь", { resource: "node-9" });
-  assert.equal(missing.restored, false, "исходников нет — служба начала с шаблона");
+  await assert.rejects(tasks.startGadget("p", "поправь", { resource: "node-9" }), (e: WorkspaceError) => e.code === "no_sources");
   for (const bad of ["", "a/b", "a b", "x".repeat(256)]) {
     await assert.rejects(tasks.startGadget("p", "поправь", { resource: bad }), (e: WorkspaceError) => e.code === "invalid", bad);
   }
