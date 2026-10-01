@@ -48,7 +48,21 @@
     "no-shadow": "warn",
     "typescript/no-this-alias": "warn",
     "typescript/no-extraneous-class": "warn",
-    "unicorn/consistent-function-scoping": "warn"
+    "unicorn/consistent-function-scoping": "warn",
+
+    // Эти правила предлагают другой стиль; исправление может менять мутацию массива
+    // или раскрывать исходную ошибку на внешней границе. Они требуют рассмотрения.
+    "unicorn/no-array-sort": "warn",
+    "unicorn/no-array-reverse": "warn",
+    "unicorn/no-new-array": "warn",
+    "unicorn/no-useless-spread": "warn",
+    "unicorn/prefer-add-event-listener": "warn",
+    "unicorn/prefer-string-starts-ends-with": "warn",
+    "preserve-caught-error": "warn",
+    "no-new": "warn",
+    // Управляющие символы намеренно отвергаются в именах и внешних данных.
+    "no-control-regex": "warn",
+    "no-unused-expressions": ["error", { "allowTernary": true }]
   },
   "ignorePatterns": [
     "**/dist/**",
@@ -56,7 +70,8 @@
     "**/*.gen.ts",
     "**/node_modules/**",
     "**/.wrangler/**",
-    "**/worker-configuration.d.ts"
+    "**/worker-configuration.d.ts",
+    "packages/workshop-frontend/src/vendor/**"
   ],
   "overrides": [
     {
@@ -96,6 +111,15 @@
     {
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/vitest.config.ts"],
       "plugins": ["typescript", "unicorn", "oxc", "import", "vitest"],
+      "rules": {
+        // Vitest принимает вторым аргументом сообщение. Остальные проверки expect сохранены.
+        "vitest/valid-expect": ["error", { "maxArgs": 2 }],
+        "vitest/require-mock-type-parameters": "warn",
+        "vitest/no-conditional-expect": "warn",
+        "vitest/require-to-throw-message": "warn",
+        // Ожидания в тестах меняются из асинхронных обработчиков, вне тела цикла.
+        "no-unmodified-loop-condition": "warn"
+      },
       "env": {
         "vitest": true,
         "es2024": true
@@ -135,6 +159,21 @@
       "rules": {
         "no-restricted-imports": "off"
       }
+    },
+    {
+      "files": ["**/*.test.mjs"],
+      "rules": { "no-unmodified-loop-condition": "warn" }
+    },
+    {
+      "files": ["packages/gatekeeper-mnemos/src/mnemos-api.test.ts"],
+      // Неверный пакет содержит 101 ссылку на одну запись; мутаций записей нет.
+      "rules": { "unicorn/no-array-fill-with-reference-type": "warn" }
+    },
+    {
+      "files": ["packages/workshop-frontend/src/nativeSnapshotSource.test.ts"],
+      // MessagePort не принимает targetOrigin; сообщения Window по-прежнему проверяются.
+      "rules": { "unicorn/require-post-message-target-origin": "off" }
     }
+
   ]
 }

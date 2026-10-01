@@ -63,7 +63,12 @@ function fakeApi(info: Partial<MiniAppDocumentInfo> = {}, options: { revision?: 
 
 // Редактор в jsdom не запускается: подставной фрейм отдаёт снимок сразу.
 function StubFrame({ onSnapshotSource }: { onSnapshotSource(read: unknown): void }) {
-  React.useEffect(() => { onSnapshotSource(async () => ({ format: "cloudflareos.document", formatVersion: 1, document: { revision: 7, title: "План" } })); return () => onSnapshotSource(null) }, [])
+  const initialSnapshotSource = React.useRef(onSnapshotSource)
+  React.useEffect(() => {
+    const notify = initialSnapshotSource.current
+    notify(async () => ({ format: "cloudflareos.document", formatVersion: 1, document: { revision: 7, title: "План" } }))
+    return () => notify(null)
+  }, [])
   return <div className="stub-editor" />
 }
 

@@ -156,7 +156,8 @@ export async function describePublishPlace(selector: Selector, binding: Document
   try {
     const parent = binding.resource ? (await selector.documentLocation(binding.scope, binding.resource, format)).parent : ''
     let cursor = ''
-    for (let page = 0; parent && folder === null && page < 20; page++) {
+    for (let page = 0; folder === null && page < 20; page++) {
+      if (!parent) break
       const listed = await selector.folders(binding.scope, cursor)
       folder = listed.folders.find(f => f.id === parent)?.name ?? null
       if (!listed.nextCursor) break

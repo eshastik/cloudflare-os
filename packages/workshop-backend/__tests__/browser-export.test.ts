@@ -189,6 +189,8 @@ describe("renderGadgetPdf", () => {
         "Test Gadget",
         { [Symbol.dispose]: () => { gadgetDisposed = true; } } as never,
       );
+      // Подписка нужна до продвижения часов; эта проверка ожидается через await ниже.
+      // oxlint-disable-next-line vitest/valid-expect
       let rejection = expect(result).rejects.toThrow("Browser export timed out.");
 
       await vi.advanceTimersByTimeAsync(30_000);
