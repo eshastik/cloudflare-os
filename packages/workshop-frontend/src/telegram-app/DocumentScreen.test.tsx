@@ -128,8 +128,9 @@ it("«Версии»: «Назад» Telegram закрывает список; �
     await settle()
     await React.act(async () => { (r.el.querySelectorAll(".md-row")[1] as HTMLButtonElement).click() })
     await React.act(async () => { [...r.el.querySelectorAll("button")].find(b => b.textContent === "Вернуть эту версию")!.click() })
-    await settle()
-    expect(f.calls).toEqual(expect.arrayContaining(["version:v1", "validate", "restore:7"]))
+    await React.act(async () => {
+      await vi.waitFor(() => expect(f.calls).toEqual(expect.arrayContaining(["version:v1", "validate", "restore:7"])))
+    })
     expect(r.el.querySelector(".md-sheet")).toBeNull()
   } finally { await r.done() }
 })
