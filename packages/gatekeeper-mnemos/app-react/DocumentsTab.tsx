@@ -171,7 +171,8 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
         if (doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("У документа конфликт версий. Откройте личный черновик, чтобы выбрать вариант.");
         const page = await ui.readDraftText(row.projectId, row.nodeId, 0, 262144);
         if (page.head !== doc.head) throw new Error("Документ изменился. Откройте его заново.");
-        if (page.failure) throw new Error("Не удалось извлечь текст. Исходный файл можно скачать.");
+        if (page.failure && !page.text) throw new Error("Не удалось извлечь текст. Исходный файл можно скачать.");
+        if (page.failure) setNotice("Текст извлечён с предупреждением. Для проверки скачайте оригинал.");
         textHead = page.head;
         content = {node_id: row.nodeId, text: page.text, media_type: page.content_type, truncated: page.truncated,
           offset: page.offset, next_offset: page.next_offset, total_bytes: page.total_bytes, text_state: page.no_text ? "no_text" : "ready"};
@@ -203,7 +204,8 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
       if (row.privateOnly) {
         const next = await ui.readDraftText(row.projectId, row.nodeId, content.next_offset, 262144);
         if (next.head !== before.textHead) throw new Error("Документ изменился. Откройте его заново.");
-        if (next.failure) throw new Error("Продолжение не прочитано. Исходный файл можно скачать.");
+        if (next.failure && !next.text) throw new Error("Продолжение не прочитано. Исходный файл можно скачать.");
+        if (next.failure) setNotice("Текст извлечён с предупреждением. Для проверки скачайте оригинал.");
         page = {node_id: row.nodeId, text: next.text, media_type: next.content_type, truncated: next.truncated,
           offset: next.offset, next_offset: next.next_offset, total_bytes: next.total_bytes};
       } else {

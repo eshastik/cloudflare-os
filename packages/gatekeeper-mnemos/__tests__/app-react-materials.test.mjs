@@ -263,7 +263,7 @@ test("Личный PDF читается извлечённым текстом; �
     async readDraftText(project, node, offset, max) {
       calls.push([project, node, offset, max]);
       return {node_id: node, head: changed ? "b".repeat(64) : head, name: "Большой.pdf", content_type: "application/pdf", size_bytes: 101 * 1024 * 1024,
-        offset, next_offset: offset ? 24 : 12, total_bytes: 24, text: offset ? "Конец" : "Начало", truncated: !offset};
+        offset, next_offset: offset ? 24 : 12, total_bytes: 24, text: offset ? "Конец" : "Начало", truncated: !offset, failure: "На странице не восстановлены пробелы у шрифта без таблицы ширин"};
     },
     async readProjectDocument(project, node) { return {node_id: node, text: "Общая", media_type: "text/plain", truncated: true, revision: 7, offset: 0, next_offset: 12, total_bytes: 24}; },
     async readProjectDocumentPage(project, node, offset, revision) {
@@ -276,6 +276,7 @@ test("Личный PDF читается извлечённым текстом; �
     await app.until(() => app.button("Большой.pdf"), "личный PDF");
     app.button("Большой.pdf").click();
     await app.until(() => preview()?.textContent.includes("Начало") && app.button("Показать ещё"), "извлечённый текст PDF");
+    assert.ok(app.text().includes("Текст извлечён с предупреждением"));
     assert.deepEqual(calls[0], ["one", "pdf", 0, 262144]);
     assert.equal(app.calls.some(c => c[0] === "downloadText"), false, "PDF не декодируется как UTF-8 файл");
     changed = true;
