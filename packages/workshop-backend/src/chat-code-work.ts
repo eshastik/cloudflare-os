@@ -336,8 +336,9 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   // Окончательно право проверяет служба рабочих мест по Mnemos; здесь отказ до запуска и понятными словами.
   if (user.codeWorkAllowed && !await user.codeWorkAllowed()) throw new Error(CODE_AGENT_DISABLED_MESSAGE);
   let gadget = request.gadget === true;
-  if (request.resource !== undefined && (!gadget || request.newGadget || !request.resource ||
-      request.resource.length > 255 || request.resource.trim() !== request.resource || /[\x00\r\n]/.test(request.resource))) {
+  const gadgetResource = gadget && request.newGadget === true ? undefined : request.resource;
+  if (gadgetResource !== undefined && (!gadget || !gadgetResource ||
+      gadgetResource.length > 255 || gadgetResource.trim() !== gadgetResource || /[\x00\r\n]/.test(gadgetResource))) {
     throw new Error("Для правки укажи узел существующего гаджета; newGadget используется только для нового файла.");
   }
   if (gadget && (!user.codeWorkStartGadget || !user.codeWorkSaveGadget)) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
@@ -346,7 +347,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
   let work = meta[slot];
   if (gadget && work?.gadget && codeWorkAlive(work.state) && !request.newGadget &&
-      (!request.resource || request.resource === work.gadget.resource) &&
+      (!gadgetResource || gadgetResource === work.gadget.resource) &&
       (!request.projectId || request.projectId === work.projectId || request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase())) {
     const remote = await user.codeWorkEvents(work.accountId, work.projectId, work.taskId, work.cursor, 0);
     // Запись беседы переживает контейнер; новую просьбу выполняет новая задача с сохранёнными исходниками.
@@ -360,9 +361,9 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let sameProject = !!work && (!request.projectId || request.projectId === work.projectId ||
     request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase());
   let newGadget = gadget && request.newGadget === true;
-  let resourceChanged = gadget && !!request.resource && (!sameProject || request.resource !== work?.gadget?.resource);
-  let requestedGadget = gadget && request.resource
-    ? !resourceChanged && work?.gadget ? work.gadget : {resource: request.resource, title: "Гаджет"}
+  let resourceChanged = gadget && !!gadgetResource && (!sameProject || gadgetResource !== work?.gadget?.resource);
+  let requestedGadget = gadget && gadgetResource
+    ? !resourceChanged && work?.gadget ? work.gadget : {resource: gadgetResource, title: "Гаджет"}
     : undefined;
   let continuing = !!work && codeWorkAlive(work.state) && (!request.projectId || request.projectId === work.projectId) && !newGadget && !resourceChanged;
   // Гаджет прежней работы беседы переживает её задачу: узел и квитанция его создания остаются, а новая

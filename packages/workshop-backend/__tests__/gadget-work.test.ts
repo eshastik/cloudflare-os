@@ -173,7 +173,7 @@ describe("гаджет через агента кода", () => {
 
     // Другой гаджет — только по явной просьбе: новая задача без узла и новый узел.
     setPages([{events: [role(3, "c")], state: "idle"}]);
-    await runChatCodeWork(h, {chatId: 1, toolCallId: "c3", prompt: "Сделай ещё опросник", gadget: true, newGadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c3", prompt: "Сделай ещё опросник", gadget: true, newGadget: true, resource: ")}", userId: "u1", profileId: "pr", signal: signal()});
     expect(starts.at(-1)).toBeUndefined();
     expect(calls.filter(c => c[0] === "save").at(-1)).toEqual(["save", 3, "hr", "g3", undefined]);
   });
