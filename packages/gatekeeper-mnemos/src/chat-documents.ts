@@ -165,7 +165,7 @@ function describeFailure(error: unknown, fallback?: string): Error {
   const why = error.code === "project.personal_disabled" ? "в организации отключены личные проекты — подключите к беседе проект"
     : error.status === 403 ? "нет права записи в этот проект"
     : error.status === 401 ? "вход в Mnemos устарел — войдите заново"
-    : error.status === 413 || error.code === "upload.too_large" ? "файл больше, чем принимает Mnemos (64 МБ)"
+    : error.status === 413 || error.code === "upload.too_large" ? "размер файла превышает предел загрузки этой установки Mnemos"
     : error.status === 404 ? "файл не найден в Mnemos"
     : error.status === 409 ? "файл изменился — обновите и повторите"
     : error.status >= 500 ? "Mnemos не ответил"
