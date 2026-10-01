@@ -60,6 +60,13 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     return ()=>{current=false;};
   },[ui,data.identity?.subject.user_id]);
   const [selected, setSelected] = useState(initialProject);
+  const selectedFromList = useRef("");
+  useEffect(() => {
+    // Выбор файла меняет адрес, но сохраняет текущий список и поиск рядом с просмотром.
+    const fromList = linkedDocument && selectedFromList.current === keyOf(initialProject, linkedDocument.node);
+    selectedFromList.current = "";
+    if (!fromList) setSelected(initialProject);
+  }, [initialProject, linkedDocument]);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<Search | null>(null);
   const [allProjects, setAllProjects] = useState(false);
@@ -186,13 +193,29 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     }
   }
 
+  function selectDocument(row: DocumentRow) {
+    selectedFromList.current = keyOf(row.projectId, row.nodeId);
+    void host.openSection("documents", row.projectId, row.nodeId)
+      .catch(() => { selectedFromList.current = ""; setNotice("Не удалось открыть документ. Повторите попытку."); });
+  }
+
+  function closeDocument() {
+    void host.openSection("documents", selected)
+      .catch(() => setNotice("Не удалось закрыть просмотр. Повторите попытку."));
+  }
+
   useEffect(() => {
-    if (!linkedDocument || openedLink.current === linkedDocument.seq) return;
-    const row = rows.find(r => r.projectId === initialProject && r.nodeId === linkedDocument.node);
-    if (!row) return;
+    if (!linkedDocument) { openedLink.current = null; setOpened(null); return; }
+    if (openedLink.current === linkedDocument.seq || data.projectsLoading) return;
+    const project = data.projects.find(p => p.id === initialProject);
+    if (!project) return;
+    const hit = search?.hits.find(h => h.project_id === initialProject && h.node_id === linkedDocument.node);
+    const row = rowsByProject.get(initialProject)?.find(r => r.nodeId === linkedDocument.node) ??
+      (hit ? rowFor(hit) : { projectId: initialProject, projectName: project.name, nodeId: linkedDocument.node,
+        name: UNNAMED_DOCUMENT, status: { tone: "success" as const, label: "Опубликовано" } });
     openedLink.current = linkedDocument.seq;
     void open(row);
-  }, [linkedDocument, initialProject, rows]);
+  }, [linkedDocument, initialProject, rowsByProject, data.projectsLoading, data.projects, search]);
 
   async function readMore() {
     const before = opened, content = before?.content;
@@ -309,7 +332,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   const materialRow = (row: DocumentRow, fragment?: string, folder?: string) => (
     <MaterialCard key={keyOf(row.projectId, row.nodeId)} row={row} fragment={fragment} folder={folder ?? row.folder} terms={search ? terms : undefined}
       showProject={!selected} at={times.get(keyOf(row.projectId, row.nodeId))}
-      selected={isOpened(row)} onOpen={() => void open(row)} onChat={action => chat(row, action)} move={moveFor(row)} />
+      selected={isOpened(row)} onOpen={() => selectDocument(row)} onChat={action => chat(row, action)} move={moveFor(row)} />
   );
 
   return (
@@ -383,7 +406,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
                   {opened.row.projectName}{times.get(keyOf(opened.row.projectId, opened.row.nodeId)) && <>, изменён {relativeTime(times.get(keyOf(opened.row.projectId, opened.row.nodeId))!)}</>}
                 </p>
               </div>
-              <Button variant="ghost" size="sm" shape="square" icon={X} aria-label="Закрыть просмотр" onClick={() => setOpened(null)} />
+              <Button variant="ghost" size="sm" shape="square" icon={X} aria-label="Закрыть просмотр" onClick={closeDocument} />
             </div>
             <div className="mb-3 flex flex-wrap items-center gap-1">
               {opened.row.status.tone !== "success" && <StatusBadge tone={opened.row.status.tone}>{opened.row.status.label}</StatusBadge>}

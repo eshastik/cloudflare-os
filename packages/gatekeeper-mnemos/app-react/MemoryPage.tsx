@@ -96,7 +96,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
     {denied ? <p role="status" className="m-0 text-[15px] text-kumo-subtle">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>
       {section === "my-work" && <MyWorkTab data={data} />}
       {section === "projects" && <ProjectsTab initialProject={selectedProject} initialView={selectedView} linkedDocument={linkedDocument} data={data} onSelectProject={project => open("projects", project)} onSelectView={view => void host.selectView(view).catch(() => {})} onOpenDocuments={project => open("documents", project)} onOpenSources={() => open("connections")} />}
-      {section === "documents" && <DocumentsTab key={documentsProject} data={data} initialProject={documentsProject} linkedDocument={linkedDocument} />}
+      {section === "documents" && <DocumentsTab data={data} initialProject={documentsProject} linkedDocument={linkedDocument} />}
       {section === "team" && <TeamTab data={data} onOpenProject={project => open("projects", project)} onInvite={() => open("people")} />}
       {section === "people" && <PeopleTab data={data} />}
       {section === "rules" && <RulesTab />}

@@ -71,3 +71,27 @@ test("неизвестная прямая ссылка не открывает �
  try {await app.until(()=>app.text().includes("Раздел не найден"),"ошибка ссылки");}
  finally {app.dispose();}
 });
+
+
+test("адрес материалов следует за выбранным файлом, восстановлением ссылки и закрытием просмотра", async () => {
+ const reads = [];
+ const app = await mountMemoryApp({async readProjectDocument(project, node) {
+  reads.push([project, node]);
+  return {node_id: node, text: `Содержимое ${node}`, media_type: "text/plain", truncated: false};
+ }}, {section: "documents", project: "one", document: "doc"});
+ const preview = () => app.document.querySelector('[aria-label="Просмотр документа"]');
+ try {
+  await app.until(() => preview()?.textContent.includes("Содержимое doc"), "файл по начальной ссылке");
+  app.go("documents", "two");
+  await app.until(() => !preview() && app.buttons().some(b => b.textContent === "Другой документ"), "смена проекта закрыла прежний файл");
+  app.buttons().find(b => b.textContent === "Другой документ").click();
+  await app.until(() => preview()?.textContent.includes("Содержимое other"), "выбранный файл");
+  assert.ok(app.calls.some(call => JSON.stringify(call) === JSON.stringify(["openSection", "documents", "two", "other"])));
+  app.go("documents", "one", "", "doc");
+  await app.until(() => preview()?.textContent.includes("Содержимое doc"), "возврат по ссылке");
+  app.document.querySelector('[aria-label="Закрыть просмотр"]').click();
+  await app.until(() => !preview(), "закрытие просмотра");
+  assert.ok(app.calls.some(call => JSON.stringify(call) === JSON.stringify(["openSection", "documents", "one"])));
+  assert.deepEqual(reads, [["one", "doc"], ["two", "other"], ["one", "doc"]]);
+ } finally {app.dispose();}
+});
