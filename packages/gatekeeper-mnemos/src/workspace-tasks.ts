@@ -211,7 +211,7 @@ export class WorkspaceClient implements WorkspaceControl {
   }
   /** conflict — чем заменить ответ 409; функция получает код ошибки и пояснение службы из тела ответа.
    * failure — чем заменить 502, invalid — 400. */
-  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError | ((code: string, message: string) => WorkspaceError), failure?: WorkspaceError, invalid?: WorkspaceError): Promise<Response> {
+  async #call(path: string, method: string, body?: unknown, signal?: AbortSignal, conflict?: WorkspaceError | ((code: string, message: string) => WorkspaceError), failure?: WorkspaceError, invalid?: WorkspaceError, unavailable?: (code: string, message: string) => WorkspaceError): Promise<Response> {
     let response: Response;
     try {
       response = await this.#fetch(this.#origin + path, { method, signal, headers: { Authorization: `Bearer ${this.#token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -223,22 +223,30 @@ export class WorkspaceClient implements WorkspaceControl {
     // Право «Агент кода» проверяет служба по Mnemos; при отказе она уже остановила задачу.
     if (response.status === 403) throw new WorkspaceError("disabled", CODE_AGENT_DISABLED_MESSAGE);
     if (response.status === 400 && invalid) throw invalid;
-    if (response.status === 409 && conflict) {
-      if (conflict instanceof WorkspaceError) throw conflict;
+    const problem = response.status === 409 ? conflict : response.status === 503 ? unavailable : undefined;
+    if (problem) {
+      if (problem instanceof WorkspaceError) throw problem;
       let code = "", message = "";
       try {
         const value = await response.json() as { error?: unknown; message?: unknown };
         code = typeof value?.error === "string" ? value.error : "";
         message = typeof value?.message === "string" ? value.message.slice(0, 500) : "";
       } catch { /* тело без кода */ }
-      throw conflict(code, message);
+      throw problem(code, message);
     }
     if (response.status === 409 || response.status === 429 || response.status === 503) throw new WorkspaceError("unavailable", "Сейчас все рабочие места заняты. Повторите позже.");
     if (response.status === 502 && failure) throw failure;
     if (!response.ok) throw new WorkspaceError("unavailable", "Служба рабочих мест отказала.");
     return response;
   }
-  async create(input: Parameters<WorkspaceControl["create"]>[0]) { return remoteTask(await (await this.#call("/v1/workspace/tasks", "POST", input)).json()); }
+  async create(input: Parameters<WorkspaceControl["create"]>[0]) {
+    const busy = () => new WorkspaceError("unavailable", "Сейчас все рабочие места заняты. Повторите позже.");
+    return remoteTask(await (await this.#call("/v1/workspace/tasks", "POST", input, undefined,
+      code => code === "no_sources" ? new WorkspaceError("no_sources", "Исходники этой версии гаджета не сохранились. Правка с пустого шаблона не запущена; файл сохранён.") : busy(),
+      undefined, undefined,
+      code => code === "sources_unavailable" ? new WorkspaceError("sources_unavailable", "Хранилище исходников гаджета недоступно. Повторите позже.") : busy(),
+    )).json());
+  }
   async status(id: string) { return remoteTask(await (await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}`, "GET")).json()); }
   async credential(id: string, token: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/credential`, "PUT", { agent_credential: token }); }
   async message(id: string, text: string) { await this.#call(`/v1/workspace/tasks/${encodeURIComponent(id)}/messages`, "POST", { text }); }

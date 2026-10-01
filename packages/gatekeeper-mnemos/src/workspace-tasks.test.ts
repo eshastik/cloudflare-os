@@ -645,3 +645,11 @@ test("«Сделать своей»: служба получает ключ аг
   control.forkError = new WorkspaceError("no_sources", "Исходники этой версии гаджета не сохранились.");
   await assert.rejects(tasks.forkGadgetSources({ project: "author-p", resource: "orig-node" }, { project: "mine", resource: "copy-node" }, sum), (e: WorkspaceError) => e.code === "no_sources");
 });
+
+test("Запуск правки отличает потерянные исходники, недоступное хранилище и занятые места", async () => {
+  const input = { binding_id: "b", agent_credential: "a", project_id: "p", repositories: [], prompt: "поправь", title: "Гаджет", kind: "gadget" as const, gadget_resource: "n" };
+  for (const [status, code, expected] of [[409, "no_sources", "no_sources"], [503, "sources_unavailable", "sources_unavailable"], [503, "capacity", "unavailable"], [409, "capacity", "unavailable"]] as const) {
+    const client = new WorkspaceClient("https://ws.example", "service-token", (async () => Response.json({ error: code }, { status })) as typeof fetch);
+    await assert.rejects(client.create(input), (e: WorkspaceError) => e.code === expected && (expected === "no_sources" ? !e.message.includes("заняты") : true));
+  }
+});
