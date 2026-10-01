@@ -320,6 +320,8 @@ export type CodeWorkRequest = {
   gadget?: boolean;
   /** Начать новый гаджет, а не править гаджет прежней работы беседы. */
   newGadget?: boolean;
+  /** Узел существующего гаджета, в том числе копии, выбранный для правки в новой беседе. */
+  resource?: string;
   /** Кто ведёт беседу сейчас: чьи подключения использовать, если у беседы ещё нет создателя. */
   userId: string;
   profileId: string;
@@ -334,12 +336,17 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   // Окончательно право проверяет служба рабочих мест по Mnemos; здесь отказ до запуска и понятными словами.
   if (user.codeWorkAllowed && !await user.codeWorkAllowed()) throw new Error(CODE_AGENT_DISABLED_MESSAGE);
   let gadget = request.gadget === true;
+  if (request.resource !== undefined && (!gadget || request.newGadget || !request.resource ||
+      request.resource.length > 255 || request.resource.trim() !== request.resource || /[\x00\r\n]/.test(request.resource))) {
+    throw new Error("Для правки укажи узел существующего гаджета; newGadget используется только для нового файла.");
+  }
   if (gadget && (!user.codeWorkStartGadget || !user.codeWorkSaveGadget)) throw new Error("Подключение Mnemos не умеет делать гаджеты через агента кода.");
   // Работа над гаджетом хранится отдельно: живая работа с кодом и её непринятые изменения не теряются.
   let slot: "codeWork" | "gadgetWork" = gadget ? "gadgetWork" : "codeWork";
   let emitStep = (step: AgentStep) => host.emit(request.chatId, {type: "toolStep", toolCallId: request.toolCallId, step});
   let work = meta[slot];
   if (gadget && work?.gadget && codeWorkAlive(work.state) && !request.newGadget &&
+      (!request.resource || request.resource === work.gadget.resource) &&
       (!request.projectId || request.projectId === work.projectId || request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase())) {
     const remote = await user.codeWorkEvents(work.accountId, work.projectId, work.taskId, work.cursor, 0);
     // Запись беседы переживает контейнер; новую просьбу выполняет новая задача с сохранёнными исходниками.
@@ -353,12 +360,16 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let sameProject = !!work && (!request.projectId || request.projectId === work.projectId ||
     request.projectId.trim().toLowerCase() === work.projectTitle.toLowerCase());
   let newGadget = gadget && request.newGadget === true;
-  let continuing = !!work && codeWorkAlive(work.state) && (!request.projectId || request.projectId === work.projectId) && !newGadget;
+  let resourceChanged = gadget && !!request.resource && (!sameProject || request.resource !== work?.gadget?.resource);
+  let requestedGadget = gadget && request.resource
+    ? !resourceChanged && work?.gadget ? work.gadget : {resource: request.resource, title: "Гаджет"}
+    : undefined;
+  let continuing = !!work && codeWorkAlive(work.state) && (!request.projectId || request.projectId === work.projectId) && !newGadget && !resourceChanged;
   // Гаджет прежней работы беседы переживает её задачу: узел и квитанция его создания остаются, а новая
   // задача восстанавливает исходники узла. Новый узел — только по просьбе начать новый гаджет.
-  let keepGadget = gadget && !newGadget && sameProject;
+  let keepGadget = gadget && !newGadget && !resourceChanged && sameProject;
   let resumeGadget = keepGadget && !continuing && !!work?.gadget;
-  if (newGadget && work && codeWorkAlive(work.state)) {
+  if ((newGadget || resourceChanged) && work && codeWorkAlive(work.state)) {
     // Прежняя задача гаджета не нужна: место в службе рабочих мест освобождается сразу.
     await user.codeWorkAbort(work.accountId, work.projectId, work.taskId).catch(() => {});
   }
@@ -414,7 +425,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let usedNames = continuing ? work!.attachmentNames ?? [] : [];
   let usedBytes = continuing ? work!.attachmentBytes ?? 0 : 0;
   let attachments = planAttachments(seen, {names: usedNames, bytes: usedBytes});
-  let backend = backendFor(user, accountId, gadget, resumeGadget ? work!.gadget!.resource : undefined);
+  let backend = backendFor(user, accountId, gadget, requestedGadget?.resource ?? (resumeGadget ? work!.gadget!.resource : undefined));
   let textPack = (pendingAsFailed: boolean) => buildCodeContextPack({messages, projects,
     attachments: pendingAsFailed ? attachments.map(f => f.status === "pending" ? {...f, status: "failed" as const} : f) : attachments});
   let putContext = async (taskId: string) => {
@@ -453,7 +464,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
       current[slot] = {accountId, projectId, projectTitle, taskId, state: "running", foreground: false, cursor, contextSeq,
         ...(same ? {summary: previous!.summary, review: previous!.review, changedFiles: previous!.changedFiles,
           attachmentNames: previous!.attachmentNames, attachmentBytes: previous!.attachmentBytes} : {}),
-        ...(keepGadget && previous?.gadget ? {gadget: previous.gadget} : {}),
+        ...(requestedGadget ? {gadget: requestedGadget} : keepGadget && previous?.gadget ? {gadget: previous.gadget} : {}),
         ...(keepGadget && previous?.gadgetRequest ? {gadgetRequest: previous.gadgetRequest} : {})};
       host.putChatMeta(current);
     },
@@ -462,7 +473,7 @@ export async function runChatCodeWork(host: ChatCodeWorkHost, request: CodeWorkR
   let savedGadget: ChatCodeWork["gadget"];
   let gadgetRequest: string | undefined;
   if (gadget) {
-    let previous = keepGadget ? work?.gadget : undefined;
+    let previous = requestedGadget ?? (keepGadget ? work?.gadget : undefined);
     // Квитанция создания пишется в беседу ДО вызова: ответ может потеряться, а узел — уже появиться.
     gadgetRequest = previous ? undefined : (keepGadget ? work?.gadgetRequest : undefined) ?? crypto.randomUUID();
     if (gadgetRequest) {

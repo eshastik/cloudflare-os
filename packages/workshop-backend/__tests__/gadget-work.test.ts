@@ -19,7 +19,7 @@ function fakeUser() {
     async listChatProjects() { return [{accountId: 3, projectId: "hr", title: "Кадры"}]; },
     async codeWorkTarget() { throw new Error("гаджету код проекта не нужен"); },
     async codeWorkStart() { throw new Error("гаджет не запускается как работа с кодом"); },
-    async codeWorkStartGadget(accountId, project, prompt) { calls.push(["startGadget", accountId, project, prompt]); return {taskId: "g1", state: "starting", scopeExtended: false}; },
+    async codeWorkStartGadget(accountId, project, prompt, options) { calls.push(["startGadget", accountId, project, prompt, ...(options ? [options] : [])]); return {taskId: "g1", state: "starting", scopeExtended: false}; },
     async codeWorkMessage(accountId, project, task, text) { calls.push(["message", accountId, project, task, text]); },
     async codeWorkEvents(_a, _p, _t, after) {
       const page = pages.shift() ?? {events: [], state: "idle" as const};
@@ -82,6 +82,31 @@ describe("гаджет через агента кода", () => {
     expect(second.gadget).toMatchObject({saved: true, resource: "node-7", created: false});
     expect(meta().gadgetWork?.gadget).toEqual({resource: "node-7", title: "Отпуска", head: HEAD2});
     expect(formatCodeWorkResult(second)).toContain("новой версией того же файла");
+  });
+
+  it("новая беседа правит выбранную копию в том же узле, не создавая новый файл", async () => {
+    const {user, calls, setPages} = fakeUser();
+    const {host: h, meta} = host(user, chat());
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    const out = await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "Поправь мою копию", projectId: "hr", resource: "copy-node", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(calls.find(c => c[0] === "startGadget")?.[4]).toEqual({resource: "copy-node"});
+    expect(calls.find(c => c[0] === "save")).toEqual(["save", 3, "hr", "g1", "copy-node"]);
+    expect(out.gadget).toMatchObject({saved: true, resource: "copy-node", created: false});
+    expect(meta().gadgetWork?.gadget?.resource).toBe("copy-node");
+    expect(meta().gadgetWork?.gadgetRequest).toBeUndefined();
+  });
+
+  it("выбор другой копии не пишет в задачу прежнего гаджета", async () => {
+    const {user, calls, setPages} = fakeUser();
+    user.codeWorkAbort = async (...args) => { calls.push(["abort", ...args]); };
+    const {host: h} = host(user, chat());
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c1", prompt: "Создай гаджет", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    setPages([{events: [role(1, "a")], state: "idle"}]);
+    await runChatCodeWork(h, {chatId: 1, toolCallId: "c2", prompt: "Поправь другую копию", resource: "copy-node", gadget: true, userId: "u1", profileId: "pr", signal: signal()});
+    expect(calls.filter(c => c[0] === "startGadget")).toHaveLength(2);
+    expect(calls.some(c => c[0] === "message")).toBe(false);
+    expect(calls.find(c => c[0] === "abort")).toEqual(["abort", 3, "hr", "g1"]);
+    expect(calls.filter(c => c[0] === "save").at(-1)?.[4]).toBe("copy-node");
   });
 
   it("битая сборка не сохраняется: ход не падает, агент узнаёт причину, прежний узел остаётся", async () => {
