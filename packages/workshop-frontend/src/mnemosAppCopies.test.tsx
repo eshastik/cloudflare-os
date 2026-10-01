@@ -169,7 +169,7 @@ function shareSelector() {
   }
   return { selector, calls }
 }
-async function renderShare(copies: { release: typeof RELEASE | null } | undefined) {
+async function renderShare(copies: Parameters<typeof DocumentSharePanel>[0]['copies']) {
   const { selector, calls } = shareSelector()
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
@@ -260,4 +260,16 @@ test('окно подтверждения «Сделать своей»: тек�
   await act(async () => { confirm.click() })
   await act(async () => { await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false)) })
   await act(async () => root.unmount()); container.remove()
+})
+
+test('сбой чтения публикации не объявляет приложение неопубликованным и даёт повторить', async () => {
+  const retry = vi.fn()
+  const view = await renderShare({ release: null, error: 'Сведения о публикации не прочитаны.', retry })
+  try {
+    expect(view.container.textContent).toContain('Сведения о публикации не прочитаны.')
+    expect(view.container.textContent).not.toContain('Опубликованной версии пока нет')
+    const button = [...view.container.querySelectorAll('button')].find(b => b.textContent === 'Повторить')!
+    await act(async () => button.click())
+    expect(retry).toHaveBeenCalledOnce()
+  } finally { await view.unmount() }
 })

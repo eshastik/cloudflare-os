@@ -8,6 +8,7 @@ import type { DocumentBinding } from './DocumentStatus'
 import { plural } from './versionDiff'
 import { useAuthenticatedApi } from './AuthContext'
 import { listAccounts, storesDocuments } from './accountCapabilities'
+import { WorkshopButton } from './components/WorkshopControls'
 import MnemosAvatar from './components/MnemosAvatar'
 import { PANEL_CLASS, PANEL_HEADER_CLASS } from './DocumentVersionPanel'
 
@@ -146,7 +147,7 @@ export default function DocumentSharePanel({ selector, binding, format, document
   selector: Selector | null; binding: DocumentBinding | null; format: MnemosNodeFormat; documentName: string | null; onClose(): void
   /** Приложение без совместной работы (ADR 0028, этап 3): каждый получатель получает свою копию, право —
    *  только чтение опубликованной версии. release — версия, которую получат копии; null — не опубликовано. */
-  copies?: { release: MnemosAppRelease | null }
+  copies?: { release: MnemosAppRelease | null; loading?: boolean; error?: string; retry?(): void }
 }) {
   const [people, setPeople] = useState<SharePerson[] | null>(null)
   const [units, setUnits] = useState<ShareUnit[]>([]), [me, setMe] = useState(''), [recent, setRecent] = useState<string[]>(() => readRecent())
@@ -296,10 +297,11 @@ export default function DocumentSharePanel({ selector, binding, format, document
         </p>}
 
         {copies && <section data-share-copies="" aria-label="Как делится приложение" className="flex flex-col gap-1.5">
-          <p className="m-0 text-[14px] leading-5">Каждый получит свою копию: тот же код и свою пустую базу. Данные автора и получателей не смешиваются.</p>
-          <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle">{copies.release
+          <p className="m-0 text-[14px] leading-5">Каждый получит свою копию: то же приложение и свою пустую базу. Данные автора и получателей не смешиваются.</p>
+          <p role={copies.error ? "alert" : "status"} className="m-0 text-[13px] leading-[18px] text-kumo-subtle">{copies.error || (copies.loading ? "Загрузка публикации…" : copies.release
             ? `Копии получают версию, опубликованную ${publishedAt(copies.release)}. Следующие публикации придут получателям предложением обновиться — без их согласия копия не меняется.`
-            : 'Опубликованной версии пока нет: получатели смогут создать копию после публикации. Опубликуйте приложение кнопкой в шапке.'}</p>
+            : 'Опубликованной версии пока нет: получатели смогут создать копию после публикации. Опубликуйте приложение кнопкой в шапке.')}</p>
+          {copies.error && copies.retry && <WorkshopButton onClick={copies.retry}>Повторить</WorkshopButton>}
           <p className="m-0 text-[13px] leading-[18px] text-kumo-subtle">Отделу или всей организации — через доступ к проекту: каждый, кто откроет приложение, получит свою копию.</p>
         </section>}
 

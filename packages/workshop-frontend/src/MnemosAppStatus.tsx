@@ -167,6 +167,8 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   const [versions, setVersions] = useState<AppVersion[] | null>(null)
   /** Оригинал без совместной работы: версия для копий и уже сделанная копия. */
   const [offer, setOffer] = useState<MnemosAppOffer | null>(null)
+  const [offerLoading, setOfferLoading] = useState(false)
+  const [offerError, setOfferError] = useState('')
   /** Своя копия чужого приложения: автор, доступ к оригиналу, обновление. */
   const [copy, setCopy] = useState<MnemosAppCopyState | null>(null)
   const [tick, setTick] = useState(0)
@@ -229,6 +231,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   useEffect(() => {
     if (!identity || !binding) { setLive(null); setLiveError(''); setOffer(null); setCopy(null); return }
     if (waitAccess) { setLive(null); return }
+    setOfferError(''); setOfferLoading(!binding.collaborative)
     let cancelled = false, connection: Connection | null = null
     let timer: ReturnType<typeof setInterval> | undefined
     void (async () => {
@@ -243,7 +246,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
         setLive({ connection, info, serial }); setLiveError(info.deployed ? '' : binding.collaborative ? 'приложение ещё не опубликовано' : 'приложение ещё не запущено')
         if (!binding.collaborative) {
           // Копии: версия для копий (у автора — для «Поделиться») и состояние своей копии.
-          const [nextOffer, nextCopy] = await Promise.all([connection.offer().catch(() => null), connection.copyState().catch(() => null)])
+          const [nextOffer, nextCopy] = await Promise.all([connection.offer().catch(() => { if (!cancelled) setOfferError('Сведения о публикации не прочитаны. Повторите попытку.'); return null }), connection.copyState().catch(() => null)])
           if (!cancelled) { setOffer(nextOffer); setCopy(nextCopy) }
         } else { setOffer(null); setCopy(null) }
         if (pollMs > 0) timer = setInterval(() => {
@@ -252,9 +255,9 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
             caught => { if (!cancelled) setLiveError(errorText(caught, 'связь с приложением закрыта')) })
         }, pollMs * 3)
       } catch (caught) {
-        if (!cancelled) { setLive(null); setLiveError(errorText(caught, 'приложение недоступно')) }
+        if (!cancelled) { setLive(null); setLiveError(errorText(caught, 'приложение недоступно')); if (!binding.collaborative) setOfferError('Сведения о публикации не прочитаны. Повторите попытку.') }
       }
-    })()
+    })().finally(() => { if (!cancelled) setOfferLoading(false) })
     // Экран приложения снимается раньше, чем закрывается его связь: иначе он обратится к закрытой связи.
     return () => { cancelled = true; clearInterval(timer); setLive(null); dispose(connection) }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- перечитывается при смене узла
@@ -537,7 +540,7 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
   }, [binding, access, collaborative, live, liveError, offerMode, offer, copy, previewMode, published])
 
   return { app, binding, access, live, liveError: offerMode ? APP_COPY_OFFER : liveError, liveGadget, showWorkspace, preview, model, busy, error, notice, versions,
-    offer, copy, offerMode, makeCopy, applyUpdate, dismissUpdate, makeOwn, previewMode, setShowPublished,
+    offer, offerError, offerLoading, copy, offerMode, makeCopy, applyUpdate, dismissUpdate, makeOwn, previewMode, setShowPublished,
     saveToProject, publish, start, loadVersions, restoreVersion, writes: () => source.current?.writes ?? null, refresh: () => setTick(t => t + 1) }
 }
 
@@ -582,7 +585,7 @@ export default function MnemosAppStatus({ handle, compact, panelHost, onShareSho
   const node = panel === 'share'
     ? <DocumentSharePanel selector={handle.writes()} binding={handle.binding ? { accountId: handle.binding.accountId, scope: handle.binding.scope, resource: handle.binding.resource } : null}
         format={GADGET_APP_FORMAT} documentName={handle.app?.title ?? null} onClose={() => setPanel(null)}
-        copies={handle.binding && !handle.binding.collaborative ? { release: handle.offer?.release ?? null } : undefined} />
+        copies={handle.binding && !handle.binding.collaborative ? { release: handle.offer?.release ?? null, loading: handle.offerLoading || (!handle.offer && !handle.offerError), error: handle.offerError, retry: handle.refresh } : undefined} />
     : panel === 'versions' ? <AppVersionsPanel handle={handle} onClose={() => setPanel(null)} />
     : panel === 'copy' ? <CopyAppPanel handle={handle} onClose={() => setPanel(null)} />
     : panel === 'save' ? <SaveAppPanel handle={handle} onClose={() => setPanel(null)} />
@@ -748,7 +751,9 @@ function CopyAppPanel({ handle, onClose }: { handle: MnemosAppHandle; onClose():
         <p className={`m-0 ${subText}`}>Когда автор опубликует новую версию, в шапке копии появится «Обновить». Без вашего согласия копия не меняется, данные при обновлении сохраняются.</p>
         <p className={`m-0 ${subText}`}>Если автор закроет доступ, копия останется у вас, но обновления приходить перестанут.</p>
       </div>
-      {!release && <p role="status" className={`m-0 ${rowText} text-kumo-warning`}>Автор ещё не опубликовал приложение. Копию можно будет создать после публикации.</p>}
+      {handle.offerError && <p role="alert" className={`m-0 ${rowText} text-kumo-danger`}>{handle.offerError} <WorkshopButton onClick={handle.refresh}>Повторить</WorkshopButton></p>}
+      {(handle.offerLoading || (!handle.offer && !handle.offerError)) && <p role="status" className={`m-0 ${subText}`}>Загрузка публикации…</p>}
+      {!release && handle.offer && !handle.offerError && !handle.offerLoading && <p role="status" className={`m-0 ${rowText} text-kumo-warning`}>Автор ещё не опубликовал приложение. Копию можно будет создать после публикации.</p>}
       <label className={`flex flex-col gap-1.5 ${rowText}`}>Проект для копии
         <select aria-label="Проект для копии" value={scope} onChange={event => setScope(event.target.value)} disabled={!scopes}
           className="h-10 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[14px]">
