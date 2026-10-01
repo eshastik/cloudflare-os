@@ -2083,6 +2083,7 @@ export const ChatInput = ({
   const selectedSlashCommandRef = useRef(selectedSlashCommand);
   selectedSlashCommandRef.current = selectedSlashCommand;
   const sendInFlightRef = useRef(false);
+  const sendingAttachmentIdsRef = useRef(new Set<string>());
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   pendingAttachmentsRef.current = pendingAttachments;
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -2347,6 +2348,7 @@ export const ChatInput = ({
   };
 
   const removeAttachment = (id: string) => {
+    if (sendingAttachmentIdsRef.current.has(id)) return;
     const attachment = pendingAttachmentsRef.current.find((attachment) => attachment.id === id);
     if (attachment) {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -2535,6 +2537,7 @@ export const ChatInput = ({
     }
 
     sendInFlightRef.current = true;
+    sendingAttachmentIdsRef.current = new Set(attachmentsSnapshot.map(attachment => attachment.id));
     setIsSending(true);
     try {
       let messageInput = inputValue;
@@ -2686,14 +2689,18 @@ export const ChatInput = ({
       for (const attachment of attachmentsSnapshot) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
-      setInputValue("");
-      setSelectedTemplate(null);
-      setCapsules([]);
-      setSelectedSlashCommand(null);
-      setFormatTokens([]);
-      pendingAttachmentsRef.current = [];
-      setPendingAttachments([]);
+      // Пока запрос шёл, человек мог начать следующее сообщение и добавить файлы.
+      const unchangedText = inputValueRef.current === inputValue;
+      setInputValue(current => current === inputValue ? "" : current);
+      setSelectedTemplate(current => unchangedText && current === selectedTemplate ? null : current);
+      setCapsules(current => unchangedText && current === capsules ? [] : current);
+      setSelectedSlashCommand(current => unchangedText && current === selectedSlashCommand ? null : current);
+      setFormatTokens(current => unchangedText && current === formatTokens ? [] : current);
+      const sentIds = new Set(attachmentsSnapshot.map(attachment => attachment.id));
+      pendingAttachmentsRef.current = pendingAttachmentsRef.current.filter(attachment => !sentIds.has(attachment.id));
+      setPendingAttachments(current => current.filter(attachment => !sentIds.has(attachment.id)));
     } finally {
+      sendingAttachmentIdsRef.current.clear();
       sendInFlightRef.current = false;
       if (mountedRef.current) setIsSending(false);
     }
@@ -3489,6 +3496,7 @@ export const ChatInput = ({
                 <button
                   type="button"
                   aria-label="Удалить вложение"
+                  disabled={isSending && sendingAttachmentIdsRef.current.has(attachment.id)}
                   onClick={() => removeAttachment(attachment.id)}
                   className="absolute right-0.5 top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                 >
