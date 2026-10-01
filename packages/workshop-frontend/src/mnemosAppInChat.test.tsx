@@ -77,6 +77,13 @@ describe('приложение Mnemos в рабочем месте беседы'
     expect(store.publicationsRead).toBe(0)
   })
 
+  it('карточка новой версии обновляет существующий гаджет без создания второго', async () => {
+    const ws = workspace([{ id: 5, title: 'Отпуска', binding: bindingOf('node-7') }])
+    expect(await openAppInWorkspace(api, ws.view(), { ...target, refreshLatest: true })).toBe(5)
+    expect(ws.created).toEqual([])
+    expect(readMnemosAppLaunch()).toMatchObject({ gadgetId: 5, resource: 'node-7', publication: 'private:head-1' })
+  })
+
   it('двойной щелчок во время открытия — один гаджет', async () => {
     const ws = workspace()
     const [a, b] = await Promise.all([openAppInWorkspace(api, ws.view(), target), openAppInWorkspace(api, ws.view(), target)])

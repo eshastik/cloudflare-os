@@ -32,7 +32,7 @@ export function mnemosLinkOpener({ apps, navigate, openInChat, onError }: {
     const document = link.document;
     if (openInChat && document && accountId !== undefined) {
       // Обещание возвращается кнопке: пока гаджет готовится (это секунды), она показывает, что работа идёт.
-      return () => openInChat({ accountId, scope: link.project, resource: document, ...(link.title ? { title: link.title } : {}) }).then(
+      return () => openInChat({ accountId, scope: link.project, resource: document, ...(link.title ? { title: link.title } : {}), ...(link.refreshLatest ? { refreshLatest: true } : {}) }).then(
           opened => {
             if (opened) return;
             if (toProjects) toProjects();

@@ -11,7 +11,7 @@ import { openNativeDownloadsFrame } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { rememberMnemosAppLaunch } from './mnemosAppLaunch'
 
-export type AppTarget = { accountId: number; scope: string; resource: string; title?: string }
+export type AppTarget = { accountId: number; scope: string; resource: string; title?: string; refreshLatest?: boolean }
 
 type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGatekeeperApp'>
 type GadgetHandle = { getId(): Promise<number>; getMnemosApp(): Promise<MnemosAppState>; [Symbol.dispose]?(): void }
@@ -74,9 +74,13 @@ export function openAppInWorkspace(api: Api, workspace: AppWorkspace, target: Ap
   if (running) return running
   const job = (async () => {
     const existing = await findAppGadget(workspace, target)
-    if (existing !== null) return existing
+    if (existing !== null && !target.refreshLatest) return existing
     const publication = await latestAppVersion(api, target)
     if (!publication) return null
+    if (existing !== null) {
+      rememberMnemosAppLaunch(workspace.id, { accountId: target.accountId, scope: target.scope, resource: target.resource, publication, gadgetId: existing })
+      return existing
+    }
     const gadget = await workspace.overseer.createGadget(target.title?.trim().slice(0, 120) || 'Приложение')
     let gadgetId: number
     try { gadgetId = await gadget.getId() } finally { dispose(gadget) }

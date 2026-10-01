@@ -1828,7 +1828,7 @@ const ToolGroupRow = memo(function ToolGroupRow({
         <GadgetWorkCard
           gadget={gadget}
           projectTitle={displayName(codeCall.output?.projectTitle, "Проект")}
-          onOpen={openDocument?.({ project: gadget.projectId, document: gadget.resource, accountId: gadget.accountId, title: gadget.title })}
+          onOpen={openDocument?.({ project: gadget.projectId, document: gadget.resource, accountId: gadget.accountId, title: gadget.title, refreshLatest: true })}
         />
       </div>
     );

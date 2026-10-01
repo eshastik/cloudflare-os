@@ -24,7 +24,7 @@ const ICONS: Record<StepIcon, Icon> = {
 export type DocumentLink = NonNullable<FoundItem["link"]>;
 /** Обработчик перехода к документу или проекту; undefined — открыть негде (приложение не подключено). */
 /** Открытие может идти секунды (гаджет в панели беседы): тогда обработчик возвращает обещание. */
-export type OpenDocument = (link: DocumentLink) => (() => void | Promise<unknown>) | undefined;
+export type OpenDocument = (link: DocumentLink & { refreshLatest?: boolean }) => (() => void | Promise<unknown>) | undefined;
 
 function iconFor(kind: string): Icon {
   return ICONS[STEP_DISPLAY[kind]?.icon ?? "connection"];

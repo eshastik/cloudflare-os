@@ -3,6 +3,8 @@ import type {AuthenticatedApi} from '@gadgets/workshop-shared/api'
 /** Открытие приложения из Mnemos (ADR 0028): какой узел и какую версию загрузить в гаджет рабочего места. */
 export type MnemosAppLaunch = {accountId: number; scope: string; resource: string; publication: string; gadgetId: number; at: number}
 
+export const MNEMOS_APP_LAUNCH_EVENT = 'mnemos-app-launch'
+
 const key = (path: string) => `mnemos-app-launch:${path}`
 /** Сколько живёт заявка на открытие: только что нажатая ссылка, не старая вкладка. */
 const LAUNCH_MS = 30 * 60 * 1000
@@ -22,6 +24,7 @@ export function clearMnemosAppLaunch() { try { sessionStorage.removeItem(key(loc
 /** Заявка для страницы рабочего места: её выполнит шапка приложения, когда откроется гаджет gadgetId. */
 export function rememberMnemosAppLaunch(workspace: string, launch: Omit<MnemosAppLaunch, 'at'>) {
   sessionStorage.setItem(key(`/workspace/${encodeURIComponent(workspace)}`), JSON.stringify({...launch, at: Date.now()} satisfies MnemosAppLaunch))
+  window.dispatchEvent(new Event(MNEMOS_APP_LAUNCH_EVENT))
 }
 
 /** Своё рабочее место на каждый узел приложения, как у документа: второе открытие попадает в то же место. */

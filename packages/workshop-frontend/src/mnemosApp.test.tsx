@@ -18,7 +18,7 @@ vi.mock('./gatekeeperAppUpload', () => ({ uploadGatekeeperAppText: async (text: 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 import { launchNativeDocument } from './nativeDocumentLaunch'
-import { readMnemosAppLaunch } from './mnemosAppLaunch'
+import { readMnemosAppLaunch, rememberMnemosAppLaunch } from './mnemosAppLaunch'
 import { deriveAppStatus, useMnemosApp, type MnemosAppHandle } from './MnemosAppStatus'
 const PUBLISHED = 'event-1'
 
@@ -137,6 +137,25 @@ test('с правом правки: код не скачивается и в р�
   expect(out.current?.showWorkspace).toBe(false)
   expect(readMnemosAppLaunch()).toBeNull()
   await unmount()
+})
+
+test('повторное «Открыть» в уже открытой панели запускает новую личную версию того же узла', async () => {
+  launch(PUBLISHED)
+  const h = harness({ doc: SOLO })
+  const { out, unmount } = await mount(h)
+  try {
+    await act(async () => { await vi.waitFor(() => { expect(out.current?.binding?.savedVersion).toBe(PUBLISHED); expect(out.current?.busy).toBe(false) }) })
+    await act(async () => {
+      rememberMnemosAppLaunch('ws-app', { accountId: 7, scope: 'project', resource: 'node', publication: `private:${NEXT}`, gadgetId: 5 })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(out.current?.binding?.savedVersion).toBe(`private:${NEXT}`))
+    })
+    expect(h.instances.personal?.version).toBe(`private:${NEXT}`)
+    expect(h.calls.creates).toEqual([])
+    expect(h.calls.downloads).toEqual([])
+    expect(readMnemosAppLaunch()).toBeNull()
+  } finally { await unmount() }
 })
 
 test('заявка из беседы пишется, пока в панели другой гаджет: выполняется, когда откроется её гаджет', async () => {

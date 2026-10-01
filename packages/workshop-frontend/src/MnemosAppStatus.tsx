@@ -30,7 +30,7 @@ import { PANEL_CLASS, PANEL_HEADER_CLASS, pillButton, primaryButton } from './Do
 import { listAccounts, openNativeWritesFrame, storesDocuments } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { uploadGatekeeperAppText } from './gatekeeperAppUpload'
-import { clearMnemosAppLaunch, readMnemosAppLaunch } from './mnemosAppLaunch'
+import { clearMnemosAppLaunch, readMnemosAppLaunch, MNEMOS_APP_LAUNCH_EVENT } from './mnemosAppLaunch'
 import { useAuthenticatedApi } from './AuthContext'
 
 type Writes = RpcStub<GatekeeperNativeDocumentWriteSelector>
@@ -334,19 +334,29 @@ export function useMnemosApp({ api, gadget, previewChatId, pollMs = APP_POLL_MS 
 
   // Открытие из Mnemos: заявка страницы выполняется один раз для своего гаджета. Проверка идёт по каждому
   // выбранному гаджету: из беседы заявка пишется, пока в панели открыт другой гаджет.
-  const launchedFor = useRef<Gadget | null>(null)
+  const [launchTick, setLaunchTick] = useState(0)
+  const launched = useRef<string | null>(null)
   useEffect(() => {
-    if (!gadget || !app || launchedFor.current === gadget) return
+    const changed = () => setLaunchTick(value => value + 1)
+    window.addEventListener(MNEMOS_APP_LAUNCH_EVENT, changed)
+    return () => window.removeEventListener(MNEMOS_APP_LAUNCH_EVENT, changed)
+  }, [])
+  useEffect(() => {
+    if (!gadget || !app) return
     const launch = readMnemosAppLaunch()
     if (!launch) return
-    launchedFor.current = gadget
+    const key = JSON.stringify(launch)
+    if (launched.current === key) return
+    let cancelled = false
     void gadget.getId().then(id => {
-      if (id !== launch.gadgetId) return
+      if (cancelled || id !== launch.gadgetId || launched.current === key) return
+      launched.current = key
       clearMnemosAppLaunch()
       return run(signal => openVersion(launch.accountId, launch.scope, launch.resource, launch.publication, signal))
     }).catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз на гаджет
-  }, [gadget, app])
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- заявка выполняется при выборе гаджета или новом нажатии «Открыть»
+  }, [gadget, app, launchTick])
 
   /** Текст файла из кода гаджета беседы: только для «Сохранить в проект». Гаджет-узел кода в рабочем месте
    *  не держит, и оболочка выгрузку ему не отдаёт. */
