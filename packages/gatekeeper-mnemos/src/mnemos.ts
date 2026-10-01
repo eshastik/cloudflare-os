@@ -43,7 +43,7 @@ import {ResourceMapCreation,type ResourceMapSetup} from "./resource-map-creation
 import {ResourceMapEdits,type ResourceMapEditInput} from "./resource-map-edits.ts";
 import {TrackerEdits,type TrackerEditInput} from "./tracker-edits.ts";
 import {TrackerCreation,type TrackerSetup} from "./tracker-creation.ts";
-import {checkGadgetEditable,gadgetReceipts,saveGadgetBuild,validGadgetRequest} from "./gadget-bridge.ts";
+import {checkGadgetEditable, checkGadgetCopyBuild,gadgetReceipts,saveGadgetBuild,validGadgetRequest} from "./gadget-bridge.ts";
 import {beginChatDocument,chatDocumentReceipts,finishChatDocument,moveChatDocument,personalSpace,readChatDocumentText,type ChatDocumentFile} from "./chat-documents.ts";
 import {TeamDocumentCreation,type TeamDocumentManagement} from "./team-document-creation.ts";
 import type { UIReadinessSample } from "@gadgets/workshop-shared/ui-readiness";
@@ -373,7 +373,7 @@ export class UserAccount extends DurableObject<Env> {
   try{
    const source=await appAccess(session,fromProject,fromResource,false).catch(()=>null);
    if(!source||(source.access!=='read'&&source.access!=='edit'))throw new WorkspaceError('invalid','Оригинал гаджета вам недоступен: исходники взять нельзя.');
-   await checkGadgetEditable(session,toProject,toResource).catch(()=>{throw new WorkspaceError('invalid','Копия гаджета удалена, в конфликте или не ваша: сделать её своей нельзя.');});
+   await checkGadgetCopyBuild(session,toProject,toResource,bodySha256,async head=>(await session.appCode(toProject,toResource,"private:"+head,this.env.MNEMOS_SHELL_KEY??"")).sha256_hex);
   }finally{session.dispose();}
   await this.#workspace().forkGadgetSources({project:fromProject,resource:fromResource},{project:toProject,resource:toResource},bodySha256);
  }

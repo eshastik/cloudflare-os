@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GADGET_APP_MIME, gadgetAppSha256, gadgetAppText, parseGadgetAppText } from "@gadgets/workshop-shared/gadget-app";
-import { GadgetBuildError, gadgetDocumentFromBuild, checkGadgetEditable, gadgetReceipts, saveGadgetBuild, validGadgetRequest, type GadgetSaveAPI } from "./gadget-bridge.ts";
+import { GadgetBuildError, gadgetDocumentFromBuild, checkGadgetEditable, checkGadgetCopyBuild, gadgetReceipts, saveGadgetBuild, validGadgetRequest, type GadgetSaveAPI } from "./gadget-bridge.ts";
 import { MnemosAPIError } from "./mnemos-api.ts";
 import { WorkspaceClient, WorkspaceError, type WorkspaceGadgetBuild } from "./workspace-tasks.ts";
 
@@ -223,6 +223,12 @@ test("Правка сохранённого гаджета: только сущ�
   await assert.rejects(checkGadgetEditable(conflicted.api, "p", "node-1"), /в конфликте/);
   const ok = api({ content_type: GADGET_APP_MIME });
   assert.equal((await checkGadgetEditable(ok.api, "p", "node-1")).head, HEAD);
+  const sum = "c".repeat(64);
+  await checkGadgetCopyBuild(ok.api, "p", "node-1", sum, async head => { assert.equal(head, HEAD); return sum; });
+  await assert.rejects(checkGadgetCopyBuild(ok.api, "p", "node-1", sum, async () => "d".repeat(64)), /Версия копии изменилась/);
+  let codeReads = 0;
+  await assert.rejects(checkGadgetCopyBuild(conflicted.api, "p", "node-1", sum, async () => { codeReads++; return sum; }), /в конфликте/);
+  assert.equal(codeReads, 0, "без права правки сумма исходников не читается");
 });
 
 test("Отказ Mnemos при сохранении называет этап и код ответа, а не «Mnemos request failed»", async () => {

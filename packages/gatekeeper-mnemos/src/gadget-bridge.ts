@@ -60,6 +60,12 @@ export async function checkGadgetEditable(api: Pick<GadgetSaveAPI, "readDraftDoc
   return doc;
 }
 
+/** Сумма копии проверяется после права правки, до переноса исходников автора. */
+export async function checkGadgetCopyBuild(api: Pick<GadgetSaveAPI, "readDraftDocument">, project: string, resource: string, expected: string, currentBodySha256: (head: string) => Promise<string>): Promise<void> {
+  const copy = await checkGadgetEditable(api, project, resource);
+  if (await currentBodySha256(copy.head) !== expected) throw new GadgetBuildError("Версия копии изменилась. Исходники автора не заменят вашу правку: откройте копию заново.");
+}
+
 /**
  * Квитанция создания узла гаджета. Тело запроса к Mnemos записывается ДО вызова: повтор после
  * потерянного ответа посылает то же тело с тем же request_id, и Mnemos отдаёт уже созданный узел,
