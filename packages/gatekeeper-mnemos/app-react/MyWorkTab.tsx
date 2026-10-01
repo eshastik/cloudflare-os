@@ -5,7 +5,7 @@ import { countPublicationNodes } from "@gadgets/workshop-shared/publication-revi
 import type { ShareRequest } from "../src/project-sharing.ts";
 import { inboxEntries, type InboxAlert, type InboxEntry, type InboxKind } from "../src/inbox-count.ts";
 import { useHost, useUi } from "./host.ts";
-import { actorName, documentNames, myApprovals, personName, projectName, UNNAMED_DOCUMENT, useLoad, type CollaborationItem, type MemoryData } from "./data.ts";
+import { actorName, documentNames, myApprovals, personName, projectName, publicationNodeName, useLoad, type CollaborationItem, type MemoryData } from "./data.ts";
 import { ApprovalRow, useReviewDecision } from "./ApprovalsTab.tsx";
 import ReviewDetails from "./ReviewDetails.tsx";
 import ProjectIntake from "./ProjectIntake.tsx";
@@ -164,7 +164,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
     void host.openPrompt(prompt, project ? { projectId: project, title } : undefined).catch(() => setNotice({ tone: "danger", text: "Беседа не открылась. Повторите попытку." }));
   }
 
-  const docs = (review: PublicationReview, nodes: string[] = review.domains.flatMap(d => d.node_ids)) => nodes.map(id => names.get(`${review.project_id}/${id}`) || UNNAMED_DOCUMENT).join(", ");
+  const docs = (review: PublicationReview, nodes: string[] = review.domains.flatMap(d => d.node_ids)) => nodes.map(id => publicationNodeName(review, names, id)).join(", ");
   function describe(entry: InboxEntry): Card {
     switch (entry.kind) {
       case "approval": {

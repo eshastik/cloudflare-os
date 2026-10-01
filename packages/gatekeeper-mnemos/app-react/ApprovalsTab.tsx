@@ -1,7 +1,7 @@
 import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { useUi } from "./host.ts";
-import { documentNames, personName, projectName, UNNAMED_DOCUMENT, type MemoryData, type PendingApproval } from "./data.ts";
+import { documentNames, personName, projectName, publicationNodeName, type MemoryData, type PendingApproval } from "./data.ts";
 import { Button, Row, RowText, StatusBadge } from "./ui.tsx";
 
 /** Запись решения по направлению во «Входящих». */
@@ -29,7 +29,7 @@ export function ApprovalRow({ item, data, busy, decide }: { item: PendingApprova
   const names = documentNames(data.projects);
   const key = `${item.review.candidate_id}/${item.domain.domain_id}`;
   const approved = item.domain.decisions.filter(d => d.approved).length;
-  const documents = item.domain.node_ids.map(id => names.get(`${item.review.project_id}/${id}`) || UNNAMED_DOCUMENT).join(", ");
+  const documents = item.domain.node_ids.map(id => publicationNodeName(item.review, names, id)).join(", ");
   const [expanded, setExpanded] = useState(false);
   const pending = item.mine === null && !item.review.stale && !item.review.withdrawn;
   const state = item.review.withdrawn ? "Отозвано" : item.review.stale ? "Устарело" : item.mine === true ? "Вы согласовали" : item.mine === false ? "Вы отклонили" : "Ждёт вас";

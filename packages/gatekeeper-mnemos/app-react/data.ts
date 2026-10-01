@@ -179,6 +179,12 @@ export function documentNames(projects: ProjectData[]): Map<string, string> {
 /** Подпись документа, у которого нет имени: идентификатор узла человеку ничего не говорит. */
 export const UNNAMED_DOCUMENT = "Документ без названия";
 
+export function publicationNodeName(review: PublicationReview, names: Map<string, string>, node: string): string {
+  const name = names.get(`${review.project_id}/${node}`);
+  if (review.application_node_ids?.includes(node)) return name ? `Приложение «${name}»` : "Приложение";
+  return name || UNNAMED_DOCUMENT;
+}
+
 /** Имя проекта; идентификатор недоступного проекта не показывается. */
 export function projectName(projects: ProjectData[], id: string): string {
   const found = projects.find(p => p.id === id);

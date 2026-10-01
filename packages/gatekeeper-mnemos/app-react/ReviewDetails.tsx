@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { countPublicationNodes } from "@gadgets/workshop-shared/publication-review";
 import type { PublicationReview } from "../src/mnemos-api.ts";
 import { useHost } from "./host.ts";
 import { Button, Notice } from "./ui.tsx";
-import { personName, UNNAMED_DOCUMENT } from "./data.ts";
+import { personName, publicationNodeName } from "./data.ts";
 
 export default function ReviewDetails({ review, names }: { review: PublicationReview; names: Map<string, string> }) {
   const host = useHost();
+  const counts = countPublicationNodes(review);
   const [preview, setPreview] = useState<{ node: string; before: string | null; after: string | null; loading: boolean; error: string } | null>(null);
   async function open(node: string) {
     setPreview({ node, before: null, after: null, loading: true, error: "" });
@@ -21,6 +23,7 @@ export default function ReviewDetails({ review, names }: { review: PublicationRe
   }
   return <div className="space-y-3 text-[14px] leading-5">
     <p className="m-0 text-kumo-subtle">Нужны решения всех назначенных согласующих: одобрение одного направления не заменяет остальные.</p>
+    {counts && <div><p className="m-0">Документов: {counts.documents}.</p><p className="m-0">Приложений: {counts.applications}.</p></div>}
     <ul aria-label="Направления согласования" className="m-0 grid list-none gap-2 p-0">
       {review.domains.map(domain => <li key={domain.domain_id} className="rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">
         <div className="font-medium text-kumo-default">Направление {domain.domain_id}</div>
@@ -28,11 +31,11 @@ export default function ReviewDetails({ review, names }: { review: PublicationRe
           const decision = domain.decisions.find(item => item.approver_id === person);
           return <div key={person}>{personName(person)}: {decision ? decision.approved ? "одобрено" : "отклонено" : "ожидает решения"}</div>;
         })}</div>
-        <div className="mt-1 flex flex-wrap gap-1">{domain.node_ids.map(node => <Button key={node} variant="secondary" size="sm" onClick={() => void open(node)}>{names.get(`${review.project_id}/${node}`) || UNNAMED_DOCUMENT}</Button>)}</div>
+        <div className="mt-1 flex flex-wrap gap-1">{domain.node_ids.map(node => <Button key={node} variant="secondary" size="sm" onClick={() => void open(node)}>{publicationNodeName(review, names, node)}</Button>)}</div>
       </li>)}
     </ul>
     {preview && <section aria-label="Изменения документа" className="rounded-[12px] border border-kumo-fill bg-kumo-overlay p-3">
-      <div className="mb-2 flex items-center justify-between gap-2"><h3 className="m-0 text-[15px] font-semibold">{names.get(`${review.project_id}/${preview.node}`) || UNNAMED_DOCUMENT}</h3><Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Закрыть просмотр</Button></div>
+      <div className="mb-2 flex items-center justify-between gap-2"><h3 className="m-0 text-[15px] font-semibold">{publicationNodeName(review, names, preview.node)}</h3><Button variant="ghost" size="sm" onClick={() => setPreview(null)}>Закрыть просмотр</Button></div>
       {preview.loading ? <Notice>Загрузка версии…</Notice> : preview.error ? <Notice tone="danger">{preview.error}</Notice> : <div className="grid gap-3 md:grid-cols-2">
         <div><h4 className="m-0 mb-1 text-[13px] font-medium text-kumo-subtle">До изменения</h4><pre className="m-0 whitespace-pre-wrap break-words font-serif text-[14px] leading-[22px]">{preview.before ?? "Нет текстового представления"}</pre></div>
         <div><h4 className="m-0 mb-1 text-[13px] font-medium text-kumo-subtle">Предлагаемая версия</h4><pre className="m-0 whitespace-pre-wrap break-words font-serif text-[14px] leading-[22px]">{preview.after ?? "Нет текстового представления"}</pre></div>
