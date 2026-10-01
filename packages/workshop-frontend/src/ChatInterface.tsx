@@ -1450,9 +1450,15 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
   const { openDocument } = useContext(WorkRunContext);
   const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
   // Документ после переноса открывается по новому месту, а не по тому, что в сообщении.
-  const [movedDocuments, setMovedDocuments] = useState<ReadonlyMap<string, ChatDocumentRef>>(new Map());
-  const documentOf = useCallback((attachment: ChatAttachmentRef) =>
-    movedDocuments.get(attachment.id) ?? attachment.document, [movedDocuments]);
+  const [movedDocuments, setMovedDocuments] = useState<ReadonlyMap<string, {from: ChatDocumentRef; to: ChatDocumentRef}>>(new Map());
+  const documentOf = useCallback((attachment: ChatAttachmentRef) => {
+    const moved = movedDocuments.get(attachment.id);
+    const current = attachment.document;
+    // Ответ переноса нужен, пока сообщение содержит прежнее место. Новое место от сервера важнее.
+    return moved && current && moved.from.accountId === current.accountId &&
+      moved.from.projectId === current.projectId && moved.from.resource === current.resource
+      ? moved.to : current;
+  }, [movedDocuments]);
   const openChatDocument = useCallback((doc: ChatDocumentRef) =>
     openDocument?.({ project: doc.projectId, document: doc.resource, accountId: doc.accountId, title: doc.name }), [openDocument]);
   const previewAttachment = previewAttachmentId === null
@@ -1480,7 +1486,7 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
               loadProjects={loadProjects}
               move={onMoveDocument && (async (target) => {
                 const next = await onMoveDocument(attachment.id, target);
-                setMovedDocuments((prev) => new Map(prev).set(attachment.id, next));
+                setMovedDocuments((prev) => new Map(prev).set(attachment.id, {from: attachment.document!, to: next}));
                 return next;
               })}
             />
