@@ -3,7 +3,7 @@ export interface ResourceMapSetup {title:string}
 export interface ResourceMapCreationIntent {id:string;project:string;setup:ResourceMapSetup;head?:string;upload?:string;attempted?:boolean;result?:{node_id:string;head:string}}
 type API=Pick<MnemosAccountSession,"listPrivateDocuments"|"draftState"|"openDraft"|"beginNativeUpload"|"createPrivateDocument"|"readDraftDocument">;
 function validate(project:string,setup:ResourceMapSetup){
- if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/.test(project)||!setup||typeof setup.title!=="string"||!setup.title.trim()||/[\/\\\0]/.test(setup.title)||new TextEncoder().encode(setup.title).length>255)throw Error("Invalid resource map setup");
+ if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/.test(project)||!setup||typeof setup.title!=="string"||!setup.title.trim()||/[/\\\0]/.test(setup.title)||new TextEncoder().encode(setup.title).length>255)throw Error("Invalid resource map setup");
 }
 /** Account-owned creation receipt survives iframe closure and uncertain POSTs. */
 export class ResourceMapCreation {

@@ -4,7 +4,7 @@ export interface TrackerCreationIntent {id:string;project:string;setup:TrackerSe
 type API=Pick<MnemosAccountSession,"listPrivateDocuments"|"draftState"|"openDraft"|"beginNativeUpload"|"createPrivateDocument"|"readDraftDocument">;
 function validate(project:string,setup:TrackerSetup){
  const id=/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/;const text=(s:unknown,max:number)=>typeof s==='string'&&s.trim()&&!s.includes('\0')&&new TextEncoder().encode(s).length<=max;
- if(!id.test(project)||!setup||!text(setup.title,255)||/[\/\\]/.test(setup.title)||!Array.isArray(setup.stages)||setup.stages.length<1||setup.stages.length>64||!Array.isArray(setup.transitions)||setup.transitions.length>4032)throw Error('Invalid tracker setup');
+ if(!id.test(project)||!setup||!text(setup.title,255)||/[/\\]/.test(setup.title)||!Array.isArray(setup.stages)||setup.stages.length<1||setup.stages.length>64||!Array.isArray(setup.transitions)||setup.transitions.length>4032)throw Error('Invalid tracker setup');
  const ids=new Set<string>();for(const stage of setup.stages){if(!id.test(stage.id)||ids.has(stage.id)||!text(stage.name,512)||!text(stage.department,512))throw Error('Invalid tracker stage');ids.add(stage.id);}
  const edges=new Set<string>();for(const edge of setup.transitions){const key=JSON.stringify([edge.from,edge.to]);if(!ids.has(edge.from)||!ids.has(edge.to)||edge.from===edge.to||edges.has(key))throw Error('Invalid tracker transition');edges.add(key);}
  if(new TextEncoder().encode(JSON.stringify(setup)).length>100000)throw Error('Tracker setup too large');

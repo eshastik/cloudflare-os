@@ -1642,7 +1642,7 @@ function checkedGitSyncPage(value:unknown):GitSyncLinkPage{
   const links=(value as {links?:unknown}|null)?.links;
   if(!Array.isArray(links)||links.some(l=>!l||typeof l!=="object"||typeof (l as GitSyncLink).link_id!=="string"||typeof (l as GitSyncLink).project_id!=="string"||typeof (l as GitSyncLink).state!=="string"))throw new MnemosAPIError(502);
   const empty:GitSyncReport={added:0,updated:0,deleted:0,conflicts:0,skipped_binary:0,skipped_large:0,skipped_ignored:0,skipped_taken:0,conflict_paths:[]};
-  return {links:links.map(l=>{const link=l as GitSyncLink;return {...link,include:link.include??[],exclude:link.exclude??[],report:{...empty,...(link.report??{}),conflict_paths:link.report?.conflict_paths??[]}};})};
+  return {links:links.map(l=>{const link=l as GitSyncLink;return {...link,include:link.include??[],exclude:link.exclude??[],report:{...empty,...link.report,conflict_paths:link.report?.conflict_paths??[]}};})};
 }
 
 /** Аккаунт GitHub, подключённый человеком кнопкой «Подключить GitHub» (сервер: services/storage-api/internal/app/git_app_owner.go). */

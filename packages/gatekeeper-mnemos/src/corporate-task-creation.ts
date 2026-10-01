@@ -47,7 +47,7 @@ export class CorporateTaskCreation {
   const preparedEntity=binary?prepared.entity_id:prepared.issue_id;
   if(binary!==(kind==="file"||jiraFile)||prepared.source_node_id!==node||prepared.source_head!==head||preparedEntity!==entity||prepared.content_type!==(fileInfo?fileInfo.content_type:kind&&!mapping?"application/json":"application/vnd.mnemos.task-tracker+json")||prepared.sha256!==sum.hex||!prepared.preview_id||bytes.length>4*1024*1024||(fileInfo&&(prepared.sha256!==fileInfo.sha256||bytes.length!==fileInfo.size_bytes)))throw Error("Invalid prepared import");
   const name=fileInfo?fileInfo.name:jiraMapped?"Jira "+issue.slice(0,80):kind?"Bitrix24 "+entity.slice(0,80):"Разбор Jira "+issue.slice(0,80);
-  if(!name||/[\/\\\0]/.test(name)||new TextEncoder().encode(name).length>255)throw Error("Invalid import filename");
+  if(!name||/[/\\\0]/.test(name)||new TextEncoder().encode(name).length>255)throw Error("Invalid import filename");
 
   const origin=new URL(this.origin);if(origin.protocol!=="https:"||origin.origin!==this.origin)throw Error("Invalid upload origin");
   const ticket=await api.beginNativeUpload(project,bytes.length,sum.base64);const url=new URL(ticket.url);

@@ -110,7 +110,7 @@ function fitBytes(text: string, maxBytes: number): string {
 export function safeAttachmentName(name: string, taken: Set<string>): string {
   let clean = (name ?? "").normalize("NFC")
     .replace(/[\p{Cc}\p{Cf}]/gu, "_")
-    .replace(/[\/\\]/g, "_")
+    .replace(/[/\\]/g, "_")
     .replace(/\.{2,}/g, ".")
     .replace(/^[._\s]+/, "")
     .replace(/[.\s]+$/, "")

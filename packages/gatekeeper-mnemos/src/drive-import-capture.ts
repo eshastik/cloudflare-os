@@ -13,7 +13,7 @@ export type DriveOriginIssuer=(value:{input:DriveCaptureInput;origin:Origin;head
 interface Intent {proof?:string;input:DriveCaptureInput;source?:Origin;head?:string;upload?:string;attempted?:boolean;result?:DriveCaptureReceipt}
 function captureName(name:string){
  let result='',size=0;
- for(const char of name.replace(/[\/\\\x00-\x1f\x7f]/g,'_')){const length=new TextEncoder().encode(char).length;if(size+length>200)break;result+=char;size+=length}
+ for(const char of name.replace(/[/\\\x00-\x1f\x7f]/g,'_')){const length=new TextEncoder().encode(char).length;if(size+length>200)break;result+=char;size+=length}
  return result;
 }
 function id(value:string){return typeof value==='string'&&!!value&&value.length<=255&&!/[\x00-\x1f\x7f]/.test(value)}

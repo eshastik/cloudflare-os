@@ -29,7 +29,7 @@ export default function DriveOfficeImport({owner,attempt,receipt,onBusy,onCreate
  if(error)return <p role="alert">{error}</p>
  if(!state?.frame.nativeWrites)return <p>Открываю разбор копии…</p>
  let name='',length=0
- for(const char of receipt.source.sourceName.replace(/[\/\\\x00-\x1f\x7f]/g,'_')){const n=new TextEncoder().encode(char).length;if(length+n>230)break;name+=char;length+=n}
+ for(const char of receipt.source.sourceName.replace(/[/\\\x00-\x1f\x7f]/g,'_')){const n=new TextEncoder().encode(char).length;if(length+n>230)break;name+=char;length+=n}
  return <>
   <label>Действие <select aria-label="Действие импорта" value={mode} disabled={busy} onChange={e=>setMode(e.target.value as 'create'|'update')}><option value="create">Создать новую копию</option><option value="update">Обновить существующую копию</option></select></label>
   {mode==='update'?<NativeOfficeUpdate key={attempt.request} selector={state.frame.nativeWrites.selector} storageOrigin={state.frame.nativeWrites.storageOrigin}

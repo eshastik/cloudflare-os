@@ -44,7 +44,7 @@ function methods(calls, over = {}) {
     async disableInternalCodeHosting(expected) { calls.push(["disableInternalCodeHosting", expected]); return { disabled: true }; },
     async saveGitRegistrationIntent(setup) { calls.push(["saveGitRegistrationIntent", setup]); return { id: "intent-1" }; },
     async executeGitRegistrationIntent(id, token) { calls.push(["executeGitRegistrationIntent", id, token]); return {}; },
-    ...(over.methods ?? {}),
+    ...over.methods,
   };
 }
 

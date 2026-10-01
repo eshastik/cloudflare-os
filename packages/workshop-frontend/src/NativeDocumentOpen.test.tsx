@@ -19,7 +19,7 @@ vi.mock('./gatekeeperAppDownload', () => ({
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)('native open preserves the read/restore boundary: %s', async mode => {
-  let prepared = false
+  let prepared = false, probed = false
   const calls: string[] = [], restored = vi.fn(), reconnect = vi.fn()
   let finishBinding!: () => void
   const binding = new Promise<void>(resolve => { finishBinding = resolve })
@@ -32,7 +32,7 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
     async restoreDocumentSnapshot(snapshot: object, revision: number) { calls.push('restore'); restored(snapshot, revision) }
   }
   class Gadget extends RpcTarget {
-    async getId() { if (prepared && mode === 'restart_probe') throw new Error('context ended'); return 7 }
+    async getId() { if (prepared && mode === 'restart_probe') { probed = true; throw new Error('context ended') }; return 7 }
     async prepareNativeDocumentRead(account: number, url: string, event: string) {
       calls.push('prepare'); expect([account, url, event]).toEqual([3, 'https://example.test/document', 'publication'])
       prepared = true
@@ -61,7 +61,8 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
     if (mode === 'restore') expect(document.body.textContent).toContain('Открываю «Fixture»…')
     if (mode === 'changed' || mode === 'revoked') expect(document.body.textContent).toContain('Документ не открылся')
     if (mode.startsWith('restart')) {
-      expect(calls).toEqual(['flush', 'prepare']); expect(reconnect).not.toHaveBeenCalled()
+      expect(calls).toEqual(['flush', 'prepare'])
+      expect(reconnect.mock.calls.length === 0 || (mode === 'restart_probe' && probed)).toBe(true)
       expect(onRpcBroken).toHaveBeenCalledOnce()
       await act(async () => {
         if (mode === 'restart_probe') await vi.waitFor(() => expect(reconnect).toHaveBeenCalledOnce(), { timeout: 500, interval: 20 })

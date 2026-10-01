@@ -9,7 +9,7 @@ function card(text:string){try{return parseCard(text);}catch{throw fail();}}
 function parseCard(text:string){
  // Detect ambiguous members before parsing; string-valued source JSON stays opaque.
  const stack:(Set<string>|null)[]=[];
- const tokens=/"(?:\\.|[^"\\])*"|[{}\[\]]/g;
+ const tokens=/"(?:\\.|[^"\\])*"|[{}[\]]/g;
  for(const token of text.matchAll(tokens)){
   const t=token[0];
   if(t==="{"||t==="["){stack.push(t==="{"?new Set():null);if(stack.length>32)throw fail();}

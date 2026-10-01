@@ -150,7 +150,7 @@ export interface LoginPort {
  * символов. Без точечных сегментов браузер путь не нормализует, поэтому «/.//evil.com»,
  * превращающийся в «//evil.com» (чужой сайт), сюда не проходит. */
 export function parseReturnTo(raw: string | null): string | null {
-  if (!raw || raw.length > 2048 || !/^\/[A-Za-z0-9\-._~!$&'()*+,;=:@\/?%]*$/.test(raw)) return null;
+  if (!raw || raw.length > 2048 || !/^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/?%]*$/.test(raw)) return null;
   const path = raw.split("?")[0];
   if (path.includes("//")) return null;
   if (path.split("/").some(segment => segment === "." || segment === "..")) return null;
