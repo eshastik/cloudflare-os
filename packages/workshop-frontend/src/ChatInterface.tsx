@@ -2089,6 +2089,7 @@ export const ChatInput = ({
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const attachmentDragDepthRef = useRef(0);
   const mountedRef = useRef(true);
+  const attachmentUploadsRef = useRef(new Map<string, AbortController>());
   const [activeUrl, setActiveUrl] = useState<{
     text: string;
     start: number;
@@ -2249,6 +2250,8 @@ export const ChatInput = ({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      for (const controller of attachmentUploadsRef.current.values()) controller.abort();
+      attachmentUploadsRef.current.clear();
       const attachments = pendingAttachmentsRef.current;
       pendingAttachmentsRef.current = [];
       for (const attachment of attachments) {
@@ -2261,11 +2264,14 @@ export const ChatInput = ({
   }, []);
 
   const uploadPendingAttachment = async (id: string, blob: Blob, mimeType: string, name?: string) => {
+    const controller = new AbortController();
+    attachmentUploadsRef.current.set(id, controller);
     try {
       const overseer = await getOverseer();
       if (!mountedRef.current || !pendingAttachmentsRef.current.some((attachment) => attachment.id === id)) return;
       const ref = await uploadPreparedAttachment(overseer, { blob, mimeType, name }, {
         retryId: id,
+        signal: controller.signal,
         modelId: selectedModel,
         chatId: chatKey ?? undefined,
         project: chatKey == null ? documentProject : undefined,
@@ -2279,8 +2285,8 @@ export const ChatInput = ({
         toasts.add({ title: `«${name ?? "Файл"}» не сохранён в проект «${ref.project.projectTitle}»: ${ref.project.reason}`, variant: "error" });
       }
     } catch (err: any) {
+      if (controller.signal.aborted || !mountedRef.current) return;
       console.error("Failed to upload chat attachment:", err);
-      if (!mountedRef.current) return;
       reportIssue('chat.attachment-upload', err)
       setPendingAttachments((prev) => prev.map((attachment) => attachment.id === id ? {
         ...attachment,
@@ -2288,6 +2294,8 @@ export const ChatInput = ({
         error: err?.message || "Не удалось загрузить файл",
       } : attachment));
       toasts.add({ title: err?.message || "Не удалось загрузить вложение", variant: "error" });
+    } finally {
+      if (attachmentUploadsRef.current.get(id) === controller) attachmentUploadsRef.current.delete(id);
     }
   };
 
@@ -2359,6 +2367,7 @@ export const ChatInput = ({
 
   const removeAttachment = (id: string) => {
     if (sendingAttachmentIdsRef.current.has(id)) return;
+    attachmentUploadsRef.current.get(id)?.abort();
     const attachment = pendingAttachmentsRef.current.find((attachment) => attachment.id === id);
     if (attachment) {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
