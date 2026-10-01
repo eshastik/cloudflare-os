@@ -64,6 +64,7 @@ interface TestHost extends RpcTarget {
   uploadText(scope: string, text: string): Promise<string>;
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
   downloadText(scope: string, resource: string, version: string, side: number): Promise<string>;
+  downloadFile(scope: string, resource: string, version: string, filename: string): Promise<void>;
   downloadNativeDocument(scope: string, resource: string, publication: string, format: NativeDocumentFormat): Promise<NativeDocumentSnapshot>;
 }
 
@@ -755,6 +756,24 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await expect(host.uploadText("project", "Привет")).resolves.toBe("receipt");
       expect(new TextDecoder().decode(request.mock.calls[0][1].body as Uint8Array)).toBe("Привет");
       await expect(host.downloadText("project", "doc", "version", 0)).resolves.toBe("draft");
+      const createBlobUrl = vi.fn<(blob: Blob) => string>(() => "blob:verified-original");
+      const revokeBlobUrl = vi.fn<(url: string) => void>();
+      const NativeURL = URL;
+      vi.stubGlobal("URL", class extends NativeURL { static createObjectURL = createBlobUrl; static revokeObjectURL = revokeBlobUrl; });
+      const saveClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+      await act(async () => { await host!.downloadFile("project", "doc", "version", "../contract.pdf"); });
+      const ready = container!.querySelector('[aria-label="Оригинал документа получен"]')!;
+      const link = ready.querySelector("a")!;
+      expect(link.download).toBe("contract.pdf");
+      expect(link.href).toBe("blob:verified-original");
+      expect(createBlobUrl.mock.calls[0][0]).toMatchObject({type: "application/octet-stream", size: 5});
+      const downloaded = request.mock.calls.length;
+      link.click();
+      expect(saveClick).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls.length).toBe(downloaded);
+      await act(async () => { ready.querySelector("button")!.click(); });
+      expect(container!.querySelector('[aria-label="Оригинал документа получен"]')).toBeNull();
+      expect(revokeBlobUrl).toHaveBeenCalledWith("blob:verified-original");
       await expect(host.downloadText("project", "app", "version", 0)).rejects.toThrow(APP_CODE_CLOSED);
       await expect(host.downloadNativeDocument("project", "doc", "publication", "cloudflareos.document")).resolves.toEqual(snapshot);
       await vi.waitFor(() => expect(nativeDisposed).toBe(1));
@@ -763,6 +782,9 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await expect(host.downloadReviewText("review", "doc", 3, "before")).resolves.toBeNull();
       expect(request.mock.calls.length).toBe(beforeAbsent);
       readable = false;
+      await expect(host.downloadFile("project", "doc", "version", "contract.pdf")).rejects.toThrow("Не удалось скачать документ.");
+      expect(container!.querySelector('[aria-label="Оригинал документа получен"]')).toBeNull();
+      expect(createBlobUrl).toHaveBeenCalledTimes(1);
       await expect(host.downloadNativeDocument("project", "doc", "publication", "cloudflareos.document")).rejects.toThrow("Не удалось скачать документ.");
       await vi.waitFor(() => expect(nativeDisposed).toBe(2));
       await expect(host.downloadReviewText("review", "doc", 3, "after")).rejects.toThrow("Не удалось скачать документ.");

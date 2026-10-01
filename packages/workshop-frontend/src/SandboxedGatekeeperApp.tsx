@@ -7,7 +7,7 @@ import {planIntakeDrop, planPickedFiles} from "./intakeDrop"
 import type { UploadView } from "../../gatekeeper-mnemos/src/upload-progress.ts"
 import type { PickedIntakeFile } from "../../gatekeeper-mnemos/src/intake.ts"
 import { pickFiles, uploadCenter, type UploadCenter } from "./uploadCenter"
-import {saveDocumentFile,saveMailAttachment} from './saveMailAttachment'
+import {prepareDocumentFile,saveDocumentFile,saveMailAttachment,type DocumentFileDownload} from './saveMailAttachment'
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { RpcStub, RpcTarget, newMessagePortRpcSession } from 'capnweb'
@@ -188,6 +188,8 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly launchShared?: (scope: string, owner: string, resource: string) => Promise<boolean>,
     private readonly photos?: FramePersonPhotos,
     private readonly openPath: (path: string) => void = () => {},
+    private readonly saveOriginal: (bytes: Blob, filename: string) => void = saveDocumentFile,
+    private readonly clearOriginal: () => void = () => {},
   ) {
     super()
     this.#uploadLink = uploadLink
@@ -447,7 +449,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
       const downloads=this.#downloads
       const ticket=await downloads.issuer.issue(scope,resource,version,0)
       const bytes=await downloadGatekeeperOriginalFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
-      saveDocumentFile(bytes,filename)
+      this.saveOriginal(bytes,filename)
     }catch(error){throw downloadFailure(error)}
     finally{this.#downloadBusy=false}
   }
@@ -646,6 +648,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#uploadClaim?.(); this.#uploadClaim = null
     this.#inboxUploads?.issuer[Symbol.dispose]?.()
     this.#uploads?.issuer[Symbol.dispose]?.()
+    this.clearOriginal()
     this.#downloads?.issuer[Symbol.dispose]?.()
     this.#reviewDownloads?.issuer[Symbol.dispose]?.()
     this.#nativeDownloads?.selector[Symbol.dispose]?.()
@@ -712,6 +715,8 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   // считается готовым по рукопожатию. Молчащее приложение не держит индикатор дольше CONTENT_READY_MAX_MS.
   const [frameReady,setFrameReady]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
+  const [original, setOriginal] = useState<DocumentFileDownload | null>(null)
+  useEffect(() => () => original?.dispose(), [original])
   const overlayRef = useRef<OverlayState>(null)
   // Push the Workshop's resolved light/dark mode to the app whenever it changes.
   const { resolvedThemeMode, accentColor } = useTheme()
@@ -848,6 +853,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.nativeWrites ? new FramePersonPhotos(frame.nativeWrites.selector, frame.nativeWrites.storageOrigin) : undefined,
         // Переход откладывается: он закрывает фрейм, а ответ на вызов должен успеть дойти.
         path => { setTimeout(() => { void navigate({ href: path }) }, 0) },
+        (bytes, filename) => {
+          const file = prepareDocumentFile(bytes, filename)
+          try { file.save(); setOriginal(file) } catch (error) { file.dispose(); throw error }
+        },
+        () => setOriginal(null),
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -971,6 +981,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
       onDrop={event=>{event.preventDefault();event.stopPropagation();setDragOver(false);void drop(event.dataTransfer)}}
       className="absolute inset-2 z-10 flex items-center justify-center rounded-xl border border-dashed border-kumo-brand bg-kumo-base/85 text-center">
       <div><p className="m-0 text-[15px] font-semibold text-kumo-strong">Отпустите, чтобы загрузить</p><p className="mb-0 mt-1 text-[12px] text-kumo-subtle">Файлы и папки попадут в приёмную{new URLSearchParams(window.location.search).get('project')?' проекта':''}.</p></div>
+    </div>}
+    {original && <div role="status" aria-label="Оригинал документа получен" className="flex flex-wrap items-center gap-3 border-b border-kumo-line bg-kumo-base px-5 py-3 text-sm text-kumo-default">
+      <span className="min-w-0 flex-1 break-words">Оригинал получен: {original.name}</span>
+      <a href={original.url} download={original.name} className="font-medium text-kumo-link underline">Сохранить файл ещё раз</a>
+      <button type="button" onClick={() => setOriginal(null)} className="text-kumo-subtle">Закрыть</button>
     </div>}
     {!frameReady&&<GatekeeperSectionLoading overlay title={loadingTitle} />}
     <div className="min-h-0 flex-1"><iframe
