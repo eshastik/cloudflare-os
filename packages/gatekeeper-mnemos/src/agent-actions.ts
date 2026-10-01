@@ -282,7 +282,8 @@ export async function prepareAgentAction(session: AgentActionSession, scope: Rea
       inScope(scope, to.id, to.name);
       const { document } = await personalDocument(session, from.id, request.document);
       if (to.id === from.id) throw new Error(`Файл «${document.name}» уже в проекте «${from.name}».`);
-      if (to.can_edit === false) throw new Error(`В проект «${to.name}» у вас нет права записи.`);
+      // can_edit описывает видимость проекта, а не право текущего человека.
+      // Право записи проверяет Mnemos при подтверждённом переносе.
       return { kind: request.kind, icon: "other", ownerOnly: true,
         title: `Перенести «${document.name}» в проект «${to.name}»`,
         details: [`Сейчас файл в «${from.name}», личной версией`, "В новом проекте он тоже будет вашей личной версией", "Вы получите уведомление о переносе"],

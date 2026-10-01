@@ -198,7 +198,7 @@ test("действие агента «перенести файл»: карто�
     async whoAmI() { return { subject: { tenant_id: "t", user_id: USER }, tenant_name: "Орг" }; },
     async listProjects() { return { projects: [
       { id: "p-personal", name: "Личное пространство", slug: personalSpaceSlug(USER), created_by: USER },
-      { id: "p-team", name: "Стройка", slug: "stroika", can_edit: true },
+      { id: "p-team", name: "Стройка", slug: "stroika", can_edit: false },
       { id: "p-other", name: "Бухгалтерия", slug: "buh", can_edit: true },
     ] }; },
     async listPrivateDocuments() { listed++; return { documents: [{ node_id: "n1", name: "Отчёт.docx", content_type: DOCX, conflicted: false }], head: HEAD, next_cursor: "" }; },
