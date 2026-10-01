@@ -290,10 +290,12 @@ test("ссылка на документ из хода агента открыв
   }, { section: "projects", project: "two", document: "n15" });
   try {
     await app.until(() => app.calls.some(c => c[0] === "openNativeDocument"), "документ по ссылке открыт");
-    assert.deepEqual(app.calls.filter(c => c[0] === "openNativeDocument"), [["openNativeDocument", "two", "n15"]]);
-    // Редактора нет (nativeOpen=false): как и при щелчке, открывается раздел документов проекта.
+    assert.deepEqual(app.calls.find(c => c[0] === "openNativeDocument"), ["openNativeDocument", "two", "n15"]);
+    // Без редактора выбранный документ открывается в просмотре материалов.
     await app.until(() => app.calls.some(c => c[0] === "openSection" && c[1] === "documents"), "запасной переход");
-    assert.deepEqual(app.calls.find(c => c[0] === "openSection"), ["openSection", "documents", "two"]);
+    assert.deepEqual(app.calls.find(c => c[0] === "openSection"), ["openSection", "documents", "two", "n15"]);
+    await app.until(() => app.document.querySelector('[aria-label="Просмотр документа"]'), "выбранный документ виден");
+    assert.equal(app.document.querySelector('[data-document="n15"]')?.getAttribute("aria-current"), "true");
   } finally { app.dispose(); }
 });
 
