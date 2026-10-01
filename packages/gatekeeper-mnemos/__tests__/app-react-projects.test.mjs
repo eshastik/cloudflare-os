@@ -8,7 +8,7 @@ test("«Проекты»: страница проекта одним экран�
       if (project !== "one") return { project_id: project, revision: 1, domains: [] };
       return { project_id: "one", revision: 4, domains: [{ domain_id: "Дизайн", node_ids: ["dir"], approver_ids: ["carol"] }, { domain_id: "Разработка", all_documents: true, node_ids: [], approver_ids: ["alice", "dave"] }] };
     },
-    async listPolicyApprovers(project) { return { approvers: project === "one" ? [{ principal_id: "carol", display_name: "Кэрол" }, { principal_id: "alice", display_name: "Алиса" }, { principal_id: "dave", display_name: "" }] : [], next_cursor: "" }; },
+    async listPolicyApprovers(project) { return { approvers: project === "one" ? [{ principal_id: "carol", display_name: "Кэрол" }, { principal_id: "alice", display_name: "Алиса" }, { principal_id: "dave", display_name: "" }, {principal_id: "candidate", display_name: "Не назначенный сотрудник"}] : [], next_cursor: "" }; },
     async listMailConnections() { return { connections: [{ connection_id: "m-1", project_id: "one", provider: "yandex", query_sha256: "", revision: 1, enabled: true }] }; },
     async listVisibleDatabaseConnections() { return { databases: [{ db_id: "db-1", project_id: "one", name: "Аналитика", driver: "postgres", env_var: "", registered_by: "alice", registered_at: "", configured: true, last_sweep_at: "2026-09-12T09:10:00Z", unreachable_since: "" }], truncated: false }; },
   });
@@ -27,9 +27,11 @@ test("«Проекты»: страница проекта одним экран�
     await app.until(() => section("Файлы")?.textContent.includes("Заметка команды"), "файлы проекта на той же странице");
     assert.ok(section("Файлы").textContent.includes("На согласовании · 1 из 2"), "статус документа");
     assert.ok(section("Файлы").textContent.includes("Папка"), "папки проекта среди файлов");
-    await app.until(() => section("Кто видит")?.textContent.includes("Кэрол"), "участники из политики");
-    assert.ok(section("Кто видит").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
-    assert.ok(section("Кто видит").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
+    await app.until(() => section("Согласующие публикации")?.textContent.includes("Кэрол"), "назначенные согласующие из политики");
+    assert.ok(!section("Кто видит").textContent.includes("Кэрол"), "согласующий не выдан за получившего доступ");
+    assert.ok(!section("Согласующие публикации").textContent.includes("Не назначенный сотрудник"), "кандидат не выдан за назначенного согласующего");
+    assert.ok(section("Согласующие публикации").textContent.includes("Согласует направление Дизайн"), "роль по направлению");
+    assert.ok(section("Согласующие публикации").textContent.includes("dave"), "согласующий без имени показан по идентификатору");
     await app.until(() => section("Кто видит")?.textContent.includes("Агент AgenticOS") && !section("Кто видит").textContent.includes("agent-alice"), "агенты по имени, без идентификатора");
     await app.until(() => section("Согласование")?.textContent.includes("Папка"), "правило по папке");
     assert.ok(section("Согласование").textContent.includes("Все документы проекта"), "правило на весь проект");

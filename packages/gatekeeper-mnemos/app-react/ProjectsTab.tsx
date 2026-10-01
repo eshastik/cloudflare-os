@@ -331,7 +331,7 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
   );
 }
 
-/** «Кто видит»: уровень доступа, согласующие и агенты с доступом; ниже — согласование и источники материалов. */
+/** Доступ к проекту и назначение согласующих показываются отдельно. */
 function ProjectPeople({ project, data, onOpenSources, onShare }: { project: ProjectData; data: MemoryData; onOpenSources(): void; onShare(): void }) {
   const ui = useUi();
   const policy = useLoad(() => ui.readPublicationPolicy(project.id), "Политика согласования не прочитана: нет права или сервер отказал.", [ui, project.id]);
@@ -356,16 +356,7 @@ function ProjectPeople({ project, data, onOpenSources, onShare }: { project: Pro
       <section id="project-members" aria-label="Кто видит" className="mb-7">
         <SectionTitle title="Кто видит" actions={<Button variant="ghost" size="sm" onClick={onShare}>Изменить доступ</Button>} />
         {project.visibility && <p className="m-0 mb-3 text-[14px] leading-5 text-kumo-subtle">{VISIBILITY_NOTES[project.visibility]}</p>}
-        {members.length === 0 && agents.length === 0 && <Notice>{peopleError || "Участники не назначены."}</Notice>}
-        {members.map(member => (
-          <div key={member.id} className="flex items-center gap-3 border-b border-kumo-fill py-2.5">
-            <PersonAvatar name={member.name} id={member.id} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[15px] text-kumo-default">{member.name}</div>
-              <div className="text-[13px] text-kumo-subtle">{member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Участник"}</div>
-            </div>
-          </div>
-        ))}
+        {!project.visibility && <Notice>Доступ к проекту не прочитан.</Notice>}
         {agents.map(agent => {
           const role = absence?.enabled && absence.local_binding_id === agent.binding_id ? "замещается" : absence?.enabled && absence.managed_binding_id === agent.binding_id ? `замещает до ${new Date(absence.ends_at).toLocaleString("ru-RU")}` : "";
           return (
@@ -378,9 +369,23 @@ function ProjectPeople({ project, data, onOpenSources, onShare }: { project: Pro
             </div>
           );
         })}
-        {(members.length > 0 || agents.length > 0) && data.connectionsError && <div className="mt-2"><Notice tone="danger">{data.connectionsError}</Notice></div>}
+        {data.connectionsError && <div className="mt-2"><Notice tone="danger">{data.connectionsError}</Notice></div>}
         {agents.length > 0 && <p className="m-0 mt-2 text-[13px] text-kumo-subtle">Каждый агент видит не больше вас.</p>}
       </section>
+      {(members.length > 0 || peopleError) && <section aria-label="Согласующие публикации" className="mb-7">
+        <SectionTitle title="Согласующие публикации" />
+        <p className="m-0 mb-3 text-[14px] leading-5 text-kumo-subtle">Публикации согласуют по правилам ниже.</p>
+        {peopleError && <Notice tone="danger">{peopleError}</Notice>}
+        {members.map(member => (
+          <div key={member.id} className="flex items-center gap-3 border-b border-kumo-fill py-2.5">
+            <PersonAvatar name={member.name} id={member.id} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[15px] text-kumo-default">{member.name}</div>
+              <div className="text-[13px] text-kumo-subtle">{member.domains.length ? `Согласует направление ${member.domains.join(", ")}` : "Согласующий"}</div>
+            </div>
+          </div>
+        ))}
+      </section>}
       <ProjectApproval project={project} />
       <Block title="Откуда приходят материалы" count={sources.length} empty={sourceErrors.length ? `Подключения не прочитаны: ${sourceErrors.join("; ")}.` : "К проекту не подключены почта, календарь или базы."}
         actions={isAdministrator(data.identity) ? <Button variant="ghost" size="sm" onClick={onOpenSources}>Все подключения</Button> : undefined}>
@@ -404,7 +409,6 @@ function membersByDomain(policy: PublicationPolicy | null, names: Map<string, st
   for (const domain of policy?.domains ?? ([] as PolicyDomain[])) {
     for (const id of domain.approver_ids) byId.set(id, [...(byId.get(id) ?? []), domain.domain_id]);
   }
-  for (const id of names.keys()) if (!byId.has(id)) byId.set(id, []);
   return [...byId].map(([id, domains]) => ({ id, name: personName(id, names), domains })).sort((a, b) => b.domains.length - a.domains.length || a.name.localeCompare(b.name, "ru"));
 }
 
