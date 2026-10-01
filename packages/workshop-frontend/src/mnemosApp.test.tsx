@@ -35,11 +35,11 @@ test('узел приложения открывается как докумен
     listGadgets: vi.fn(async () => [{ id: 'ws-app' }]), listOutputFormats: vi.fn(), newGadgetFromBlueprint: vi.fn(),
     newGadget: vi.fn(async () => ({ getMetadata: async () => ({ id: 'ws-app' }), createGadget: vi.fn(async () => gadget), [Symbol.dispose]: dispose })),
   }
-  const selector = { publications: vi.fn(async () => ({ publications: [{ id: `private:${HEAD}`, format: 'cloudflareos.app' }], resourceUrl: '' })) }
+  const selector = { publications: vi.fn(async (_scope: string, _resource: string, cursor: string) => ({ publications: cursor ? [{ id: PUBLISHED, format: 'cloudflareos.app' }] : [{ id: `private:${HEAD}`, format: 'cloudflareos.app' }], resourceUrl: '', nextCursor: cursor ? '' : 'published-page' })) }
   const navigate = vi.fn(async (id: string) => { history.replaceState(null, '', `/workspace/${id}`) })
   expect(await launchNativeDocument(api as never, selector as never, 7, 'project', 'node', navigate)).toBe(true)
   expect(api.newGadgetFromBlueprint).not.toHaveBeenCalled()
-  expect(readMnemosAppLaunch()).toMatchObject({ accountId: 7, scope: 'project', resource: 'node', publication: `private:${HEAD}`, gadgetId: 5 })
+  expect(readMnemosAppLaunch()).toMatchObject({ accountId: 7, scope: 'project', resource: 'node', publication: PUBLISHED, gadgetId: 5 })
   expect(dispose).toHaveBeenCalledOnce()
   await launchNativeDocument(api as never, selector as never, 7, 'project', 'node', navigate)
   expect(api.newGadget).toHaveBeenCalledOnce()

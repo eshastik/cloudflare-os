@@ -2,7 +2,7 @@ import {nativeFormatForOutput} from '@gadgets/workshop-shared/native-document'
 import type {NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
 import type {GatekeeperNativeDocumentSelector} from '@gadgets/workshop-shared/gatekeeper'
 import type {AuthenticatedApi} from '@gadgets/workshop-shared/api'
-import {launchMnemosApp} from './mnemosAppLaunch'
+import {launchMnemosApp, appVersionToOpen} from './mnemosAppLaunch'
 
 export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; at: number}
 const key = (path: string) => `mnemos-document-launch:${path}`
@@ -22,7 +22,10 @@ export async function launchNativeDocument(api: Pick<AuthenticatedApi, 'listOutp
   const version = history.publications[0]
   if (!version) return false
   // Приложение (ADR 0028) открывается так же, как документ, но в рабочем месте с гаджетом, а не с редактором формата.
-  if (version.format === 'cloudflareos.app') return launchMnemosApp(api, accountId, scope, resource, version.id, navigate)
+  if (version.format === 'cloudflareos.app') {
+    const appVersion = await appVersionToOpen(history, cursor => selector.publications(scope, resource, cursor))
+    return launchMnemosApp(api, accountId, scope, resource, appVersion!.id, navigate)
+  }
   const documentFormat = version.format
   const workspaceKey = `mnemos-document-workspace:${JSON.stringify([accountId, scope, resource, documentFormat])}`
   let previous: string | null = null

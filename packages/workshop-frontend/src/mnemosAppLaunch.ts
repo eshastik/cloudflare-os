@@ -27,6 +27,27 @@ export function rememberMnemosAppLaunch(workspace: string, launch: Omit<MnemosAp
   window.dispatchEvent(new Event(MNEMOS_APP_LAUNCH_EVENT))
 }
 
+/** Обычное открытие ведёт в опубликованное приложение; новая сборка из беседы — в личный предпросмотр. */
+export async function appVersionToOpen<T extends {id: string; format: string}>(
+  first: {publications: readonly T[]; nextCursor: string},
+  nextPage: (cursor: string) => Promise<{publications: readonly T[]; nextCursor: string}>,
+  preview = false,
+): Promise<T | null> {
+  const latest = first.publications[0]
+  if (latest?.format !== 'cloudflareos.app') return null
+  if (preview) return latest
+  let page = first
+  const seen = new Set<string>()
+  for (;;) {
+    const published = page.publications.find(v => v.format === 'cloudflareos.app' && !v.id.startsWith('private:'))
+    if (published) return published
+    if (!page.nextCursor) return latest
+    if (seen.has(page.nextCursor)) throw new Error('История приложения повторяет страницу. Откройте файл ещё раз.')
+    seen.add(page.nextCursor)
+    page = await nextPage(page.nextCursor)
+  }
+}
+
 /** Своё рабочее место на каждый узел приложения, как у документа: второе открытие попадает в то же место. */
 export async function launchMnemosApp(api: Pick<AuthenticatedApi, 'listGadgets' | 'newGadget'>, accountId: number, scope: string, resource: string, publication: string,
   navigate: (id: string) => void | Promise<void>): Promise<boolean> {

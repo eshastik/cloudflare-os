@@ -5,11 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MnemosAppBinding, MnemosAppState } from '@gadgets/workshop-shared/gadget-app'
 
-const { store } = vi.hoisted(() => ({ store: { format: 'cloudflareos.app', publicationsRead: 0 } }))
+const { store } = vi.hoisted(() => ({ store: { format: 'cloudflareos.app', publicationsRead: 0, published: false } }))
 vi.mock('./accountCapabilities', () => ({
   openNativeDownloadsFrame: async (_api: unknown, accountId: number) => {
     if (accountId !== 3) throw new Error('Нет подключения')
-    return { nativeDownloads: { selector: { publications: async () => { store.publicationsRead++; return { publications: [{ id: 'private:head-1', format: store.format }], nextCursor: '' } } } } }
+    return { nativeDownloads: { selector: { publications: async (_scope: string, _resource: string, cursor: string) => { store.publicationsRead++; return { publications: cursor ? [{ id: 'event-1', format: store.format }] : [{ id: 'private:head-1', format: store.format }], nextCursor: store.published && !cursor ? 'published-page' : '' } } } } }
   },
 }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: () => {} }))
@@ -53,16 +53,17 @@ const api = {} as never
 const target = { accountId: 3, scope: 'hr', resource: 'node-7', title: 'Учёт отпусков' }
 const bindingOf = (resource: string): MnemosAppBinding => ({ accountId: 3, scope: 'hr', resource, description: '', collaborative: true, session: true, permissions: [], savedVersion: 'event-1' })
 
-beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState(null, '', '/workspace/ws-chat'); store.format = 'cloudflareos.app'; store.publicationsRead = 0 })
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState(null, '', '/workspace/ws-chat'); store.format = 'cloudflareos.app'; store.publicationsRead = 0; store.published = false })
 
 describe('приложение Mnemos в рабочем месте беседы', () => {
   it('гаджета нет — создаётся один, заявка открытия пишется для этой страницы; повтор не создаёт второй', async () => {
+    store.published = true
     const ws = workspace([{ id: 1, title: 'Беседа', filesRoot: '1', binding: null }])
     expect(await openAppInWorkspace(api, ws.view(), target)).toBe(2)
     expect(ws.created).toEqual(['Учёт отпусков'])
     // Привязку ставит шапка после проверки прав; здесь только заявка на последнюю версию узла.
     expect(ws.gadgets.find(g => g.id === 2)?.binding).toBeNull()
-    expect(readMnemosAppLaunch()).toMatchObject({ accountId: 3, scope: 'hr', resource: 'node-7', publication: 'private:head-1', gadgetId: 2 })
+    expect(readMnemosAppLaunch()).toMatchObject({ accountId: 3, scope: 'hr', resource: 'node-7', publication: 'event-1', gadgetId: 2 })
     // Повтор до того, как список рабочего места обновился, и после.
     expect(await openAppInWorkspace(api, ws.view(), target)).toBe(2)
     ws.sync()
@@ -79,6 +80,7 @@ describe('приложение Mnemos в рабочем месте беседы'
 
   it('карточка новой версии обновляет существующий гаджет без создания второго', async () => {
     const ws = workspace([{ id: 5, title: 'Отпуска', binding: bindingOf('node-7') }])
+    store.published = true
     expect(await openAppInWorkspace(api, ws.view(), { ...target, refreshLatest: true })).toBe(5)
     expect(ws.created).toEqual([])
     expect(readMnemosAppLaunch()).toMatchObject({ gadgetId: 5, resource: 'node-7', publication: 'private:head-1' })

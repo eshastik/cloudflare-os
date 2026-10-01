@@ -5,11 +5,11 @@
 // проверки прав в Mnemos. Код узла в рабочее место не кладётся.
 import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi, WorkpieceSummary } from '@gadgets/workshop-shared/api'
-import { GADGET_APP_FORMAT, type MnemosAppState } from '@gadgets/workshop-shared/gadget-app'
+import { type MnemosAppState } from '@gadgets/workshop-shared/gadget-app'
 import { nativeFormatForOutput } from '@gadgets/workshop-shared/native-document'
 import { openNativeDownloadsFrame } from './accountCapabilities'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
-import { rememberMnemosAppLaunch } from './mnemosAppLaunch'
+import { rememberMnemosAppLaunch, appVersionToOpen } from './mnemosAppLaunch'
 
 export type AppTarget = { accountId: number; scope: string; resource: string; title?: string; refreshLatest?: boolean }
 
@@ -28,8 +28,9 @@ const storeKey = (workspace: string, target: AppTarget) => `mnemos-app-chat:${JS
 export async function latestAppVersion(api: Api, target: AppTarget): Promise<string | null> {
   const frame = await openNativeDownloadsFrame(api, target.accountId)
   try {
-    const latest = (await frame.nativeDownloads.selector.publications(target.scope, target.resource, '')).publications[0]
-    return latest?.format === GADGET_APP_FORMAT ? latest.id : null
+    const history = await frame.nativeDownloads.selector.publications(target.scope, target.resource, '')
+    const version = await appVersionToOpen(history, cursor => frame.nativeDownloads.selector.publications(target.scope, target.resource, cursor), target.refreshLatest)
+    return version?.id ?? null
   } finally { disposeGatekeeperFrame(frame) }
 }
 
