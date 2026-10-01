@@ -3320,6 +3320,7 @@ class OverseerImpl implements AgentHooks {
 
   relocateChatDocument(accountId: number, move: NonNullable<ActionOutcome["chatDocumentMove"]>): void {
     this.ctx.storage.transactionSync(() => {
+      const affected = new Map<number, Set<string>>();
       for (let content of Array.from(this.storage.chatAttachmentContent.list())) {
         let document = content.state.document;
         if (content.state.type !== "committed" || !document || document.accountId !== accountId ||
@@ -3328,6 +3329,9 @@ class OverseerImpl implements AgentHooks {
         let next: ChatDocumentRef = {...document, projectId: move.to.projectId, projectTitle: move.to.projectTitle,
           resource: move.to.resource, name: move.to.name, personal: false};
         this.storage.chatAttachmentContent.put({...content, state: {...content.state, document: next}});
+        const ids = affected.get(chatId) ?? new Set<string>();
+        ids.add(content.fileId);
+        affected.set(chatId, ids);
         let oldGrant = chatDocumentGrantKey(chatId, document.projectId, document.resource);
         if (this.storage.chatDocumentGrants.get(oldGrant)) {
           // Старый ключ общий для подключений. Он нужен оставшемуся
@@ -3338,6 +3342,14 @@ class OverseerImpl implements AgentHooks {
             this.storage.chatDocumentGrants.delete(oldGrant);
           }
           this.grantChatDocument(chatId, next);
+        }
+      }
+      // Подписка беседы заменяет сообщение по sequence: новое место видно без перезагрузки.
+      for (const [chatId, ids] of affected) {
+        for (const message of Array.from(this.storage.chats.list({prefix: `${keyString(chatId)}.`}))) {
+          if (message.type !== "message" || !message.attachments?.some(a => ids.has(a.id))) continue;
+          this.storage.chats.put({...message, attachments: message.attachments.map(a =>
+            ids.has(a.id) ? {...a, document: this.getChatAttachmentDocument(a.id)} : a)});
         }
       }
     });

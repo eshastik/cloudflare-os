@@ -27,6 +27,14 @@ it("после подтверждённого переноса обновляе�
       fileId: id, data: new Uint8Array(0), state: {type: "committed", chatId: 1, document: {...document, accountId}},
     });
     put(first, 3); put(other, 4);
+    impl.storage.chats.put({chatId: 1, sequence: 0, timestamp: new Date(),
+      type: "message", author: {type: "user", id: "owner", name: "Владелец"}, message: "Учебные вложения",
+      attachments: [
+        {id: first, mimeType: "text/plain", document},
+        {id: other, mimeType: "text/plain", document: {...document, accountId: 4}},
+      ]});
+    const updated = vi.fn();
+    impl.storage.chats.subscribe({add() {}, remove() {}, update: updated});
     impl.storage.chatAttachmentContent.put({fileId: staged, data: new Uint8Array(0),
       state: {type: "staged", uploadedAt: Date.now(), mimeType: "text/plain", document}});
     impl.grantChatDocument(1, document);
@@ -43,6 +51,10 @@ it("после подтверждённого переноса обновляе�
         resource: "new-node", projectTitle: "Проект", name: "файл 2.txt", personal: false, size: 10});
       expect(impl.getChatAttachmentDocument(other)).toMatchObject({accountId: 4, projectId: "personal", resource: "old-node"});
       expect(impl.getChatAttachmentDocument(staged)).toMatchObject({projectId: "personal", resource: "old-node"});
+      expect(updated).toHaveBeenCalledTimes(1);
+      const delivered = impl.hydrateChatMessageForClient(updated.mock.calls[0][1]);
+      expect(delivered.type === "message" && delivered.attachments?.[0].document).toMatchObject({projectId: "team", resource: "new-node"});
+      expect(delivered.type === "message" && delivered.attachments?.[1].document).toMatchObject({accountId: 4, projectId: "personal", resource: "old-node"});
       expect(() => impl.authorizeChatDocument({from: "agent", chatId: 1}, "personal", "old-node", 3)).toThrow();
       expect(() => impl.authorizeChatDocument({from: "agent", chatId: 1}, "team", "new-node", 3)).not.toThrow();
       expect(() => impl.authorizeChatDocument({from: "agent", chatId: 1}, "personal", "old-node", 4)).not.toThrow();
