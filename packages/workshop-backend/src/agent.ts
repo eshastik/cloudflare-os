@@ -290,7 +290,7 @@ export interface AgentHooks {
   executeCodeMode(chatId: number, code: string,
                    initiator: AiChatAuthorInfo, initiatorModelId: string,
                    bindings: Record<string, ChatBindingEntry>,
-                   onOutputText?: (delta: string) => void): Promise<string>;
+                   onOutputText?: (delta: string) => void): Promise<string | { output: string; error: string }>;
   activeAgentCallbackCount(chatId: number): number;
   rejectAllAgentCallbacks(chatId: number, error: string): void;
   consumeCapturedActions(chatId: number)
@@ -2942,18 +2942,23 @@ export async function runAgent(
           //   it for now.
           flushCapturedYdocChanges();
 
-          let output = await hooks.executeCodeMode(
+          const result = await hooks.executeCodeMode(
               chatId, code, initiator, author.id, Object.fromEntries(chatBindings),
               delta => emitStreamEvent({
                 type: "toolOutputDelta",
                 toolCallId,
                 delta,
               }));
-          // Модель видит ограниченную часть вывода; в журнал беседы (и человеку) идёт весь вывод.
-          return toolResult(limitCodeOutput(`${output}`), {output: `${output}`} as Partial<AiToolCall>);
+          const output = typeof result === "string" ? result : result.output;
+          // Отказ учитывается защитой от повторов; весь вывод остаётся в журнале.
+          if (typeof result !== "string") {
+            toolCallNotes.set(toolCallId, { output });
+            throw new Error(result.error);
+          }
+          return toolResult(limitCodeOutput(output), { output } as Partial<AiToolCall>);
         } catch (error) {
           toolCallNotes.set(toolCallId, {
-            error: toolErrorText(error)
+            ...toolCallNotes.get(toolCallId), error: toolErrorText(error)
           });
           throw error;
         }

@@ -6407,7 +6407,7 @@ class OverseerImpl implements AgentHooks {
                         initiator: AiChatAuthorInfo, initiatorModelId: string,
                         bindings: Record<string, ChatBindingEntry>,
                         onOutputText?: (delta: string) => void)
-      : Promise<string> {
+      : Promise<string | { output: string; error: string }> {
     let bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     let executionId: string = bytes.toBase64();
@@ -6531,11 +6531,11 @@ class OverseerImpl implements AgentHooks {
         }).join(" ");
       }).join("\n");
 
-      if (error) {
+      if (error !== undefined) {
         log += `\n\nUncaught exception: ${error}`;
       }
 
-      return log;
+      return error !== undefined ? { output: log, error: error || "Исполнение кода завершилось ошибкой." } : log;
     } finally {
       this.#codeModeOutputSubscribers.delete(executionId);
       this.#codeModeResolvers.delete(executionId);
