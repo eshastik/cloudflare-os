@@ -20,7 +20,7 @@ import type { ResolvedThemeMode } from './theme'
 import { forwardTrustedFrameError } from './errorReporting'
 import { uploadGatekeeperText } from './gatekeeperAppUpload'
 import { openGatekeeperAudioRecording } from './gatekeeperAudioRecording'
-import { downloadGatekeeperFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
+import { downloadGatekeeperOriginalFile, downloadGatekeeperNativeDocument, downloadGatekeeperText, downloadGatekeeperTemplateText } from './gatekeeperAppDownload'
 import type { NativeDocumentFormat, NativeDocumentSnapshot } from '@gadgets/workshop-shared/native-document'
 import { APP_CODE_CLOSED } from '@gadgets/workshop-shared/gadget-app'
 import { useAuthenticatedApi } from './AuthContext'
@@ -446,7 +446,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     try {
       const downloads=this.#downloads
       const ticket=await downloads.issuer.issue(scope,resource,version,0)
-      const bytes=await downloadGatekeeperFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
+      const bytes=await downloadGatekeeperOriginalFile(downloads.storageOrigin,ticket,this.#uploadLifetime.signal,()=>downloads.issuer.validate(scope,resource,version))
       saveDocumentFile(bytes,filename)
     }catch(error){throw downloadFailure(error)}
     finally{this.#downloadBusy=false}

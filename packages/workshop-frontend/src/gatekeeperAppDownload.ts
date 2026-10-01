@@ -25,6 +25,47 @@ export async function downloadGatekeeperFile(storageOrigin:string,ticket:Gatekee
  return bytes
 }
 
+/** Исходник читается частями в Blob: размер файла не задаёт размер массива в JavaScript. */
+export async function downloadGatekeeperOriginalFile(storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal, validateAccess: () => Promise<void>): Promise<Blob> {
+  const failure = () => new Error('Не удалось скачать документ.')
+  const stalled = new AbortController()
+  const lifetime = AbortSignal.any([signal, stalled.signal])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const progress = () => { clearTimeout(timer); timer = setTimeout(() => stalled.abort(), 30_000) }
+  try {
+    const origin = new URL(storageOrigin), url = new URL(ticket.url)
+    if (origin.protocol !== 'https:' || origin.origin !== storageOrigin || url.origin !== storageOrigin || url.username || url.password || url.hash ||
+        ticket.method !== 'GET' || !Number.isSafeInteger(ticket.size_bytes) || ticket.size_bytes < 0 || !/^[0-9a-f]{64}$/.test(ticket.sha256_hex)) throw failure()
+    lifetime.throwIfAborted()
+    const { createSHA256 } = await import('hash-wasm')
+    const hash = await createSHA256()
+    hash.init()
+    progress()
+    const response = await fetch(url.href, { signal: lifetime, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', cache: 'no-store' })
+    if (!response.ok || !response.body) { await response.body?.cancel(); throw failure() }
+    const reader = response.body.getReader(), parts: Blob[] = []
+    let size = 0
+    try {
+      for (;;) {
+        progress()
+        const { done, value } = await reader.read()
+        lifetime.throwIfAborted()
+        if (done) break
+        size += value.byteLength
+        if (size > ticket.size_bytes) throw failure()
+        hash.update(value)
+        parts.push(new Blob([new Uint8Array(value)]))
+      }
+    } finally { await reader.cancel(); reader.releaseLock() }
+    clearTimeout(timer)
+    if (size !== ticket.size_bytes || hash.digest('hex') !== ticket.sha256_hex) throw failure()
+    await validateAccess()
+    lifetime.throwIfAborted()
+    return new Blob(parts, { type: 'application/octet-stream' })
+  } catch { throw failure() }
+  finally { clearTimeout(timer) }
+}
+
 async function downloadVerifiedBytes(
   storageOrigin: string, ticket: GatekeeperDownloadTicket, signal: AbortSignal, maxBytes: number,
 ): Promise<Uint8Array> {

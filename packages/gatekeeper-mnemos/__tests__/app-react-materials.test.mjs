@@ -228,3 +228,27 @@ test("«Материалы»: поздний ответ прежнего зап�
     assert.equal(card(app, "Старый.md"), undefined, "поздний ответ прежнего запроса отброшен");
   } finally { app.dispose(); }
 });
+
+
+test("Из просмотра скачиваются исходники общей и личной версии, включая усечённый текст", async () => {
+  const app = await mountMemoryApp({
+    async nodeHistory() { return { events: [{event_id: "published-event", exists: true, recorded_at: "2026-09-12T10:00:00Z"}] }; },
+    async readProjectDocument(project, node) { return {node_id: node, text: "Начало большого файла", media_type: "text/plain", truncated: true}; },
+    async listPrivateDocuments() { return {documents: [{node_id: "private", name: "Личный.pdf", content_type: "application/pdf", conflicted: false}], head: "a".repeat(64), next_cursor: ""}; },
+    async readDraftDocument(project, node) { return {node_id: node, exists: true, conflicted: false, head: "a".repeat(64), content_type: "application/pdf", terms: [{present: true}]}; },
+  }, {section: "documents", project: "one", nativeOpen: false});
+  try {
+    await app.until(() => app.button("Заметка команды"), "общий документ");
+    app.button("Заметка команды").click();
+    await app.until(() => app.text().includes("Полный файл доступен"), "усечённый просмотр");
+    app.button("Скачать оригинал").click();
+    await app.until(() => app.calls.some(c => c[0] === "downloadFile"), "общий исходник");
+    assert.deepEqual(app.calls.find(c => c[0] === "downloadFile"), ["downloadFile", "one", "doc", "file-publication:published-event", "Заметка команды"]);
+    await app.until(() => app.button("Личный.pdf") && !app.button("Скачиваю…"), "личный файл");
+    app.button("Личный.pdf").click();
+    await app.until(() => app.document.querySelector('[aria-label="Просмотр документа"] h2')?.textContent === "Личный.pdf", "личный просмотр");
+    app.button("Скачать оригинал").click();
+    await app.until(() => app.calls.filter(c => c[0] === "downloadFile").length === 2, "личный исходник");
+    assert.deepEqual(app.calls.filter(c => c[0] === "downloadFile")[1], ["downloadFile", "one", "private", "private:" + "a".repeat(64), "Личный.pdf"]);
+  } finally { app.dispose(); }
+});

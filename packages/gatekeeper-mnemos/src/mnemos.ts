@@ -1326,6 +1326,10 @@ class MnemosTextDownloadIssuer extends RpcTarget {
     return this.#issue(projectId, nodeId, version, side).catch(closedCode);
   }
   async #issue(projectId: string, nodeId: string, version: string, side: number) {
+    if(version.startsWith("file-publication:")){
+      if(side!==0)throw new Error("Invalid publication side");
+      return refuseAppCode(await this.#session.downloadPublication(projectId,nodeId,version.slice(17)),false);
+    }
     if(version.startsWith("private:")){
       if(side!==0)throw new Error("Invalid private version side");
       return refuseAppCode(await this.#session.downloadPrivateVersion(projectId,nodeId,version.slice(8)),false);
@@ -1358,6 +1362,9 @@ class MnemosTextDownloadIssuer extends RpcTarget {
     return this.#session.beginDraftDownload(projectId, nodeId, version, side);
   }
   async validate(projectId: string, nodeId: string, version: string): Promise<void> {
+    if(version.startsWith("file-publication:")){
+      await this.#session.checkPublicationRead(projectId,nodeId,version.slice(17));return;
+    }
     if(version.startsWith("private:")){
       await this.#session.checkPrivateVersionRead(projectId,nodeId,version.slice(8));return;
     }

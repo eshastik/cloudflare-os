@@ -1,6 +1,6 @@
 import { uploadGatekeeperOfficePreview } from './gatekeeperAppUpload'
 import { afterEach, expect, it, vi } from 'vitest'
-import { downloadGatekeeperTemplateText, downloadGatekeeperFile, downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
+import { downloadGatekeeperOriginalFile, downloadGatekeeperTemplateText, downloadGatekeeperFile, downloadGatekeeperOfficePreview, downloadGatekeeperOffice, downloadGatekeeperText, downloadGatekeeperNativeDocument, downloadGatekeeperNativeReview } from './gatekeeperAppDownload'
 const origin = 'https://objects.example'
 afterEach(() => vi.unstubAllGlobals())
 
@@ -151,3 +151,19 @@ it('снимок шаблона имеет отдельный предел, об
  await expect(downloadGatekeeperText(origin,ticket,signal)).rejects.toThrow('Не удалось скачать документ.')
  await expect(downloadGatekeeperTemplateText(origin,{...ticket,size_bytes:49*1024*1024},signal)).rejects.toThrow('Не удалось скачать документ.')
 })
+
+
+it('исходный файл собирается частями без перекодирования, повреждение и отзыв доступа не дают скачивание', async () => {
+  const bytes = new Uint8Array([0, 255, 128, 10, 7]);
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
+  const ticket = { url: origin + '/original', method: 'GET', size_bytes: bytes.length, sha256_hex: digest };
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ start(c) { c.enqueue(bytes.slice(0, 2)); c.enqueue(bytes.slice(2)); c.close() } }))));
+  const signal = new AbortController().signal, validate = vi.fn(async () => {});
+  const blob = await downloadGatekeeperOriginalFile(origin, ticket, signal, validate);
+  expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+  expect(validate).toHaveBeenCalledOnce();
+  await expect(downloadGatekeeperOriginalFile(origin, ticket, signal, async () => { throw Error('revoked') })).rejects.toThrow();
+  await expect(downloadGatekeeperOriginalFile(origin, { ...ticket, sha256_hex: '0'.repeat(64) }, signal, validate)).rejects.toThrow();
+  await expect(downloadGatekeeperOriginalFile(origin, { ...ticket, size_bytes: 4 }, signal, validate)).rejects.toThrow();
+  expect(validate).toHaveBeenCalledOnce();
+});

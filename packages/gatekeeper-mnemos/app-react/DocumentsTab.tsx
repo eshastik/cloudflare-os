@@ -68,6 +68,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   const [notice, setNotice] = useState("");
   const [moved, setMoved] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const openedLink = useRef<number | null>(null);
   const requested = useRef(new Set<string>());
   const searchGeneration = useRef(0);
@@ -187,6 +188,26 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     openedLink.current = linkedDocument.seq;
     void open(row);
   }, [linkedDocument, initialProject, rows]);
+
+  async function download(row: DocumentRow) {
+    if (downloading) return;
+    setDownloading(true); setNotice("");
+    try {
+      let version: string;
+      if (row.privateOnly) {
+        const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
+        if (!doc.exists || doc.conflicted || doc.terms.length !== 1 || !doc.terms[0].present) throw new Error("Личная версия недоступна или содержит конфликт.");
+        version = "private:" + doc.head;
+      } else {
+        const event = (await ui.nodeHistory(row.projectId, row.nodeId, "")).events[0];
+        if (!event?.exists) throw new Error("Опубликованная версия недоступна.");
+        version = "file-publication:" + event.event_id;
+      }
+      await host.downloadFile(row.projectId, row.nodeId, version, row.name);
+    } catch {
+      setNotice(`Файл «${row.name}» не скачан. Проверьте доступ и повторите попытку. Если у личной версии конфликт, сначала выберите нужный вариант.`);
+    } finally { setDownloading(false); }
+  }
 
   function chat(row: DocumentRow, action: MaterialAction) {
     setNotice("");
@@ -337,6 +358,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
             </div>
             <div className="mb-3 flex flex-wrap items-center gap-1">
               {opened.row.status.tone !== "success" && <StatusBadge tone={opened.row.status.tone}>{opened.row.status.label}</StatusBadge>}
+              <Button variant="secondary" size="sm" disabled={downloading} onClick={() => void download(opened.row)}>{downloading ? "Скачиваю…" : "Скачать оригинал"}</Button>
               <MaterialChatButtons onChat={action => chat(opened.row, action)} />
             </div>
             <div className="max-h-[68vh] overflow-auto rounded-[12px] bg-kumo-base p-4">
@@ -345,7 +367,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
               {opened.content && (opened.content.text && isMarkdown(opened.content.media_type, opened.row.name)
                 ? <Markdown text={opened.content.text} className="text-[14px] leading-5 text-kumo-default" />
                 : <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[13px] leading-5 text-kumo-default">{opened.content.text || "(Пустой файл)"}</pre>)}
-              {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа: он длиннее допустимого для просмотра.</p>}
+              {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа. Полный файл доступен по кнопке «Скачать оригинал».</p>}
             </div>
           </aside>
         )}
