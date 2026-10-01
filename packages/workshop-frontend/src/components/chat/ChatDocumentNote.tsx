@@ -32,6 +32,7 @@ export function ChatDocumentNote({ document: initial, openDocument, loadProjects
   useEffect(() => {
     if (!open || choices || !loadProjects) return;
     let cancelled = false;
+    setFailed(false);
     loadProjects()
       .then((list) => { if (!cancelled) setChoices(list); })
       .catch(() => { if (!cancelled) setFailed(true); });

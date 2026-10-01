@@ -57,6 +57,7 @@ export function ProjectChips({ projects, onChange, loadChoices, disabled = false
   useEffect(() => {
     if (!open || choices) return;
     let cancelled = false;
+    setFailed(false);
     loadChoices()
       .then((list) => { if (!cancelled) setChoices(list); })
       .catch(() => { if (!cancelled) setFailed(true); });

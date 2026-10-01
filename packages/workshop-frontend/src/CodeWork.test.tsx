@@ -290,3 +290,19 @@ describe("пометка «агент кода» у ответа", () => {
     expect([...seqs]).toEqual([3, 7]);
   });
 });
+
+ it("после ошибки загрузки повторное открытие позволяет выбрать проект", async () => {
+  const loadChoices = vi.fn().mockRejectedValueOnce(new Error("Сеть недоступна"))
+    .mockResolvedValueOnce([{accountId: 1, projectId: "reports", title: "Отчёты"}]);
+  const onChange = vi.fn();
+  const view = render(<ProjectChips projects={[]} onChange={onChange} loadChoices={loadChoices} />);
+  act(() => button(view, "Добавить проект").click());
+  await flush();
+  expect(view.textContent).toContain("Проекты не загрузились");
+  act(() => button(view, "Добавить проект").click());
+  act(() => button(view, "Добавить проект").click());
+  await flush();
+  expect(view.textContent).not.toContain("Проекты не загрузились");
+  act(() => button(view, "Отчёты").click());
+  expect(onChange).toHaveBeenCalledWith([{accountId: 1, projectId: "reports", title: "Отчёты", pinnedBy: "user"}]);
+});
