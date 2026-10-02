@@ -1,3 +1,4 @@
+import { visibleChatMessages } from "@gadgets/workshop-shared/api";
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext, UsedGadget} from "@gadgets/workshop-shared/api";
 import { findInvitees, notYetSignedInProfile, rankInvitees } from './user-directory.js';
 import {chatCodeMode, chatProjects, validateChatProjects, type AgentStep, type ChatCodeMode, type ChatProject, type CodeWorkOutput} from "@gadgets/workshop-shared/code-work";
@@ -4299,52 +4300,77 @@ class OverseerImpl implements AgentHooks {
     if (JSON.stringify(currentMeta.projectContext) !== JSON.stringify(sourceMeta.projectContext)) {
       throw new Error("Проекты беседы изменились. Повторите отправку правки.");
     }
-    const history = [...this.storage.chats.list({prefix: `${keyString(chatId)}.`})]
-      .filter(m => m.sequence <= sequence && m.type === "message");
-    let newId!: number;
+    message = message.trim();
+    const history = visibleChatMessages([...this.storage.chats.list({prefix: `${keyString(chatId)}.`})]);
+    if (!history.some(m => m.sequence === sequence)) throw new Error("Сообщение уже заменено правкой.");
+    const lastUser = history.findLast(m => m.author.type === "user" && (m.type === "message" || m.type === "slashCommand"));
+    const inPlace = lastUser?.sequence === sequence;
+    let resultId = chatId;
     const timestamp = this.getChatTimestamp();
+    const editedCapsules = original.capsules?.flatMap(capsule => {
+      const token = original.message.slice(capsule.position, capsule.position + capsule.length);
+      const position = token ? message.indexOf(token) : -1;
+      if (position < 0) return [];
+      if (message.indexOf(token, position + token.length) >= 0) {
+        throw new Error("Ссылка на ресурс повторяется. Оставьте её в тексте один раз.");
+      }
+      return [{...capsule, position}];
+    });
     this.ctx.storage.transactionSync(() => {
-      newId = this.nextChatId();
-      this.storage.chatMeta.put({
-        id: newId, title: sourceMeta.title + " · правка", started: timestamp, lastActive: timestamp,
-        activeAgent: userMeta.aiModel!.profile, codeMode: sourceMeta.codeMode,
-        ...(projectContext ? {projectContext} : {}),
-      });
-      for (const entry of history) {
-        if (entry.type !== "message") continue;
-        const attachments = entry.attachments?.map(attachment => {
-          const content = this.storage.chatAttachmentContent.get(attachment.id);
-          if (!content || content.state.type !== "committed" || content.state.chatId !== chatId) {
-            throw new Error("Вложение исходного сообщения недоступно.");
-          }
-          const id = crypto.randomUUID();
-          this.storage.chatAttachmentContent.put({fileId: id, data: content.data,
-            state: {...content.state, chatId: newId}});
-          if (content.state.document) this.grantChatDocument(newId, content.state.document);
-          return {...attachment, id, ...(content.state.document ? {document: content.state.document} : {})};
+      if (inPlace) {
+        const meta = this.getChatMetaOrThrow(chatId);
+        this.rollbackChatCompaction(meta, sequence);
+        delete meta.totalTokens;
+        meta.activeAgent = userMeta.aiModel!.profile;
+        meta.lastActive = timestamp;
+        this.storage.chatMeta.put(meta);
+        this.#validateCapsules(chatId, editedCapsules);
+        this.storage.chats.put({...original, sequence: this.nextChatSequence(chatId), timestamp,
+          message, capsules: editedCapsules, formats: sanitizeMessageFormatRefs(original.formats, message),
+          replacesSequence: sequence});
+      } else {
+        resultId = this.nextChatId();
+        this.storage.chatMeta.put({
+          id: resultId, title: sourceMeta.title + " · правка", started: timestamp, lastActive: timestamp,
+          activeAgent: userMeta.aiModel!.profile, codeMode: sourceMeta.codeMode,
+          ...(projectContext ? {projectContext} : {}),
         });
-        // Выполненные действия остаются в исходной истории. Их повторный запуск или перенос
-        // предложенных изменений кода при правке текста мог бы повторить побочный эффект.
-        const text = entry.sequence === sequence ? message.trim() : entry.message;
-        const copied: AiChatMessage = {chatId: newId, sequence: this.nextChatSequence(newId),
-          timestamp: this.getChatTimestamp(),
-          author: entry.author, type: "message", message: text,
-          capsules: entry.sequence === sequence ? entry.capsules?.flatMap(capsule => {
-            const token = entry.message.slice(capsule.position, capsule.position + capsule.length);
-            const position = token ? text.indexOf(token) : -1;
-            if (position < 0) return [];
-            if (text.indexOf(token, position + token.length) >= 0) {
-              throw new Error("Ссылка на ресурс повторяется. Оставьте её в тексте один раз.");
+        const agentContext = this.storage.chatContext.get(chatId);
+        if (agentContext) this.storage.chatContext.put({...agentContext, chatId: resultId});
+        for (const entry of history.filter(m => m.sequence <= sequence)) {
+          const copied: AiChatMessage = {...entry, chatId: resultId, timestamp: this.getChatTimestamp()};
+          if (copied.type === "message") {
+            copied.attachments = copied.attachments?.map(attachment => {
+              const content = this.storage.chatAttachmentContent.get(attachment.id);
+              if (!content || content.state.type !== "committed" || content.state.chatId !== chatId) {
+                throw new Error("Вложение исходного сообщения недоступно.");
+              }
+              const id = crypto.randomUUID();
+              this.storage.chatAttachmentContent.put({fileId: id, data: content.data,
+                state: {...content.state, chatId: resultId}});
+              if (content.state.document) this.grantChatDocument(resultId, content.state.document);
+              return {...attachment, id, ...(content.state.document ? {document: content.state.document} : {})};
+            });
+            if (entry.sequence === sequence) {
+              copied.message = message;
+              copied.capsules = editedCapsules;
+              copied.formats = sanitizeMessageFormatRefs(original.formats, message);
+              delete copied.replacesSequence;
             }
-            return [{...capsule, position}];
-          }) : entry.capsules,
-          attachments, formats: sanitizeMessageFormatRefs(entry.formats, text)};
-        this.#validateCapsules(newId, copied.capsules);
-        this.storage.chats.put(copied);
+            this.#validateCapsules(resultId, copied.capsules);
+          }
+          this.storage.chats.put(copied);
+          const key = `${keyString(chatId)}.${keyString(entry.sequence)}`;
+          const modelData = this.storage.chatModelData.get(key);
+          if (modelData) this.storage.chatModelData.put({...modelData, chatId: resultId});
+          const callbackArgs = this.storage.agentCallbackArgs.get(key);
+          if (callbackArgs) this.storage.agentCallbackArgs.put({...callbackArgs, chatId: resultId});
+        }
+        this.storage.nextChatSequences.put({chatId: resultId, nextSequence: sequence + 1});
       }
     });
-    this.startAgent(newId, userMeta.aiModel, userMeta.profile, clientUser.id.toString());
-    return newId;
+    this.startAgent(resultId, userMeta.aiModel, userMeta.profile, clientUser.id.toString());
+    return resultId;
   }
 
   registerExternalMessageResponseTarget(
@@ -4764,10 +4790,8 @@ class OverseerImpl implements AgentHooks {
   // Returns messages at and after the checkpoint boundary. Older messages stay in storage for
   // history paging.
   #listChatTail(chatId: number, checkpoint?: CompactionCheckpoint): AiChatMessage[] {
-    return [...this.storage.chats.list({
-      prefix: `${keyString(chatId)}.`,
-      start: checkpoint && compactionKey(chatId, checkpoint.compactedTo),
-    })];
+    return visibleChatMessages([...this.storage.chats.list({prefix: `${keyString(chatId)}.`})])
+      .filter(m => !checkpoint || m.sequence >= checkpoint.compactedTo);
   }
 
   // Publishes a checkpoint: stores it and points the chat at it. `runAgent` produces the checkpoint,
@@ -9499,11 +9523,9 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     let checkpoint = beforeSequence === undefined
         ? this.impl.getActiveChatCompaction(chatId)
         : this.impl.getChatCompactionBelow(chatId, beforeSequence);
-    let result = [...this.impl.storage.chats.list({
-      prefix: `${keyString(chatId)}.`,
-      start: checkpoint && compactionKey(chatId, checkpoint.compactedTo),
-      end: beforeSequence === undefined ? undefined : compactionKey(chatId, beforeSequence),
-    })];
+    let result = visibleChatMessages([...this.impl.storage.chats.list({prefix: `${keyString(chatId)}.`})])
+      .filter(m => (!checkpoint || m.sequence >= checkpoint.compactedTo) &&
+        (beforeSequence === undefined || m.sequence < beforeSequence));
     return {
       messages: await Promise.all(result.map((msg) => this.#getChatMessageForClient(msg))),
       compacted: checkpoint && {

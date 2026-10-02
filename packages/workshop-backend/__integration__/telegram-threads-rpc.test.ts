@@ -313,3 +313,32 @@ it("правка сообщения сохраняет исходную исто
   expect(prompt).not.toContain("Будущий запрос");
   expect(prompt).not.toContain("Исходный запрос");
 });
+
+it("правка последнего запроса заменяет ответ в текущей беседе и переживает повторную правку", async () => {
+  const net = stubNetwork();
+  const {session, idle} = await setup(net);
+  const overseer = await session.newGadget();
+  const chat = await overseer.newChat("Контекст первой реплики", "fake-model");
+  await idle(overseer, chat, 1);
+  await overseer.sendChatMessage(chat, "Последний запрос", "fake-model");
+  await idle(overseer, chat, 2);
+  const original = await overseer.getChatHistory(chat);
+  const target = original.messages.find(m => m.type === "message" && m.message === "Последний запрос")!;
+  const count = (await overseer.listChats()).length;
+  expect(await overseer.editChatMessage(chat, target.sequence, "Исправленный запрос", "fake-model")).toBe(chat);
+  await idle(overseer, chat, 2);
+  expect(await overseer.listChats()).toHaveLength(count);
+  const edited = await overseer.getChatHistory(chat);
+  expect(edited.messages.filter(m => m.type === "message" && m.author.type === "user").map(m => m.type === "message" && m.message))
+    .toEqual(["Контекст первой реплики", "Исправленный запрос"]);
+  expect(edited.messages.filter(m => m.type === "message" && m.author.type === "agent")).toHaveLength(2);
+  expect(net.model.prompts.at(-1)).not.toContain("Последний запрос");
+  const revision = edited.messages.find(m => m.type === "message" && m.message === "Исправленный запрос")!;
+  expect(await overseer.editChatMessage(chat, revision.sequence, "Повторная правка", "fake-model")).toBe(chat);
+  await idle(overseer, chat, 2);
+  const again = await overseer.getChatHistory(chat);
+  expect(again.messages.filter(m => m.type === "message" && m.author.type === "user").map(m => m.type === "message" && m.message))
+    .toEqual(["Контекст первой реплики", "Повторная правка"]);
+  expect(await overseer.getChatMessage(chat, target.sequence)).toEqual(target);
+  expect(net.model.prompts.at(-1)).not.toContain("Исправленный запрос");
+});

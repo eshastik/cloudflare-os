@@ -71,6 +71,7 @@ import {
 } from "./modelSelection";
 import {
   Overseer,
+  visibleChatMessages,
   GatekeeperClient,
   AiChatHistoryPage,
   AiChatMetadata,
@@ -4902,13 +4903,14 @@ function ChatInterface({
   // Memoized to prevent creating new array on every render
   const currentMessages = useMemo(() => {
     if (selectedChatId === null) return [];
-    return (cacheRef.current.messages.get(selectedChatId) || []).filter(
+    return visibleChatMessages((cacheRef.current.messages.get(selectedChatId) || []).filter(
       (msg) => msg !== undefined,
-    );
+    ));
   }, [selectedChatId, updateCounter]);
   const currentCompactions = useMemo(() => {
     if (selectedChatId === null) return [];
-    return cacheRef.current.compacted.get(selectedChatId) ?? [];
+    const activeBoundary = cacheRef.current.chats.get(selectedChatId)?.compactedTo ?? 0;
+    return (cacheRef.current.compacted.get(selectedChatId) ?? []).filter(b => b.to <= activeBoundary);
   }, [selectedChatId, updateCounter]);
   const messageStates = useMemo(
     // The oldest boundary is the one whose proposed changes no loaded message accounts for.
@@ -7482,7 +7484,7 @@ function ChatInterface({
                                       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submitMessageEdit(); }
                                     }}
                                     className="w-full resize-y bg-transparent text-[15px] leading-6 outline-none" />
-                                  <p className="mt-2 text-xs text-kumo-subtle">Агент ответит в новой беседе. Исходная беседа и вложения сохранятся.</p>
+                                  <p className="mt-2 text-xs text-kumo-subtle">{currentMessages.findLast(m => m.author.type === "user" && (m.type === "message" || m.type === "slashCommand"))?.sequence === msg.sequence ? "Агент заменит ответ в этой беседе. Вложения сохранятся." : "Откроется новая беседа со всей историей до этого сообщения."}</p>
                                   {editError && <p role="alert" className="mt-2 text-sm text-kumo-danger">{editError}</p>}
                                   <div className="mt-3 flex justify-end gap-2">
                                     <WorkshopButton disabled={editSending} onClick={() => setEditingMessage(null)}>Отмена</WorkshopButton>

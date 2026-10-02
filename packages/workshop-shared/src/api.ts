@@ -1697,8 +1697,8 @@ export interface Overseer extends RpcTarget {
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
                   formats?: MessageFormatRef[]): Promise<void>;
 
-  // Изменяет собственное сообщение в новой беседе. Исходная история сохраняется; новая
-  // беседа получает текстовый контекст до правки и вложения, затем новый ответ агента.
+  // Правка последнего своего сообщения заменяет ответ в той же беседе. Правка из середины
+  // создаёт беседу со всей историей до сообщения. Возвращает ID беседы для нового ответа.
   editChatMessage(chatId: number, sequence: number, message: string, modelId: string | null): Promise<number>;
 
   // Набор проектов беседы (чипы над полем ввода). Проверяется владение подключениями.
@@ -2034,6 +2034,25 @@ export type AiChatMessage = {
   author: AiChatAuthorInfo;
 } & AiChatMessageBody;
 
+// Текущая история после правок. Старые запросы и ответы остаются в каноническом журнале.
+export function visibleChatMessages(messages: AiChatMessage[]): AiChatMessage[] {
+  const ranges = messages.flatMap(m => m.type === "message" && m.author.type === "user" &&
+      m.replacesSequence !== undefined && m.replacesSequence < m.sequence
+      ? [[m.replacesSequence, m.sequence] as const] : []).sort((a, b) => a[0] - b[0]);
+  if (!ranges.length) return messages;
+  const merged: [number, number][] = [];
+  for (const [start, end] of ranges) {
+    const last = merged.at(-1);
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  let range = 0;
+  return messages.filter(m => {
+    while (range < merged.length && m.sequence >= merged[range][1]) range++;
+    return range >= merged.length || m.sequence < merged[range][0];
+  });
+}
+
 // Код отметки «ход остановлен на пределе шагов» в сообщении типа "error": оболочка показывает её
 // не как ошибку, а с кнопкой «Продолжить» (Overseer.continueAgent).
 export const AGENT_STEP_LIMIT_CODE = "step_limit";
@@ -2042,6 +2061,10 @@ export type AiChatMessageBody = {
   // A regular chat message.
   type: "message";
   message: string;
+
+  // Эта правка заменяет сообщение и старый ответ от указанной последовательности до себя.
+  // Исходные записи остаются в журнале; в ленту и контекст агента идёт текущая версия.
+  replacesSequence?: number;
 
   // The message may contain "capsules", which are embedded capabilities that reference external
   // resources. See `CapsuleSpecifier` for more.
