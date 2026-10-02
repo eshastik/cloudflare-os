@@ -226,6 +226,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     try {
       // Документ со своим редактором открывается в оболочке; просмотр здесь не нужен.
       if (await host.openNativeDocument(row.projectId, row.nodeId, nodes.find(node => node.node_id === row.nodeId)?.parent_id || undefined)) { setOpened(current => current?.row === row ? null : current); return; }
+      if (selected) { await download(row, true); setOpened(null); return; }
       let content: DocumentContent, textHead: string | undefined;
       if (row.privateOnly) {
         const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
@@ -249,12 +250,18 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   }
 
   function selectDocument(row: DocumentRow) {
-    selectedFromList.current = keyOf(row.projectId, row.nodeId);
-    void host.openSection("documents", row.projectId, row.nodeId)
-      .catch(() => { selectedFromList.current = ""; setNotice("Не удалось открыть документ. Повторите попытку."); });
+    if (!selected) {
+      void open(row);
+      return;
+    }
+    void (async () => {
+      if (await host.openNativeDocument(row.projectId, row.nodeId, nodes.find(node => node.node_id === row.nodeId)?.parent_id || undefined)) return;
+      await download(row, true);
+    })().catch(() => setNotice("Документ не открылся. Повторите попытку."));
   }
 
   function closeDocument() {
+    setOpened(null);
     void host.openSection("documents", selected, folder || undefined)
       .catch(() => setNotice("Не удалось закрыть просмотр. Повторите попытку."));
   }
@@ -302,7 +309,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     } finally { setReadingMore(false); }
   }
 
-  async function download(row: DocumentRow) {
+  async function download(row: DocumentRow, previewOriginal = false) {
     if (downloading) return;
     setDownloading(true); setNotice("");
     try {
@@ -320,9 +327,10 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
         if (!event?.exists) throw new Error("Опубликованная версия недоступна.");
         version = "file-publication:" + event.event_id;
       }
-      await host.downloadFile(row.projectId, row.nodeId, version, row.name);
+      if (previewOriginal) await host.previewFile(row.projectId, row.nodeId, version, row.name, row.projectName);
+      else await host.downloadFile(row.projectId, row.nodeId, version, row.name);
     } catch {
-      setNotice(`Файл «${row.name}» не скачан. Проверьте доступ и повторите попытку. Если у личной версии конфликт, сначала выберите нужный вариант.`);
+      setNotice(`Файл «${row.name}» ${previewOriginal ? "не открылся" : "не скачан"}. Проверьте доступ и повторите попытку. Если у личной версии конфликт, сначала выберите нужный вариант.`);
     } finally { setDownloading(false); }
   }
 
@@ -511,8 +519,9 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
       </div>
       </> }
       </div>
-      {selected && <aside className="min-w-0 space-y-4 xl:sticky xl:top-4 xl:self-start">{preview}<ExplorerAssistant key={selected} targets={targets} contextName={folder ? folderPath(nodes, folder).map(n => n.name).join(" / ") : "Все материалы проекта"} onClear={() => setChosen(new Set())} onStart={async task => { setNotice(""); try { await host.openPrompt(explorerPrompt(selected, agentTargets, task), { projectId: selected, title: currentProject?.name ?? "Проект", materials: agentTargets }); } catch { setNotice("Беседа не открылась. Задача сохранена в поле, повторите попытку."); } }} /></aside>}
+      {selected && <aside className="min-w-0 space-y-4 xl:sticky xl:top-4 xl:self-start"><ExplorerAssistant key={selected} targets={targets} contextName={folder ? folderPath(nodes, folder).map(n => n.name).join(" / ") : "Все материалы проекта"} onClear={() => setChosen(new Set())} onStart={async task => { setNotice(""); try { await host.openPrompt(explorerPrompt(selected, agentTargets, task), { projectId: selected, title: currentProject?.name ?? "Проект", materials: agentTargets }); } catch { setNotice("Беседа не открылась. Задача сохранена в поле, повторите попытку."); } }} /></aside>}
       </div>
+      {selected && <Button icon={ChatCircleText} className="fixed bottom-4 right-4 z-20 xl:hidden" onClick={() => document.getElementById("project-assistant")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Mnemos{targets.length ? ` · ${targets.length}` : ""}</Button>}
       {isAdministrator && <details aria-label="Личные версии сотрудников" className="mt-8 border-t border-kumo-fill pt-4" onToggle={e => setAdministrative((e.currentTarget as HTMLDetailsElement).open)}>
         <summary className="cursor-pointer text-[15px] font-semibold text-kumo-default">Личные версии сотрудников</summary>
         <p className="mt-1 mb-0 text-[13px] text-kumo-subtle">Черновики, которые сотрудники ещё не опубликовали. Видны только администратору.</p>

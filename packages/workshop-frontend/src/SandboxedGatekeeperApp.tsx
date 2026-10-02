@@ -1,3 +1,4 @@
+import OriginalFileViewer, { type OriginalFileView } from './OriginalFileViewer'
 import {launchTemplateProposal} from './templateProposalLaunch'
 import {homeProjectFromSearch} from './homePrompt'
 import { launchNativeDocument } from './nativeDocumentLaunch'
@@ -192,6 +193,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly saveOriginal: (bytes: Blob, filename: string) => void = saveDocumentFile,
     private readonly clearOriginal: () => void = () => {},
     private readonly projectChats?: (project: string, offset: number) => Promise<ProjectChatPage>,
+    private readonly showOriginal?: (file: OriginalFileView | null) => void,
   ) {
     super()
     this.#uploadLink = uploadLink
@@ -457,6 +459,18 @@ class GatekeeperAppHostImpl extends RpcTarget {
     finally{this.#downloadBusy=false}
   }
 
+  previewFile(scope: string, resource: string, version: string, filename: string, projectTitle = 'Проект'): void {
+    if (!this.showOriginal || !this.#downloads || this.#uploadLifetime.signal.aborted ||
+        [scope, resource, version].some(value => typeof value !== 'string' || !value || value.length > 255) ||
+        typeof filename !== 'string' || !filename || filename.length > 4096 || typeof projectTitle !== 'string' || projectTitle.length > 4096) throw Error('Просмотр документа недоступен.')
+    const downloads = this.#downloads
+    this.showOriginal({ name: filename, load: async signal => {
+      this.#uploadLifetime.signal.throwIfAborted()
+      const ticket = await downloads.issuer.issue(scope, resource, version, 0)
+      return downloadGatekeeperOriginalFile(downloads.storageOrigin, ticket, AbortSignal.any([signal, this.#uploadLifetime.signal]), () => downloads.issuer.validate(scope, resource, version))
+    }, ask: () => this.#openPrompt(`Помоги разобраться с файлом «${filename}».`, { projectId: scope, title: projectTitle, materials: [{ nodeId: resource, name: filename, privateOnly: version.startsWith('private:') }] }) })
+  }
+
   async downloadText(scope: string, resource: string, version: string, side: number): Promise<string> {
     if (!this.#downloads || this.#downloadBusy || this.#uploadLifetime.signal.aborted ||
         [scope, resource, version].some(value => typeof value !== 'string' || !value || value.length > 255) ||
@@ -664,6 +678,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#inboxUploads?.issuer[Symbol.dispose]?.()
     this.#uploads?.issuer[Symbol.dispose]?.()
     this.clearOriginal()
+    this.showOriginal?.(null)
     this.#downloads?.issuer[Symbol.dispose]?.()
     this.#reviewDownloads?.issuer[Symbol.dispose]?.()
     this.#nativeDownloads?.selector[Symbol.dispose]?.()
@@ -704,7 +719,9 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   onIntakeDropReady?:(handler:((transfer:DataTransfer)=>void)|null)=>void,
 }) {
   const navigate = useNavigate()
-  const { authenticatedApi } = useAuthenticatedApi()
+  const { authenticatedApi, currentUser } = useAuthenticatedApi()
+  const identityRef = useRef({ api: authenticatedApi, user: currentUser })
+  identityRef.current = { api: authenticatedApi, user: currentUser }
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const sessionRef = useRef<{ [Symbol.dispose]?(): void } | null>(null)
   const hostRef = useRef<GatekeeperAppHostImpl | null>(null)
@@ -731,6 +748,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   const [frameReady,setFrameReady]=useState(false)
   const [overlay, setOverlay] = useState<OverlayState>(null)
   const [original, setOriginal] = useState<DocumentFileDownload | null>(null)
+  const [reader, setReader] = useState<OriginalFileView | null>(null)
   useEffect(() => () => original?.dispose(), [original])
   const overlayRef = useRef<OverlayState>(null)
   // Push the Workshop's resolved light/dark mode to the app whenever it changes.
@@ -874,7 +892,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         },
         () => setOriginal(null),
         gatekeeperVendorId === 'mnemos' && accountId !== undefined ? async (project, offset) => {
-          const ownerProfile = await authenticatedApi.whoami()
+          const ownerProfile = (identityRef.current.api === authenticatedApi ? identityRef.current.user : null) ?? await authenticatedApi.whoami()
           const workspaces = (await authenticatedApi.listGadgets()).filter(workspace => !workspace.archived).sort((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
           const page = workspaces.slice(offset, offset + 20)
           const chats: ProjectChatPage['chats'] = []
@@ -894,6 +912,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           }))
           return { chats: chats.sort((a, b) => b.at.localeCompare(a.at)), next: offset + page.length < workspaces.length ? offset + page.length : null, failed }
         } : undefined,
+        setReader,
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host
@@ -1011,6 +1030,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+    {reader && <OriginalFileViewer key={reader.name} file={reader} onClose={() => setReader(null)} />}
     {intakeDrop&&dragOver&&<div role="region" aria-label="Перетащите материалы организации" data-testid="intake-drop-layer"
       onDragOver={event=>{event.preventDefault();event.stopPropagation();setDragOver(true)}}
       onDragLeave={event=>{if(event.currentTarget.contains(event.relatedTarget as Node|null))return;setDragOver(false)}}

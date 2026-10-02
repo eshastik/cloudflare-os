@@ -350,6 +350,7 @@ export interface Host extends RpcTarget {
   uploadText(project: string, text: string): Promise<string>;
   downloadReviewText(review: string, node: string, version: number, side: "before" | "after"): Promise<string | null>;
   downloadFile(project:string,node:string,version:string,filename:string):Promise<void>;
+  previewFile(project:string,node:string,version:string,filename:string,projectTitle:string):Promise<void>;
   downloadText(project: string, node: string, head: string, side: number): Promise<string>;
   ui: RpcStub<Management>; subscribeTheme(frame: RpcTarget): Promise<string>;
   /** Уводит страницу на вход, установку или настройки приложения GitHub; false — адрес не из перечня. */

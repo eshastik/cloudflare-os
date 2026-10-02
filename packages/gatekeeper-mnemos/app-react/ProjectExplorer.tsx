@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CaretRight, ChatCircleText, Folder, House, Sparkle, X } from "@phosphor-icons/react";
 import type { ProjectNode } from "./data.ts";
 import { useHost } from "./host.ts";
@@ -64,19 +64,31 @@ export function ExplorerAssistant({ targets, contextName, onClear, onStart }: { 
 
 export function ProjectConversations({ project }: { project: string }) {
   const host = useHost();
-  const [page, setPage] = useState<Awaited<ReturnType<typeof host.listProjectChats>> | null>(null);
+  type ChatPage = Pick<Awaited<ReturnType<typeof host.listProjectChats>>, "chats" | "next" | "failed">;
+  const [page, setPage] = useState<ChatPage | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const loading = useRef(false), retryOffset = useRef(0);
+  const pages = useRef(new Map<number, ChatPage>());
   async function load(offset = 0) {
-    if (busy) return; setBusy(true); setError("");
-    try { const next = await host.listProjectChats(project, offset); setPage(before => ({ ...next, chats: offset && before ? [...before.chats, ...next.chats] : next.chats, failed: (offset ? before?.failed ?? 0 : 0) + next.failed })); }
+    if (loading.current) return;
+    loading.current = true; retryOffset.current = offset; setBusy(true); setError("");
+    try {
+      let next;
+      try { next = await host.listProjectChats(project, offset); }
+      catch { next = await host.listProjectChats(project, offset); }
+      pages.current.set(offset, next);
+      const ordered = [...pages.current.entries()].sort((a, b) => a[0] - b[0]);
+      const unique = new Map(ordered.flatMap(([, slice]) => slice.chats.map(chat => [`${chat.workspaceId}/${chat.chatId}`, chat] as const)));
+      setPage({ chats: [...unique.values()], next: ordered.at(-1)![1].next, failed: ordered.reduce((sum, [, slice]) => sum + slice.failed, 0) }); }
+
     catch { setError("Не удалось прочитать беседы. Повторите попытку."); }
-    finally { setBusy(false); }
+    finally { loading.current = false; setBusy(false); }
   }
   useEffect(() => { void load(); }, [project]);
   return <section aria-label="Беседы проекта">
     <p className="mt-0 text-[13px] text-kumo-subtle">Ваши беседы, к которым подключён этот проект.</p>
-    {error && <Notice tone="danger">{error}<button type="button" onClick={() => void load()}>Повторить</button></Notice>}
-    {page?.failed ? <Notice>Часть бесед не загрузилась ({page.failed}).<button type="button" onClick={() => void load()}>Повторить</button></Notice> : null}
+    {error && <div className="mb-4 rounded-xl border border-kumo-fill bg-kumo-overlay p-4"><p role="alert" className="mt-0 text-[14px]">{error}</p><Button variant="secondary" size="sm" disabled={busy} onClick={() => void load(retryOffset.current)}>Повторить загрузку</Button></div>}
+    {page?.failed ? <Notice>Часть бесед не загрузилась ({page.failed}). <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load([...pages.current].find(([, slice]) => slice.failed > 0)?.[0] ?? 0)}>Повторить загрузку</Button></Notice> : null}
     <div className="overflow-hidden rounded-xl border border-kumo-fill bg-kumo-overlay">{page?.chats.map(chat => <button type="button" key={`${chat.workspaceId}/${chat.chatId}`} onClick={() => void host.openProjectChat(chat.workspaceId, chat.chatId).catch(() => setError("Не удалось открыть беседу."))} className="flex w-full items-center gap-3 border-t border-kumo-fill px-4 py-4 text-left first:border-0 hover:bg-kumo-tint"><ChatCircleText size={22} className="shrink-0 text-kumo-brand" /><span className="min-w-0 flex-1 truncate text-[15px]">{chat.title}</span><span className="shrink-0 text-[12px] text-kumo-subtle">{relativeTime(chat.at)}</span></button>)}</div>
     {busy && <p role="status" className="text-[13px] text-kumo-subtle">Ищу беседы проекта…</p>}
     {!busy && page && !page.chats.length && <p className="text-[14px] text-kumo-subtle">{page.next !== null ? "В недавних беседах этот проект пока не найден. Можно посмотреть более ранние." : "Бесед с этим проектом пока нет. Начните новую беседу."}</p>}

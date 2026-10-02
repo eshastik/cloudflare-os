@@ -1,3 +1,4 @@
+@source "../../workshop-frontend/src/components/chat/attachmentAppearance.tsx";
 @source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 @import "@cloudflare/kumo/styles";
 @import "tailwindcss";

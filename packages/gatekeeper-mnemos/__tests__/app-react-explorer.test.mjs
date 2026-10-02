@@ -69,14 +69,40 @@ test("прямая ссылка на личный файл со второй с�
   const app = await mountMemoryApp({
     async browseProject() { return { nodes, truncated: false }; },
     async listPrivateDocuments(project, cursor) { return { documents: cursor ? [{ node_id: "draft", parent_id: "dir", name: "Личная заметка.pdf", content_type: "application/pdf", conflicted: false }] : [], head: "a".repeat(64), next_cursor: cursor ? "" : "private-next" }; },
+    async readDraftDocument() { return {exists:true,head:"a".repeat(64),conflicted:false,terms:[{present:true}]}; },
     async readDraftText() { return { text: "Личный текст", content_type: "text/plain", head: "a".repeat(64), truncated: false }; },
   }, { section: "documents", project: "one", document: "draft" });
   try {
-    await app.until(() => app.document.querySelector('[aria-label="Просмотр документа"]'), "личный файл открыт");
+    await app.until(() => app.calls.some(([method]) => method === "previewFile"), "оригинал личного файла открыт");
     await app.until(() => app.document.querySelector('[data-document="doc"]'), "родитель личного файла");
     assert.equal(app.document.querySelector('[data-document="root"]'), null);
-    app.document.querySelector('button[aria-label="Закрыть просмотр"]').click();
-    await app.until(() => app.calls.some(([m]) => m === "openSection"), "возврат в папку");
-    assert.ok(app.calls.some(call => call[0] === "openSection" && call[3] === "dir"));
+    const preview = app.calls.find(([method]) => method === "previewFile");
+    assert.equal(preview[2], "draft");
+    assert.equal(preview[3], "private:" + "a".repeat(64));
+    assert.equal(app.document.querySelector('[aria-label="Просмотр документа"]'), null, "документ не вытесняет агента");
+  } finally { app.dispose(); }
+});
+
+test("беседы переживают временный отказ, повтор следующей страницы сохраняет уже найденные", async () => {
+  let attempts = 0, failNext = true;
+  const app = await mountMemoryApp({}, { section: "documents", project: "one", projectChats: async (_project, offset) => {
+    attempts++;
+    if (attempts === 1 || (offset === 20 && failNext)) throw Error("temporary connection failure");
+    return offset === 20 ? {chats:[{workspaceId:"older",chatId:2,title:"Ранняя беседа",at:"2026-09-01"}],next:null,failed:0}
+      : {chats:[{workspaceId:"recent",chatId:1,title:"Недавняя беседа",at:"2026-10-02"}],next:20,failed:0};
+  }});
+  try {
+    await app.until(() => app.buttons().some(button => button.textContent === "Беседы"), "вкладка бесед");
+    app.buttons().find(button => button.textContent === "Беседы").click();
+    await app.until(() => app.text().includes("Недавняя беседа"), "повтор после первого отказа");
+    assert.equal(attempts, 2);
+    app.buttons().find(button => button.textContent.includes("Посмотреть более ранние")).click();
+    await app.until(() => app.buttons().some(button => button.textContent.includes("Повторить загрузку")), "понятный отказ следующей страницы");
+    assert.ok(app.text().includes("Недавняя беседа"));
+    failNext = false;
+    app.buttons().find(button => button.textContent.includes("Повторить загрузку")).click();
+    await app.until(() => app.text().includes("Ранняя беседа"), "повтор именно следующей страницы");
+    assert.ok(app.text().includes("Недавняя беседа"));
+    assert.equal(app.calls.filter(call => call[0] === "listProjectChats").at(-1)[2], 20);
   } finally { app.dispose(); }
 });

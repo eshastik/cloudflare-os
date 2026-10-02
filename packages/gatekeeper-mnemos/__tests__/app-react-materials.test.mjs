@@ -230,29 +230,25 @@ test("«Материалы»: поздний ответ прежнего зап�
 });
 
 
-test("Из просмотра скачиваются исходники общей и личной версии, включая усечённый текст", async () => {
+test("В читатель передаются исходники точной общей и личной версии без извлечённого текста", async () => {
   let privateHead = "a".repeat(64);
   const app = await mountMemoryApp({
     async nodeHistory() { return { events: [{event_id: "published-event", exists: true, recorded_at: "2026-09-12T10:00:00Z"}] }; },
-    async readProjectDocument(project, node) { return {node_id: node, text: "Начало большого файла", media_type: "text/plain", truncated: true}; },
-    async listPrivateDocuments() { return {documents: [{node_id: "private", name: "Личный.pdf", content_type: "application/pdf", conflicted: false}], head: "a".repeat(64), next_cursor: ""}; },
-    async readDraftDocument(project, node) { return {node_id: node, exists: true, conflicted: false, head: privateHead, content_type: "application/pdf", terms: [{present: true}]}; },
-    async readDraftText(project, node) { return {node_id: node, head: privateHead, content_type: "application/pdf", text: "Текст личной версии", offset: 0, next_offset: 33, total_bytes: 33, truncated: false, no_text: false}; },
+    async listPrivateDocuments() { return {documents: [{node_id: "private", name: "Личный.pdf", content_type: "application/pdf", conflicted: false}], head: privateHead, next_cursor: ""}; },
+    async readDraftDocument() { return {exists: true, conflicted: false, head: privateHead, terms: [{present: true}]}; },
+    async readProjectDocument() { throw Error("Извлечённый текст не нужен читателю оригиналов"); },
   }, {section: "documents", project: "one", nativeOpen: false});
   try {
     await app.until(() => app.button("Заметка команды"), "общий документ");
     app.button("Заметка команды").click();
-    await app.until(() => app.text().includes("Полный файл доступен"), "усечённый просмотр");
-    app.button("Скачать оригинал").click();
-    await app.until(() => app.calls.some(c => c[0] === "downloadFile"), "общий исходник");
-    assert.deepEqual(app.calls.find(c => c[0] === "downloadFile"), ["downloadFile", "one", "doc", "file-publication:published-event", "Заметка команды"]);
-    await app.until(() => app.button("Личный.pdf") && !app.button("Скачиваю…"), "личный файл");
+    await app.until(() => app.calls.some(c => c[0] === "previewFile"), "общий оригинал");
+    assert.deepEqual(app.calls.find(c => c[0] === "previewFile"), ["previewFile", "one", "doc", "file-publication:published-event", "Заметка команды", "Общий проект"]);
+    await app.until(() => app.button("Личный.pdf"), "личный файл");
     app.button("Личный.pdf").click();
-    await app.until(() => app.document.querySelector('[aria-label="Просмотр документа"]')?.textContent.includes("Текст личной версии"), "личный просмотр");
+    await app.until(() => app.calls.filter(c => c[0] === "previewFile").length === 2, "личный оригинал");
+    assert.deepEqual(app.calls.filter(c => c[0] === "previewFile")[1], ["previewFile", "one", "private", "private:" + "a".repeat(64), "Личный.pdf", "Общий проект"]);
     privateHead = "b".repeat(64);
-    app.button("Скачать оригинал").click();
-    await app.until(() => app.calls.filter(c => c[0] === "downloadFile").length === 2, "личный исходник");
-    assert.deepEqual(app.calls.filter(c => c[0] === "downloadFile")[1], ["downloadFile", "one", "private", "private:" + "a".repeat(64), "Личный.pdf"]);
+    assert.equal(app.document.querySelector('[aria-label="Просмотр документа"]'), null);
   } finally { app.dispose(); }
 });
 
@@ -273,7 +269,7 @@ test("Личный PDF читается извлечённым текстом; �
       assert.deepEqual([project, node, offset, revision], ["one", "doc", 12, 7]);
       return {node_id: node, text: "Версия", media_type: "text/plain", truncated: false, revision, offset, next_offset: 24, total_bytes: 24};
     },
-  }, {section: "documents", project: "one", nativeOpen: false});
+  }, {section: "documents", nativeOpen: false});
   const preview = () => app.document.querySelector('[aria-label="Просмотр документа"]');
   try {
     await app.until(() => app.button("Большой.pdf"), "личный PDF");
