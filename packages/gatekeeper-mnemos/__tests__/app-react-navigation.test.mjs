@@ -73,25 +73,22 @@ test("неизвестная прямая ссылка не открывает �
 });
 
 
-test("адрес материалов следует за выбранным файлом, восстановлением ссылки и закрытием просмотра", async () => {
- const reads = [];
- const app = await mountMemoryApp({async readProjectDocument(project, node) {
-  reads.push([project, node]);
-  return {node_id: node, text: `Содержимое ${node}`, media_type: "text/plain", truncated: false};
+test("адрес материалов передаёт выбранный оригинал хосту при прямой ссылке и смене проекта", async () => {
+ const app = await mountMemoryApp({async nodeHistory(_project, node) {
+  return {events: [{event_id: `published-${node}`, exists: true, recorded_at: "2026-10-02T10:00:00Z"}]};
  }}, {section: "documents", project: "one", document: "doc"});
- const preview = () => app.document.querySelector('[aria-label="Просмотр документа"]');
+ const previews = () => app.calls.filter(call => call[0] === "previewFile");
  try {
-  await app.until(() => preview()?.textContent.includes("Содержимое doc"), "файл по начальной ссылке");
+  await app.until(() => previews().length === 1, "оригинал по начальной ссылке");
+  assert.deepEqual(previews()[0], ["previewFile", "one", "doc", "file-publication:published-doc", "Заметка команды", "Общий проект"]);
   app.go("documents", "two");
-  await app.until(() => !preview() && app.buttons().some(b => b.textContent === "Другой документ"), "смена проекта закрыла прежний файл");
-  app.buttons().find(b => b.textContent === "Другой документ").click();
-  await app.until(() => preview()?.textContent.includes("Содержимое other"), "выбранный файл");
-  assert.ok(app.calls.some(call => JSON.stringify(call) === JSON.stringify(["openSection", "documents", "two", "other"])));
+  await app.until(() => app.buttons().some(b => b.textContent === "Другой документ"), "смена проекта");
+  app.button("Другой документ").click();
+  await app.until(() => previews().length === 2, "выбранный оригинал");
+  assert.deepEqual(previews()[1], ["previewFile", "two", "other", "file-publication:published-other", "Другой документ", "Второй проект"]);
   app.go("documents", "one", "", "doc");
-  await app.until(() => preview()?.textContent.includes("Содержимое doc"), "возврат по ссылке");
-  app.document.querySelector('[aria-label="Закрыть просмотр"]').click();
-  await app.until(() => !preview(), "закрытие просмотра");
-  assert.ok(app.calls.some(call => JSON.stringify(call) === JSON.stringify(["openSection", "documents", "one"])));
-  assert.deepEqual(reads, [["one", "doc"], ["two", "other"], ["one", "doc"]]);
+  await app.until(() => previews().length === 3, "возврат по ссылке");
+  assert.deepEqual(previews()[2], previews()[0]);
+  assert.equal(app.document.querySelector('[aria-label="Просмотр документа"]'), null, "оригинал не заменяется извлечённым текстом в боковой панели");
  } finally {app.dispose();}
 });

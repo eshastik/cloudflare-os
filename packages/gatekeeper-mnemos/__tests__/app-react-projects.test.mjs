@@ -283,6 +283,7 @@ test("«Файлы»: сверх предела страниц счёт чест
 
 test("ссылка на документ из хода агента открывает документ, как щелчок в списке, и выделяет его строку", async () => {
   const app = await mountMemoryApp({
+    async nodeHistory() { return {events: [{event_id: "published-15", exists: true, recorded_at: "2026-10-02T10:00:00Z"}]}; },
     async browseProject(id) {
       if (id !== "two") return { nodes: [], truncated: false };
       return { nodes: nodePage(0, 20), truncated: false };
@@ -294,8 +295,9 @@ test("ссылка на документ из хода агента открыв
     // Без редактора выбранный документ открывается в просмотре материалов.
     await app.until(() => app.calls.some(c => c[0] === "openSection" && c[1] === "documents"), "запасной переход");
     assert.deepEqual(app.calls.find(c => c[0] === "openSection"), ["openSection", "documents", "two", "n15"]);
-    await app.until(() => app.document.querySelector('[aria-label="Просмотр документа"]'), "выбранный документ виден");
-    assert.equal(app.document.querySelector('[data-document="n15"]')?.getAttribute("aria-current"), "true");
+    await app.until(() => app.calls.some(c => c[0] === "previewFile"), "оригинал передан просмотру");
+    assert.deepEqual(app.calls.find(c => c[0] === "previewFile"), ["previewFile", "two", "n15", "file-publication:published-15", "Документ 15", "Второй проект"]);
+    assert.equal(app.document.querySelector('[aria-label="Просмотр документа"]'), null, "просмотр оригинала находится в оболочке");
   } finally { app.dispose(); }
 });
 
@@ -340,19 +342,15 @@ test("«Файлы»: принятый, но не разобранный фай�
 });
 
 
-test("Текстовый файл проекта сразу открывает выбранное содержимое в материалах", async () => {
-  const reads = [];
+test("Текстовый файл проекта открывает оригинал после перехода из карточки проекта", async () => {
   const app = await mountMemoryApp({
-    async readProjectDocument(project, node) {
-      reads.push([project, node]);
-      return { node_id: node, text: "Именно выбранный документ", media_type: "text/plain", truncated: false };
-    },
+    async nodeHistory() { return {events: [{event_id: "published-doc", exists: true, recorded_at: "2026-10-02T10:00:00Z"}]}; },
   }, {section: "projects", project: "one", nativeOpen: false});
   try {
     await app.until(() => app.button("Заметка команды"), "файл проекта");
     app.button("Заметка команды").click();
-    await app.until(() => app.text().includes("Именно выбранный документ"), "выбранный файл открыт");
-    assert.deepEqual(reads, [["one", app.calls.find(c => c[0] === "openNativeDocument")[2]]]);
+    await app.until(() => app.calls.some(c => c[0] === "previewFile"), "выбранный оригинал открыт");
+    assert.deepEqual(app.calls.find(c => c[0] === "previewFile"), ["previewFile", "one", "doc", "file-publication:published-doc", "Заметка команды", "Общий проект"]);
     assert.equal(app.calls.filter(c => c[0] === "openSection" && c[1] === "documents").length, 1);
   } finally { app.dispose(); }
 });
