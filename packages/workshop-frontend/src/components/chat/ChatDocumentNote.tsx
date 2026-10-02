@@ -1,10 +1,9 @@
-// Пометка под документом, прикреплённым в беседе: где он лежит в Mnemos, ссылка на него и перенос
-// в другой проект. Место после переноса держится здесь: сообщение в кэше беседы не перечитывается.
+// Место после переноса держится здесь: сообщение в кэше беседы не перечитывается.
 import { useCallback, useEffect, useState } from "react";
-import { useKumoToastManager } from "@cloudflare/kumo";
+import { DropdownMenu, useKumoToastManager } from "@cloudflare/kumo";
 import type { ChatDocumentRef, ChatProjectChoice } from "@gadgets/workshop-shared/api";
 import { displayName } from "@gadgets/workshop-shared/code-work";
-import { chatDocumentPlaceLabel } from "../../chatAttachmentFiles";
+import { DotsThree, FolderSimple, ArrowRight } from "@phosphor-icons/react";
 import { COMPOSER_POPOVER, useDismiss } from "./ProjectChips";
 
 export type ChatDocumentNoteProps = {
@@ -15,8 +14,7 @@ export type ChatDocumentNoteProps = {
   move?: (targetProjectId: string) => Promise<ChatDocumentRef>;
 };
 
-const NOTE = "m-0 text-[11px] leading-[14px] text-kumo-subtle";
-const LINK = "cursor-pointer text-left text-[11px] leading-[14px] underline decoration-kumo-line underline-offset-2";
+
 
 export function ChatDocumentNote({ document: initial, openDocument, loadProjects, move }: ChatDocumentNoteProps) {
   const toasts = useKumoToastManager();
@@ -58,29 +56,29 @@ export function ChatDocumentNote({ document: initial, openDocument, loadProjects
     }
   };
 
-  const label = chatDocumentPlaceLabel(doc);
+  const label = doc.personal ? "Личное пространство" : doc.projectTitle || "Проект без названия";
+  const placeTitle = doc.personal ? label : `Личная версия в проекте «${label}»`;
   const openHandler = openDocument?.(doc);
   return (
-    <div ref={rootRef} className="relative flex flex-col items-start gap-0.5">
+    <div ref={rootRef} className="relative flex min-w-0 items-center gap-2 border-t border-kumo-line/50 px-3 py-1.5 text-[11px] text-kumo-subtle">
+      <FolderSimple size={14} aria-hidden="true" className="shrink-0" />
       {openHandler ? (
-        <button type="button" onClick={() => { void openHandler(); }} className={`${LINK} text-kumo-subtle hover:text-kumo-default`}
-          title={`Открыть «${doc.name}»`}>
-          {label}
-        </button>
-      ) : (
-        <p className={NOTE}>{label}</p>
-      )}
+        <button type="button" onClick={() => { void openHandler(); }} className="min-w-0 flex-1 cursor-pointer truncate text-left hover:text-kumo-default"
+          title={`${placeTitle}. Открыть «${doc.name}»`}>{label}</button>
+      ) : <span title={placeTitle} className="min-w-0 flex-1 truncate">{label}</span>}
       {move && loadProjects && (
-        <button
-          type="button"
-          disabled={moving}
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-haspopup="listbox"
-          className={`${LINK} text-kumo-link hover:text-kumo-brand disabled:cursor-wait disabled:opacity-60`}
-        >
-          {moving ? "Переношу…" : "Переместить в проект…"}
-        </button>
+        <DropdownMenu>
+          <DropdownMenu.Trigger render={<button type="button" disabled={moving}
+            aria-label={`Действия с файлом «${doc.name}»`}
+            className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg hover:bg-kumo-tint disabled:cursor-wait disabled:opacity-60">
+            {moving ? <span aria-label="Переношу…">…</span> : <DotsThree size={20} weight="bold" />}
+          </button>} />
+          <DropdownMenu.Content collisionPadding={16} className="!z-[1100] rounded-xl border border-kumo-line bg-kumo-base p-1">
+            <DropdownMenu.Item onClick={() => setOpen(true)} className="flex min-h-9 items-center gap-2 rounded-lg px-3 text-[12px] data-highlighted:bg-kumo-tint">
+              <ArrowRight size={15} />Переместить в проект…
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu>
       )}
       {open && (
         <div role="listbox" aria-label={`Куда перенести «${doc.name}»`}

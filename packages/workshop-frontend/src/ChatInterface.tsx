@@ -1,3 +1,4 @@
+import { AttachmentFileIcon, attachmentAppearance } from "./components/chat/attachmentAppearance";
 import { displayChatTitle } from './chatTitle'
 import SmartLink from './components/SmartLink';
 import { restoreAfterConnect } from './auth/accountConnect';
@@ -1231,9 +1232,10 @@ export const MarkdownMessage = memo(function MarkdownMessage(
 
 function formatAttachmentSize(size: number | undefined): string | null {
   if (size === undefined) return null;
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size < 1024) return `${size} Б`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} КБ`;
+  if (size < 1024 ** 3) return `${(size / (1024 ** 2)).toFixed(1)} МБ`;
+  return `${(size / (1024 ** 3)).toFixed(1)} ГБ`;
 }
 
 // Build a temporary object URL for inlined attachment bytes, revoking it when no longer needed.
@@ -1350,7 +1352,7 @@ const AttachmentPreviewModal = memo(function AttachmentPreviewModal(
             <div className="grid min-h-56 place-items-center rounded-xl border border-kumo-line/70 bg-kumo-elevated/40 p-6 py-10 text-center">
               <div className="max-w-sm space-y-2">
                 <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-kumo-line/70 bg-kumo-base text-kumo-inactive">
-                  <FileIcon size={26} />
+                  <AttachmentFileIcon name={attachment.name} mimeType={attachment.mimeType} />
                 </div>
                 <div className="text-[14px] font-medium text-kumo-default">{title}</div>
                 <div className="text-[12px] leading-5 text-kumo-subtle">
@@ -1394,30 +1396,24 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
     <button
       type="button"
       onClick={() => onPreview(attachment.id)}
-      className="relative h-28 w-36 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-kumo-line/70 bg-kumo-elevated text-left transition-[border-color,background-color,transform] duration-150 ease-out hover:border-kumo-line hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40 active:scale-[0.98]"
+      className="relative flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl p-3 text-left transition-colors hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40"
+      title={attachment.name ?? "Прикреплённый файл"}
       aria-label={`Открыть ${attachment.name ?? "прикреплённый файл"}`}
     >
       {isImage && objectUrl && imageState !== "error" ? (
-        <>
-          {/* Kept in layout (not display:none) so lazy-loading actually triggers. */}
-          <img
-            src={objectUrl}
-            alt={attachment.name ?? "Прикреплённое изображение"}
-            loading="lazy"
-            className="block h-full w-full object-cover"
-            onLoad={() => setImageState("loaded")}
-            onError={() => setImageState("error")}
-          />
-          {imageState !== "loaded" && (
-            <div className="absolute inset-0 grid place-items-center bg-kumo-elevated text-[11px] text-kumo-inactive">Загрузка изображения…</div>
-          )}
-        </>
-      ) : (
-        <div className="flex h-full w-full min-w-0 items-center justify-center gap-2 p-3 text-[12px] leading-4 text-kumo-subtle">
-          <FileIcon size={20} className="shrink-0 text-kumo-inactive" />
-          <span className="min-w-0 truncate">{attachment.name ?? "Прикреплённый файл"}</span>
-        </div>
-      )}
+        <span className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-kumo-elevated">
+          <img src={objectUrl} alt="" loading="lazy" className="h-full w-full object-cover"
+            onLoad={() => setImageState("loaded")} onError={() => setImageState("error")} />
+          {imageState !== "loaded" && <span className="absolute inset-0 animate-pulse bg-kumo-tint" />}
+        </span>
+      ) : <AttachmentFileIcon name={attachment.name} mimeType={attachment.mimeType} />}
+      <span className="min-w-0 flex-1">
+        <span className="block break-all text-[13px] font-medium leading-5 text-kumo-default">{attachment.name ?? "Прикреплённый файл"}</span>
+        <span className="mt-0.5 block text-[11px] leading-4 text-kumo-subtle">
+          {attachmentAppearance(attachment.name, attachment.mimeType).extension ?? attachmentAppearance(attachment.name, attachment.mimeType).label}
+          {formatAttachmentSize(attachment.size) && ` · ${formatAttachmentSize(attachment.size)}`}
+        </span>
+      </span>
     </button>
   );
 });
@@ -1427,24 +1423,24 @@ const AttachmentProjectNote = memo(function AttachmentProjectNote({ save }: { sa
   const { openDocument } = useContext(WorkRunContext);
   if (!save.saved) {
     return (
-      <p className="m-0 text-[11px] leading-[14px] text-kumo-danger">
+      <p className="m-0 border-t border-kumo-line/50 px-3 py-2 text-[11px] leading-4 text-kumo-danger">
         Не сохранено в проект «{save.projectTitle}»: {save.reason}
       </p>
     );
   }
   const open = openDocument?.({ project: save.projectId, document: save.resource, accountId: save.accountId, title: save.name });
-  const label = `Сохранено в проект «${save.projectTitle}» — личная версия`;
+  const label = save.projectTitle || "Проект без названия";
   return open ? (
     <button
       type="button"
       onClick={() => { void open(); }}
-      className="cursor-pointer text-left text-[11px] leading-[14px] text-kumo-subtle underline decoration-kumo-line underline-offset-2 hover:text-kumo-default"
-      title={`Открыть «${save.name}» в проекте`}
+      className="block w-full cursor-pointer truncate border-t border-kumo-line/50 px-3 py-2 text-left text-[11px] leading-4 text-kumo-subtle hover:text-kumo-default"
+      title={`Личная версия в проекте «${label}». Открыть «${save.name}»`}
     >
       {label}
     </button>
   ) : (
-    <p className="m-0 text-[11px] leading-[14px] text-kumo-subtle">{label}</p>
+    <p title={`Личная версия в проекте «${label}»`} className="m-0 truncate border-t border-kumo-line/50 px-3 py-2 text-[11px] leading-4 text-kumo-subtle">{label}</p>
   );
 });
 
@@ -1492,9 +1488,9 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
 
   return (
     <>
-      <div className="mb-2 flex flex-wrap gap-2">
+      <div className="mb-3 flex min-w-0 flex-wrap gap-2">
         {attachments.map((attachment) => attachment.document ? (
-          <div key={attachment.id} className="flex w-36 flex-col gap-1">
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
             <ChatDocumentNote
               document={attachment.document}
@@ -1508,16 +1504,14 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
             />
           </div>
         ) : attachment.project ? (
-          <div key={attachment.id} className="flex w-36 flex-col gap-1">
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
             <AttachmentProjectNote save={attachment.project} />
           </div>
         ) : (
-          <ChatAttachmentThumbnail
-            key={attachment.id}
-            attachment={attachment}
-            onPreview={handlePreview}
-          />
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
+            <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
+          </div>
         ))}
       </div>
       <AttachmentPreviewModal
