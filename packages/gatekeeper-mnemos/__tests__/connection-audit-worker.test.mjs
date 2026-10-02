@@ -22,10 +22,11 @@ test('production account alarm delivers retained local connection events after W
   if(events.has(e.event_id))assert.deepEqual(e,events.get(e.event_id));events.set(e.event_id,e);return Response.json({event_id:e.event_id});
  }}]};
  let mf=new Miniflare(options);
- const waitFor=async(predicate)=>{for(let i=0;i<100&&!predicate();i++)await new Promise(r=>setTimeout(r,50));assert(predicate(),'expected production alarm delivery')};
+ const waitFor=async(predicate)=>{for(let i=0;i<100&&!predicate();i++)await new Promise(r=>setTimeout(r,50));assert(predicate(),'expected production alarm delivery; attempts='+attempts+'; events='+JSON.stringify([...events.values()].map(e=>[e.protocol,e.phase])))};
  try{
   const connected=await mf.dispatchFetch('https://fixture/connect');assert.equal(connected.status,200);assert.equal((await connected.json()).enabled,true);
-  await waitFor(()=>attempts>0);assert.equal(events.size,0);await mf.dispose();offline=false;mf=new Miniflare(options);
+  // Дождаться отказов обеих очередей: перезапуск посреди прохода оставляет вторую на минутный повтор.
+  await waitFor(()=>attempts>=2);assert.equal(events.size,0);await mf.dispose();offline=false;mf=new Miniflare(options);
   assert.equal((await mf.dispatchFetch('https://fixture/remove')).status,200);await waitFor(()=>events.size===5);
   assert.deepEqual([...events.values()].filter(e=>e.protocol==='webdav').map(e=>e.phase),['connecting','enabled','removed']);
   const accountEvents=[...events.values()].filter(e=>e.protocol==='account');
