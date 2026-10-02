@@ -60,7 +60,7 @@ export function ChatDocumentNote({ document: initial, openDocument, loadProjects
   const placeTitle = doc.personal ? label : `Личная версия в проекте «${label}»`;
   const openHandler = openDocument?.(doc);
   return (
-    <div ref={rootRef} className="relative flex min-w-0 items-center gap-2 border-t border-kumo-line/50 px-3 py-1.5 text-[11px] text-kumo-subtle">
+    <div ref={rootRef} className="relative flex min-w-0 items-center gap-2 border-t border-kumo-line/50 px-2.5 py-1 text-[11px] text-kumo-subtle">
       <FolderSimple size={14} aria-hidden="true" className="shrink-0" />
       {openHandler ? (
         <button type="button" onClick={() => { void openHandler(); }} className="min-w-0 flex-1 cursor-pointer truncate text-left hover:text-kumo-default"

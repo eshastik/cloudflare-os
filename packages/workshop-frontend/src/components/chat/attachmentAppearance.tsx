@@ -40,7 +40,7 @@ export function attachmentAppearance(name?: string, mimeType = "") {
   return { ...TYPES[type], extension: extension?.toUpperCase() };
 }
 
-export function AttachmentFileIcon({ name, mimeType, size = 26 }: { name?: string; mimeType?: string; size?: number }) {
+export function AttachmentFileIcon({ name, mimeType, size = 23 }: { name?: string; mimeType?: string; size?: number }) {
   const { icon: Glyph, color } = attachmentAppearance(name, mimeType);
-  return <span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-xl" style={{ color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` }}><Glyph size={size} weight="duotone" /></span>;
+  return <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg" style={{ color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` }}><Glyph size={size} weight="duotone" /></span>;
 }

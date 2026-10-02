@@ -1396,7 +1396,7 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
     <button
       type="button"
       onClick={() => onPreview(attachment.id)}
-      className="relative flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl p-3 text-left transition-colors hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40"
+      className="relative flex w-full min-w-0 cursor-pointer items-center gap-2.5 rounded-lg p-2.5 text-left transition-colors hover:bg-kumo-tint/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand/40"
       title={attachment.name ?? "Прикреплённый файл"}
       aria-label={`Открыть ${attachment.name ?? "прикреплённый файл"}`}
     >
@@ -1490,7 +1490,7 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
     <>
       <div className="mb-3 flex min-w-0 flex-wrap items-start gap-2">
         {attachments.map((attachment) => attachment.document ? (
-          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-lg border border-kumo-line/60 bg-transparent">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
             <ChatDocumentNote
               document={attachment.document}
@@ -1504,12 +1504,12 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
             />
           </div>
         ) : attachment.project ? (
-          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-lg border border-kumo-line/60 bg-transparent">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
             <AttachmentProjectNote save={attachment.project} />
           </div>
         ) : (
-          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
+          <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-lg border border-kumo-line/60 bg-transparent">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
           </div>
         ))}
@@ -7411,7 +7411,7 @@ function ChatInterface({
                         {/* ── user / AI text message ── */}
                         {msg.type === "slashCommand" && (
                           <div className="group/message relative flex flex-col items-end">
-                            <div className="w-fit max-w-[min(460px,85%)] rounded-[18px] rounded-br-[4px] border border-kumo-fill bg-kumo-bubble-user px-4 py-3 text-[15px] leading-[22px] text-kumo-default">
+                            <div className={styles.userMessageBubble}>
                               <span className="whitespace-pre-wrap">
                                 <SlashCommandMention
                                   name={msg.skillName}
@@ -7440,15 +7440,17 @@ function ChatInterface({
                         {msg.type === "message" && (
                           msg.author.type === "user" ? (
                             <div data-chat-message className="group/message relative flex flex-col items-end">
-                              <div className={`w-fit max-w-[min(460px,85%)] rounded-[18px] rounded-br-[4px] border border-kumo-fill bg-kumo-bubble-user px-4 py-3 text-[15px] leading-[22px] text-kumo-default ${styles.markdownContent}`}>
-                                {msg.attachments && msg.attachments.length > 0 && (
+                              {msg.attachments && msg.attachments.length > 0 && (
+                                <div className={styles.userMessageAttachments}>
                                   <ChatAttachmentGrid
                                     attachments={msg.attachments}
                                     onDownload={(attachment) => { void downloadChatAttachment(msg.chatId, attachment); }}
                                     loadProjects={loadProjectChoices}
                                     onMoveDocument={(attachmentId, target) => overseer.moveChatDocument(msg.chatId, attachmentId, target)}
                                   />
-                                )}
+                                </div>
+                              )}
+                              {(entry.slashCommand || msg.message.trim()) && <div className={`${styles.userMessageBubble} ${styles.markdownContent}`}>
                                 {entry.slashCommand ? (
                                   // What the command expanded into is the agent's context, not
                                   // something to re-read here.
@@ -7464,7 +7466,7 @@ function ChatInterface({
                                   </div>
                                 ) : msg.message.trim() && (
                                   // pre-wrap renders users' single newlines as hard breaks.
-                                  <div data-message-text className="whitespace-pre-wrap">
+                                  <div data-message-text className={styles.userMessageText}>
                                     <MarkdownMessage
                                       message={msg.message}
                                       capsules={msg.capsules}
@@ -7472,7 +7474,7 @@ function ChatInterface({
                                     />
                                   </div>
                                 )}
-                              </div>
+                              </div>}
                               <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
                                 <button type="button" aria-label="Копировать моё сообщение"
                                   onClick={e => { void handleCopyMessage(msg.message, e.currentTarget); }}
@@ -7523,7 +7525,7 @@ function ChatInterface({
                               )}
 
                               {hasMessageText && (
-                                <div data-message-text className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
+                                <div data-message-text className={`${styles.assistantMessageText} ${styles.markdownContent}`}>
                                   <MarkdownMessage
                                     message={shownMessageText}
                                     capsules={msg.capsules}
@@ -7904,7 +7906,7 @@ function ChatInterface({
                           )}
 
                           {currentProvisionalState?.text && (
-                            <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
+                            <div className={`${styles.assistantMessageText} ${styles.markdownContent}`}>
                               <MarkdownMessage message={hideGadgetLinks(currentProvisionalState.text, gadgetCardResources)} />
                             </div>
                           )}
