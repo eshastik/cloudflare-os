@@ -2066,18 +2066,39 @@ export const ChatInput = ({
   onFolderProjectCreated?: (project: ChatProjectChoice) => void;
 }) => {
   const toasts = useKumoToastManager();
+  const { authenticatedApi, currentUser } = useAuthenticatedApi();
   // Подключение аккаунта из подсказки ресурса уводит страницу к гейткиперу; набранное сообщение
   // переживает уход и возвращается в это же поле (auth/accountConnect.ts).
   const composerRestoreKey = `chat-composer:${chatKey ?? "new"}`;
   const attachRestoreKey = `gatekeeper-modal:attach:${chatKey ?? "new"}`;
   const [restoredAttach] = useState(() => restoreAfterConnect<GatekeeperModalRestore<{ input: string; capsules: InputCapsule[] }>>(attachRestoreKey));
   const [restoredComposer] = useState(() => restoreAfterConnect<{ input: string; capsules: InputCapsule[] }>(composerRestoreKey) ?? restoredAttach?.parent ?? null);
+  const draftKey = currentUser ? `mnemos:composer:${currentUser.id}:${window.location.pathname.split("/").slice(0, 3).join("/")}:${chatKey ?? "new"}` : null;
   const [inputValue, setInputValue] = useState(() => restoredComposer?.input ?? "");
   const [showMessagePreview, setShowMessagePreview] = useState(false);
   useEffect(() => setShowMessagePreview(false), [chatKey]);
   useEffect(() => { if (!inputValue) setShowMessagePreview(false); }, [inputValue]);
   const inputRevision = useRef(0);
   const [capsules, setCapsules] = useState<InputCapsule[]>(() => restoredComposer?.capsules ?? []);
+  const draftScopeRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!draftKey || draftScopeRef.current === draftKey) return;
+    draftScopeRef.current = draftKey;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(draftKey) ?? "null");
+      if (!restoredComposer && saved && typeof saved.input === "string" && Array.isArray(saved.capsules)) {
+        setInputValue(saved.input);
+        setCapsules(saved.capsules);
+      }
+    } catch { /* Хранилище браузера может быть отключено. Поле ввода остаётся рабочим. */ }
+  }, [draftKey, restoredComposer]);
+  useEffect(() => {
+    if (!draftKey || draftScopeRef.current !== draftKey) return;
+    try {
+      if (inputValue || capsules.length) sessionStorage.setItem(draftKey, JSON.stringify({input: inputValue, capsules}));
+      else sessionStorage.removeItem(draftKey);
+    } catch { /* Отсутствие места в браузере не мешает отправке. */ }
+  }, [draftKey, inputValue, capsules]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -2097,7 +2118,6 @@ export const ChatInput = ({
   const pickerCaretRef = useRef<{key: string | null; text: string}>({key: null, text: ""});
   // Caret position and text the URL overlay was last resolved for, to skip repeated scans.
   const lastUrlScanRef = useRef({position: -1, text: ""});
-  const { authenticatedApi } = useAuthenticatedApi();
   const vendorBranding = useVendorBranding(authenticatedApi);
   const folderProject = useFolderProject(authenticatedApi, onFolderProjectCreated);
   const selectedSlashCommandRef = useRef(selectedSlashCommand);
@@ -6213,6 +6233,24 @@ function ChatInterface({
     }
   };
 
+  const [editingMessage, setEditingMessage] = useState<{chatId: number; sequence: number; text: string} | null>(null);
+  const [editSending, setEditSending] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  useEffect(() => { setEditingMessage(null); setEditError(null); }, [selectedChatId]);
+  const submitMessageEdit = async () => {
+    if (!editingMessage || editSending || !editingMessage.text.trim() || isAgentActive) return;
+    setEditSending(true);
+    setEditError(null);
+    try {
+      const newId = await overseer.editChatMessage(editingMessage.chatId, editingMessage.sequence, editingMessage.text, selectedModel);
+      setEditingMessage(null);
+      onNavigateToChatRef.current(newId);
+    } catch (error) {
+      logRpcFailure("Не удалось изменить сообщение:", error, {reportSite: "chat.edit"});
+      setEditError("Не удалось отправить правку. Текст сохранён — попробуйте ещё раз.");
+    } finally { setEditSending(false); }
+  };
+
   const handleCopyMessage = useCallback(async (message: string, button?: HTMLButtonElement) => {
     const rendered = button?.closest("[data-chat-message]")?.querySelector("[data-message-text]")?.cloneNode(true) as HTMLElement | undefined;
     rendered?.querySelectorAll("button, [aria-hidden=true]").forEach(node => node.remove());
@@ -7434,7 +7472,24 @@ function ChatInterface({
                                   />
                                 </div>
                               )}
-                              {(entry.slashCommand || msg.message.trim()) && <div className={`${styles.userMessageBubble} ${styles.markdownContent}`}>
+                              {editingMessage?.chatId === msg.chatId && editingMessage.sequence === msg.sequence ? (
+                                <div className="w-full max-w-[720px] rounded-2xl border border-kumo-line bg-kumo-base p-4">
+                                  <textarea aria-label="Редактировать сообщение" autoFocus disabled={editSending}
+                                    value={editingMessage.text} rows={Math.min(12, Math.max(3, editingMessage.text.split("\n").length))}
+                                    onChange={event => setEditingMessage({...editingMessage, text: event.target.value})}
+                                    onKeyDown={event => {
+                                      if (event.key === "Escape" && !editSending) setEditingMessage(null);
+                                      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void submitMessageEdit(); }
+                                    }}
+                                    className="w-full resize-y bg-transparent text-[15px] leading-6 outline-none" />
+                                  <p className="mt-2 text-xs text-kumo-subtle">Агент ответит в новой беседе. Исходная беседа и вложения сохранятся.</p>
+                                  {editError && <p role="alert" className="mt-2 text-sm text-kumo-danger">{editError}</p>}
+                                  <div className="mt-3 flex justify-end gap-2">
+                                    <WorkshopButton disabled={editSending} onClick={() => setEditingMessage(null)}>Отмена</WorkshopButton>
+                                    <WorkshopButton disabled={editSending || isAgentActive || !editingMessage.text.trim()} onClick={() => { void submitMessageEdit(); }}>{editSending ? "Отправляем…" : "Отправить правку"}</WorkshopButton>
+                                  </div>
+                                </div>
+                              ) : (entry.slashCommand || msg.message.trim()) && <div className={`${styles.userMessageBubble} ${styles.markdownContent}`}>
                                 {entry.slashCommand ? (
                                   // What the command expanded into is the agent's context, not
                                   // something to re-read here.
@@ -7463,6 +7518,12 @@ function ChatInterface({
                                 <button type="button" aria-label="Копировать моё сообщение"
                                   onClick={e => { void handleCopyMessage(msg.message, e.currentTarget); }}
                                   className="rounded-md p-1 touch:h-10 touch:w-10 hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><Copy size={14} /></button>
+                                {msg.author.id === currentUser?.id && !entry.slashCommand && (
+                                  <button type="button" aria-label="Редактировать моё сообщение" disabled={isAgentActive || editSending}
+                                    title={isAgentActive ? "Дождитесь ответа агента или остановите его" : "Редактировать сообщение"}
+                                    onClick={() => { setEditingMessage({chatId: msg.chatId, sequence: msg.sequence, text: msg.message}); setEditError(null); }}
+                                    className="rounded-md p-1 touch:h-10 touch:w-10 hover:text-kumo-default disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-kumo-ring"><PencilSimple size={14} /></button>
+                                )}
                                 {/* hideOwnUserName implies currentUser is non-null (see memo). */}
                                 {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                   <span className="font-medium">{msg.author.name}</span>
@@ -7952,6 +8013,7 @@ function ChatInterface({
                         trailing={codeWorkAllowed ? <CodeModeSwitch mode={codeMode} onChange={changeCodeMode} /> : undefined}
                       />
                     }
+                    key={selectedChatId ?? "new"}
                     chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>
                       overseer.newGatekeeper(accountId, url)

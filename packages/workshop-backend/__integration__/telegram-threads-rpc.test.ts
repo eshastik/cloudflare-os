@@ -36,7 +36,7 @@ function sse(text: string): Response {
 
 function stubNetwork() {
   let telegram: Call[] = [];
-  let model = { requests: 0 };
+  let model = { requests: 0, prompts: [] as string[] };
   let gone = new Set<number>();
   let nextThread = 700;
   // Ход, в котором агент ждёт решения: модель отвечает, только когда тест положил действие.
@@ -60,6 +60,7 @@ function stubNetwork() {
       let body = input instanceof Request ? await input.text() : String(init?.body ?? "");
       if (body.includes("Придумай короткое понятное название")) return sse(TITLE);
       model.requests++;
+      model.prompts.push(body);
       for (let [marker, gate] of gates) {
         if (body.includes(marker)) { gates.delete(marker); await gate; }
       }
@@ -275,4 +276,40 @@ it("решение кнопкой в треде: подтверждение вл
   await until(() => net.telegram.filter(call => call.method === "answerCallbackQuery").length === 3, "ответа на устаревшую карточку");
   expect(applied).toHaveLength(1);
   await idle(overseer, setupActions.chatId, 1);
+});
+
+it("правка сообщения сохраняет исходную историю и вложения, отвечает только на изменённый контекст", async () => {
+  const net = stubNetwork();
+  const {session, idle} = await setup(net);
+  const overseer = await session.newGadget();
+  const chat = await overseer.newChat("Первый контекст", "fake-model");
+  await idle(overseer, chat, 1);
+  const bytes = new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64"));
+  const file = await overseer.uploadChatAttachment({mimeType: "image/png", name: "image.png", content: bytes}, "fake-model");
+  await overseer.sendChatMessage(chat, "Исходный запрос", "fake-model", undefined, [file]);
+  await idle(overseer, chat, 2);
+  const before = await overseer.getChatHistory(chat);
+  const target = before.messages.find(m => m.type === "message" && m.message === "Исходный запрос")!;
+  await overseer.sendChatMessage(chat, "Будущий запрос, который не должен попасть в правку", "fake-model");
+  await idle(overseer, chat, 3);
+  await overseer.setChatCodeMode(chat, "off");
+  const source = await overseer.getChatHistory(chat);
+  const edited = await overseer.editChatMessage(chat, target.sequence, "Изменённый запрос", "fake-model");
+  expect(edited).not.toBe(chat);
+  expect((await overseer.listChats()).find(c => c.id === edited)?.codeMode).toBe("off");
+  await idle(overseer, edited, 2);
+  expect(await overseer.getChatHistory(chat)).toEqual(source);
+  const history = await overseer.getChatHistory(edited);
+  expect(history.messages.filter(m => m.type === "message" && m.author.type === "user").map(m => m.type === "message" && m.message))
+    .toEqual(["Первый контекст", "Изменённый запрос"]);
+  const message = history.messages.find(m => m.type === "message" && m.message === "Изменённый запрос");
+  const attachment = message?.type === "message" ? message.attachments?.[0] : undefined;
+  expect(attachment?.id).not.toBe(file.id);
+  expect(await overseer.getChatAttachmentContent(edited, attachment!.id)).toEqual(Buffer.from(bytes));
+  expect(await overseer.getChatAttachmentContent(chat, file.id)).toEqual(Buffer.from(bytes));
+  const prompt = net.model.prompts.at(-1)!;
+  expect(prompt).toContain("Первый контекст");
+  expect(prompt).toContain("Изменённый запрос");
+  expect(prompt).not.toContain("Будущий запрос");
+  expect(prompt).not.toContain("Исходный запрос");
 });

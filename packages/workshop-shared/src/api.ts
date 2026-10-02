@@ -1697,6 +1697,10 @@ export interface Overseer extends RpcTarget {
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
                   formats?: MessageFormatRef[]): Promise<void>;
 
+  // Изменяет собственное сообщение в новой беседе. Исходная история сохраняется; новая
+  // беседа получает текстовый контекст до правки и вложения, затем новый ответ агента.
+  editChatMessage(chatId: number, sequence: number, message: string, modelId: string | null): Promise<number>;
+
   // Набор проектов беседы (чипы над полем ввода). Проверяется владение подключениями.
   setChatProjects(chatId: number, projects: ChatProject[]): Promise<void>;
 

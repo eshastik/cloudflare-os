@@ -4276,6 +4276,77 @@ class OverseerImpl implements AgentHooks {
     });
   }
 
+  async editChatMessage(
+      clientUser: DurableObjectStub<UserDurableObject>, userMeta: UserChatContext,
+      chatId: number, sequence: number, message: string): Promise<number> {
+    const sourceMeta = this.assertChatNotActive(chatId);
+    using _reservation = this.reserveChatMessagePreparation(chatId);
+    const original = this.storage.chats.get(`${keyString(chatId)}.${keyString(sequence)}`);
+    if (!original || original.type !== "message" || original.author.type !== "user" ||
+        original.author.id !== userMeta.profile.id || original.generatedBySlashCommandSequence !== undefined) {
+      throw new Error("Можно изменить только собственное текстовое сообщение.");
+    }
+    if (typeof message !== "string" || !message.trim()) throw new Error("Сообщение не должно быть пустым.");
+    if (!userMeta.aiModel) throw new Error("Выберите агента для ответа.");
+    let projectContext = sourceMeta.projectContext;
+    if (projectContext) {
+      for (const accountId of new Set([projectContext.accountId, ...chatProjects(projectContext).map(p => p.accountId)])) {
+        if (!await clientUser.describeConnectedAccount(accountId)) throw new Error("Подключение проекта недоступно");
+      }
+      projectContext = {...projectContext, creatorId: clientUser.id.toString(), creatorProfileId: userMeta.profile.id};
+    }
+    const currentMeta = this.assertChatNotActive(chatId, true);
+    if (JSON.stringify(currentMeta.projectContext) !== JSON.stringify(sourceMeta.projectContext)) {
+      throw new Error("Проекты беседы изменились. Повторите отправку правки.");
+    }
+    const history = [...this.storage.chats.list({prefix: `${keyString(chatId)}.`})]
+      .filter(m => m.sequence <= sequence && m.type === "message");
+    let newId!: number;
+    const timestamp = this.getChatTimestamp();
+    this.ctx.storage.transactionSync(() => {
+      newId = this.nextChatId();
+      this.storage.chatMeta.put({
+        id: newId, title: sourceMeta.title + " · правка", started: timestamp, lastActive: timestamp,
+        activeAgent: userMeta.aiModel!.profile, codeMode: sourceMeta.codeMode,
+        ...(projectContext ? {projectContext} : {}),
+      });
+      for (const entry of history) {
+        if (entry.type !== "message") continue;
+        const attachments = entry.attachments?.map(attachment => {
+          const content = this.storage.chatAttachmentContent.get(attachment.id);
+          if (!content || content.state.type !== "committed" || content.state.chatId !== chatId) {
+            throw new Error("Вложение исходного сообщения недоступно.");
+          }
+          const id = crypto.randomUUID();
+          this.storage.chatAttachmentContent.put({fileId: id, data: content.data,
+            state: {...content.state, chatId: newId}});
+          if (content.state.document) this.grantChatDocument(newId, content.state.document);
+          return {...attachment, id, ...(content.state.document ? {document: content.state.document} : {})};
+        });
+        // Выполненные действия остаются в исходной истории. Их повторный запуск или перенос
+        // предложенных изменений кода при правке текста мог бы повторить побочный эффект.
+        const text = entry.sequence === sequence ? message.trim() : entry.message;
+        const copied: AiChatMessage = {chatId: newId, sequence: this.nextChatSequence(newId),
+          timestamp: this.getChatTimestamp(),
+          author: entry.author, type: "message", message: text,
+          capsules: entry.sequence === sequence ? entry.capsules?.flatMap(capsule => {
+            const token = entry.message.slice(capsule.position, capsule.position + capsule.length);
+            const position = token ? text.indexOf(token) : -1;
+            if (position < 0) return [];
+            if (text.indexOf(token, position + token.length) >= 0) {
+              throw new Error("Ссылка на ресурс повторяется. Оставьте её в тексте один раз.");
+            }
+            return [{...capsule, position}];
+          }) : entry.capsules,
+          attachments, formats: sanitizeMessageFormatRefs(entry.formats, text)};
+        this.#validateCapsules(newId, copied.capsules);
+        this.storage.chats.put(copied);
+      }
+    });
+    this.startAgent(newId, userMeta.aiModel, userMeta.profile, clientUser.id.toString());
+    return newId;
+  }
+
   registerExternalMessageResponseTarget(
     idempotencyKey: string,
     chatId: number,
@@ -9636,6 +9707,11 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }
   }
 
+  async editChatMessage(chatId: number, sequence: number, message: string, modelId: string | null): Promise<number> {
+    const userMeta = await this.clientUser.getAgentChatContext(modelId);
+    return this.impl.editChatMessage(this.clientUser, userMeta, chatId, sequence, message);
+  }
+
   async setChatTitle(chatId: number, title: string): Promise<void> {
     let meta = this.impl.storage.chatMeta.get(chatId);
     if (!meta) {
@@ -10483,6 +10559,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
                         _capsules?: CapsuleSpecifier[], _attachments?: ChatAttachmentHandle[]): Promise<void> {
     this.#deny();
   }
+  async editChatMessage(_chatId: number, _sequence: number, _message: string, _modelId: string | null): Promise<number> { this.#deny(); }
   async uploadChatAttachment(
     _attachment: ChatAttachmentUpload,
     _modelId: string | null,
