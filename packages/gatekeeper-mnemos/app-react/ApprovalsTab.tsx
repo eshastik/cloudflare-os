@@ -1,7 +1,7 @@
 import ReviewDetails from "./ReviewDetails.tsx";
 import { useState } from "react";
 import { useUi } from "./host.ts";
-import { documentNames, personName, projectName, publicationNodeName, type MemoryData, type PendingApproval } from "./data.ts";
+import { documentNames, projectName, publicationNodeName, type MemoryData, type PendingApproval } from "./data.ts";
 import { Button, Row, RowText, StatusBadge } from "./ui.tsx";
 
 /** Запись решения по направлению во «Входящих». */
@@ -28,23 +28,18 @@ export function useReviewDecision(data: MemoryData) {
 export function ApprovalRow({ item, data, busy, decide }: { item: PendingApproval; data: MemoryData; busy: string; decide(item: PendingApproval, approved: boolean): void }) {
   const names = documentNames(data.projects);
   const key = `${item.review.candidate_id}/${item.domain.domain_id}`;
-  const approved = item.domain.decisions.filter(d => d.approved).length;
-  const documents = item.domain.node_ids.map(id => publicationNodeName(item.review, names, id)).join(", ");
+  const documents = item.domain.node_ids.map(id => publicationNodeName(item.review, names, id));
   const [expanded, setExpanded] = useState(false);
   const pending = item.mine === null && !item.review.stale && !item.review.withdrawn;
-  const state = item.review.withdrawn ? "Отозвано" : item.review.stale ? "Устарело" : item.mine === true ? "Вы согласовали" : item.mine === false ? "Вы отклонили" : "Ждёт вас";
+  const state = item.review.withdrawn ? "Отозвано" : item.review.stale ? "Неактуально" : item.mine === true ? "Вы согласовали" : item.mine === false ? "Вы отклонили" : "Ждёт вас";
   return (
     <div className="border-t border-kumo-fill first:border-t-0"><Row className="items-start" data-review={item.review.candidate_id} data-decision="approve">
       <RowText
-        title={<>«{documents}»</>}
-        note={<>
-          проект «{projectName(data.projects, item.review.project_id)}» · направление {item.domain.domain_id} · автор {personName(item.review.author_id)} · одобрений {approved} из {item.domain.approvers.length}
-          {item.review.withdrawn && " · автор отозвал предложение"}
-          {item.review.stale && " · предложение устарело: права, политика или общая версия изменились"}
-        </>}
+        title={<>{documents[0] || "Заявка на согласование"}{documents.length > 1 && <span className="ml-2 text-[12px] text-kumo-subtle">+{documents.length - 1}</span>}</>}
+        note={projectName(data.projects, item.review.project_id)}
       />
       <StatusBadge tone={pending ? "warning" : item.mine === true ? "success" : "neutral"}>{state}</StatusBadge>
-      <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>{expanded ? "Скрыть" : "Проверить изменения"}</Button>
+      <Button variant="ghost" size="sm" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Скрыть" : "Подробнее"}</Button>
       {pending && (
         <div className="flex shrink-0 gap-1.5">
           <Button size="sm" disabled={busy === key} onClick={() => decide(item, true)}>Согласовать</Button>

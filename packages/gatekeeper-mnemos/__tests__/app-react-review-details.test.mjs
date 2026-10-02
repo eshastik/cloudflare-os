@@ -32,6 +32,7 @@ test("согласующий проверяет точную версию и в�
     app.document.querySelector('#root [data-inbox="approval"] button').click();
     await app.until(() => app.text().includes("dave: ожидает решения"), "матрица областей");
     assert.ok(app.text().includes("carol: одобрено"));
+    assert.equal(app.document.querySelector("#root aside details").open, false, "участники скрыты до раскрытия");
     assert.ok(app.text().includes("Юридическая") && app.text().includes("Финансовая"));
     app.button("Заметка команды").click();
     await app.until(() => app.text().includes("Исходный текст") && app.text().includes("Новая версия"), "две стороны версии");
@@ -49,8 +50,10 @@ test("согласующий проверяет точную версию и в�
 test("отозванное предложение не позволяет записать решение", async () => {
   const app = await mountMemoryApp({ async listPublicationReviews() { return { reviews: [{ ...review, withdrawn: true }], next_cursor: "" }; } }, { section: "approvals" });
   try {
-    await app.until(() => app.text().includes("автор отозвал предложение"), "отзыв предложения");
-    assert.equal(app.button("Одобрить"), undefined);
+    await app.until(() => app.text().includes("Отозвано"), "отзыв предложения");
+    app.button("Подробнее").click();
+    await app.until(() => app.text().includes("Автор отозвал заявку."), "причина завершения");
+    assert.equal(app.button("Согласовать"), undefined);
     assert.equal(app.button("Отклонить"), undefined);
   } finally { app.dispose(); }
 });

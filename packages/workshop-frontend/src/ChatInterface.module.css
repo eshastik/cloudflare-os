@@ -193,7 +193,8 @@
   white-space: pre-wrap;
 }
 .markdownContent ul, .markdownContent ol, .markdownContent table { white-space: normal; }
-.markdownContent li { white-space: pre-wrap; }
+.markdownContent li { white-space: normal; }
+.markdownContent li p { white-space: pre-wrap; }
 .composerPreview pre { white-space: normal; }
 .composerPreview pre code { white-space: pre; }
 .markdownContent ul ul { list-style-type: circle; }

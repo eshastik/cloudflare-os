@@ -78,7 +78,7 @@ test("«Входящие»: выбор строки открывает подр�
     assert.ok(panel().textContent.includes("Документов: 1."), "приложение не считается документом");
     rowsOf(app).find(r => r.dataset.inbox === "approval").querySelector("button").click();
     await app.until(() => panel()?.textContent.includes("carol: одобрено"), "подробности согласования");
-    assert.ok(panel().textContent.includes("Приложений: 1.") && panel().textContent.includes("Документов: 1."), "согласующий видит состав публикации");
+    assert.ok(panel().textContent.includes("1 документ · 1 приложение"), "согласующий видит состав публикации");
     assert.ok([...panel().querySelectorAll("button")].some(button => button.textContent === "Приложение «Счётчик»"), "приложение не названо документом");
     [...panel().querySelectorAll("button")].find(b => b.textContent === "Отклонить").click();
     await app.until(() => app.calls.some(([m]) => m === "recordReviewDecision"), "отказ записан");

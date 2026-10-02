@@ -1408,7 +1408,7 @@ const ChatAttachmentThumbnail = memo(function ChatAttachmentThumbnail(
         </span>
       ) : <AttachmentFileIcon name={attachment.name} mimeType={attachment.mimeType} />}
       <span className="min-w-0 flex-1">
-        <span className="block break-all text-[13px] font-medium leading-5 text-kumo-default">{attachment.name ?? "Прикреплённый файл"}</span>
+        <span className="block break-words text-[13px] font-medium leading-5 text-kumo-default [overflow-wrap:anywhere]">{attachment.name ?? "Прикреплённый файл"}</span>
         <span className="mt-0.5 block text-[11px] leading-4 text-kumo-subtle">
           {attachmentAppearance(attachment.name, attachment.mimeType).extension ?? attachmentAppearance(attachment.name, attachment.mimeType).label}
           {formatAttachmentSize(attachment.size) && ` · ${formatAttachmentSize(attachment.size)}`}
@@ -1488,7 +1488,7 @@ const ChatAttachmentGrid = memo(function ChatAttachmentGrid(
 
   return (
     <>
-      <div className="mb-3 flex min-w-0 flex-wrap gap-2">
+      <div className="mb-3 flex min-w-0 flex-wrap items-start gap-2">
         {attachments.map((attachment) => attachment.document ? (
           <div key={attachment.id} className="w-[320px] max-w-full min-w-0 rounded-xl border border-kumo-line/70 bg-kumo-base shadow-sm">
             <ChatAttachmentThumbnail attachment={attachment} onPreview={handlePreview} />
@@ -3542,30 +3542,27 @@ export const ChatInput = ({
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-3 pb-2 pt-1">
             {pendingAttachments.map((attachment) => (
-              <div key={attachment.id} className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg border border-kumo-line/70 bg-kumo-elevated">
+              <div key={attachment.id} className="flex w-[280px] max-w-full min-w-0 items-start gap-2 rounded-xl border border-kumo-line/70 bg-kumo-base p-2">
                 {attachment.previewUrl ? (
-                  <img src={attachment.previewUrl} alt={attachment.name ?? "Прикреплённый файл"} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="grid h-full w-full place-items-center" title={attachment.error ? `${attachment.name ?? "Файл"}: ${attachment.error}` : attachment.name}>
-                    <FileIcon size={22} className="text-kumo-inactive" />
+                  <img src={attachment.previewUrl} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" />
+                ) : <AttachmentFileIcon name={attachment.name} mimeType={attachment.mimeType} />}
+                <div className="min-w-0 flex-1 py-0.5">
+                  <span title={attachment.name} className="block break-words text-[12px] font-medium leading-4 text-kumo-default [overflow-wrap:anywhere]">{attachment.name ?? "Прикреплённый файл"}</span>
+                  <span className="mt-1 block text-[11px] leading-4 text-kumo-subtle" role="status">
+                    {attachment.uploadState === "uploading" ? "Загрузка…" : attachment.uploadState === "error" ? "Не удалось загрузить" : formatAttachmentSize(attachment.blob.size)}
                   </span>
-                )}
-                {attachment.uploadState === "uploading" && (
-                  <div className="absolute inset-0 grid place-items-center rounded-lg bg-black/35 text-[10px] text-white">Загрузка</div>
-                )}
-                {attachment.uploadState === "error" && (
-                  <button type="button" onClick={() => retryAttachment(attachment.id)}
-                    aria-label={`Повторить загрузку «${attachment.name ?? "Файл"}»`} title={attachment.error}
-                    className="absolute inset-0 grid place-items-center rounded-lg bg-kumo-danger/80 px-1 text-center text-[9px] leading-3 text-white">Повторить</button>
-                )}
-                <button
-                  type="button"
-                  aria-label="Удалить вложение"
+                  {attachment.uploadState === "error" && <>
+                    <span className="mt-1 block text-[11px] leading-4 text-kumo-danger">{attachment.error}</span>
+                    <button type="button" onClick={() => retryAttachment(attachment.id)}
+                      aria-label={`Повторить загрузку «${attachment.name ?? "Файл"}»`}
+                      className="mt-1 min-h-8 cursor-pointer text-[12px] text-kumo-brand hover:underline">Повторить</button>
+                  </>}
+                </div>
+                <button type="button" aria-label="Удалить вложение" title={`Убрать «${attachment.name ?? "Файл"}»`}
                   disabled={isSending && sendingAttachmentIdsRef.current.has(attachment.id)}
                   onClick={() => removeAttachment(attachment.id)}
-                  className="absolute right-0.5 top-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-black/55 text-white hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-                >
-                  <X size={10} weight="bold" />
+                  className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-kumo-subtle hover:bg-kumo-tint hover:text-kumo-default disabled:cursor-wait disabled:opacity-50">
+                  <X size={16} />
                 </button>
               </div>
             ))}
