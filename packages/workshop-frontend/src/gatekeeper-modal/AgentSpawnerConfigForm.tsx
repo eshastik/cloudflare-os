@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { getStoredSelectedModel } from '../modelSelection'
 import { Checkbox, Select, type PortalContainer } from '@cloudflare/kumo'
 import { AiChatAuthorInfo, WorkpieceId, validateBindingName } from '@gadgets/workshop-shared/api'
 import { WorkshopInput } from '../components/WorkshopControls'
@@ -72,6 +74,9 @@ export function AgentSpawnerConfigForm({
   onEnvChange,
   selectContainer,
 }: AgentSpawnerConfigFormProps) {
+  useEffect(() => {
+    if (modelId === null && availableModels.length) onModelIdChange(getStoredSelectedModel(availableModels))
+  }, [modelId, availableModels, onModelIdChange])
   const updateRow = (index: number, updates: Partial<SpawnerEnvRow>) => {
     onEnvChange(env.map((row, i) => (i === index ? { ...row, ...updates } : row)))
   }
@@ -103,13 +108,10 @@ export function AgentSpawnerConfigForm({
           value={modelId}
           onValueChange={(v) => onModelIdChange(v as string | null)}
           renderValue={(id) => {
-            if (id === null) return 'Без агента'
+            if (id === null) return 'Выберите агента'
             return availableModels.find((m) => m.id === id)?.name ?? String(id)
           }}
         >
-          <Select.Option value={null as any}>
-            Без агента
-          </Select.Option>
           {availableModels.map(model => (
             <Select.Option key={model.id} value={model.id}>
               {model.name}
@@ -117,7 +119,7 @@ export function AgentSpawnerConfigForm({
           ))}
         </Select>
         <p className="mt-1 text-[12px] leading-4 font-normal tracking-[-0.2px] text-kumo-subtle">
-          Выберите «Без агента», чтобы создавать беседы без агента.
+          Каждая беседа создаётся с агентом.
         </p>
       </ConnectionConfigField>
 

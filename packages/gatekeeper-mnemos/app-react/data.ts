@@ -28,7 +28,8 @@ export interface ProjectData {
   truncated: boolean;
   nodesError: boolean;
   /** Документы личной версии: только здесь видно конфликт и документы, которых в общей версии ещё нет. */
-  privateDocs: Map<string, { name: string; conflicted: boolean; contentType?: string }>;
+  privateDocs: Map<string, { name: string; conflicted: boolean; contentType?: string; parentId?: string }>;
+  privateCursor?: string;
   draftState: DraftState | null;
   /** Файлы, черновики и состояние проекта уже прочитаны; до этого пустой список файлов ничего не значит. */
   detailsLoaded?: boolean;
@@ -123,7 +124,7 @@ export function documentRows(project: ProjectData, reviews: PublicationReview[])
   }
   for (const [nodeId, doc] of project.privateDocs) {
     if (seen.has(nodeId)) continue;
-    rows.push({ projectId: project.id, projectName: project.name, nodeId, privateOnly: true, contentType: doc.contentType, name: doc.name || UNNAMED_DOCUMENT, status: documentStatus(project, nodeId, true, reviews) });
+    rows.push({ projectId: project.id, projectName: project.name, nodeId, privateOnly: true, contentType: doc.contentType, name: doc.name || UNNAMED_DOCUMENT, ...(folderOf(doc.parentId) ? { folder: folderOf(doc.parentId) } : {}), status: documentStatus(project, nodeId, true, reviews) });
   }
   return rows;
 }
@@ -375,7 +376,7 @@ export function useMemoryData(ui: Ui): MemoryData {
           const patch: Partial<ProjectData> = {};
           if (nodes.status === "fulfilled") { patch.nodes = nodes.value.nodes; patch.truncated = nodes.value.truncated; }
           else patch.nodesError = true;
-          if (privateDocs.status === "fulfilled") patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted, contentType: d.content_type }]));
+          if (privateDocs.status === "fulfilled") { patch.privateDocs = new Map(privateDocs.value.documents.map(d => [d.node_id, { name: d.name, conflicted: d.conflicted, contentType: d.content_type, parentId: d.parent_id }])); patch.privateCursor = privateDocs.value.next_cursor; }
           if (draft.status === "fulfilled") patch.draftState = draft.value;
           patch.detailsLoaded = true;
           if (absence.status === "fulfilled") setAbsences(prev => new Map(prev).set(project.id, absence.value));

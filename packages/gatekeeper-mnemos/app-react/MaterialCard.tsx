@@ -1,5 +1,6 @@
+import { AttachmentFileIcon, attachmentAppearance } from "../../workshop-frontend/src/components/chat/attachmentAppearance.tsx";
 import { useState } from "react";
-import { ArrowSquareRight, ChatCircleText, FileCode, FileText, ListChecks } from "@phosphor-icons/react";
+import { ArrowSquareRight, ChatCircleText, ListChecks } from "@phosphor-icons/react";
 import type { DocumentRow } from "./data.ts";
 import { isMarkdown, markdownToPlain } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
@@ -7,9 +8,6 @@ import { Button, StatusBadge } from "./ui.tsx";
 
 /** Сколько символов фрагмента показывать в строке: дальше человек открывает документ. */
 const SNIPPET_LENGTH = 240;
-
-/** Файлы, у которых вместо листа — значок кода: по ним ищут именем и словом, а не смыслом. */
-const CODE_FILE = /\.(py|pyi|js|mjs|cjs|jsx|ts|tsx|go|rs|java|kt|scala|c|h|cpp|hpp|cs|rb|php|swift|sh|bash|zsh|ps1|sql|ya?ml|toml|ini|cfg|conf|properties|proto|tf|gradle|lock|json)$|^(Dockerfile|Makefile|\.env.*|\.gitignore)$/i;
 
 export type MaterialAction = "ask" | "task";
 
@@ -59,19 +57,18 @@ export function MaterialCard({ row, at, fragment, folder, showProject, terms, se
   /** Перенос в проект: только у файла личного пространства. */
   move?: MoveTargets;
 }) {
-  const code = CODE_FILE.test(row.name);
-  const Icon = code ? FileCode : FileText;
   const text = fragment ? snippet(isMarkdown(row.contentType, row.name) ? markdownToPlain(fragment) : fragment) : "";
+  const code = attachmentAppearance(row.name, row.contentType).label === "Код";
   const quiet = row.status.tone === "success";
   return (
     <article data-document={row.nodeId} aria-current={selected ? "true" : undefined}
       className={`group relative flex gap-3 border-b border-kumo-fill px-4 py-3 last:border-b-0 ${selected ? "bg-kumo-tint" : "hover:bg-kumo-tint/60"}`}>
-      <Icon size={20} className="mt-0.5 shrink-0 text-kumo-subtle" aria-hidden="true" />
+      <AttachmentFileIcon name={row.name} mimeType={row.contentType} />
       <div className="min-w-0 flex-1">
         {/* На узком экране проект и время уходят под имя: в одной строке они вытесняли имя файла целиком. */}
         <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-3">
-          <button type="button" onClick={onOpen}
-            className="m-0 min-w-0 flex-1 bg-transparent p-0 text-left text-[15px] leading-5 font-medium text-kumo-default outline-none line-clamp-2 [overflow-wrap:anywhere] after:absolute after:inset-0 focus-visible:underline sm:truncate"><Highlight text={row.name} terms={terms} /></button>
+          <button type="button" title={row.name} onClick={onOpen}
+            className="m-0 min-w-0 flex-1 bg-transparent p-0 text-left text-[15px] leading-5 font-medium text-kumo-default outline-none line-clamp-3 [overflow-wrap:anywhere] after:absolute after:inset-0 focus-visible:underline sm:truncate"><Highlight text={row.name} terms={terms} /></button>
           <span className="truncate text-[13px] leading-5 text-kumo-subtle sm:shrink-0">
             {showProject && row.projectName}{showProject && at && ", "}{at && <time dateTime={at}>{relativeTime(at)}</time>}
           </span>

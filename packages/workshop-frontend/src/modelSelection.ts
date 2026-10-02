@@ -10,16 +10,13 @@ export function getStoredSelectedModel(
 ): string | null {
   const storedModel = localStorage.getItem(LAST_SELECTED_MODEL_KEY);
 
-  if (storedModel === NO_AGENT_OPTION_VALUE) {
-    return null;
-  }
 
   if (storedModel && models.some((model) => model.id === storedModel)) {
     return storedModel;
   }
 
   // Default: Return the first configured model, or null if none are configured.
-  return models[0]?.id ?? null;
+  return models.find(model => model.id === "mnemos-assistant")?.id ?? models[0]?.id ?? null;
 }
 
 export function persistSelectedModel(modelId: string | null): void {

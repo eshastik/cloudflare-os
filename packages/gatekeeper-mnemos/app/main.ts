@@ -311,10 +311,12 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
 }
 export interface Host extends RpcTarget {
   openTemplateProposal(project:string,node:string,proposal:string):Promise<void>;
-  openNativeDocument(project: string, resource: string): Promise<boolean>;
+  openNativeDocument(project: string, resource: string, folder?: string): Promise<boolean>;
   /** Документ другого человека по приглашению: оболочка отмечает уведомление прочитанным и открывает редактор. */
   openSharedDocument(project: string, owner: string, resource: string): Promise<boolean>;
-  openPrompt(prompt: string, project?:{projectId:string;title:string}): void;
+  listProjectChats(project: string, offset?: number): Promise<{ chats: { workspaceId: string; chatId: number; title: string; at: string }[]; next: number | null; failed: number }>;
+  openProjectChat(workspace: string, chat: number): void;
+  openPrompt(prompt: string, project?:{projectId:string;title:string;materials?:import("@gadgets/workshop-shared/code-work").ChatMaterialReference[]}): void;
   setUnsavedChanges(dirty: boolean): void;
   subscribeAccent(frame: RpcTarget): string;
   getSelectedSection(): string;

@@ -2,6 +2,22 @@
 // Агент беседы один; когда задача про код, он переходит в рабочее место (OpenCode) через
 // инструмент codeWork, а шаги рабочего места показываются в ленте как вложенные строки.
 
+/** Выбранный файл или папка для задачи. Ссылка не расширяет права человека или агента. */
+export type ChatMaterialReference = { nodeId: string; name: string; folder?: boolean; privateOnly?: boolean };
+
+/** Проверка ссылок на материалы, которые человек выбрал в проекте. */
+export function validateChatMaterials(value: unknown): ChatMaterialReference[] {
+  if (!Array.isArray(value) || value.length > 1000) throw new Error("Неверный набор материалов беседы");
+  const seen = new Set<string>();
+  return value.map(item => {
+    const ref = item as ChatMaterialReference;
+    if (!ref || typeof ref.nodeId !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(ref.nodeId) || !validText(ref.name, 2048) ||
+        (ref.folder !== undefined && typeof ref.folder !== "boolean") || (ref.privateOnly !== undefined && typeof ref.privateOnly !== "boolean") || seen.has(ref.nodeId)) throw new Error("Неверный материал беседы");
+    seen.add(ref.nodeId);
+    return { nodeId: ref.nodeId, name: ref.name, ...(ref.folder ? { folder: true } : {}), ...(ref.privateOnly ? { privateOnly: true } : {}) };
+  });
+}
+
 /** Проект в наборе беседы. Контекст работы, а не право доступа. */
 export type ChatProject = {
   accountId: number;
@@ -11,6 +27,8 @@ export type ChatProject = {
   pinnedBy: "user" | "agent";
   /** У проекта есть подключённый код (известно на момент подключения). */
   hasCode?: boolean;
+  /** Материалы, выбранные человеком для задачи в этой беседе. */
+  materials?: ChatMaterialReference[];
 };
 
 /** Состояние работы с кодом в беседе; хранится в метаданных беседы. */
@@ -163,7 +181,7 @@ export function validateChatProjects(value: unknown): ChatProject[] {
     let key = `${p.accountId}:${p.projectId}`;
     if (seen.has(key)) throw new Error("Проект указан дважды");
     seen.add(key);
-    return {accountId: p.accountId, projectId: p.projectId, title: p.title.trim(), pinnedBy: p.pinnedBy, ...(p.hasCode ? {hasCode: true} : {})};
+    return {accountId: p.accountId, projectId: p.projectId, title: p.title.trim(), pinnedBy: p.pinnedBy, ...(p.hasCode ? {hasCode: true} : {}), ...(p.materials === undefined ? {} : {materials: validateChatMaterials(p.materials)})};
   });
 }
 

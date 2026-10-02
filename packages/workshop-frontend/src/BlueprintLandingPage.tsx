@@ -29,7 +29,6 @@ interface Props {
 
 // Using `any` for form state to avoid complex discriminated union issues with spread.
 type BindingFormState = Record<string, any>
-const NO_AGENT_MODEL_ID = 'gadgets:sentinel:no-agent-model'
 
 export default function BlueprintLandingPage({ rpcStub }: Props) {
   const params = useParams({ strict: false }) as { id?: string }
@@ -1269,7 +1268,7 @@ function BlueprintBindingSummaryCard({
       ? `${binding.suggestedModel.provider} / ${binding.suggestedModel.modelName}`
       : binding.type === 'agentSpawner'
         ? binding.suggestedModel === null
-          ? 'Без агента'
+          ? 'Mnemos по умолчанию'
           : binding.suggestedModel
             ? `${binding.suggestedModel.provider} / ${binding.suggestedModel.modelName}`
             : undefined
@@ -1287,7 +1286,7 @@ function BlueprintBindingSummaryCard({
     if (assignment.type === 'aiModel') {
       return modelsByIdLabel(assignment.modelId)
     }
-    if (assignment.modelId === null) return 'Без агента'
+    if (assignment.modelId === null) return 'Mnemos по умолчанию'
     return modelsByIdLabel(assignment.modelId)
   })()
   const status = assignment ? 'Готово' : suggestion ? 'Есть подсказка' : 'Нужно настроить'
@@ -1426,7 +1425,7 @@ function BindingField({
 
   if (binding.type === 'agentSpawner') {
     const selectedModelId = (value as any).modelId === null
-      ? NO_AGENT_MODEL_ID
+      ? models.find(model => model.id === "mnemos-assistant")?.id ?? models[0]?.id
       : (value as any).modelId ?? undefined
 
     return (
@@ -1442,14 +1441,12 @@ function BindingField({
           className="w-full text-sm"
           placeholder="Модель для запускаемых агентов"
           value={selectedModelId}
-          onValueChange={(modelId) => onChange({ modelId: modelId === NO_AGENT_MODEL_ID ? null : modelId } as any)}
+          onValueChange={(modelId) => onChange({ modelId } as any)}
           renderValue={(id) => {
-            if (id === NO_AGENT_MODEL_ID) return '(Без агента)'
             return models.find(m => m.id === id)?.name ?? String(id)
           }}
           container={selectPortalContainer}
         >
-          <Select.Option value={NO_AGENT_MODEL_ID}>(Без агента)</Select.Option>
           {models.map(m => (
             <Select.Option key={m.id} value={m.id}>
               {m.name}

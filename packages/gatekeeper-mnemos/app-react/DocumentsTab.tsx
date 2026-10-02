@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatCircleText, CircleNotch, FileArrowUp, MagnifyingGlass, X } from "@phosphor-icons/react";
+import { ChatCircleText, CircleNotch, FileArrowUp, MagnifyingGlass, X, Folder, ArrowLeft, CaretRight } from "@phosphor-icons/react";
 import type { DocumentContent, ProjectSearchPage } from "../src/mnemos-api.ts";
 import { useHost, useUi } from "./host.ts";
-import { documentRows, isPersonalSpace, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData } from "./data.ts";
+import { documentRows, isPersonalSpace, UNNAMED_DOCUMENT, type DocumentRow, type MemoryData, type ProjectNode, type ProjectData } from "./data.ts";
+import { ProjectConversations, ExplorerFolders, ExplorerPath, ExplorerAssistant, explorerPrompt, inFolder, folderPath, type ExplorerTarget } from "./ProjectExplorer.tsx";
 import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { folderOf, MaterialCard, queryTerms, MaterialChatButtons, materialPrompt, type MaterialAction, type MoveTarget, type MoveTargets } from "./MaterialCard.tsx";
 import { isMarkdown, Markdown } from "./markdown.tsx";
@@ -67,6 +68,55 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     selectedFromList.current = "";
     if (!fromList) setSelected(initialProject);
   }, [initialProject, linkedDocument]);
+  const [tab, setTab] = useState<"files" | "chats">("files");
+  const [folder, setFolder] = useState("");
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [nodePage, setNodePage] = useState<{ project: string; nodes: ProjectNode[]; cursor: string; truncated: boolean } | null>(null);
+  const [extraPrivate, setExtraPrivate] = useState<{ project: string; docs: ProjectData["privateDocs"]; cursor: string } | null>(null);
+  const [loadingNodes, setLoadingNodes] = useState(false);
+  const scannedCursors = useRef(new Set<string>());
+  const pageGeneration = useRef(0);
+  const previousProject = useRef("");
+  const baseNodes = data.projects.find(project => project.id === selected)?.nodes;
+  useEffect(() => {
+    const generation = ++pageGeneration.current;
+    scannedCursors.current.clear();
+    if (previousProject.current !== selected) { setFolder(""); setChosen(new Set()); previousProject.current = selected; }
+    setNodePage(null); setExtraPrivate(null);
+    if (!selected) return;
+    setLoadingNodes(true);
+    void ui.browseProject(selected, "").then(page => {
+      if (pageGeneration.current === generation) setNodePage({ project: selected, nodes: page.nodes, cursor: page.next_cursor ?? "", truncated: page.truncated });
+    }, () => { if (pageGeneration.current === generation) setNotice("Не удалось прочитать папки проекта. Повторите загрузку."); }).finally(() => { if (pageGeneration.current === generation) setLoadingNodes(false); });
+    return () => { pageGeneration.current++; };
+  }, [ui, selected, baseNodes]);
+  async function moreNodes() {
+    const sharedCursor = nodePage?.cursor ?? "", privateCursor = extraPrivate?.project === selected ? extraPrivate.cursor : data.projects.find(project => project.id === selected)?.privateCursor ?? "";
+    if (loadingNodes || (!sharedCursor && !privateCursor)) return;
+    const generation = pageGeneration.current, before = nodePage;
+    setLoadingNodes(true); setNotice("");
+    try {
+      if (sharedCursor && before) {
+        const page = await ui.browseProject(before.project, sharedCursor);
+        if (page.next_cursor === sharedCursor) throw new Error("Сервер повторил страницу.");
+        if (generation === pageGeneration.current) setNodePage({ project: before.project, nodes: [...new Map([...before.nodes, ...page.nodes].map(node => [node.node_id, node])).values()], cursor: page.next_cursor ?? "", truncated: page.truncated });
+      }
+      if (privateCursor) {
+        const page = await ui.listPrivateDocuments(selected, privateCursor);
+        if (page.next_cursor === privateCursor) throw new Error("Сервер повторил страницу.");
+        if (generation === pageGeneration.current) setExtraPrivate(previous => ({ project: selected, docs: new Map([...(previous?.project === selected ? previous.docs : new Map()), ...page.documents.map(doc => [doc.node_id, { name: doc.name, parentId: doc.parent_id, contentType: doc.content_type, conflicted: doc.conflicted }] as const)]), cursor: page.next_cursor }));
+      }
+    } catch { if (generation === pageGeneration.current) setNotice("Продолжение списка не загрузилось. Повторите попытку. Если личная версия изменилась, обновите страницу."); }
+    finally { if (generation === pageGeneration.current) setLoadingNodes(false); }
+  }
+  const explorerProjects = useMemo(() => data.projects.map(project => ({ ...project, ...(nodePage?.project === project.id ? { nodes: nodePage.nodes, truncated: nodePage.truncated } : {}), ...(extraPrivate?.project === project.id ? { privateDocs: new Map([...project.privateDocs, ...extraPrivate.docs]), privateCursor: extraPrivate.cursor } : {}) })), [data.projects, nodePage, extraPrivate]);
+  const currentProject = explorerProjects.find(project => project.id === selected);
+  const nodes = useMemo(() => currentProject ? [...currentProject.nodes, ...[...currentProject.privateDocs].filter(([id]) => !currentProject.nodes.some(node => node.node_id === id)).map(([id, doc]) => ({ node_id: id, parent_id: doc.parentId, name: doc.name, is_dir: false }))] : [], [currentProject]);
+  const toggleChosen = (id: string) => setChosen(before => { const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  function openFolder(id: string) {
+    setTab("files"); setFolder(id); setChosen(new Set()); setQuery(""); setOpened(null);
+    void host.openSection("documents", selected, id || undefined).catch(() => setNotice("Не удалось сохранить переход к папке."));
+  }
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<Search | null>(null);
   const [allProjects, setAllProjects] = useState(false);
@@ -86,9 +136,14 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => () => { mounted.current = false; clearTimeout(timer.current); searchAbort.current?.abort(); }, []);
 
-  const rowsByProject = useMemo(() => new Map(data.projects.map(p => [p.id, documentRows(p, data.reviews)])), [data.projects, data.reviews]);
-  const visibleProjects = useMemo(() => selected ? data.projects.filter(p => p.id === selected) : data.projects, [data.projects, selected]);
-  const rows = useMemo(() => visibleProjects.flatMap(p => rowsByProject.get(p.id) ?? []), [visibleProjects, rowsByProject]);
+  const rowsByProject = useMemo(() => new Map(explorerProjects.map(p => [p.id, documentRows(p, data.reviews)])), [explorerProjects, data.reviews]);
+  const visibleProjects = useMemo(() => selected ? explorerProjects.filter(p => p.id === selected) : explorerProjects, [explorerProjects, selected]);
+  const allRows = useMemo(() => visibleProjects.flatMap(p => rowsByProject.get(p.id) ?? []), [visibleProjects, rowsByProject]);
+  const rows = selected ? allRows.filter(row => inFolder(nodes, row.nodeId, folder)).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true })) : allRows;
+  const shownFolders = selected ? nodes.filter(node => node.is_dir && inFolder(nodes, node.node_id, folder)).sort((a, b) => a.name.localeCompare(b.name, "ru", { numeric: true })) : [];
+  const targets: ExplorerTarget[] = nodes.filter(node => chosen.has(node.node_id)).map(node => ({ nodeId: node.node_id, name: folderPath(nodes, node.is_dir ? node.node_id : node.parent_id ?? "").map(n => n.name).concat(node.is_dir ? [] : [node.name]).join("/"), folder: node.is_dir, privateOnly: currentProject?.privateDocs.has(node.node_id) && !currentProject.nodes.some(shared => shared.node_id === node.node_id) }));
+  for (const row of allRows) if (chosen.has(row.nodeId) && !targets.some(target => target.nodeId === row.nodeId)) targets.push({ nodeId: row.nodeId, name: row.name, privateOnly: row.privateOnly });
+  const agentTargets = targets.length ? targets : folder ? [{ nodeId: folder, name: folderPath(nodes, folder).map(n => n.name).join("/"), folder: true }] : [];
   const total = data.projects.reduce((sum, p) => sum + (rowsByProject.get(p.id)?.length ?? 0), 0);
   const anyTruncated = data.projects.some(p => p.truncated);
   // Эффект поиска читает проекты через ссылку: перезагрузка списка проектов не должна повторять запрос.
@@ -170,7 +225,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     setOpened({ row, content: null, error: "" });
     try {
       // Документ со своим редактором открывается в оболочке; просмотр здесь не нужен.
-      if (await host.openNativeDocument(row.projectId, row.nodeId)) { setOpened(current => current?.row === row ? null : current); return; }
+      if (await host.openNativeDocument(row.projectId, row.nodeId, nodes.find(node => node.node_id === row.nodeId)?.parent_id || undefined)) { setOpened(current => current?.row === row ? null : current); return; }
       let content: DocumentContent, textHead: string | undefined;
       if (row.privateOnly) {
         const doc = await ui.readDraftDocument(row.projectId, row.nodeId);
@@ -200,22 +255,28 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   }
 
   function closeDocument() {
-    void host.openSection("documents", selected)
+    void host.openSection("documents", selected, folder || undefined)
       .catch(() => setNotice("Не удалось закрыть просмотр. Повторите попытку."));
   }
 
   useEffect(() => {
-    if (!linkedDocument) { openedLink.current = null; setOpened(null); return; }
+    if (!linkedDocument) { openedLink.current = null; setOpened(null); setFolder(""); return; }
     if (openedLink.current === linkedDocument.seq || data.projectsLoading) return;
-    const project = data.projects.find(p => p.id === initialProject);
+    const project = explorerProjects.find(p => p.id === initialProject);
     if (!project) return;
+    const linkedNode = nodes.find(node => node.node_id === linkedDocument.node);
+    if (linkedNode?.is_dir) { openedLink.current = linkedDocument.seq; setFolder(linkedNode.node_id); setOpened(null); return; }
+    if (!linkedNode && loadingNodes) return;
+    const linkedCursor = nodePage?.cursor || project.privateCursor;
+    if (!linkedNode && linkedCursor) { if (!scannedCursors.current.has(linkedCursor)) { scannedCursors.current.add(linkedCursor); void moreNodes(); } return; }
+    if (linkedNode) setFolder(linkedNode.parent_id && nodes.some(node => node.node_id === linkedNode.parent_id && node.is_dir) ? linkedNode.parent_id : "");
     const hit = search?.hits.find(h => h.project_id === initialProject && h.node_id === linkedDocument.node);
     const row = rowsByProject.get(initialProject)?.find(r => r.nodeId === linkedDocument.node) ??
       (hit ? rowFor(hit) : { projectId: initialProject, projectName: project.name, nodeId: linkedDocument.node,
         name: UNNAMED_DOCUMENT, status: { tone: "success" as const, label: "Опубликовано" } });
     openedLink.current = linkedDocument.seq;
     void open(row);
-  }, [linkedDocument, initialProject, rowsByProject, data.projectsLoading, data.projects, search]);
+  }, [linkedDocument, initialProject, rowsByProject, data.projectsLoading, explorerProjects, search, loadingNodes, nodePage, extraPrivate, nodes]);
 
   async function readMore() {
     const before = opened, content = before?.content;
@@ -269,7 +330,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     setNotice("");
     // Недоступный проект в беседу не передаётся: агент всё равно не сможет его подключить.
     const known = data.projects.some(p => p.id === row.projectId);
-    void host.openPrompt(materialPrompt(action, row.name), known ? { projectId: row.projectId, title: row.projectName } : undefined)
+    void host.openPrompt(explorerPrompt(row.projectId, [{ nodeId: row.nodeId, name: [row.folder, row.name].filter(Boolean).join("/"), privateOnly: row.privateOnly }], materialPrompt(action, row.name)), known ? { projectId: row.projectId, title: row.projectName, materials: [{ nodeId: row.nodeId, name: row.name, privateOnly: row.privateOnly }] } : undefined)
       .catch(() => setNotice("Беседа не открылась. Повторите попытку."));
   }
 
@@ -307,11 +368,11 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
       .catch(() => setNotice("Беседа не открылась. Повторите попытку."));
   }
 
-  async function upload() {
+  async function upload(directory = false) {
     if (uploading) return;
     setUploading(true); setNotice("");
     try {
-      const result = await (selected ? host.pickInboxFiles(false, selected) : host.pickInboxFiles(false));
+      const result = await (selected ? host.pickInboxFiles(directory, selected) : host.pickInboxFiles(directory));
       if (result.length) await data.reloadProjects();
     } catch { setNotice("Загрузка не завершена. Проверьте материалы проекта перед повтором."); }
     finally { setUploading(false); }
@@ -334,75 +395,13 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
   const hiddenProjects = data.projects.length - shownProjects.length;
   const terms = useMemo(() => search ? queryTerms(search.query) : [], [search?.query]);
   const materialRow = (row: DocumentRow, fragment?: string, folder?: string) => (
-    <MaterialCard key={keyOf(row.projectId, row.nodeId)} row={row} fragment={fragment} folder={folder ?? row.folder} terms={search ? terms : undefined}
+    <MaterialCard key={keyOf(row.projectId, row.nodeId)} row={row} fragment={fragment} folder={folder ?? (selected && !search ? undefined : row.folder)} terms={search ? terms : undefined}
       showProject={!selected} at={times.get(keyOf(row.projectId, row.nodeId))}
       selected={isOpened(row)} onOpen={() => selectDocument(row)} onChat={action => chat(row, action)} move={moveFor(row)} />
   );
 
-  return (
-    <div className="max-w-[1040px]">
-      <div className="sticky top-0 z-10 -mx-1 bg-kumo-base px-1 pt-1 pb-3">
-        <label className="flex h-12 items-center gap-3 rounded-[16px] border border-kumo-fill bg-kumo-overlay px-4 text-kumo-subtle shadow-[0_1px_2px_rgba(24,32,28,.04)] focus-within:border-kumo-brand">
-          <MagnifyingGlass size={20} aria-hidden="true" />
-          <input ref={input} type="search" value={query} autoComplete="off" spellCheck={false}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); searchNow(); } else if (e.key === "Escape" && query) { e.preventDefault(); clearQuery(); } }}
-            placeholder={scopeName ? `Искать в «${scopeName}»: имя файла, слово, вопрос` : "Искать во всех материалах: имя файла, слово, вопрос"}
-            aria-label="Поиск по материалам"
-            className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-kumo-default outline-none placeholder:text-kumo-inactive [&::-webkit-search-cancel-button]:hidden" />
-          <span aria-live="polite" className="shrink-0 text-[13px]">
-            {search?.busy && <span data-searching="" className="inline-flex items-center gap-1.5 text-kumo-subtle"><CircleNotch size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Ищу…</span>}
-          </span>
-          {query.trim().length > 0 && query.trim().length < MIN_QUERY_LENGTH && <span data-too-short="" className="shrink-0 text-[13px] text-kumo-subtle">Ещё хотя бы один знак</span>}
-          {query && <button type="button" aria-label="Очистить поиск" onClick={clearQuery}
-            className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-kumo-subtle outline-none hover:bg-kumo-tint hover:text-kumo-default focus-visible:ring-2 focus-visible:ring-kumo-ring"><X size={14} aria-hidden="true" /></button>}
-        </label>
-
-        {data.projects.length > 1 && (
-          <div role="group" aria-label="Проект" className="mt-3 flex items-center gap-1.5 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:pb-1 max-sm:[scrollbar-width:none] sm:flex-wrap max-sm:[&>*]:shrink-0">
-            <ProjectChip active={!selected} onClick={() => setSelected("")} count={`${total}${anyTruncated ? "+" : ""}`}>Все проекты</ProjectChip>
-            {shownProjects.map(p => <ProjectChip key={p.id} active={selected === p.id} onClick={() => setSelected(p.id)} count={countOf(p.id)}>{p.name}</ProjectChip>)}
-            {hiddenProjects > 0 && <button type="button" onClick={() => setAllProjects(true)} className="h-8 rounded-full px-3 text-[13px] text-kumo-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-kumo-ring">Ещё {hiddenProjects}</button>}
-          </div>
-        )}
-      </div>
-
-      {notice && <div className="mb-3"><Notice tone="danger">{notice}</Notice></div>}
-      {moved && <div className="mb-3"><Notice tone="success">{moved}</Notice></div>}
-      {data.projectsError && <div className="mb-3"><Notice tone="danger">{data.projectsError}</Notice></div>}
-
-      <div className={opened ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)]" : ""}>
-        <div className="min-w-0">
-          {search ? (
-            <section aria-label="Результаты поиска" aria-busy={search.busy || undefined}>
-              {(search.busy || search.hits.length > 0 || search.pending || search.failed > 0) && <ListHeader>
-                {search.busy && search.hits.length === 0 ? `Ищу «${search.query}»…` : `Найдено: ${search.hits.length}`}
-                {search.pending && <span> · часть файлов ещё готовится к поиску</span>}
-                {search.failed > 0 && <span className="text-kumo-danger"> · не ответили проекты: {search.failed} <button type="button" onClick={searchNow} className="text-kumo-brand underline-offset-2 hover:underline">Повторить</button></span>}
-              </ListHeader>}
-              {!search.busy && search.hits.length === 0 && <NothingFound query={search.query} scope={scopeName} onAsk={() => askAgent(search.query)} />}
-              {search.hits.length > 0 && <div className={`overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay transition-opacity ${search.busy ? "opacity-60" : ""}`}>
-                {search.hits.map(hit => {
-                  const row = rowFor(hit);
-                  return materialRow(row, hit.text, hit.path !== undefined ? folderOf(hit.path, hit.name) : row.folder);
-                })}
-              </div>}
-            </section>
-          ) : (
-            <section aria-label="Документы">
-              {nodesFailed.length > 0 && <div className="mb-3"><Notice tone="danger">Не удалось загрузить документы: {nodesFailed.map(p => p.name).join(", ")}. Проверьте доступ и обновите страницу.</Notice></div>}
-              {rows.length === 0 && data.projectsLoading && <p className="m-0 py-8 text-center text-[14px] text-kumo-subtle">Загружаю материалы…</p>}
-              {noMaterials && <EmptyMaterials inProject={!!selected} uploading={uploading} onUpload={() => void upload()} />}
-              {rows.length > 0 && <>
-                <ListHeader>{scopeName ? `В проекте «${scopeName}»: ${rows.length}` : `Все материалы: ${rows.length}`}{anyTruncated && " · показана первая страница, остальное находится поиском"}</ListHeader>
-                <div className="overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay">{rows.map(row => materialRow(row))}</div>
-              </>}
-            </section>
-          )}
-        </div>
-
-        {opened && (
-          <aside aria-label="Просмотр документа" className="min-w-0 rounded-[20px] border border-kumo-fill bg-kumo-overlay p-5 shadow-[0_1px_2px_rgba(24,32,28,.05),0_16px_40px_rgba(24,32,28,.08)] max-lg:order-first lg:sticky lg:top-24 lg:self-start">
+  const preview = opened ? (
+          <aside aria-label="Просмотр документа" className="min-w-0 rounded-xl border border-kumo-fill bg-kumo-overlay p-4 max-lg:order-first lg:self-start">
             <div className="mb-3 flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <h2 className="m-0 text-[17px] font-semibold tracking-[-0.2px] text-kumo-default [overflow-wrap:anywhere]">{opened.row.name}</h2>
@@ -428,7 +427,90 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
               {opened.content?.truncated && <p className="mt-3 mb-0 text-[13px] text-kumo-subtle">Показано начало документа. Полный файл доступен по кнопке «Скачать оригинал».</p>}
             </div>
           </aside>
+) : null;
+  return (
+    <div className="max-w-full">
+      {currentProject && <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div><button type="button" onClick={() => void host.openSection("projects", selected).catch(() => setNotice("Проект не открылся."))} className="mb-2 inline-flex items-center gap-1 text-[13px] text-kumo-brand"><ArrowLeft size={14} />К проекту</button><h1 className="m-0 text-[25px] font-semibold">{currentProject.name}</h1><p className="mb-0 mt-1 text-[14px] text-kumo-subtle">Файлы, папки и работа с Mnemos</p></div>
+        <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" disabled={uploading} icon={FileArrowUp} onClick={() => void upload()}>Загрузить файлы</Button>{!touchOnly && <Button variant="secondary" size="sm" disabled={uploading} icon={Folder} onClick={() => void upload(true)}>Загрузить папку</Button>}<Button size="sm" icon={ChatCircleText} onClick={() => askAgent(`Работаем над проектом «${currentProject.name}».`)}>Новая беседа</Button></div>
+      </header>}
+      <div className={selected ? "grid gap-5 xl:grid-cols-[200px_minmax(0,1fr)_280px]" : ""}>
+      {selected && <aside className="min-w-0 rounded-xl border border-kumo-fill p-2 max-xl:hidden"><ExplorerFolders nodes={nodes} current={folder} onOpen={openFolder} /></aside>}
+      <div className="min-w-0">
+      {selected && <div role="tablist" aria-label="Содержимое проекта" className="mb-4 flex gap-4 border-b border-kumo-fill">{([["files", "Файлы"], ["chats", "Беседы"]] as const).map(([id, label]) => <button type="button" role="tab" aria-selected={tab === id} key={id} onClick={() => setTab(id)} className={`border-b-2 px-1 py-3 text-[14px] ${tab === id ? "border-kumo-brand font-semibold text-kumo-brand" : "border-transparent text-kumo-subtle"}`}>{label}</button>)}</div>}
+      {tab === "chats" && selected ? <ProjectConversations key={selected} project={selected} /> : <>
+      <div className="sticky top-0 z-10 -mx-1 bg-kumo-base px-1 pt-1 pb-3">
+        <label className="flex h-12 items-center gap-3 rounded-[16px] border border-kumo-fill bg-kumo-overlay px-4 text-kumo-subtle shadow-[0_1px_2px_rgba(24,32,28,.04)] focus-within:border-kumo-brand">
+          <MagnifyingGlass size={20} aria-hidden="true" />
+          <input ref={input} type="search" value={query} autoComplete="off" spellCheck={false}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); searchNow(); } else if (e.key === "Escape" && query) { e.preventDefault(); clearQuery(); } }}
+            placeholder={scopeName ? `Искать в «${scopeName}»: имя файла, слово, вопрос` : "Искать во всех материалах: имя файла, слово, вопрос"}
+            aria-label="Поиск по материалам"
+            className="h-full min-w-0 flex-1 bg-transparent text-[16px] text-kumo-default outline-none placeholder:text-kumo-inactive [&::-webkit-search-cancel-button]:hidden" />
+          <span aria-live="polite" className="shrink-0 text-[13px]">
+            {search?.busy && <span data-searching="" className="inline-flex items-center gap-1.5 text-kumo-subtle"><CircleNotch size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Ищу…</span>}
+          </span>
+          {query.trim().length > 0 && query.trim().length < MIN_QUERY_LENGTH && <span data-too-short="" className="shrink-0 text-[13px] text-kumo-subtle">Ещё хотя бы один знак</span>}
+          {query && <button type="button" aria-label="Очистить поиск" onClick={clearQuery}
+            className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-kumo-subtle outline-none hover:bg-kumo-tint hover:text-kumo-default focus-visible:ring-2 focus-visible:ring-kumo-ring"><X size={14} aria-hidden="true" /></button>}
+        </label>
+
+        {!selected && data.projects.length > 1 && (
+          <div role="group" aria-label="Проект" className="mt-3 flex items-center gap-1.5 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:pb-1 max-sm:[scrollbar-width:none] sm:flex-wrap max-sm:[&>*]:shrink-0">
+            <ProjectChip active={!selected} onClick={() => setSelected("")} count={`${total}${anyTruncated ? "+" : ""}`}>Все проекты</ProjectChip>
+            {shownProjects.map(p => <ProjectChip key={p.id} active={selected === p.id} onClick={() => setSelected(p.id)} count={countOf(p.id)}>{p.name}</ProjectChip>)}
+            {hiddenProjects > 0 && <button type="button" onClick={() => setAllProjects(true)} className="h-8 rounded-full px-3 text-[13px] text-kumo-brand outline-none hover:underline focus-visible:ring-2 focus-visible:ring-kumo-ring">Ещё {hiddenProjects}</button>}
+          </div>
         )}
+      </div>
+
+      {selected && <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><ExplorerPath nodes={nodes} current={folder} onOpen={openFolder} />{chosen.size > 0 && <div className="flex gap-3 text-[13px]"><button type="button" onClick={() => document.querySelector<HTMLTextAreaElement>("#project-assistant textarea")?.focus()} className="font-medium text-kumo-brand">Задача по выбранным ({chosen.size})</button><button type="button" onClick={() => setChosen(new Set())} className="text-kumo-subtle">Снять выбор</button></div>}</div>}
+      {notice && <div className="mb-3"><Notice tone="danger">{notice}</Notice></div>}
+      {moved && <div className="mb-3"><Notice tone="success">{moved}</Notice></div>}
+      {data.projectsError && <div className="mb-3"><Notice tone="danger">{data.projectsError}</Notice></div>}
+
+      <div className={opened && !selected ? "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)]" : ""}>
+        <div className="min-w-0">
+          {search ? (
+            <section aria-label="Результаты поиска" aria-busy={search.busy || undefined}>
+              {(search.busy || search.hits.length > 0 || search.pending || search.failed > 0) && <ListHeader>
+                {search.busy && search.hits.length === 0 ? `Ищу «${search.query}»…` : `Найдено: ${search.hits.length}`}
+                {search.pending && <span> · часть файлов ещё готовится к поиску</span>}
+                {search.failed > 0 && <span className="text-kumo-danger"> · не ответили проекты: {search.failed} <button type="button" onClick={searchNow} className="text-kumo-brand underline-offset-2 hover:underline">Повторить</button></span>}
+              </ListHeader>}
+              {!search.busy && search.hits.length === 0 && <NothingFound query={search.query} scope={scopeName} onAsk={() => askAgent(search.query)} />}
+              {search.hits.length > 0 && <div className={`overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay transition-opacity ${search.busy ? "opacity-60" : ""}`}>
+                {search.hits.map(hit => {
+                  const row = rowFor(hit);
+                  return materialRow(row, hit.text, hit.path !== undefined ? folderOf(hit.path, hit.name) : row.folder);
+                })}
+              </div>}
+            </section>
+          ) : (
+            <section aria-label="Документы">
+              {nodesFailed.length > 0 && <div className="mb-3"><Notice tone="danger">Не удалось загрузить документы: {nodesFailed.map(p => p.name).join(", ")}. Проверьте доступ и обновите страницу.</Notice></div>}
+              {rows.length === 0 && data.projectsLoading && <p className="m-0 py-8 text-center text-[14px] text-kumo-subtle">Загружаю материалы…</p>}
+              {noMaterials && shownFolders.length === 0 && !folder && <EmptyMaterials inProject={!!selected} uploading={uploading} onUpload={() => void upload()} />}
+              {shownFolders.length > 0 && <div className="mb-3 overflow-hidden rounded-xl border border-kumo-fill bg-kumo-overlay">{shownFolders.map(dir => <div key={dir.node_id} className="flex items-center gap-3 border-t border-kumo-fill px-4 py-3 first:border-0">
+                <input type="checkbox" aria-label={`Выбрать папку ${dir.name}`} checked={chosen.has(dir.node_id)} onChange={() => toggleChosen(dir.node_id)} className="h-4 w-4 shrink-0 accent-[var(--color-kumo-brand)]" />
+                <button type="button" onClick={() => openFolder(dir.node_id)} className="flex min-w-0 flex-1 items-center gap-3 text-left"><Folder size={24} weight="duotone" className="shrink-0 text-kumo-brand" /><span className="min-w-0 flex-1 truncate text-[15px] font-medium">{dir.name}</span><CaretRight size={16} className="text-kumo-subtle" /></button>
+              </div>)}</div>}
+              {folder && rows.length === 0 && shownFolders.length === 0 && !loadingNodes && !nodePage?.cursor && !currentProject?.privateCursor && <Notice>В этой папке пока нет файлов.</Notice>}
+              {rows.length > 0 && <>
+                <ListHeader>{scopeName ? `Файлов в папке: ${rows.length}` : `Все материалы: ${rows.length}`}{(selected ? (currentProject?.truncated || !!currentProject?.privateCursor) : anyTruncated) && " · список загружен не полностью"}</ListHeader>
+                <div className="overflow-hidden rounded-[16px] border border-kumo-fill bg-kumo-overlay">{rows.map(row => selected ? <div key={row.nodeId} className="flex border-t border-kumo-fill first:border-0"><label className="flex shrink-0 items-start pl-4 pt-5"><input type="checkbox" aria-label={`Выбрать файл ${row.name}`} checked={chosen.has(row.nodeId)} onChange={() => toggleChosen(row.nodeId)} className="h-4 w-4" /></label><div className="min-w-0 flex-1">{materialRow(row)}</div></div> : materialRow(row))}</div>
+              </>}
+              {selected && <div className="mt-3">{loadingNodes ? <p role="status" className="text-[13px] text-kumo-subtle">Загружаю папки и файлы…</p> : (nodePage?.cursor || currentProject?.privateCursor) ? <Button size="sm" variant="secondary" onClick={() => void moreNodes()}>Загрузить ещё файлы и папки</Button> : currentProject?.truncated ? <Notice>Сервер не выдал продолжение списка. Найдите файл через поиск.</Notice> : null}</div>}
+            </section>
+          )}
+        </div>
+
+        {!selected && preview}
+      </div>
+      </> }
+      </div>
+      {selected && <aside className="min-w-0 space-y-4 xl:sticky xl:top-4 xl:self-start">{preview}<ExplorerAssistant key={selected} targets={targets} contextName={folder ? folderPath(nodes, folder).map(n => n.name).join(" / ") : "Все материалы проекта"} onClear={() => setChosen(new Set())} onStart={async task => { setNotice(""); try { await host.openPrompt(explorerPrompt(selected, agentTargets, task), { projectId: selected, title: currentProject?.name ?? "Проект", materials: agentTargets }); } catch { setNotice("Беседа не открылась. Задача сохранена в поле, повторите попытку."); } }} /></aside>}
       </div>
       {isAdministrator && <details aria-label="Личные версии сотрудников" className="mt-8 border-t border-kumo-fill pt-4" onToggle={e => setAdministrative((e.currentTarget as HTMLDetailsElement).open)}>
         <summary className="cursor-pointer text-[15px] font-semibold text-kumo-default">Личные версии сотрудников</summary>

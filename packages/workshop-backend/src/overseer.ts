@@ -8083,9 +8083,6 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
       title: string, prompt: string, config: AgentSpawnerConfig,
       creatorUserId?: string, callable?: boolean) {
     if (!this.impl.ownerId) throw new Error("Workspace has been deleted.");
-    if (callable && !config.modelId) {
-      throw new Error("Cannot create a callable agent without a model.");
-    }
 
     // Resolve the model from the creating user's account (falls back to owner for
     // bindings created before collaborator support).

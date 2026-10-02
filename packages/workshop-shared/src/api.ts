@@ -29,7 +29,7 @@ import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { NativeDocumentSource, AccountDescription, ActionKind, ActionDescription, ActionOutcome, AvatarImage, GatekeeperUiFrame, ObservationDescription, ResourceDescription, ResourceConfiguratorFrame, SupportedResource, VendorDescription, HookDescription } from "./gatekeeper.js";
 import type { UiFeatureFlags } from "./feature-flags.js";
 import type { AppearancePreference } from "./accent-theme.js";
-import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
+import type { AgentStep, ChatCodeMode, ChatCodeWork, ChatProject, ChatMaterialReference, CodeWorkOutput, ChangedFile, CodeChangesRepository } from "./code-work.js";
 import type { TelegramChatLink } from "./telegram-bot.js";
 
 export const SERVICE_SALT = new Uint8Array([
@@ -1676,8 +1676,7 @@ export interface Overseer extends RpcTarget {
   // always creates a visible chat event, even when it does not produce a message for the agent.
   // Slash-command requests cannot include capsules or attachments.
   //
-  // `modelId` is one of the IDs in the result of `listModels()`, or null to inhibit AI response
-  // (useful when using chat to talk between humans).
+  // `modelId` is one of the IDs in the result of `listModels()`, or null to use the deployment default agent.
   //
   // `formats` records where the message names one of the deployment's standard output formats, so
   // the transcript can draw it as a chip. Display only -- what the agent reads is the noun, which
@@ -1692,8 +1691,7 @@ export interface Overseer extends RpcTarget {
   // agent does not run.
   // Slash-command requests cannot include capsules or attachments.
   //
-  // `modelId` is one of the IDs in the result of `listModels()`, or null to inhibit AI response
-  // (useful when using chat to talk between humans).
+  // `modelId` is one of the IDs in the result of `listModels()`, or null to use the deployment default agent.
   //
   sendChatMessage(chatId: number, message: string | SlashCommandRequest, modelId: string | null,
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
@@ -1923,6 +1921,8 @@ export type ChatProjectContext = {
   accountId: number;
   projectId: string;
   title: string;
+  /** Материалы первого проекта при открытии новой беседы. */
+  materials?: ChatMaterialReference[];
   /** Набор проектов беседы; пустой — проект определится по задаче. */
   projects?: ChatProject[];
 };

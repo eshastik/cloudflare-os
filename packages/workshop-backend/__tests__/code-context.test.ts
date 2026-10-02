@@ -74,3 +74,10 @@ describe("переключатель «Код» в подсказке и инс�
     expect(prompt).not.toContain("«Код: Выкл»");
   });
 });
+
+it("выбранные файлы доступны агенту беседы при выключенной работе с кодом", () => {
+  const prompt = formatCodeWorkPrompt({ mode: "off", codeDisabled: true, projects: [{ accountId: 0, projectId: "project", title: "Исследования", pinnedBy: "user", materials: [{ nodeId: "doc-1", name: "Отчёт.pdf", privateOnly: true }] }] });
+  expect(prompt).toContain('"nodeId":"doc-1"');
+  expect(prompt).toContain("readPersonalDocument");
+  expect(prompt).toContain("инструментов кода");
+});

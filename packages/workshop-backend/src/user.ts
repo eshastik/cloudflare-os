@@ -1005,6 +1005,11 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
 
   // DO NOT MAKE PUBLIC -- returns API keys.
   async getChatContext(modelId: string | null): Promise<UserChatContext> {
+    if (!modelId) {
+      const models = await this.listModels();
+      modelId = models.find(model => model.id === "mnemos-assistant")?.id ?? models[0]?.id ?? null;
+    }
+    if (!modelId) throw new Error("Нет доступного агента. Проверьте настройку моделей установки.");
     let gwConfig = getAiGatewayConfig(this.env);
 
     let result: UserChatContext = {

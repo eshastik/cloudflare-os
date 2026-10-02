@@ -1412,7 +1412,7 @@ export interface PrivateDocumentCreate {
 
 /** Authorized documents in the account owner's current personal snapshot. */
 export interface PrivateDocumentPage {
-  documents: { node_id: string; name: string; content_type: string; conflicted: boolean }[];
+  documents: { node_id: string; parent_id?: string; name: string; content_type: string; conflicted: boolean }[];
   head: string;
   next_cursor: string;
 }

@@ -61,7 +61,8 @@ type OpenTarget = (target: GatekeeperAppWorkspaceTarget) => void
 // Resolves workspace IDs the app already holds to their live titles; null for a workspace the user
 // can no longer see. Deliberately a lookup, not an enumeration: the app learns nothing new.
 type ResolveWorkspaceTitles = (ids: string[]) => Promise<(string | null)[]>
-type OpenPrompt = (prompt: string, project?:{projectId:string;title:string}) => void
+type ProjectChatPage = { chats: { workspaceId: string; chatId: number; title: string; at: string }[]; next: number | null; failed: number };
+type OpenPrompt = (prompt: string, project?:{projectId:string;title:string;materials?:import("@gadgets/workshop-shared/code-work").ChatMaterialReference[]}) => void
 
 type OverlayState = 'full' | null
 
@@ -181,7 +182,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     inboxUploads?: GatekeeperUiFrame['inboxUploads'],
     private readonly reportUnsavedChanges: (dirty: boolean) => void = () => {},
     private readonly embeddedIntake = false,
-    private readonly launchDocument?: (scope: string, resource: string) => Promise<boolean>,
+    private readonly launchDocument?: (scope: string, resource: string, folder?: string) => Promise<boolean>,
     private readonly launchTemplate?: (scope:string,resource:string,proposal:string,signal:AbortSignal)=>Promise<void>,
     private readonly navigateView: (view: string) => void = () => {},
     uploadLink?: UploadLink,
@@ -190,6 +191,7 @@ class GatekeeperAppHostImpl extends RpcTarget {
     private readonly openPath: (path: string) => void = () => {},
     private readonly saveOriginal: (bytes: Blob, filename: string) => void = saveDocumentFile,
     private readonly clearOriginal: () => void = () => {},
+    private readonly projectChats?: (project: string, offset: number) => Promise<ProjectChatPage>,
   ) {
     super()
     this.#uploadLink = uploadLink
@@ -218,11 +220,12 @@ class GatekeeperAppHostImpl extends RpcTarget {
     this.#resolveWorkspaceTitles = resolveWorkspaceTitles
   }
 
-  async openNativeDocument(scope: string, resource: string): Promise<boolean> {
+  async openNativeDocument(scope: string, resource: string, folder?: string): Promise<boolean> {
     this.#uploadLifetime.signal.throwIfAborted()
     if (typeof scope !== 'string' || typeof resource !== 'string' || !scope || !resource || scope.length > 255 || resource.length > 255) throw Error('Не выбран документ')
     if (!this.launchDocument) return false
-    return this.launchDocument(scope, resource)
+    if (folder !== undefined && !/^[A-Za-z0-9_-]{1,255}$/.test(folder)) throw Error("Некорректная папка")
+    return this.launchDocument(scope, resource, folder)
   }
 
   /** Документ другого человека по приглашению: владелец нужен, чтобы отметить уведомление прочитанным до перехода в редактор. */
@@ -520,7 +523,19 @@ class GatekeeperAppHostImpl extends RpcTarget {
     return this.#resolveWorkspaceTitles(ids)
   }
 
-  openPrompt(prompt: string, project?:{projectId:string;title:string}): void {
+  listProjectChats(project: string, offset = 0): Promise<ProjectChatPage> {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (!this.projectChats || typeof project !== 'string' || !project || project.length > 255 || !Number.isSafeInteger(offset) || offset < 0) throw Error('Беседы проекта недоступны')
+    return this.projectChats(project, offset)
+  }
+
+  openProjectChat(workspace: string, chat: number): void {
+    this.#uploadLifetime.signal.throwIfAborted()
+    if (!this.projectChats || !/^[a-zA-Z0-9_-]{1,255}$/.test(workspace) || !Number.isSafeInteger(chat) || chat < 0) throw Error('Некорректная беседа')
+    this.openPath(`/workspace/${workspace}?chat=${chat}`)
+  }
+
+  openPrompt(prompt: string, project?:{projectId:string;title:string;materials?:import("@gadgets/workshop-shared/code-work").ChatMaterialReference[]}): void {
     if(project&&!homeProjectFromSearch({accountId:0,...project}))throw new Error('Неверный проект')
     this.#openPrompt(normalizeGatekeeperAppPrompt(prompt),project)
   }
@@ -781,7 +796,7 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
   }, [authenticatedApi])
   const openPrompt = useCallback<OpenPrompt>((prompt,project) => {
     if(project&&accountId===undefined)throw new Error('Подключение проекта недоступно')
-    navigate({ to: '/', search: { prompt, ...(project&&accountId!==undefined?{projectContext:{projectId:project.projectId,title:project.title,accountId}}:{}) } })
+    navigate({ to: '/', search: { prompt, ...(project&&accountId!==undefined?{projectContext:{projectId:project.projectId,title:project.title,materials:project.materials,accountId}}:{}) } })
   }, [navigate,accountId])
   // The gatekeeper capability is `any`: its method shape is gatekeeper-defined and opaque to us.
   const closePanelRef = useRef(onClosePanel)
@@ -832,11 +847,11 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
         frame.inboxUploads,
         dirty => { if (hostRef.current === host) dirtyRef.current = dirty },
         embeddedIntake,
-        async (scope, resource) => {
+        async (scope, resource, folder) => {
           if (accountId === undefined || !frame.nativeDownloads) return false
           return launchNativeDocument(authenticatedApi, frame.nativeDownloads.selector, accountId, scope, resource, async id => {
             // Ссылка на документ отработала: без этого «Назад» из редактора снова открыл бы документ по адресу.
-            if (new URLSearchParams(window.location.search).has('document')) await navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, document: undefined }), replace: true })
+            if (new URLSearchParams(window.location.search).has('document')) await navigate({ to: '/gatekeepers/$appId', params: { appId: gatekeeperVendorId }, search: previous => ({ ...previous, document: folder }), replace: true })
             await navigate({to: '/workspace/$id', params: {id}})
           })
         },
@@ -858,6 +873,27 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           try { file.save(); setOriginal(file) } catch (error) { file.dispose(); throw error }
         },
         () => setOriginal(null),
+        gatekeeperVendorId === 'mnemos' && accountId !== undefined ? async (project, offset) => {
+          const ownerProfile = await authenticatedApi.whoami()
+          const workspaces = (await authenticatedApi.listGadgets()).filter(workspace => !workspace.archived).sort((a, b) => b.lastActive.getTime() - a.lastActive.getTime())
+          const page = workspaces.slice(offset, offset + 20)
+          const chats: ProjectChatPage['chats'] = []
+          let next = 0, failed = 0
+          await Promise.all(Array.from({ length: Math.min(4, page.length) }, async () => {
+            while (next < page.length) {
+              const workspace = page[next++]
+              let overseer: Awaited<ReturnType<typeof authenticatedApi.openGadget>> | undefined
+              try {
+                overseer = await authenticatedApi.openGadget(workspace.id)
+                for (const chat of await overseer.listChats()) {
+                  const context = chat.projectContext
+                  if (context && context.creatorProfileId === ownerProfile.id && (context.projects ?? [context]).some(p => p.accountId === accountId && p.projectId === project)) chats.push({ workspaceId: workspace.id, chatId: chat.id, title: chat.title || workspace.title, at: chat.lastActive.toISOString() })
+                }
+              } catch { failed++ } finally { overseer?.[Symbol.dispose]() }
+            }
+          }))
+          return { chats: chats.sort((a, b) => b.at.localeCompare(a.at)), next: offset + page.length < workspaces.length ? offset + page.length : null, failed }
+        } : undefined,
       )
       host.updateAccentColor(accentRef.current)
       hostRef.current = host

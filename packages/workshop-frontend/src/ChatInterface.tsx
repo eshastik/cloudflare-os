@@ -3531,13 +3531,6 @@ export const ChatInput = ({
           </div>
         </div>
 
-        {models.length > 0 && selectedModel === null && !isAgentActive && (
-          <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-2 text-[13px] text-kumo-subtle">
-            <span>Выбран режим «Без агента». Сообщение сохранится без ответа.</span>
-            <button type="button" disabled={isSending || isBlocked} onClick={() => onModelChange(models[0].id)}
-              className="text-kumo-brand hover:underline disabled:opacity-50">Включить агента</button>
-          </div>
-        )}
 
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 px-3 pb-2 pt-1">
@@ -3635,16 +3628,7 @@ export const ChatInput = ({
                       </DropdownMenu.Item>
                     );
                   })}
-                  <div className="my-1 border-t border-kumo-line/70" />
-                  <DropdownMenu.Item
-                    onClick={() => onModelChange(null)}
-                    className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] leading-4 font-normal tracking-[-0.15px] text-kumo-subtle transition-colors data-highlighted:bg-kumo-tint/70 data-highlighted:text-kumo-default"
-                  >
-                    <span className="min-w-0 flex-1 truncate">Без агента</span>
-                    {selectedModel == null && (
-                      <Check size={12} weight="bold" className="ml-3 flex-shrink-0 text-kumo-inactive" />
-                    )}
-                  </DropdownMenu.Item>
+
               </DropdownMenu.Content>
             </DropdownMenu>
             {settings}

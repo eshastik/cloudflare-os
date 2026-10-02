@@ -300,7 +300,7 @@ function ProjectFiles({ project, data, descriptions, linkedDocument = null, onOp
           <Card>
           {shownFolders.map(folder => (
             <ListRow key={folder.node_id} icon={<Folder size={18} />}>
-              <button type="button" className={name} onClick={onOpenDocuments}>{folder.name}</button>
+              <button type="button" className={name} onClick={() => void host.openSection("documents", project.id, folder.node_id).catch(() => setActionError("Папка не открылась. Повторите попытку."))}>{folder.name}</button>
               {described.get(folder.node_id) && <div className="mt-0.5 line-clamp-2 text-[13px] text-kumo-subtle">{described.get(folder.node_id)}</div>}
             </ListRow>
           ))}
