@@ -25,6 +25,7 @@ import {
 } from "react";
 import { reportIssue } from './errorReporting'
 import {
+  Dialog,
   DropdownMenu,
   Popover,
   Tooltip,
@@ -63,6 +64,7 @@ import {
   GitBranch,
 } from "@phosphor-icons/react";
 import { RpcStub, RpcTarget } from "capnweb";
+import { Link } from "@tanstack/react-router";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import * as Y from "yjs";
@@ -4632,7 +4634,7 @@ function ChatInterface({
   const [_isSubscribed, setIsSubscribed] = useState(false);
   const [chatListReady, setChatListReady] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
-  const [listComposing, setListComposing] = useState(false);
+  const [conversationPickerOpen, setConversationPickerOpen] = useState(false);
   // Out-of-credits modal (free-tier limit reached). `usageModalShownFor` tracks the error sequence
   // we've already auto-opened for, so dismissing it doesn't immediately reopen.
   const [usageModalOpen, setUsageModalOpen] = useState(false);
@@ -4920,17 +4922,26 @@ function ChatInterface({
     }
   }, [anyHasProposedChanges, chatListReady]);
 
-  // In sidebar mode, auto-select the most recent chat when none is selected.
+  const selectionStorageKey = currentUser ? `mnemos-chat-selection:${currentUser.id}:${window.location.pathname}` : null;
   useEffect(() => {
-    if (
-      sidebarMode &&
-      selectedChatId === null &&
-      chatListReady &&
-      chatList.length > 0
-    ) {
-      onNavigateToChatRef.current(chatList[0].id, { replace: true });
+    if (selectedChatId !== null && selectionStorageKey) {
+      try { sessionStorage.setItem(selectionStorageKey, String(selectedChatId)); } catch { /* Недоступное хранилище не мешает навигации. */ }
     }
-  }, [sidebarMode, selectedChatId, chatListReady, chatList]);
+  }, [selectedChatId, selectionStorageKey]);
+  useEffect(() => {
+    if (selectedChatId !== null || !chatListReady || !chatList.length || !selectionStorageKey) return;
+    let remembered: number | undefined;
+    try {
+      const value = sessionStorage.getItem(selectionStorageKey);
+      if (value !== null && /^\d+$/.test(value)) remembered = Number(value);
+    } catch { /* По умолчанию открывается исходная беседа. */ }
+    const target = chatList.find(chat => chat.id === remembered) ?? chatList.find(chat => chat.id === 0) ?? chatList[0];
+    onNavigateToChatRef.current(target.id, {replace: true});
+  }, [selectedChatId, chatListReady, chatList, selectionStorageKey]);
+  const selectListedChat = (chatId: number) => {
+    setConversationPickerOpen(false);
+    onNavigateToChatRef.current(chatId);
+  };
 
   // Get messages for selected chat (filter out any undefined slots in sparse array)
   // Memoized to prevent creating new array on every render
@@ -6913,7 +6924,7 @@ function ChatInterface({
       {/* Chat list header — title doubles as the scope switcher */}
       {!sidebarMode && <div className={sidebarMode ? "flex flex-shrink-0 items-center justify-between border-b border-kumo-line p-3" : "mx-auto flex w-full max-w-[1080px] flex-shrink-0 flex-wrap items-center justify-between gap-4 px-6 pb-5 pt-8 md:px-10"}>
         {!sidebarMode && <div><h2 className="text-[26px] font-semibold tracking-[-0.7px] text-kumo-default">Беседы <span className="ml-2 text-lg font-normal text-kumo-subtle">{chatList.length}</span></h2><p className="mt-1 text-sm text-kumo-subtle">Разговоры и альтернативные ветки с Mnemos</p></div>}
-        <WorkshopButton onClick={() => setListComposing(value => !value)}><Plus size={16} /> Новая беседа</WorkshopButton>
+        <Link to="/" className="inline-flex h-9 items-center gap-2 rounded-xl border border-kumo-line px-3 text-sm text-kumo-default hover:bg-kumo-tint"><Plus size={16} /> Новая беседа</Link>
       </div>}
       <div className={sidebarMode ? "flex flex-shrink-0 items-center gap-2 px-3 py-3" : "mx-auto flex w-full max-w-[1080px] flex-shrink-0 items-center gap-3 px-6 pb-5 md:px-10"}>
         <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-3 py-2.5 text-kumo-subtle"><MagnifyingGlass size={18} /><input aria-label="Поиск бесед" placeholder="Найти беседу…" value={chatSearch} onChange={e => setChatSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-kumo-default outline-none" />{chatSearch && <button aria-label="Очистить поиск бесед" onClick={() => setChatSearch("")}><X size={14} /></button>}</label>
@@ -7006,8 +7017,8 @@ function ChatInterface({
                     role={isRenaming ? undefined : "button"}
                     tabIndex={isRenaming ? undefined : 0}
                     aria-label={isRenaming ? undefined : `Открыть беседу: ${rowTitle}`}
-                    onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onNavigateToChat(chat.id); } }}
-                    onClick={isRenaming ? undefined : () => onNavigateToChat(chat.id)}
+                    onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selectListedChat(chat.id); } }}
+                    onClick={isRenaming ? undefined : () => selectListedChat(chat.id)}
                     className={`group flex w-full items-start gap-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand ${sidebarMode ? "rounded-lg px-2.5 py-2" : "rounded-2xl border border-kumo-line bg-kumo-base p-5 hover:border-kumo-brand/40"} ${
                       isRenaming
                         ? "cursor-default bg-kumo-base ring-1 ring-kumo-ring/40"
@@ -7072,7 +7083,7 @@ function ChatInterface({
                         ) : null}
                       </div>
                       {!isRenaming && !sidebarMode && preview && <p className="mt-1.5 line-clamp-2 text-sm leading-6 text-kumo-subtle">{preview}</p>}
-                      {!isRenaming && family.length === 1 && (chat.forkedFrom || legacyBranches > 0) && <div className="mt-2 flex items-center gap-2 text-xs text-kumo-subtle"><GitBranch size={13} /><span>{legacyBranches > 0 ? `Ветка ${legacyBranches}` : "Альтернативная ветка"}</span>{chat.forkedFrom && cacheRef.current.chats.has(chat.forkedFrom.chatId) && <button type="button" className="cursor-pointer text-kumo-brand hover:underline" onClick={e => { e.stopPropagation(); onNavigateToChat(chat.forkedFrom!.chatId); }}>Исходная беседа <ArrowUpRight size={12} className="inline" /></button>}</div>}
+                      {!isRenaming && family.length === 1 && (chat.forkedFrom || legacyBranches > 0) && <div className="mt-2 flex items-center gap-2 text-xs text-kumo-subtle"><GitBranch size={13} /><span>{legacyBranches > 0 ? `Ветка ${legacyBranches}` : "Альтернативная ветка"}</span>{chat.forkedFrom && cacheRef.current.chats.has(chat.forkedFrom.chatId) && <button type="button" className="cursor-pointer text-kumo-brand hover:underline" onClick={e => { e.stopPropagation(); selectListedChat(chat.forkedFrom!.chatId); }}>Исходная беседа <ArrowUpRight size={12} className="inline" /></button>}</div>}
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-kumo-inactive">
                         {chat.spawnerName && (
                           <>
@@ -7092,7 +7103,7 @@ function ChatInterface({
                           </>
                         )}
                       </div>
-                      {!sidebarMode && !isRenaming && family.length > 1 && <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-kumo-line pt-3" aria-label="Варианты беседы"><span className="mr-1 inline-flex items-center gap-1.5 text-xs text-kumo-subtle"><GitBranch size={14} /> Варианты</span>{family.map((variant, index) => <button key={variant.id} type="button" onClick={e => { e.stopPropagation(); onNavigateToChat(variant.id); }} className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-xs transition-colors ${variant.id === chat.id ? "bg-kumo-tint text-kumo-brand" : "text-kumo-subtle hover:bg-kumo-tint"}`} aria-label={`Открыть ${variant.id === familyId ? "исходную беседу" : `ветку ${index}`}: ${rowTitle}`}>{variant.id === familyId ? "Исходная" : `Ветка ${index}`}{variant.id === chat.id && <span className="ml-1.5 text-kumo-subtle">· последняя</span>}</button>)}</div>}
+                      {!sidebarMode && !isRenaming && family.length > 1 && <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-kumo-line pt-3" aria-label="Варианты беседы"><span className="mr-1 inline-flex items-center gap-1.5 text-xs text-kumo-subtle"><GitBranch size={14} /> Варианты</span>{family.map((variant, index) => <button key={variant.id} type="button" onClick={e => { e.stopPropagation(); selectListedChat(variant.id); }} className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-xs transition-colors ${variant.id === chat.id ? "bg-kumo-tint text-kumo-brand" : "text-kumo-subtle hover:bg-kumo-tint"}`} aria-label={`Открыть ${variant.id === familyId ? "исходную беседу" : `ветку ${index}`}: ${rowTitle}`}>{variant.id === familyId ? "Исходная" : `Ветка ${index}`}{variant.id === chat.id && <span className="ml-1.5 text-kumo-subtle">· последняя</span>}</button>)}</div>}
                     </div>
                     {!isRenaming && (
                       <DropdownMenu>
@@ -7145,7 +7156,7 @@ function ChatInterface({
       {/* New chat input — pinned to bottom. ChatInput supplies its own
           horizontal padding, so the wrapper just adds the top divider; no
           extra p-4 (which would shrink the input vs. the in-chat composer). */}
-      {(sidebarMode || listComposing) && <div className="flex-shrink-0 border-t border-kumo-line">
+      {(sidebarMode || chatList.length === 0) && <div className="flex-shrink-0 border-t border-kumo-line">
         <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
           <ChatInput
             createCapsuleGatekeeper={(accountId, url) =>
@@ -7199,7 +7210,7 @@ function ChatInterface({
 
       {/* ── Non-sidebar mode: show list OR chat ────────────────────────────── */}
       {!sidebarMode && selectedChatId === null ? (
-        chatListPanel
+        (chatListReady && chatList.length === 0 ? chatListPanel : <div className="flex flex-1 items-center justify-center"><span className="h-5 w-5 animate-spin rounded-full border-2 border-kumo-brand border-t-transparent" aria-label="Открываем беседу" /></div>)
       ) : selectedChatId !== null ? (
         <div className="flex-1 flex flex-col overflow-auto">
           {/* Tab bar — in sidebar mode, show Chat / Connections tabs */}
@@ -7244,7 +7255,7 @@ function ChatInterface({
                 <ChatSubline
                   chatCount={chatList.length}
                   projectTitle={chatProjectList.map((p) => displayName(p.title, "проект")).join(" · ") || undefined}
-                  onBack={() => onNavigateToChat(null)}
+                  onBack={() => setConversationPickerOpen(true)}
                 />
               )}
 
@@ -8206,6 +8217,15 @@ function ChatInterface({
         restoreParent={connectionAccept}
         restoredState={restoredAccept?.modal}
       />
+      <Dialog.Root open={conversationPickerOpen} onOpenChange={setConversationPickerOpen}>
+        <Dialog className="!z-[1000] !w-[min(880px,calc(100vw-24px))] !max-w-none overflow-hidden bg-kumo-base !p-0" size="lg">
+          <div className="flex items-center justify-between border-b border-kumo-line px-5 py-3">
+            <Dialog.Title className="text-sm font-medium text-kumo-default">Разговоры и варианты</Dialog.Title>
+            <Dialog.Close render={props => <WorkshopIconButton {...props} aria-label="Закрыть варианты"><X size={18} /></WorkshopIconButton>} />
+          </div>
+          <div className="flex h-[min(640px,75dvh)] flex-col">{chatListPanel}</div>
+        </Dialog>
+      </Dialog.Root>
       <OutOfCreditsModal
         open={usageModalOpen}
         onClose={() => setUsageModalOpen(false)}

@@ -24,7 +24,7 @@ describe("строка под шапкой беседы", () => {
   it("при нескольких чатах ведёт к их списку, проект показан строкой", () => {
     const back = vi.fn();
     const view = render(<ChatSubline chatCount={3} projectTitle="Mnemos" onBack={back} />);
-    expect(view.textContent).toContain("Все беседы3");
+    expect(view.textContent).toContain("Варианты беседы3");
     expect(view.textContent).toContain("Проект: Mnemos");
     act(() => view.querySelector("button")!.click());
     expect(back).toHaveBeenCalledOnce();
