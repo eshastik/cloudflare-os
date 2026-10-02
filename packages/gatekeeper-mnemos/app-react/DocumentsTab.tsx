@@ -309,8 +309,10 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
     } finally { setReadingMore(false); }
   }
 
+  const originalGeneration = useRef(0);
   async function download(row: DocumentRow, previewOriginal = false) {
-    if (downloading) return;
+    if (downloading && !previewOriginal) return;
+    const generation = previewOriginal ? ++originalGeneration.current : 0;
     setDownloading(true); setNotice("");
     try {
       let version: string;
@@ -327,11 +329,13 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
         if (!event?.exists) throw new Error("Опубликованная версия недоступна.");
         version = "file-publication:" + event.event_id;
       }
+      if (previewOriginal && generation !== originalGeneration.current) return;
       if (previewOriginal) await host.previewFile(row.projectId, row.nodeId, version, row.name, row.projectName);
       else await host.downloadFile(row.projectId, row.nodeId, version, row.name);
     } catch {
+      if (previewOriginal && generation !== originalGeneration.current) return;
       setNotice(`Файл «${row.name}» ${previewOriginal ? "не открылся" : "не скачан"}. Проверьте доступ и повторите попытку. Если у личной версии конфликт, сначала выберите нужный вариант.`);
-    } finally { setDownloading(false); }
+    } finally { if (!previewOriginal || generation === originalGeneration.current) setDownloading(false); }
   }
 
   function chat(row: DocumentRow, action: MaterialAction) {
