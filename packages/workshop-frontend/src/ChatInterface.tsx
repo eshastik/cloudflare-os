@@ -4940,6 +4940,15 @@ function ChatInterface({
     const target = chatList.find(chat => chat.id === remembered) ?? chatList.find(chat => chat.id === 0) ?? chatList[0];
     onNavigateToChatRef.current(target.id, {replace: true});
   }, [selectedChatId, chatListReady, chatList, selectionStorageKey]);
+  const selectedConversation = chatList.find(chat => chat.id === selectedChatId);
+  const selectedFamilyId = selectedConversation ? chatFamilyId(selectedConversation, chatList) : undefined;
+  const familyVariants = chatList.filter(chat => chatFamilyId(chat, chatList) === selectedFamilyId).sort((a, b) => a.id - b.id);
+  const variantLabel = (chat: AiChatMetadata) => {
+    const index = familyVariants.filter(variant => variant.id !== selectedFamilyId).findIndex(variant => variant.id === chat.id);
+    return chat.id === selectedFamilyId ? "Исходная" : `Вариант ${index + 1}`;
+  };
+  const currentVariantLabel = selectedConversation ? variantLabel(selectedConversation) : "Исходная";
+  const otherConversations = chatList.filter(chat => chatFamilyId(chat, chatList) !== selectedFamilyId);
   const selectListedChat = (chatId: number) => {
     setConversationPickerOpen(false);
     onNavigateToChatRef.current(chatId);
@@ -7256,6 +7265,8 @@ function ChatInterface({
               {!sidebarMode && (
                 <ChatSubline
                   chatCount={chatList.length}
+                  variantLabel={currentVariantLabel}
+                  variantCount={familyVariants.length}
                   projectTitle={chatProjectList.map((p) => displayName(p.title, "проект")).join(" · ") || undefined}
                   onBack={() => setConversationPickerOpen(true)}
                 />
@@ -8220,12 +8231,34 @@ function ChatInterface({
         restoredState={restoredAccept?.modal}
       />
       <Dialog.Root open={conversationPickerOpen} onOpenChange={setConversationPickerOpen}>
-        <Dialog className="!z-[1000] !w-[min(880px,calc(100vw-24px))] !max-w-none overflow-hidden bg-kumo-base !p-0" size="lg">
-          <div className="flex items-center justify-between border-b border-kumo-line px-5 py-3">
-            <Dialog.Title className="text-sm font-medium text-kumo-default">Разговоры и варианты</Dialog.Title>
-            <Dialog.Close render={props => <WorkshopIconButton {...props} aria-label="Закрыть варианты"><X size={18} /></WorkshopIconButton>} />
+        <Dialog className="!z-[1000] !w-[min(520px,calc(100vw-24px))] !max-w-none overflow-hidden bg-kumo-base !p-0" size="lg">
+          <div className="flex items-center justify-between gap-3 border-b border-kumo-line px-5 py-4">
+            <div className="min-w-0">
+              <Dialog.Title className="text-lg font-semibold text-kumo-default">Выберите вариант</Dialog.Title>
+              <p className="mt-1 truncate text-sm text-kumo-subtle">{selectedConversation?.title.replace(/(?: · правка)+$/, "")}</p>
+            </div>
+            <Dialog.Close render={props => <WorkshopIconButton {...props} aria-label="Закрыть варианты"><X size={20} /></WorkshopIconButton>} />
           </div>
-          <div className="flex h-[min(640px,75dvh)] flex-col">{chatListPanel}</div>
+          <div className="max-h-[65dvh] overflow-y-auto p-3">
+            {familyVariants.map(chat => {
+              const selected = chat.id === selectedChatId;
+              return <button key={chat.id} type="button" aria-label={`Выбрать: ${variantLabel(chat)}`} aria-current={selected ? "true" : undefined} onClick={() => selectListedChat(chat.id)} className={`mb-2 flex w-full cursor-pointer items-center gap-3 rounded-xl border p-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-kumo-brand ${selected ? "border-kumo-brand bg-kumo-tint" : "border-kumo-line hover:bg-kumo-tint"}`}>
+                <span className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${selected ? "bg-kumo-brand text-white" : "bg-kumo-fill text-kumo-subtle"}`}><GitBranch size={20} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2 text-base font-semibold text-kumo-default">{variantLabel(chat)}{selected && <span className="inline-flex items-center gap-1 rounded-md bg-kumo-brand px-2 py-0.5 text-xs font-medium text-white"><Check size={14} weight="bold" />Текущий</span>}</span>
+                  <span className="mt-1 block truncate text-sm text-kumo-subtle">{chatRowPreview(chat, cacheRef.current.messages.get(chat.id)) || "Нет сообщений"}</span>
+                  <span className="mt-1 block text-xs text-kumo-subtle">{chat.lastActive.toLocaleString("ru-RU", {day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</span>
+                </span>
+                {!selected && <CaretRight size={20} className="shrink-0 text-kumo-subtle" />}
+              </button>;
+            })}
+            {otherConversations.length > 0 && <div className="mt-3 border-t border-kumo-line pt-3">
+              <p className="px-1 pb-2 text-sm font-medium text-kumo-subtle">Другие разговоры в этом рабочем месте</p>
+              {otherConversations.map(chat => <button key={chat.id} type="button" onClick={() => selectListedChat(chat.id)} className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-kumo-tint">
+                <ChatCircle size={20} className="shrink-0 text-kumo-subtle" /><span className="min-w-0 flex-1 truncate text-sm font-medium text-kumo-default">{chat.title.replace(/(?: · правка)+$/, "")}</span><CaretRight size={18} />
+              </button>)}
+            </div>}
+          </div>
         </Dialog>
       </Dialog.Root>
       <OutOfCreditsModal
