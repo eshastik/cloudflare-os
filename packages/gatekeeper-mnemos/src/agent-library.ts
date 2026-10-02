@@ -730,7 +730,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
   async #searchProject(queue: RpcStub<ApprovalQueue>, project: string, query: string): Promise<MnemosSearchResult> {
     identifier(project, "проект"); identifier(query, "запрос", 4096);
     using reader = await this.#open();
-    const projectName = await this.#projectName(reader, project);
+    const resolved = await this.#resolveReadProject(reader, project);
+    project = resolved.id;
+    const projectName = resolved.name;
     const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Поиск в Mnemos",
@@ -758,6 +760,7 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       throw new Error("Некорректное окно чтения: ordinal ≥ 0, radius от 1 до 50, maxBytes от 4 до 262144; для offset нужна expectedRevision.");
     }
     using reader = await this.#open();
+    project = (await this.#resolveReadProject(reader, project)).id;
     // Поиск узла не бросает: наблюдение записывается и при неудаче, а один текст ошибки после
     // него не выдаёт, существует ли имя в проекте (TD-177).
     const located = await this.#lookup(reader, project, document);
@@ -767,7 +770,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       const eventId = history?.events.find(event => event.exists !== false)?.event_id;
       publication = eventId ? { projectId: project, nodeId: located.id, eventId } : undefined;
     }
-    const projectName = await this.#projectName(reader, project);
+    const resolved = await this.#resolveReadProject(reader, project);
+    project = resolved.id;
+    const projectName = resolved.name;
     const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Чтение документа Mnemos",
@@ -831,7 +836,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     identifier(project, "проект");
     if (typeof folder !== "string" || folder.length > 4096) throw new Error("Некорректное значение: папка.");
     using reader = await this.#open();
-    const projectName = await this.#projectName(reader, project);
+    const resolved = await this.#resolveReadProject(reader, project);
+    project = resolved.id;
+    const projectName = resolved.name;
     const ref = crypto.randomUUID();
     await queue.authorizeObservation({
       title: "Папки проекта Mnemos",
@@ -1050,6 +1057,15 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     } finally { release(agent); }
   }
 
+  async #resolveReadProject(reader: LibraryReader, value: string) {
+    const projects = (await this.#data(() => reader.listProjects())).projects;
+    const exact = projects.find(item => item.id === value);
+    if (exact) return exact;
+    const matches = projects.filter(item => item.name === value || item.slug === value);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) throw new Error("Название проекта неоднозначно. Передайте id из listProjects().");
+    throw new Error("Проект не найден или недоступен. Передайте id из listProjects().");
+  }
   /** Имя проекта для подписи шага; null — список недоступен или проекта в нём нет. */
   async #projectName(reader: LibraryReader, project: string): Promise<string | undefined> {
     return (await this.#quiet(() => reader.listProjects()))?.projects.find(item => item.id === project)?.name;

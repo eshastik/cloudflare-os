@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useRouterState } from '@tanstack/react-router'
 import { useKumoToastManager } from '@cloudflare/kumo'
 import type { RpcStub } from 'capnweb'
 import {
@@ -68,6 +68,8 @@ export function useWorkspacesContext(): WorkspacesContextValue {
 export function SidebarWorkspacesProvider({ children }: { children: ReactNode }) {
   const { authenticatedApi } = useAuthenticatedApi()
   const toasts = useKumoToastManager()
+  const pathname = useRouterState({ select: state => state.location.pathname })
+  const refreshRef = useRef<() => void>(() => {})
 
   const [gadgets, setGadgets] = useState<GadgetMetadataWithTimestamps[]>([])
   const [gadgetsLoading, setGadgetsLoading] = useState(true)
@@ -86,23 +88,51 @@ export function SidebarWorkspacesProvider({ children }: { children: ReactNode })
     authenticatedApi.whoami().then(setCurrentUser).catch(() => {})
   }, [authenticatedApi])
 
-  // Load gadgets. Refresh on mount + after mutation; no live subscription yet.
   useEffect(() => {
     let cancelled = false
+    let pending = false
+    let again = false
+    let loaded = false
     setGadgetsLoading(true)
-    authenticatedApi.listGadgets()
-      .then((list) => {
+    const refresh = async () => {
+      if (cancelled || document.visibilityState === 'hidden') return
+      if (pending) { again = true; return }
+      pending = true
+      try {
+        const list = await authenticatedApi.listGadgets()
         if (cancelled) return
         setGadgets(list)
-        setGadgetsLoading(false)
-        setInitialization({api: authenticatedApi, state: "ready"})
-      })
-      .catch((err) => {
-        logRpcFailure('Failed to load workspaces for sidebar:', err)
-        if (!cancelled) { setGadgetsLoading(false); setInitialization({api: authenticatedApi, state: "error"}) }
-      })
-    return () => { cancelled = true }
+        loaded = true
+        setInitialization({api: authenticatedApi, state: 'ready'})
+      } catch (err) {
+        if (!cancelled && !loaded) {
+          logRpcFailure('Failed to load workspaces for sidebar:', err)
+          setInitialization({api: authenticatedApi, state: 'error'})
+        }
+      } finally {
+        pending = false
+        if (!cancelled) {
+          setGadgetsLoading(false)
+          if (again) { again = false; void refresh() }
+        }
+      }
+    }
+    const request = () => { void refresh() }
+    refreshRef.current = request
+    request()
+    // Название может измениться агентом или в Telegram, без перехода на другую страницу.
+    const timer = window.setInterval(request, 5000)
+    window.addEventListener('focus', request)
+    document.addEventListener('visibilitychange', request)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      window.removeEventListener('focus', request)
+      document.removeEventListener('visibilitychange', request)
+    }
   }, [authenticatedApi])
+
+  useEffect(() => { refreshRef.current() }, [pathname])
 
   useEffect(() => {
     reportShellStage("workspaces", initialization?.api === authenticatedApi ? initialization.state : "loading", authenticatedApi)

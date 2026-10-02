@@ -955,3 +955,21 @@ test("продолжение целого документа не подстав
 });
 
  test("потолок первой страницы целого документа не игнорируется",async()=>{const {library,state}=fixture();const session=await library.startSession(authorizer(state) as any);await session.readDocument("p1","n1",{maxBytes:100});assert.ok(state.calls.includes("page:p1:n1:0:0:undefined:undefined:100"));});
+
+
+test("чтение проекта по названию использует его id; неизвестное и неоднозначное имя не дают ложную пустую папку", async () => {
+  const {library, state} = fixture();
+  const session = await library.startSession(authorizer(state) as any);
+  const root = await session.browseProject("Продажи");
+  assert.equal(root.project, "p1");
+  assert.equal(root.entries.length, 2);
+  assert.ok(state.calls.includes("browse:p1:"));
+  await session.searchProject("sales", "план");
+  assert.ok(state.calls.some(call => call.startsWith("search:p1:")));
+  await session.readDocument("Продажи", "docs/plan.md");
+  assert.ok(state.calls.includes("read:p1:n1"));
+  await assert.rejects(session.browseProject("неизвестный"), /не найден или недоступен/);
+  state.projects = [...PROJECTS, {id: "p3", name: "Продажи", slug: "other-sales"}];
+  await assert.rejects(session.browseProject("Продажи"), /неоднозначно/);
+  assert.equal((await session.browseProject("p1")).project, "p1");
+});

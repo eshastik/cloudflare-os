@@ -47,7 +47,8 @@ interface MnemosLibrary {
    * Нельзя выдумывать сотрудников или считать предложение выполненным до подтверждения.
    * Повторяйте requestId только с теми же параметрами. */
   proposeProjectAccess(requestId: string, person: string, project: string, domain: string, mode: "read" | "write"): Promise<MnemosAdminProposal>;
-  /** Проекты, доступные владельцу аккаунта. */
+  /** Проекты, доступные владельцу аккаунта. В остальных вызовах project — id из этого списка;
+   * точное уникальное название или slug тоже принимаются. */
   listProjects(): Promise<MnemosProject[]>;
   /** Гибридный поиск (полнотекст + смысл) по опубликованным документам одного проекта; до 20 совпадений.
    * indexPending или degraded — выдача неполна; пустые hits не доказывают отсутствие документа. */
