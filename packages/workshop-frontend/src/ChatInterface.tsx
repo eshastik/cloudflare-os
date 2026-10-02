@@ -4924,7 +4924,9 @@ function ChatInterface({
 
   const selectionStorageKey = currentUser ? `mnemos-chat-selection:${currentUser.id}:${window.location.pathname}` : null;
   useEffect(() => {
-    if (selectedChatId !== null && selectionStorageKey) {
+    if (selectedChatId !== null && selectionStorageKey &&
+        new URLSearchParams(window.location.search).get("chat") === String(selectedChatId)) {
+      // При смене рабочего места прежний компонент ещё может отрисоваться с новым URL.
       try { sessionStorage.setItem(selectionStorageKey, String(selectedChatId)); } catch { /* Недоступное хранилище не мешает навигации. */ }
     }
   }, [selectedChatId, selectionStorageKey]);
