@@ -7262,15 +7262,13 @@ function ChatInterface({
           {/* Chat content — hidden when connections tab is active in sidebar mode */}
           {(!sidebarMode || sidebarActiveTab === "chat") && (
             <>
-              {!sidebarMode && (
-                <ChatSubline
+              <ChatSubline
                   chatCount={chatList.length}
                   variantLabel={currentVariantLabel}
                   variantCount={familyVariants.length}
-                  projectTitle={chatProjectList.map((p) => displayName(p.title, "проект")).join(" · ") || undefined}
+                  projects={chatProjectList.map(p => ({id: `${p.accountId}:${p.projectId}`, title: displayName(p.title, "проект")}))}
                   onBack={() => setConversationPickerOpen(true)}
-                />
-              )}
+              />
 
               {/* Messages */}
               <div

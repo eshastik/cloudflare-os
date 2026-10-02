@@ -23,13 +23,24 @@ describe("строка под шапкой беседы", () => {
   });
   it("при нескольких чатах ведёт к их списку, проект показан строкой", () => {
     const back = vi.fn();
-    const view = render(<ChatSubline chatCount={3} projectTitle="Mnemos" variantLabel="Вариант 2" onBack={back} />);
+    const view = render(<ChatSubline chatCount={3} projects={[{id:"1",title:"Mnemos"},{id:"2",title:"Красноярский лев"}]} variantLabel="Вариант 2" onBack={back} />);
     expect(view.textContent).toContain("Вариант 2Варианты · 3");
     expect(view.querySelector("button")?.getAttribute("aria-label")).toContain("Сейчас: Вариант 2");
-    expect(view.textContent).toContain("Проект: Mnemos");
+    expect(view.textContent).toContain("Mnemos");
+    expect(view.querySelector('[aria-label="Прикреплённые проекты"]')?.textContent).toContain("Красноярский лев");
     act(() => view.querySelector("button")!.click());
     expect(back).toHaveBeenCalledOnce();
   });
+  it("показывает проекты без вариантов и обновляет их при смене беседы", () => {
+    const view = render(<ChatSubline chatCount={1} projects={[{id:"1",title:"Mnemos"}]} onBack={() => {}} />);
+    expect(view.textContent).toContain("Mnemos");
+    expect(view.querySelector("button")).toBeNull();
+    act(() => root!.render(<ChatSubline chatCount={3} variantLabel="Вариант 2" projects={[{id:"2",title:"Гео БПЛА"}]} onBack={() => {}} />));
+    expect(view.textContent).toContain("Гео БПЛА");
+    expect(view.textContent).not.toContain("Mnemos");
+    expect(view.textContent).toContain("Вариант 2");
+  });
+
 });
 
 describe("счётчик раздела в левой колонке", () => {
