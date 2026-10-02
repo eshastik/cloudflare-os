@@ -153,6 +153,7 @@ import OutOfCreditsModal from "./components/billing/OutOfCreditsModal";
 import { useSlashCommandPicker } from "./components/chat/SlashCommandPicker";
 import { formatFullTimestamp } from "./utils/formatTimestamp";
 import { copyToClipboard } from "./clipboard";
+import { composerClipboardText, insertComposerText } from "./components/chat/composerClipboard";
 
 export interface StreamingProposedChanges {
   updates: Uint8Array[];
@@ -321,7 +322,7 @@ function autoResizeTextarea(textarea: HTMLTextAreaElement, minRows: number, maxR
   const paddingY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
   const borderY = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
   const minH = lineHeight * minRows + paddingY + borderY
-  const maxH = lineHeight * maxRows + paddingY + borderY
+  const maxH = Math.max(minH, Math.min(lineHeight * maxRows + paddingY + borderY, window.innerHeight * 0.4))
   textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, minH), maxH)}px`
   textarea.style.overflow = textarea.scrollHeight > maxH ? 'auto' : 'hidden'
 }
@@ -1133,10 +1134,25 @@ function FormatMention({ format }: { format: MessageFormatRef }) {
   );
 }
 
+function ChatCodeBlock({children}: {children?: ReactNode}) {
+  const content = useRef<HTMLPreElement>(null);
+  const [copyState, setCopyState] = useState("Копировать код");
+  return <div className={styles.codeBlock}>
+    <div className={styles.codeBlockToolbar}>
+      <button type="button" aria-label="Копировать код" onClick={async () => {
+        const text = content.current?.textContent ?? "";
+        setCopyState(await copyToClipboard(text) ? "Скопировано" : "Не удалось скопировать");
+      }}>{copyState}</button>
+    </div>
+    <pre ref={content}>{children}</pre>
+  </div>;
+}
+
 function getMarkdownComponents(
   mentionsByToken?: Map<string, Mention>,
 ): Components {
   return {
+    pre: ({children}) => <ChatCodeBlock>{children}</ChatCodeBlock>,
     table: ({ node: _node, children, ...props }) => (
       <div className={styles.markdownTableWrapper}>
         <table {...props}>{children}</table>
@@ -2063,6 +2079,10 @@ export const ChatInput = ({
   const [restoredAttach] = useState(() => restoreAfterConnect<GatekeeperModalRestore<{ input: string; capsules: InputCapsule[] }>>(attachRestoreKey));
   const [restoredComposer] = useState(() => restoreAfterConnect<{ input: string; capsules: InputCapsule[] }>(composerRestoreKey) ?? restoredAttach?.parent ?? null);
   const [inputValue, setInputValue] = useState(() => restoredComposer?.input ?? "");
+  const [showMessagePreview, setShowMessagePreview] = useState(false);
+  useEffect(() => setShowMessagePreview(false), [chatKey]);
+  useEffect(() => { if (!inputValue) setShowMessagePreview(false); }, [inputValue]);
+  const inputRevision = useRef(0);
   const [capsules, setCapsules] = useState<InputCapsule[]>(() => restoredComposer?.capsules ?? []);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -3338,6 +3358,12 @@ export const ChatInput = ({
                 activateRef={overlayActivateRef}
               />
             )}
+            {showMessagePreview && <div role="region" aria-label="Предпросмотр сообщения" tabIndex={0}
+              className={`${styles.markdownContent} ${styles.composerPreview}`}
+              onKeyDown={(e) => { if (e.key === "Escape") { setShowMessagePreview(false); requestAnimationFrame(() => composerTextareaRef.current?.focus()); } }}>
+              {inputValue.trim() ? <MarkdownMessage message={inputValue} /> : <span className="text-kumo-subtle">Введите сообщение, чтобы увидеть его оформление.</span>}
+            </div>}
+            <div hidden={showMessagePreview}>
             <ComposerMirror
               ref={mirrorRef}
               value={inputValue}
@@ -3347,16 +3373,18 @@ export const ChatInput = ({
             <textarea
               value={inputValue}
               role="combobox"
+              aria-label="Сообщение"
               aria-autocomplete="list"
               aria-expanded={slashCommandPicker.open}
               aria-controls={slashCommandPicker.open ? slashCommandPicker.listboxId : undefined}
               aria-activedescendant={slashCommandPicker.activeDescendant}
               onChange={(e) => {
+                inputRevision.current++;
                 handleInputChange(e.target.value, e.target.selectionStart ?? 0);
                 syncPickerCaret(e.target.selectionStart ?? 0);
                 requestAnimationFrame(handleCursorChange);
                 // Auto-resize after value change
-                autoResizeTextarea(e.target, minRows, newChat ? 10 : 4);
+                autoResizeTextarea(e.target, minRows, 12);
                 syncMirrorScroll(e.target);
               }}
               onSelect={handleCursorChange}
@@ -3406,9 +3434,24 @@ export const ChatInput = ({
                 if (files.length > 0) {
                   e.preventDefault();
                   void addFiles(files);
+                  return;
                 }
+                const plain = e.clipboardData.getData("text/plain");
+                const text = composerClipboardText(plain, e.clipboardData.getData("text/html"));
+                if (text === plain) return;
+                e.preventDefault();
+                const textarea = e.currentTarget;
+                const revision = inputRevision.current;
+                insertComposerText(textarea, text);
+                // insertText может сам вызвать input; повторный сдвиг ломает позиции капсул.
+                if (revision === inputRevision.current) handleInputChange(textarea.value, textarea.selectionStart);
+                syncPickerCaret(textarea.selectionStart);
+                autoResizeTextarea(textarea, minRows, 12);
+                syncMirrorScroll(textarea);
+                requestAnimationFrame(handleCursorChange);
               }}
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                 if (slashCommandPicker.open && e.key === "Escape") {
                   e.preventDefault();
                   slashCommandPicker.dismiss();
@@ -3484,12 +3527,13 @@ export const ChatInput = ({
                 composerTextareaRef.current = el;
                 // Initial auto-resize on mount
                 if (el) {
-                  autoResizeTextarea(el, minRows, newChat ? 10 : 4);
+                  autoResizeTextarea(el, minRows, 12);
                   syncMirrorScroll(el);
                 }
               }}
               className={`relative z-[1] w-full resize-none border-none bg-transparent p-0 text-[15px] leading-[22px] outline-none placeholder:text-kumo-subtle disabled:cursor-not-allowed ${composerTextareaClass}`}
             />
+            </div>
           </div>
         </div>
 
@@ -3613,6 +3657,11 @@ export const ChatInput = ({
               </DropdownMenu.Content>
             </DropdownMenu>
             {settings}
+            <button type="button" aria-pressed={showMessagePreview} disabled={isBlocked}
+              onClick={() => { setShowMessagePreview(value => !value); if (showMessagePreview) requestAnimationFrame(() => composerTextareaRef.current?.focus()); }}
+              className="rounded-lg px-2 py-1.5 text-[12px] text-kumo-subtle hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:opacity-50">
+              {showMessagePreview ? "Редактировать" : "Предпросмотр"}
+            </button>
           </div>
 
           {/* Right actions */}
@@ -6189,8 +6238,10 @@ function ChatInterface({
     }
   };
 
-  const handleCopyMessage = useCallback(async (message: string) => {
-    const ok = await copyToClipboard(message);
+  const handleCopyMessage = useCallback(async (message: string, button?: HTMLButtonElement) => {
+    const rendered = button?.closest("[data-chat-message]")?.querySelector("[data-message-text]")?.cloneNode(true) as HTMLElement | undefined;
+    rendered?.querySelectorAll("button, [aria-hidden=true]").forEach(node => node.remove());
+    const ok = await copyToClipboard(message, rendered?.innerHTML);
     toasts.add({
       title: ok ? "Сообщение скопировано" : "Не удалось скопировать сообщение",
       variant: ok ? "success" : "error",
@@ -7397,7 +7448,7 @@ function ChatInterface({
                         )}
                         {msg.type === "message" && (
                           msg.author.type === "user" ? (
-                            <div className="group/message relative flex flex-col items-end">
+                            <div data-chat-message className="group/message relative flex flex-col items-end">
                               <div className={`w-fit max-w-[min(460px,85%)] rounded-[18px] rounded-br-[4px] border border-kumo-fill bg-kumo-bubble-user px-4 py-3 text-[15px] leading-[22px] text-kumo-default ${styles.markdownContent}`}>
                                 {msg.attachments && msg.attachments.length > 0 && (
                                   <ChatAttachmentGrid
@@ -7422,7 +7473,7 @@ function ChatInterface({
                                   </div>
                                 ) : msg.message.trim() && (
                                   // pre-wrap renders users' single newlines as hard breaks.
-                                  <div className="whitespace-pre-wrap">
+                                  <div data-message-text className="whitespace-pre-wrap">
                                     <MarkdownMessage
                                       message={msg.message}
                                       capsules={msg.capsules}
@@ -7432,6 +7483,9 @@ function ChatInterface({
                                 )}
                               </div>
                               <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
+                                <button type="button" aria-label="Копировать моё сообщение"
+                                  onClick={e => { void handleCopyMessage(msg.message, e.currentTarget); }}
+                                  className="rounded-md p-1 touch:h-10 touch:w-10 hover:text-kumo-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring"><Copy size={14} /></button>
                                 {/* hideOwnUserName implies currentUser is non-null (see memo). */}
                                 {!(hideOwnUserName && msg.author.id === currentUser?.id) && (
                                   <span className="font-medium">{msg.author.name}</span>
@@ -7472,13 +7526,13 @@ function ChatInterface({
                               : -1;
                             return (
                           <div className="min-w-0 w-full max-w-[860px] space-y-2">
-                            <div className="group/agentMessage relative space-y-1.5">
+                            <div data-chat-message className="group/agentMessage relative space-y-1.5">
                               {showReasoning && (
                                 <ThinkingTraceRow reasoning={msg.reasoning!} translation={msg.reasoningTranslation} />
                               )}
 
                               {hasMessageText && (
-                                <div className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
+                                <div data-message-text className={`max-w-[580px] text-[16px] leading-[26px] text-kumo-default ${styles.markdownContent}`}>
                                   <MarkdownMessage
                                     message={shownMessageText}
                                     capsules={msg.capsules}
@@ -7500,7 +7554,7 @@ function ChatInterface({
                                     <Tooltip content="Копировать сообщение" asChild>
                                       <button
                                         type="button"
-                                        onClick={() => handleCopyMessage(msg.message)}
+                                        onClick={e => { void handleCopyMessage(msg.message, e.currentTarget); }}
                                         className="flex cursor-pointer items-center justify-center rounded-md p-1 touch:h-10 touch:w-10 text-kumo-inactive transition-[color,transform] duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none active:scale-[0.96]"
                                         aria-label="Копировать сообщение"
                                       >

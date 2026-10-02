@@ -184,3 +184,31 @@
   margin-right: 0.35em;
   vertical-align: -0.1em;
 }
+
+.composerPreview {
+  max-height: 264px;
+  min-height: 44px;
+  overflow-y: auto;
+  font-size: 15px;
+  white-space: pre-wrap;
+}
+.markdownContent ul, .markdownContent ol, .markdownContent table { white-space: normal; }
+.markdownContent li { white-space: pre-wrap; }
+.composerPreview pre { white-space: normal; }
+.composerPreview pre code { white-space: pre; }
+.markdownContent ul ul { list-style-type: circle; }
+.markdownContent ul ul ul { list-style-type: square; }
+.markdownContent ol ol { list-style-type: lower-alpha; }
+
+.codeBlock {
+  margin: 0.6em 0;
+  overflow: hidden;
+  border: 1px solid var(--color-kumo-line);
+  border-radius: 10px;
+  background: var(--color-kumo-elevated);
+}
+.codeBlockToolbar { display: flex; justify-content: flex-end; padding: 5px 10px; border-bottom: 1px solid var(--color-kumo-line); }
+.codeBlockToolbar button { font-size: 12px; color: var(--text-color-kumo-subtle); cursor: pointer; }
+.codeBlockToolbar button:hover { color: var(--text-color-kumo-default); }
+.codeBlockToolbar button:focus-visible { outline: 2px solid var(--color-kumo-brand); outline-offset: 2px; }
+.markdownContent .codeBlock pre { margin: 0; border: 0; border-radius: 0; white-space: pre; }

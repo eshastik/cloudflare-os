@@ -13,6 +13,36 @@ import { ChatInput } from "./ChatInterface";
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
 
+test("Вставленный список виден в предпросмотре и отправляется с форматированием; незавершённый ввод не отправляет сообщение", async () => {
+  const onSend = vi.fn<(message: unknown) => Promise<void>>(async () => {});
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<ChatInput createCapsuleGatekeeper={async () => null} getOverseer={async () => ({}) as never}
+      onSend={onSend} isAgentActive={false} models={[]} selectedModel={null} onModelChange={() => {}} seedText="Начало заменить конец" seedNonce={1} />));
+    const textarea = host.querySelector("textarea")!;
+    act(() => textarea.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", isComposing: true, bubbles: true, cancelable: true})));
+    expect(onSend).not.toHaveBeenCalled();
+    textarea.setSelectionRange(7, 15);
+    const paste = new Event("paste", {bubbles: true, cancelable: true});
+    Object.defineProperty(paste, "clipboardData", {value: {items: [], getData: (type: string) => type === "text/html"
+      ? '<ul><li><strong>Первое</strong><ul><li>Подпункт</li></ul></li><li>Второе</li></ul>' : "Первое\nПодпункт\nВторое"}});
+    await act(async () => textarea.dispatchEvent(paste));
+    expect(textarea.value).toMatch(/^Начало \n\n- +\*\*Первое\*\*/);
+    expect(textarea.value).toMatch(/Второе\n\n конец$/);
+    const preview = [...host.querySelectorAll("button")].find(b => b.textContent === "Предпросмотр")!;
+    await act(async () => preview.click());
+    const region = host.querySelector('[aria-label="Предпросмотр сообщения"]')!;
+    expect(region.querySelector("ul ul li")?.textContent).toBe("Подпункт");
+    expect(region.querySelector("strong")?.textContent).toBe("Первое");
+    const message = textarea.value;
+    await act(async () => (host.querySelector('button[aria-label="Отправить сообщение"]') as HTMLButtonElement).click());
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(onSend.mock.calls[0]?.[0]).toBe(message);
+  } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); }
+});
+
 test("Следующий текст и файл переживают завершение предыдущей отправки", async () => {
   let finish!: () => void;
   const pending = new Promise<void>(resolve => {finish = resolve;});
