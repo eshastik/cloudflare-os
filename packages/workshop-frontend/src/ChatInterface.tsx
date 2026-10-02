@@ -2080,9 +2080,6 @@ export const ChatInput = ({
   const [restoredComposer] = useState(() => restoreAfterConnect<{ input: string; capsules: InputCapsule[] }>(composerRestoreKey) ?? restoredAttach?.parent ?? null);
   const draftKey = currentUser ? `mnemos:composer:${currentUser.id}:${window.location.pathname.split("/").slice(0, 3).join("/")}:${chatKey ?? "new"}` : null;
   const [inputValue, setInputValue] = useState(() => restoredComposer?.input ?? "");
-  const [showMessagePreview, setShowMessagePreview] = useState(false);
-  useEffect(() => setShowMessagePreview(false), [chatKey]);
-  useEffect(() => { if (!inputValue) setShowMessagePreview(false); }, [inputValue]);
   const inputRevision = useRef(0);
   const [capsules, setCapsules] = useState<InputCapsule[]>(() => restoredComposer?.capsules ?? []);
   const draftScopeRef = useRef<string | null>(null);
@@ -3377,12 +3374,7 @@ export const ChatInput = ({
                 activateRef={overlayActivateRef}
               />
             )}
-            {showMessagePreview && <div role="region" aria-label="Предпросмотр сообщения" tabIndex={0}
-              className={`${styles.markdownContent} ${styles.composerPreview}`}
-              onKeyDown={(e) => { if (e.key === "Escape") { setShowMessagePreview(false); requestAnimationFrame(() => composerTextareaRef.current?.focus()); } }}>
-              {inputValue.trim() ? <MarkdownMessage message={inputValue} /> : <span className="text-kumo-subtle">Введите сообщение, чтобы увидеть его оформление.</span>}
-            </div>}
-            <div hidden={showMessagePreview}>
+            <div>
             <ComposerMirror
               ref={mirrorRef}
               value={inputValue}
@@ -3657,11 +3649,7 @@ export const ChatInput = ({
               </DropdownMenu.Content>
             </DropdownMenu>
             {settings}
-            <button type="button" aria-pressed={showMessagePreview} disabled={isBlocked}
-              onClick={() => { setShowMessagePreview(value => !value); if (showMessagePreview) requestAnimationFrame(() => composerTextareaRef.current?.focus()); }}
-              className="rounded-lg px-2 py-1.5 text-[12px] text-kumo-subtle hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:opacity-50">
-              {showMessagePreview ? "Редактировать" : "Предпросмотр"}
-            </button>
+
           </div>
 
           {/* Right actions */}

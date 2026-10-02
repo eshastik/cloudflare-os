@@ -24,7 +24,7 @@ describe("строка под шапкой беседы", () => {
   it("при нескольких чатах ведёт к их списку, проект показан строкой", () => {
     const back = vi.fn();
     const view = render(<ChatSubline chatCount={3} projects={[{id:"1",title:"Mnemos"},{id:"2",title:"Красноярский лев"}]} variantLabel="Вариант 2" onBack={back} />);
-    expect(view.textContent).toContain("Вариант 2Варианты · 3");
+    expect(view.textContent).toContain("Вариант 2· 3");
     expect(view.querySelector("button")?.getAttribute("aria-label")).toContain("Сейчас: Вариант 2");
     expect(view.textContent).toContain("Mnemos");
     expect(view.querySelector('[aria-label="Прикреплённые проекты"]')?.textContent).toContain("Красноярский лев");

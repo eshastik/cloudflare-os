@@ -13,7 +13,7 @@ import { ChatInput } from "./ChatInterface";
 
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
 
-test("Вставленный список виден в предпросмотре и отправляется с форматированием; незавершённый ввод не отправляет сообщение", async () => {
+test("Вставленный список отправляется с форматированием без режима предпросмотра; незавершённый ввод не отправляет сообщение", async () => {
   const onSend = vi.fn<(message: unknown) => Promise<void>>(async () => {});
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   const host = document.createElement("div"); document.body.append(host);
@@ -31,11 +31,8 @@ test("Вставленный список виден в предпросмотр
     await act(async () => textarea.dispatchEvent(paste));
     expect(textarea.value).toMatch(/^Начало \n\n- +\*\*Первое\*\*/);
     expect(textarea.value).toMatch(/Второе\n\n конец$/);
-    const preview = [...host.querySelectorAll("button")].find(b => b.textContent === "Предпросмотр")!;
-    await act(async () => preview.click());
-    const region = host.querySelector('[aria-label="Предпросмотр сообщения"]')!;
-    expect(region.querySelector("ul ul li")?.textContent).toBe("Подпункт");
-    expect(region.querySelector("strong")?.textContent).toBe("Первое");
+    expect([...host.querySelectorAll("button")].some(b => b.textContent === "Предпросмотр")).toBe(false);
+    expect(textarea.value).toContain("Подпункт");
     const message = textarea.value;
     await act(async () => (host.querySelector('button[aria-label="Отправить сообщение"]') as HTMLButtonElement).click());
     expect(onSend).toHaveBeenCalledOnce();
