@@ -4331,7 +4331,8 @@ class OverseerImpl implements AgentHooks {
       } else {
         resultId = this.nextChatId();
         this.storage.chatMeta.put({
-          id: resultId, title: sourceMeta.title + " · правка", started: timestamp, lastActive: timestamp,
+          id: resultId, title: sourceMeta.title.replace(/(?: · правка)+$/, ""), started: timestamp, lastActive: timestamp,
+          forkedFrom: {chatId, sequence},
           activeAgent: userMeta.aiModel!.profile, codeMode: sourceMeta.codeMode,
           ...(projectContext ? {projectContext} : {}),
         });
@@ -9372,7 +9373,15 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async listChats(): Promise<AiChatMetadata[]> {
-    return [...this.impl.storage.chatMeta.list({reverse: true})];
+    return [...this.impl.storage.chatMeta.list({reverse: true})].map(meta => {
+      for (const message of this.impl.storage.chats.list({prefix: `${keyString(meta.id)}.`, reverse: true})) {
+        if (message.type === "message" && message.message.trim() &&
+            (message.author.type === "user" || message.author.type === "agent")) {
+          return {...meta, preview: message.message.slice(0, 320)};
+        }
+      }
+      return meta;
+    });
   }
 
   async listModels(): Promise<AiChatAuthorInfo[]> {

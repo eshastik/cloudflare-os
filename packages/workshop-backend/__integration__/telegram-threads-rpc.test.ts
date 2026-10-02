@@ -297,6 +297,7 @@ it("правка сообщения сохраняет исходную исто
   const edited = await overseer.editChatMessage(chat, target.sequence, "Изменённый запрос", "fake-model");
   expect(edited).not.toBe(chat);
   expect((await overseer.listChats()).find(c => c.id === edited)?.codeMode).toBe("off");
+  expect((await overseer.listChats()).find(c => c.id === edited)).toMatchObject({forkedFrom: {chatId: chat, sequence: target.sequence}});
   await idle(overseer, edited, 2);
   expect(await overseer.getChatHistory(chat)).toEqual(source);
   const history = await overseer.getChatHistory(edited);
@@ -307,6 +308,7 @@ it("правка сообщения сохраняет исходную исто
   expect(attachment?.id).not.toBe(file.id);
   expect(await overseer.getChatAttachmentContent(edited, attachment!.id)).toEqual(Buffer.from(bytes));
   expect(await overseer.getChatAttachmentContent(chat, file.id)).toEqual(Buffer.from(bytes));
+  expect((await overseer.listChats()).find(c => c.id === edited)?.preview).toBeTruthy();
   const prompt = net.model.prompts.at(-1)!;
   expect(prompt).toContain("Первый контекст");
   expect(prompt).toContain("Изменённый запрос");

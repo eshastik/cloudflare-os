@@ -59,6 +59,8 @@ import {
   Question,
   ArrowUpRight,
   Blueprint,
+  ChatCircle,
+  GitBranch,
 } from "@phosphor-icons/react";
 import { RpcStub, RpcTarget } from "capnweb";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -4402,6 +4404,28 @@ interface ChatInterfaceProps {
   openMnemosApp?: OpenAppInChat;
 }
 
+function chatFamilyId(chat: AiChatMetadata, chats: readonly AiChatMetadata[]): number {
+  const visited = new Set<number>();
+  let current = chat;
+  while (current.forkedFrom && !visited.has(current.id)) {
+    visited.add(current.id);
+    const parent = chats.find(c => c.id === current.forkedFrom!.chatId);
+    if (!parent) return current.forkedFrom.chatId;
+    current = parent;
+  }
+  if (/(?: · правка)+$/.test(current.title)) {
+    const base = current.title.replace(/(?: · правка)+$/, "");
+    const originals = chats.filter(c => !c.forkedFrom && c.title === base);
+    if (originals.length === 1) return originals[0].id;
+  }
+  return current.id;
+}
+
+function chatRowPreview(chat: AiChatMetadata, messages: AiChatMessage[] = []): string {
+  const latest = visibleChatMessages(messages.filter(Boolean)).findLast(m => m.type === "message" && m.message.trim());
+  return (latest?.type === "message" ? latest.message : chat.preview ?? "").replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
+}
+
 // Bucket a chat's lastActive into a time grouping for the chat list.
 type ChatTimeBucket = "today" | "yesterday" | "thisWeek" | "earlier";
 
@@ -4607,6 +4631,8 @@ function ChatInterface({
   // UI state
   const [_isSubscribed, setIsSubscribed] = useState(false);
   const [chatListReady, setChatListReady] = useState(false);
+  const [chatSearch, setChatSearch] = useState("");
+  const [listComposing, setListComposing] = useState(false);
   // Out-of-credits modal (free-tier limit reached). `usageModalShownFor` tracks the error sequence
   // we've already auto-opened for, so dismissing it doesn't immediately reopen.
   const [usageModalOpen, setUsageModalOpen] = useState(false);
@@ -4833,14 +4859,21 @@ function ChatInterface({
   } = useMemo(() => {
     const directCount = chatList.filter((chat) => !chat.spawnerName).length;
     const agentCount = chatList.length - directCount;
+    const query = chatSearch.trim().toLocaleLowerCase();
     const visible = chatList.filter((chat) => {
+      if (query && !`${chat.title} ${chatRowPreview(chat, cacheRef.current.messages.get(chat.id))} ${chat.projectContext?.projectId ?? ""}`.toLocaleLowerCase().includes(query)) return false;
       if (chatListScope === "direct") return !chat.spawnerName;
       if (chatListScope === "agents") return Boolean(chat.spawnerName);
       return true;
     });
     const now = new Date();
     const buckets = new Map<ChatTimeBucket, AiChatMetadata[]>();
+    const families = new Map<number, AiChatMetadata>();
     for (const chat of visible) {
+      const family = sidebarMode ? chat.id : chatFamilyId(chat, chatList);
+      if (!families.has(family)) families.set(family, chat);
+    }
+    for (const chat of families.values()) {
       const bucket = getChatTimeBucket(chat.lastActive, now);
       let arr = buckets.get(bucket);
       if (!arr) {
@@ -4864,7 +4897,7 @@ function ChatInterface({
         { value: "agents" as const, count: agentCount },
       ],
     };
-  }, [chatList, chatListScope]);
+  }, [chatList, chatListScope, chatSearch, updateCounter, sidebarMode]);
 
   // Notify parent when chat list changes. Gated on chatListReady so that we
   // don't report 0 from the empty initial cache before listChats() has completed.
@@ -6878,7 +6911,12 @@ function ChatInterface({
   const chatListPanel = (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Chat list header — title doubles as the scope switcher */}
-      <div className="flex h-12 flex-shrink-0 items-center border-b border-kumo-line px-4">
+      {!sidebarMode && <div className={sidebarMode ? "flex flex-shrink-0 items-center justify-between border-b border-kumo-line p-3" : "mx-auto flex w-full max-w-[1080px] flex-shrink-0 flex-wrap items-center justify-between gap-4 px-6 pb-5 pt-8 md:px-10"}>
+        {!sidebarMode && <div><h2 className="text-[26px] font-semibold tracking-[-0.7px] text-kumo-default">Беседы <span className="ml-2 text-lg font-normal text-kumo-subtle">{chatList.length}</span></h2><p className="mt-1 text-sm text-kumo-subtle">Разговоры и альтернативные ветки с Mnemos</p></div>}
+        <WorkshopButton onClick={() => setListComposing(value => !value)}><Plus size={16} /> Новая беседа</WorkshopButton>
+      </div>}
+      <div className={sidebarMode ? "flex flex-shrink-0 items-center gap-2 px-3 py-3" : "mx-auto flex w-full max-w-[1080px] flex-shrink-0 items-center gap-3 px-6 pb-5 md:px-10"}>
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-3 py-2.5 text-kumo-subtle"><MagnifyingGlass size={18} /><input aria-label="Поиск бесед" placeholder="Найти беседу…" value={chatSearch} onChange={e => setChatSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-kumo-default outline-none" />{chatSearch && <button aria-label="Очистить поиск бесед" onClick={() => setChatSearch("")}><X size={14} /></button>}</label>
         <DropdownMenu>
           <DropdownMenu.Trigger
             render={
@@ -6921,7 +6959,7 @@ function ChatInterface({
         </DropdownMenu>
       </div>
       {/* Chat list */}
-      <div className="chat-panel flex-1 overflow-y-auto bg-kumo-base p-3">
+      <div className={sidebarMode ? "chat-panel flex-1 overflow-y-auto bg-kumo-base p-3" : "chat-panel flex-1 overflow-y-auto px-6 pb-10 md:px-10"}>
         {!chatListReady ? (
           <div className="flex items-center justify-center py-10">
             <div className="w-5 h-5 border-2 border-kumo-brand border-t-transparent rounded-full animate-spin" />
@@ -6931,17 +6969,17 @@ function ChatInterface({
             Бесед пока нет
           </p>
         ) : (
-          <div className="flex flex-col gap-1">
+          <div className={sidebarMode ? "flex flex-col gap-1" : "mx-auto flex w-full max-w-[1000px] flex-col gap-1"}>
             {visibleChatList.length === 0 ? (
               // Only reachable when a non-"all" scope filters everything out;
               // the all-empty case is handled by the outer chatList.length check.
               <div className="py-8 text-center">
                 <p className="text-[13px] leading-[18px] text-kumo-inactive">
-                  {chatListScope === "agents" ? "Бесед, начатых агентами, пока нет" : "Бесед, начатых людьми, пока нет"}
+                  {chatSearch ? "По этому запросу бесед не найдено" : chatListScope === "agents" ? "Бесед, начатых агентами, пока нет" : "Бесед, начатых людьми, пока нет"}
                 </p>
                 <button
                   type="button"
-                  onClick={() => setChatListScope("all")}
+                  onClick={() => { setChatListScope("all"); setChatSearch(""); }}
                   className="mt-2 cursor-pointer rounded-md px-2 py-1 text-[12px] leading-4 font-medium text-kumo-subtle transition-colors duration-150 ease-out hover:text-kumo-default focus-visible:text-kumo-default focus-visible:outline-none"
                 >
                   Показать все
@@ -6950,7 +6988,7 @@ function ChatInterface({
             ) : (
               <div className="flex flex-col gap-4">
                 {bucketedVisibleChats.map(({ bucket, items }) => (
-                  <section key={bucket} className="flex flex-col gap-0.5">
+                  <section key={bucket} className={sidebarMode ? "flex flex-col gap-0.5" : "flex flex-col gap-3"}>
                     <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-[0.08em] text-kumo-inactive">
                       {CHAT_TIME_BUCKET_LABELS[bucket]}
                     </p>
@@ -6958,10 +6996,19 @@ function ChatInterface({
               <div key={chat.id} className="relative">
                 {(() => {
                   const isRenaming = renamingChatId === chat.id;
+                  const legacyBranches = chat.title.match(/(?: · правка)+$/)?.[0].match(/ · правка/g)?.length ?? 0;
+                  const rowTitle = displayChatTitle(chat.title.replace(/(?: · правка)+$/, ""));
+                  const preview = chatRowPreview(chat, cacheRef.current.messages.get(chat.id));
+                  const familyId = chatFamilyId(chat, chatList);
+                  const family = chatList.filter(c => chatFamilyId(c, chatList) === familyId).sort((a, b) => a.started.getTime() - b.started.getTime() || a.id - b.id);
                   return (
                   <div
+                    role={isRenaming ? undefined : "button"}
+                    tabIndex={isRenaming ? undefined : 0}
+                    aria-label={isRenaming ? undefined : `Открыть беседу: ${rowTitle}`}
+                    onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onNavigateToChat(chat.id); } }}
                     onClick={isRenaming ? undefined : () => onNavigateToChat(chat.id)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-[background-color] duration-150 ease-out ${
+                    className={`group flex w-full items-start gap-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand ${sidebarMode ? "rounded-lg px-2.5 py-2" : "rounded-2xl border border-kumo-line bg-kumo-base p-5 hover:border-kumo-brand/40"} ${
                       isRenaming
                         ? "cursor-default bg-kumo-base ring-1 ring-kumo-ring/40"
                         : sidebarMode && chat.id === selectedChatId
@@ -6969,6 +7016,7 @@ function ChatInterface({
                           : "cursor-pointer hover:bg-kumo-tint"
                     }`}
                   >
+                    {!sidebarMode && <span className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-kumo-tint text-kumo-brand" aria-hidden="true">{chat.forkedFrom || legacyBranches ? <GitBranch size={21} /> : <ChatCircle size={21} />}</span>}
                     <div className="flex-1 min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
                         {isRenaming ? (
@@ -6991,12 +7039,12 @@ function ChatInterface({
                             spellCheck={false}
                             autoCapitalize="off"
                             autoCorrect="off"
-                            aria-label={`Переименовать «${displayChatTitle(chat.title)}»`}
+                            aria-label={`Переименовать «${rowTitle}»`}
                             className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default outline-none placeholder:text-kumo-inactive"
                           />
                         ) : (
-                          <span className="truncate text-[13px] leading-[18px] font-medium tracking-[-0.25px] text-kumo-default">
-                            {displayChatTitle(chat.title)}
+                          <span className={sidebarMode ? "truncate text-[13px] font-medium text-kumo-default" : "line-clamp-2 text-[16px] leading-6 font-semibold tracking-[-0.25px] text-kumo-default"}>
+                            {rowTitle}
                           </span>
                         )}
                         {!isRenaming && chatListState(chat) === "working" ? (
@@ -7023,6 +7071,8 @@ function ChatInterface({
                           </Tooltip>
                         ) : null}
                       </div>
+                      {!isRenaming && !sidebarMode && preview && <p className="mt-1.5 line-clamp-2 text-sm leading-6 text-kumo-subtle">{preview}</p>}
+                      {!isRenaming && family.length === 1 && (chat.forkedFrom || legacyBranches > 0) && <div className="mt-2 flex items-center gap-2 text-xs text-kumo-subtle"><GitBranch size={13} /><span>{legacyBranches > 0 ? `Ветка ${legacyBranches}` : "Альтернативная ветка"}</span>{chat.forkedFrom && cacheRef.current.chats.has(chat.forkedFrom.chatId) && <button type="button" className="cursor-pointer text-kumo-brand hover:underline" onClick={e => { e.stopPropagation(); onNavigateToChat(chat.forkedFrom!.chatId); }}>Исходная беседа <ArrowUpRight size={12} className="inline" /></button>}</div>}
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-4 text-kumo-inactive">
                         {chat.spawnerName && (
                           <>
@@ -7033,7 +7083,7 @@ function ChatInterface({
                         <span className="flex-shrink-0">
                           {formatChatRowTime(chat.lastActive, bucket, chatListNow)}
                         </span>
-                        {chat.totalCost != null && (
+                        {sidebarMode && chat.totalCost != null && (
                           <>
                             <span className="flex-shrink-0" aria-hidden="true">·</span>
                             <span className="flex-shrink-0 font-mono">
@@ -7042,6 +7092,7 @@ function ChatInterface({
                           </>
                         )}
                       </div>
+                      {!sidebarMode && !isRenaming && family.length > 1 && <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-kumo-line pt-3" aria-label="Варианты беседы"><span className="mr-1 inline-flex items-center gap-1.5 text-xs text-kumo-subtle"><GitBranch size={14} /> Варианты</span>{family.map((variant, index) => <button key={variant.id} type="button" onClick={e => { e.stopPropagation(); onNavigateToChat(variant.id); }} className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-xs transition-colors ${variant.id === chat.id ? "bg-kumo-tint text-kumo-brand" : "text-kumo-subtle hover:bg-kumo-tint"}`} aria-label={`Открыть ${variant.id === familyId ? "исходную беседу" : `ветку ${index}`}: ${rowTitle}`}>{variant.id === familyId ? "Исходная" : `Ветка ${index}`}{variant.id === chat.id && <span className="ml-1.5 text-kumo-subtle">· последняя</span>}</button>)}</div>}
                     </div>
                     {!isRenaming && (
                       <DropdownMenu>
@@ -7050,7 +7101,7 @@ function ChatInterface({
                             <WorkshopIconButton
                               aria-label={`Действия: ${chat.title}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-0 touch:opacity-100 focus:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100"
+                              className="!h-7 !w-7 flex-shrink-0 text-kumo-inactive opacity-70 hover:opacity-100"
                             >
                               <DotsThreeVertical size={14} />
                             </WorkshopIconButton>
@@ -7094,7 +7145,7 @@ function ChatInterface({
       {/* New chat input — pinned to bottom. ChatInput supplies its own
           horizontal padding, so the wrapper just adds the top divider; no
           extra p-4 (which would shrink the input vs. the in-chat composer). */}
-      <div className="flex-shrink-0 border-t border-kumo-line">
+      {(sidebarMode || listComposing) && <div className="flex-shrink-0 border-t border-kumo-line">
         <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
           <ChatInput
             createCapsuleGatekeeper={(accountId, url) =>
@@ -7114,7 +7165,7 @@ function ChatInterface({
           {/* Reserve the same height as the token/cost row to avoid layout shift. */}
           <div aria-hidden className="min-h-[1rem]" />
         </div>
-      </div>
+      </div>}
     </div>
   );
 

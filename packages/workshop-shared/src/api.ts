@@ -1960,6 +1960,10 @@ export type AiChatMetadata = {
   codeMode?: ChatCodeMode;
   id: number,
   title: string,
+  /** Последняя реплика для списка бесед; вычисляется при чтении. */
+  preview?: string;
+  /** Исходная беседа и запрос, от которого создана ветка. */
+  forkedFrom?: {chatId: number; sequence: number};
   started: Date,
   lastActive: Date,
 
