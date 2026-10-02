@@ -9372,7 +9372,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     });
   }
 
-  async listChats(): Promise<AiChatMetadata[]> {
+  async listChats(includePreview = true): Promise<AiChatMetadata[]> {
+    if (!includePreview) return [...this.impl.storage.chatMeta.list({reverse: true})];
     return [...this.impl.storage.chatMeta.list({reverse: true})].map(meta => {
       for (const message of this.impl.storage.chats.list({prefix: `${keyString(meta.id)}.`, reverse: true})) {
         if (message.type === "message" && message.message.trim() &&

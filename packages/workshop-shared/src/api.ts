@@ -1635,7 +1635,7 @@ export interface Overseer extends RpcTarget {
   subscribeToActions(subscriber: RpcStub<ActionsSubscriber>, startAfter?: Date): Promise<RpcStub<{}>>;
 
   // List past AI chats.
-  listChats(): Promise<AiChatMetadata[]>;
+  listChats(includePreview?: boolean): Promise<AiChatMetadata[]>;
 
   // List available models. The first listed model should be the default, unless the user has
   // chosen something else.

@@ -309,6 +309,9 @@ it("правка сообщения сохраняет исходную исто
   expect(await overseer.getChatAttachmentContent(edited, attachment!.id)).toEqual(Buffer.from(bytes));
   expect(await overseer.getChatAttachmentContent(chat, file.id)).toEqual(Buffer.from(bytes));
   expect((await overseer.listChats()).find(c => c.id === edited)?.preview).toBeTruthy();
+  const summaries = await overseer.listChats(false);
+  expect(summaries.find(c => c.id === edited)?.preview).toBeUndefined();
+  expect(summaries.find(c => c.id === edited)?.forkedFrom).toEqual({chatId: chat, sequence: target.sequence});
   const prompt = net.model.prompts.at(-1)!;
   expect(prompt).toContain("Первый контекст");
   expect(prompt).toContain("Изменённый запрос");

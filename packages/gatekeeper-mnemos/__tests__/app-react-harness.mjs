@@ -128,6 +128,7 @@ export async function mountMemoryApp(overrides = {}, options = {}) {
     async sendMailDraft(id, sha256) { calls.push(["sendMailDraft", id, sha256]); return { state: "accepted" }; }
     async createCalendarDraft(id, sha256) { calls.push(["createCalendarDraft", id, sha256]); return { state: "created", event_id: "ev" }; }
     async listProjectChats(...args) { calls.push(["listProjectChats", ...args]); return options.projectChats ? options.projectChats(...args) : {chats:[],next:null,failed:0}; }
+    async openProjectChat(...args) { calls.push(["openProjectChat", ...args]); }
     async previewFile(...args) { calls.push(["previewFile", ...args]); }
     async downloadFile(...args) { calls.push(["downloadFile",...args]); }
     async downloadText(...args) { calls.push(["downloadText",...args]); return typeof options.downloadText === "function" ? options.downloadText(...args) : options.downloadText ?? "текст"; }

@@ -106,3 +106,15 @@ test("беседы переживают временный отказ, повт�
     assert.equal(app.calls.filter(call => call[0] === "listProjectChats").at(-1)[2], 20);
   } finally { app.dispose(); }
 });
+
+
+test("страница проекта показывает беседы справа и открывает точную ветку", async () => {
+  const app = await mountMemoryApp({}, { section: "projects", project: "one", projectChats: async () => ({chats:[{workspaceId:"linked",chatId:7,title:"Сводка проекта",at:"2026-10-02"}],next:null,failed:0}) });
+  try {
+    await app.until(() => app.document.querySelector('[aria-label="Беседы проекта"] button'), "беседы на странице проекта");
+    const button = [...app.document.querySelectorAll('[aria-label="Беседы проекта"] button')].find(button => button.textContent.includes("Сводка проекта"));
+    button.click();
+    await app.until(() => app.calls.some(([method]) => method === "openProjectChat"), "переход к беседе");
+    assert.deepEqual(app.calls.find(([method]) => method === "openProjectChat").slice(1), ["linked",7]);
+  } finally { app.dispose(); }
+});

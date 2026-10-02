@@ -16,6 +16,7 @@ import { uploadActive, useProjectUpload, useUploadChoosing } from "./UploadNotic
 import ProjectCode, { type CompareTarget } from "./ProjectCode.tsx";
 import GitHubSyncStatus from "./GitHubSyncStatus.tsx";
 import ProjectTasks from "./ProjectTasks.tsx";
+import { ProjectConversations } from "./ProjectExplorer.tsx";
 
 const COLLABORATION_STATES = { awaiting_result: "В работе", awaiting_review: "Ждёт приёмки", accepted: "Принято", changes_requested: "На доработке" } as const;
 /** Сколько файлов показывать до «Показать все». */
@@ -142,6 +143,10 @@ function ProjectPage({ project, data, view, linkedDocument = null, onOpenDocumen
           <ProjectFiles project={project} data={data} descriptions={overview.value?.children ?? []} linkedDocument={linkedDocument} onOpenDocuments={onOpenDocuments} />
         </div>
         <div className="min-w-0">
+          <section className="mb-7">
+            <SectionTitle title="Беседы" />
+            <ProjectConversations key={project.id} project={project.id} compact />
+          </section>
           <ProjectNow project={project} data={data} />
           <ProjectPeople project={project} data={data} onOpenSources={onOpenSources} onShare={share} />
         </div>

@@ -62,7 +62,7 @@ export function ExplorerAssistant({ targets, contextName, onClear, onStart }: { 
   </section>;
 }
 
-export function ProjectConversations({ project }: { project: string }) {
+export function ProjectConversations({ project, compact = false }: { project: string; compact?: boolean }) {
   const host = useHost();
   type ChatPage = Pick<Awaited<ReturnType<typeof host.listProjectChats>>, "chats" | "next" | "failed">;
   const [page, setPage] = useState<ChatPage | null>(null);
@@ -86,10 +86,10 @@ export function ProjectConversations({ project }: { project: string }) {
   }
   useEffect(() => { void load(); }, [project]);
   return <section aria-label="Беседы проекта">
-    <p className="mt-0 text-[13px] text-kumo-subtle">Ваши беседы, к которым подключён этот проект.</p>
+    {!compact && <p className="mt-0 text-[13px] text-kumo-subtle">Ваши беседы, к которым подключён этот проект.</p>}
     {error && <div className="mb-4 rounded-xl border border-kumo-fill bg-kumo-overlay p-4"><p role="alert" className="mt-0 text-[14px]">{error}</p><Button variant="secondary" size="sm" disabled={busy} onClick={() => void load(retryOffset.current)}>Повторить загрузку</Button></div>}
     {page?.failed ? <Notice>Часть бесед не загрузилась ({page.failed}). <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load([...pages.current].find(([, slice]) => slice.failed > 0)?.[0] ?? 0)}>Повторить загрузку</Button></Notice> : null}
-    <div className="overflow-hidden rounded-xl border border-kumo-fill bg-kumo-overlay">{page?.chats.map(chat => <button type="button" key={`${chat.workspaceId}/${chat.chatId}`} onClick={() => void host.openProjectChat(chat.workspaceId, chat.chatId).catch(() => setError("Не удалось открыть беседу."))} className="flex w-full items-center gap-3 border-t border-kumo-fill px-4 py-4 text-left first:border-0 hover:bg-kumo-tint"><ChatCircleText size={22} className="shrink-0 text-kumo-brand" /><span className="min-w-0 flex-1 truncate text-[15px]">{chat.title}</span><span className="shrink-0 text-[12px] text-kumo-subtle">{relativeTime(chat.at)}</span></button>)}</div>
+    <div className="overflow-hidden rounded-xl border border-kumo-fill bg-kumo-overlay">{page?.chats.map(chat => <button type="button" key={`${chat.workspaceId}/${chat.chatId}`} onClick={() => void host.openProjectChat(chat.workspaceId, chat.chatId).catch(() => setError("Не удалось открыть беседу."))} className={`flex w-full items-center gap-3 border-t border-kumo-fill px-4 text-left first:border-0 hover:bg-kumo-tint ${compact ? "py-3" : "py-4"}`}><ChatCircleText size={compact ? 18 : 22} className="shrink-0 text-kumo-brand" /><span className={`min-w-0 flex-1 truncate ${compact ? "text-[14px]" : "text-[15px]"}`}>{chat.title.replace(/(?: · правка)+$/, "")}</span><span className="shrink-0 text-[12px] text-kumo-subtle">{relativeTime(chat.at)}</span></button>)}</div>
     {busy && <p role="status" className="text-[13px] text-kumo-subtle">Ищу беседы проекта…</p>}
     {!busy && page && !page.chats.length && <p className="text-[14px] text-kumo-subtle">{page.next !== null ? "В недавних беседах этот проект пока не найден. Можно посмотреть более ранние." : "Бесед с этим проектом пока нет. Начните новую беседу."}</p>}
     {!busy && page?.next !== null && page?.next !== undefined && <Button variant="secondary" size="sm" className="mt-3" onClick={() => void load(page.next!)}>Посмотреть более ранние</Button>}

@@ -897,13 +897,13 @@ export default function SandboxedGatekeeperApp({ frame, gatekeeperVendorId, acco
           const page = workspaces.slice(offset, offset + 20)
           const chats: ProjectChatPage['chats'] = []
           let next = 0, failed = 0
-          await Promise.all(Array.from({ length: Math.min(4, page.length) }, async () => {
+          await Promise.all(Array.from({ length: Math.min(8, page.length) }, async () => {
             while (next < page.length) {
               const workspace = page[next++]
               let overseer: Awaited<ReturnType<typeof authenticatedApi.openGadget>> | undefined
               try {
                 overseer = await authenticatedApi.openGadget(workspace.id)
-                for (const chat of await overseer.listChats()) {
+                for (const chat of await overseer.listChats(false)) {
                   const context = chat.projectContext
                   if (context && context.creatorProfileId === ownerProfile.id && (context.projects ?? [context]).some(p => p.accountId === accountId && p.projectId === project)) chats.push({ workspaceId: workspace.id, chatId: chat.id, title: chat.title || workspace.title, at: chat.lastActive.toISOString() })
                 }
