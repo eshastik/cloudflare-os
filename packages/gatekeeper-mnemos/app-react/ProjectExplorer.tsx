@@ -39,7 +39,7 @@ export function ExplorerPath({ nodes, current, onOpen }: { nodes: ProjectNode[];
 export type ExplorerTarget = { nodeId: string; name: string; folder?: boolean; privateOnly?: boolean };
 export function explorerPrompt(_project: string, targets: ExplorerTarget[], task: string): string {
   const references = targets.map(target => `- ${target.folder ? "Папка" : "Файл"} «${target.name}»`).join("\n");
-  return `${task}${references ? `\n\nМатериалы для задачи:\n${references}` : "\n\nИспользуй материалы подключённого проекта."}`;
+  return `${task.trimEnd()}${references ? `\n\nМатериалы для задачи:\n${references}` : "\n\nИспользуй материалы подключённого проекта."}`;
 
 }
 

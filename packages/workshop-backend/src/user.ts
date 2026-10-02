@@ -1003,13 +1003,18 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
              resetAt: nextUtcMidnightIso() };
   }
 
-  // DO NOT MAKE PUBLIC -- returns API keys.
-  async getChatContext(modelId: string | null): Promise<UserChatContext> {
+  // Возвращает ключи API; не предоставлять этот метод внешним клиентам.
+  async getAgentChatContext(modelId: string | null): Promise<UserChatContext> {
     if (!modelId) {
       const models = await this.listModels();
       modelId = models.find(model => model.id === "mnemos-assistant")?.id ?? models[0]?.id ?? null;
     }
     if (!modelId) throw new Error("Нет доступного агента. Проверьте настройку моделей установки.");
+    return this.getChatContext(modelId);
+  }
+
+  // DO NOT MAKE PUBLIC -- returns API keys.
+  async getChatContext(modelId: string | null): Promise<UserChatContext> {
     let gwConfig = getAiGatewayConfig(this.env);
 
     let result: UserChatContext = {
@@ -1056,7 +1061,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       ?? models.find(model => model.id === this.storage.preferredModel.get())
       ?? models[0];
 
-    return this.getChatContext(selectedModel?.id ?? null);
+    return this.getAgentChatContext(selectedModel?.id ?? null);
   }
 
   async listGadgets(): Promise<GadgetMetadataWithTimestamps[]> {

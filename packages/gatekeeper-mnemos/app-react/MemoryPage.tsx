@@ -17,7 +17,7 @@ import { PageHeader } from "./ui.tsx";
 import { UploadProvider } from "./UploadNotice.tsx";
 
 /** Разделы, которые сами рисуют заголовок: в нём живые числа и действия раздела. */
-const OWN_HEADER: ReadonlySet<SectionId> = new Set<SectionId>(["my-work", "projects", "team"]);
+const OWN_HEADER: ReadonlySet<SectionId> = new Set<SectionId>(["my-work", "projects", "team", "documents"]);
 const WIDTH: Partial<Record<SectionId, string>> = { "my-work": "max-w-[768px]", team: "max-w-[928px]" };
 
 /** Уведомление о загрузке живёт выше разделов: смена раздела его не снимает. */
@@ -90,7 +90,7 @@ function Sections({ data }: { data: ReturnType<typeof useMemoryData> }) {
   </>;
 
   return <div className={compact ? "flex w-full flex-col px-4 py-4" : `mx-auto flex w-full ${(section && WIDTH[section]) ?? "max-w-[1120px]"} flex-col px-4 py-8 sm:px-6 sm:py-12`}>
-    {!compact && !repositories && !(section === "documents" && documentsProject) && !(section && OWN_HEADER.has(section)) && <PageHeader title={page ? page.title : "Раздел не найден"} subtitle={page?.description} />}
+    {!compact && !repositories && !(section && OWN_HEADER.has(section)) && <PageHeader title={page ? page.title : "Раздел не найден"} subtitle={page?.description} />}
     {notice && <p role="alert" className="m-0 mb-4 text-[14px] text-kumo-danger">{notice}</p>}
     {!section && <p className="m-0 text-[15px] text-kumo-subtle">Выберите нужный раздел в основном меню.</p>}
     {denied ? <p role="status" className="m-0 text-[15px] text-kumo-subtle">{data.projectsLoading ? "Проверка доступа…" : "Этот раздел доступен администратору организации."}</p> : <>

@@ -51,8 +51,8 @@ test("панель приёма рядом с беседой по-прежнем
 test("прямой раздел материалов открывается с выбранным проектом без второго меню",async()=>{
  const app=await mountMemoryApp({}, {section:"documents",project:"two"});
  try {
-  await app.until(()=>heading(app)==="Материалы" && app.text().includes("Другой документ"),"материалы выбранного проекта");
-  assert.equal(app.document.querySelectorAll('[role="tab"]').length,0);
+  await app.until(()=>heading(app)==="Второй проект" && app.text().includes("Другой документ"),"материалы выбранного проекта");
+  assert.deepEqual([...app.document.querySelectorAll('[role="tab"]')].map(tab => tab.textContent),["Файлы", "Беседы"]);
  } finally {app.dispose();}
 });
 

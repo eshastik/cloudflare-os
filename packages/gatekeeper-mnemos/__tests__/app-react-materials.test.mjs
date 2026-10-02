@@ -48,7 +48,7 @@ test("«Материалы»: одна строка ищет по всем пр�
     chip(app, "Второй проект").click();
     await app.until(() => cards(app).length === 1 && card(app, "Другой документ"), "поиск в выбранном проекте");
     assert.deepEqual(searches.at(-1), ["two", "оплата"]);
-    assert.equal(chip(app, "Второй проект").getAttribute("aria-pressed"), "true");
+    assert.equal(app.document.querySelector("h1").textContent, "Второй проект");
   } finally { app.dispose(); }
 });
 
@@ -93,7 +93,7 @@ test("«Материалы»: просмотр справа и переход в
     await app.until(() => card(app, "Заметка команды"), "карточка");
     inside(card(app, "Заметка команды"), "Спросить в беседе").click();
     await app.until(() => app.calls.some(c => c[0] === "openPrompt"), "беседа из карточки");
-    assert.deepEqual(app.calls.find(c => c[0] === "openPrompt"), ["openPrompt", "Вопрос по документу «Заметка команды»:\n\n", { projectId: "one", title: "Общий проект" }]);
+    assert.deepEqual(app.calls.find(c => c[0] === "openPrompt"), ["openPrompt", "Вопрос по документу «Заметка команды»:\n\nМатериалы для задачи:\n- Файл «Заметка команды»", { projectId: "one", title: "Общий проект", materials: [{nodeId: "doc", name: "Заметка команды", privateOnly: undefined}] }]);
 
     inside(card(app, "Другой документ"), "Открыть").click();
     const preview = () => app.document.querySelector('#root aside[aria-label="Просмотр документа"]');
@@ -102,7 +102,7 @@ test("«Материалы»: просмотр справа и переход в
     assert.ok(card(app, "Заметка команды"), "список остаётся рядом с просмотром");
     inside(preview(), "Сделать задачу по документу").click();
     await app.until(() => app.calls.filter(c => c[0] === "openPrompt").length === 2, "задача из просмотра");
-    assert.deepEqual(app.calls.filter(c => c[0] === "openPrompt")[1], ["openPrompt", "Задача по документу «Другой документ»:\n\n", { projectId: "two", title: "Второй проект" }]);
+    assert.deepEqual(app.calls.filter(c => c[0] === "openPrompt")[1], ["openPrompt", "Задача по документу «Другой документ»:\n\nМатериалы для задачи:\n- Файл «Другой документ»", { projectId: "two", title: "Второй проект", materials: [{nodeId: "other", name: "Другой документ", privateOnly: undefined}] }]);
     assert.ok(!/[0-9a-f]{16}/.test(app.text()), "на экране нет служебных идентификаторов");
 
     app.document.querySelector('#root button[aria-label="Закрыть просмотр"]').click();

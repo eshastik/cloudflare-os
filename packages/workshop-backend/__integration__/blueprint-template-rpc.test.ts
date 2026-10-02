@@ -1,3 +1,4 @@
+import {prepareTestAgent} from "./test-agent";
 import * as Y from 'yjs';
 import { exports } from 'cloudflare:workers';
 import {newWebSocketRpcSession} from 'capnweb';
@@ -32,6 +33,7 @@ it('восстанавливает личный гаджет из снимка �
  const document = await editor.getDocument();
  expect(document.title).toBe('Сохранённый договор');
  expect(document.blocks[0].html).toBe('<p>Точная редакция</p>');
+ await prepareTestAgent(owner, workspace);
  const chatId=await workspace.newChat('Работа с шаблоном',null);
  const operation=crypto.randomUUID();
  const result=await workspace.importTemplateIntoChat(new Response(bytes).body!,chatId,operation);

@@ -8088,7 +8088,7 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
     // bindings created before collaborator support).
     let resolveUserId = creatorUserId ?? this.impl.ownerId;
     let user = this.impl.users.get(this.impl.users.idFromString(resolveUserId));
-    let userMeta = await user.getChatContext(config.modelId);
+    let userMeta = await user.getAgentChatContext(config.modelId);
 
     let chatId = this.impl.nextChatId();
     let timestamp = this.impl.getChatTimestamp();
@@ -9615,7 +9615,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       }
       projectContext={accountId:projectContext.accountId,projectId:projectContext.projectId,title:projectContext.title.trim(),projects};
     }
-    let userMeta = await this.clientUser.getChatContext(chosenModelId);
+    let userMeta = await this.clientUser.getAgentChatContext(chosenModelId);
     return this.impl.newChat(this.clientUser, userMeta, initialMessage, capsules, attachments,
                              undefined, undefined, formats, projectContext);
   }
@@ -9624,7 +9624,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       chatId: number, message: string | SlashCommandRequest, chosenModelId: string | null,
       capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
       formats?: MessageFormatRef[]): Promise<void> {
-    let userMeta = await this.clientUser.getChatContext(chosenModelId);
+    let userMeta = await this.clientUser.getAgentChatContext(chosenModelId);
     await this.impl.sendChatMessage(
         this.clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats);
     // Сообщение человека с сайта в беседе, связанной с тредом, уходит в тред с пометкой «с сайта».

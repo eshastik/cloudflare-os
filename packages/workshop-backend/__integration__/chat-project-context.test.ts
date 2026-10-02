@@ -1,3 +1,4 @@
+import {prepareTestAgent} from "./test-agent";
 import {exports} from 'cloudflare:workers';
 import {runInDurableObject} from 'cloudflare:test';
 import {newWebSocketRpcSession} from 'capnweb';
@@ -11,7 +12,7 @@ it('сохраняет контекст проекта при повторном
  const token=await api.createAccount(name,name,new Uint8Array([1,2,3]));using owner=await api.authenticate(token!);
  const user=exports.UserDurableObject.getByName(name);
  await runInDurableObject(user,async instance=>{instance['storage'].connectedAccounts.put({id:3,vendorId:'mnemos',description:{displayName:'Учебная организация'},account:{} as never});});
- using workspace=await owner.newGadget();const info=await workspace.getMetadata();
+ using workspace=await owner.newGadget();await prepareTestAgent(owner,workspace);const info=await workspace.getMetadata();
  const context={accountId:3,projectId:'project-a',title:'Проект А'};
  const chat=await workspace.newChat('Подготовь документ',null,undefined,undefined,undefined,context);
  using reopened=await owner.openGadget(info.id);

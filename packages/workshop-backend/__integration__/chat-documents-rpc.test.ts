@@ -1,3 +1,4 @@
+import {prepareTestAgent} from "./test-agent";
 // Документ беседы через настоящий WebSocket (ADR 0003): по соединению беседы идут только описание
 // файла, билет и место в Mnemos; сам файл браузер кладёт в хранилище мимо беседы. Старый путь байтами
 // документ не принимает (это и отказы — модульными тестами __tests__/chat-documents.test.ts: отказ через
@@ -57,6 +58,7 @@ it('документ беседы: билет, узел в проекте или
   });
 
   using workspace = await owner.newGadget();
+  await prepareTestAgent(owner, workspace);
   const context = {accountId: 3, projectId: 'project-a', title: 'Проект А'};
 
   // Беседы ещё нет: документ ложится в проект, выбранный для неё.

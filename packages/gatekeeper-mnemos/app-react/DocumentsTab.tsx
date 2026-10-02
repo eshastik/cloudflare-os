@@ -8,7 +8,7 @@ import AdministrativeDocuments from "./AdministrativeDocuments.tsx";
 import { folderOf, MaterialCard, queryTerms, MaterialChatButtons, materialPrompt, type MaterialAction, type MoveTarget, type MoveTargets } from "./MaterialCard.tsx";
 import { isMarkdown, Markdown } from "./markdown.tsx";
 import { relativeTime } from "./time.ts";
-import { Button, Notice, StatusBadge, touchOnly } from "./ui.tsx";
+import { Button, Notice, PageHeader, StatusBadge, touchOnly } from "./ui.tsx";
 
 /** Время документа даёт только история; чтобы не грузить сервер, берём первую страницу истории для ограниченного числа строк. */
 const HISTORY_ROWS = 40;
@@ -430,6 +430,7 @@ export default function DocumentsTab({ data, initialProject = "", linkedDocument
 ) : null;
   return (
     <div className="max-w-full">
+      {!selected && <PageHeader title="Материалы" subtitle="Документы организации, личные черновики и опубликованные версии." />}
       {currentProject && <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div><button type="button" onClick={() => void host.openSection("projects", selected).catch(() => setNotice("Проект не открылся."))} className="mb-2 inline-flex items-center gap-1 text-[13px] text-kumo-brand"><ArrowLeft size={14} />К проекту</button><h1 className="m-0 text-[25px] font-semibold">{currentProject.name}</h1><p className="mb-0 mt-1 text-[14px] text-kumo-subtle">Файлы, папки и работа с Mnemos</p></div>
         <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" disabled={uploading} icon={FileArrowUp} onClick={() => void upload()}>Загрузить файлы</Button>{!touchOnly && <Button variant="secondary" size="sm" disabled={uploading} icon={Folder} onClick={() => void upload(true)}>Загрузить папку</Button>}<Button size="sm" icon={ChatCircleText} onClick={() => askAgent(`Работаем над проектом «${currentProject.name}».`)}>Новая беседа</Button></div>
