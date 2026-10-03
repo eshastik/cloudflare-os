@@ -142,9 +142,10 @@ test("цепочка фото: principal_id из principal_photo → мост �
   forgetDownloadedPhotos(); forgetPersonPhotos();
   const lines = []; const debug = console.debug; console.debug = (...args) => lines.push(args.join(" "));
   try {
-    const tampered = new FramePersonPhotos(selector, STORAGE, { fetch: async (input, init) => new URL(String(input)).origin === STORAGE ? new Response(new Uint8Array([0xff, 0xd8, 0xff, 9]), { status: 200 }) : server(input, init) });
+    const changedBytes = JPEG.slice(); changedBytes[changedBytes.length - 1] ^= 1;
+    const tampered = new FramePersonPhotos(selector, STORAGE, { fetch: async (input, init) => new URL(String(input)).origin === STORAGE ? new Response(changedBytes, { status: 200 }) : server(input, init) });
     assert.deepEqual(await framePhotos(tampered, ["mnemos-owner"]), [null]);
-    assert.ok(lines.some(line => line.includes("mnemos-owner") && line.includes("сумма")), `причина в консоли: ${lines.join(" | ")}`);
+    assert.ok(lines.some(line => line.includes("mnemos-owner") && line.includes("Не совпала версия фотографии")), `причина в консоли: ${lines.join(" | ")}`);
   } finally { console.debug = debug; }
 });
 
