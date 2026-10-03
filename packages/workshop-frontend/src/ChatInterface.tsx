@@ -2001,7 +2001,6 @@ export const ChatInput = ({
   minRows = 2,
   seedText,
   seedNonce,
-  attachLabel,
   draftUpdateBanner,
   blockedReason,
   chatKey,
@@ -2020,8 +2019,7 @@ export const ChatInput = ({
     accountId: number,
     url: string,
   ) => Promise<RpcStub<GatekeeperClient<any>> | null>;
-  // Returns an overseer stub, used by the attach modal to create gatekeepers. Can be async
-  // to support lazy provisional-gadget creation on the Home page.
+  // На главной странице рабочее пространство создаётся при первом обращении.
   getOverseer: () => Promise<RpcStub<Overseer>> | RpcStub<Overseer>;
   onSend: (
     message: string | SlashCommandRequest,
@@ -2051,8 +2049,6 @@ export const ChatInput = ({
    * whenever `seedNonce` changes, so the same text can be re-seeded by bumping the nonce. */
   seedText?: string;
   seedNonce?: number;
-  /** Optional label for the attach menu item. */
-  attachLabel?: string;
   draftUpdateBanner?: ReactNode;
   /** When set, the composer is disabled and shows this message — the user must resolve something
    * (e.g. accept/deny a pending connection request) before they can type or send. */
@@ -2152,11 +2148,6 @@ export const ChatInput = ({
     overlayItemsRef.current = items;
     if (!overlayNavigatedRef.current) setOverlayIndex(firstAccountIndex(items));
   }, []);
-
-  // Attach modal state
-  const [attachModalOpen, setAttachModalOpen] = useState(() => restoredAttach !== null);
-  // Save the cursor position when the attach modal opens, so we can insert the capsule there.
-  const attachCursorPosRef = useRef(0);
 
   // Refs for the mirror div and the textarea wrapper.
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -2896,65 +2887,6 @@ export const ChatInput = ({
     });
   };
 
-  // Opens the attach modal, saving the current cursor position so we can insert there later.
-  const handleAttachOpen = () => {
-    const wrapper = wrapperRef.current;
-    if (wrapper) {
-      const textarea = wrapper.querySelector("textarea");
-      if (textarea) {
-        attachCursorPosRef.current =
-          textarea.selectionStart ?? inputValueRef.current.length;
-      } else {
-        attachCursorPosRef.current = inputValueRef.current.length;
-      }
-    } else {
-      attachCursorPosRef.current = inputValueRef.current.length;
-    }
-    setAttachModalOpen(true);
-  };
-
-  // Insert a capsule chip at the given position and move the caret past it.
-  const insertCapsuleAt = (
-    insertPos: number,
-    id: number,
-    description: ResourceDescription,
-    vendorId?: string,
-  ) => {
-    const splice = spliceComposerToken(
-        inputValueRef.current, insertPos, insertPos, capsuleTokenText(description, vendorId));
-
-    setInputValue(splice.value);
-
-    // Shift any existing capsules after the insertion point.
-    shiftSelectedSlashCommand(insertPos, splice.delta);
-    setCapsules((prev) => [
-      ...prev.map((c) =>
-        c.start >= insertPos ? { ...c, start: c.start + splice.delta } : c),
-      { start: splice.start, length: splice.length, gatekeeperId: id, description, vendorId },
-    ]);
-
-    requestAnimationFrame(() => {
-      composerTextareaRef.current?.focus();
-      moveCaret(splice.caret);
-    });
-  };
-
-  // Called by the GatekeeperModal when a gatekeeper is created via the attach flow.
-  // Inserts a capsule at the previously-saved cursor position.
-  const handleAttachCreated = async (gk: RpcStub<GatekeeperClient<any>>) => {
-    try {
-      // Fetch everything in parallel (promise pipelining).
-      const [id, description, creationSpec] = await Promise.all([
-        gk.getId(), gk.describe(), gk.getCreationSpec(),
-      ]);
-      insertCapsuleAt(attachCursorPosRef.current, id, description,
-          creationSpec.type === "gatekeeper" ? creationSpec.vendorId : undefined);
-      setAttachModalOpen(false);
-    } finally {
-      gk[Symbol.dispose]();
-    }
-  };
-
   // Handle text changes: capsules are atomic, so an edit overlapping one removes it, while an
   // edit overlapping the resolved command only detaches the resolution. Both shift when text is
   // inserted or removed before them.
@@ -3625,11 +3557,8 @@ export const ChatInput = ({
                   </span>
                   <span className="flex-1">Прикрепить файл</span>
                 </DropdownMenu.Item>
-                <DropdownMenu.Item onClick={handleAttachOpen} className="!h-auto rounded-xl !px-2 !py-1.5 text-[12px] text-kumo-subtle data-highlighted:bg-kumo-tint">
-                  <Plug size={14} className="mr-2"/><span>{attachLabel ?? "Подключить источник"}</span>
-                </DropdownMenu.Item>
                 <div className="my-1 border-t border-kumo-line/70" />
-                <div className="px-2 py-1 text-[11px] text-kumo-inactive">Модель</div>
+                <div className="px-2 py-1 text-[11px] text-kumo-inactive">Агент</div>
                   {models.map((model) => {
                     const active = selectedModel === model.id;
                     return (
@@ -3697,15 +3626,6 @@ export const ChatInput = ({
       </div>
 
       {templatePickerOpen && <ChatTemplatePicker onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
-      <GatekeeperModal
-        open={attachModalOpen}
-        onClose={() => setAttachModalOpen(false)}
-        getOverseer={getOverseer}
-        onCreated={handleAttachCreated}
-        restoreKey={attachRestoreKey}
-        restoreParent={{ input: inputValue, capsules }}
-        restoredState={restoredAttach?.modal}
-      />
     </div>
   );
 };
