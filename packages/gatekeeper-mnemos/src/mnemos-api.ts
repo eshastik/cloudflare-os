@@ -18,7 +18,7 @@ import {checkedGitTree,checkedGitBranches,checkedGitLog,checkedGitComparison} fr
 import type {GitConnection,GitConnectionPage,GitRegistration,GitRepositoryPage,GitDisabled} from "./git-connections.ts";
 import type {PersonalWorkTemplateSelection,WorkTemplateResolution} from "./work-templates.ts";
 import {validTemplateScopeConfig,type TemplateScope,type TemplateScopeConfig} from "./work-templates.ts";
-import type {TemplateDecisionInput,TemplatePromotionDecision,TemplateProposalSource} from "./work-templates.ts";
+import {validTemplateContentDecision,type TemplateContentDecisionInput,type TemplateContentDecision,type TemplateDecisionInput,type TemplatePromotionDecision,type TemplateProposalSource} from "./work-templates.ts";
 import {validTemplatePromotionReview,type TemplatePromotionReview,type TemplatePromotionPage} from "./work-templates.ts";
 import type {TemplatePromotionInput,TemplatePromotion} from "./work-templates.ts";
 import {validScopedWorkTemplate,type TemplateScopePage,type ScopedWorkTemplatePage,type ScopedWorkTemplateVersion,type ScopedWorkTemplateApplied} from "./work-templates.ts";
@@ -367,9 +367,16 @@ export class MnemosAPI {
     const proposal=await this.readTemplateProposal(id,signal);
     if((proposal.proposal.source_scope_id?"scoped":"personal")!==kind)throw new MnemosAPIError(409);
     if(typeof input.approved!=="boolean"||!Number.isSafeInteger(input.scope_revision)||input.scope_revision<1||typeof input.comment!=="string"||!input.comment.trim())throw new MnemosAPIError(400);segment(input.request_id);
-    const body={request_id:input.request_id,approved:input.approved,scope_revision:input.scope_revision,comment:input.comment};
+    if(input.publish_snapshot!==undefined&&(typeof input.publish_snapshot!=="boolean"||input.publish_snapshot&&!input.approved))throw new MnemosAPIError(400);
+    const body={request_id:input.request_id,approved:input.approved,scope_revision:input.scope_revision,comment:input.comment,...(input.publish_snapshot===undefined?{}:{publish_snapshot:input.publish_snapshot})};
     const out=await this.#request<TemplatePromotionDecision>(`/v1/template-promotions/${kind}/${segment(id)}/decision`,"PUT",signal,body);
-    if(!out||!validTemplatePromotionReview({proposal:proposal.proposal,decision:out})||out.request_id!==input.request_id||out.approved!==input.approved||out.scope_revision!==input.scope_revision||out.comment!==input.comment||(input.approved&&out.catalogue_revision!==proposal.proposal.expected_catalogue_revision+1))throw new MnemosAPIError(502);return out;
+    if(!out||!validTemplatePromotionReview({proposal:proposal.proposal,decision:out})||out.request_id!==input.request_id||out.approved!==input.approved||out.scope_revision!==input.scope_revision||out.comment!==input.comment||(out.publish_snapshot??false)!==(input.publish_snapshot??false)||(input.approved&&out.catalogue_revision!==proposal.proposal.expected_catalogue_revision+1))throw new MnemosAPIError(502);return out;
+  }
+  async decideTemplateContent(id:string,scope:string,domain:string,input:TemplateContentDecisionInput,signal?:AbortSignal):Promise<TemplateContentDecision>{
+    segment(id);segment(scope);segment(domain);segment(input.request_id);if(typeof input.approved!=="boolean"||typeof input.comment!=="string"||!input.comment.trim()||new TextEncoder().encode(input.comment).length>4096)throw new MnemosAPIError(400);
+    const [review,identity]=await Promise.all([this.readTemplateProposal(id,signal),this.whoAmI(signal)]);if(identity.subject.agent_principal_id)throw new MnemosAPIError(403);
+    const out=await this.#request<TemplateContentDecision>(`/v1/template-promotions/${segment(id)}/content-decisions/${segment(scope)}/${segment(domain)}`,"PUT",signal,{request_id:input.request_id,approved:input.approved,comment:input.comment});
+    if(!validTemplateContentDecision(review.proposal,out)||out.scope_id!==scope||out.domain_id!==domain||out.reviewer_id!==identity.subject.user_id||out.request_id!==input.request_id||out.approved!==input.approved||out.comment!==input.comment)throw new MnemosAPIError(502);return out;
   }
   async listTemplateProposals(scope:string,cursor="",signal?:AbortSignal):Promise<TemplatePromotionPage>{
     if(typeof cursor!=="string"||cursor.length>255)throw new MnemosAPIError(400);
@@ -390,9 +397,9 @@ export class MnemosAPI {
   }
   async setTemplateScope(id:string,expected:number,config:TemplateScopeConfig,signal?:AbortSignal):Promise<TemplateScope>{
     segment(id);if(!Number.isSafeInteger(expected)||expected<0||expected>=Number.MAX_SAFE_INTEGER||!validTemplateScopeConfig(config)||config.parent_id===id)throw new MnemosAPIError(400);
-    const body={expected_revision:expected,level:config.level,parent_id:config.parent_id,reader_group_id:config.reader_group_id,name:config.name,enabled:config.enabled,approvers:[...config.approvers].sort()};
+    const body={expected_revision:expected,level:config.level,parent_id:config.parent_id,reader_group_id:config.reader_group_id,name:config.name,enabled:config.enabled,approvers:config.approvers.toSorted(),...(config.review_requirements===undefined?{}:{review_requirements:config.review_requirements.map(r=>({domain_id:r.domain_id,approvers:r.approvers.toSorted()})).toSorted((a,b)=>a.domain_id.localeCompare(b.domain_id))})};
     const out=await this.#request<TemplateScope>(`/v1/template-scopes/${segment(id)}`,"PUT",signal,body);
-    if(!out||!validTemplateScopeConfig(out)||out.scope_id!==id||out.revision!==expected+1||out.level!==body.level||out.parent_id!==body.parent_id||out.reader_group_id!==body.reader_group_id||out.name!==body.name||out.enabled!==body.enabled||JSON.stringify([...out.approvers].sort())!==JSON.stringify(body.approvers))throw new MnemosAPIError(502);return out;
+    if(!out||!validTemplateScopeConfig(out)||out.scope_id!==id||out.revision!==expected+1||out.level!==body.level||out.parent_id!==body.parent_id||out.reader_group_id!==body.reader_group_id||out.name!==body.name||out.enabled!==body.enabled||JSON.stringify([...out.approvers].sort())!==JSON.stringify(body.approvers)||(body.review_requirements!==undefined&&JSON.stringify(out.review_requirements??[])!==JSON.stringify(body.review_requirements)))throw new MnemosAPIError(502);return out;
   }
   async listTemplateScopes(cursor="",signal?:AbortSignal,mode:"member"|"review"|"manage"="member"):Promise<TemplateScopePage>{
     if(typeof cursor!=="string"||cursor.length>255)throw new MnemosAPIError(400);

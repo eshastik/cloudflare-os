@@ -1300,6 +1300,9 @@ export class MnemosAccountSession {
   async beginTemplateProposalBaselineDownload(id:string){this.#check();const out=await this.#client.beginTemplateProposalBaselineDownload(id,this.#lifetime.signal);this.#check();return out;}
   async beginTemplateProposalDownload(id:string){this.#check();const out=await this.#client.beginTemplateProposalDownload(id,this.#lifetime.signal);this.#check();return out;}
   private templateReviewActions(){return new TemplateReviewActions(this.requestStorage,this.#client,()=>this.#check(),this.#lifetime.signal);}
+  async readSavedTemplateContentDecision(id:string,scope:string,domain:string){return this.templateReviewActions().readContent(id,scope,domain);}
+  async saveTemplateContentDecision(id:string,scope:string,domain:string,input:Parameters<MnemosAPI["decideTemplateContent"]>[3]){return this.templateReviewActions().saveContent(id,scope,domain,input);}
+  executeSavedTemplateContentDecision(id:string,scope:string,domain:string){return this.templateReviewActions().executeContent(id,scope,domain);}
   async readSavedTemplateDecision(id:string){return this.templateReviewActions().read(id);}
   async saveTemplateDecision(id:string,input:TemplateDecisionInput){return this.templateReviewActions().save(id,input);}
   executeSavedTemplateDecision(id:string){return this.templateReviewActions().execute(id);}

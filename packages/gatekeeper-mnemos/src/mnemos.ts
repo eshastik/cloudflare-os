@@ -1630,6 +1630,9 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
 
   async readTemplateProposalBaseline(id:string){return this.#session.readTemplateProposalBaseline(id);}
   async readTemplateProposalSource(id:string){return this.#session.readTemplateProposalSource(id);}
+  async readSavedTemplateContentDecision(id:string,scope:string,domain:string){return this.#session.readSavedTemplateContentDecision(id,scope,domain);}
+  async saveTemplateContentDecision(id:string,scope:string,domain:string,input:Parameters<MnemosAccountSession["saveTemplateContentDecision"]>[3]){return this.#session.saveTemplateContentDecision(id,scope,domain,input);}
+  executeSavedTemplateContentDecision(id:string,scope:string,domain:string){return this.#session.executeSavedTemplateContentDecision(id,scope,domain);}
   async readSavedTemplateDecision(id:string){return this.#session.readSavedTemplateDecision(id);}
   async saveTemplateDecision(id:string,input:Parameters<MnemosAccountSession["saveTemplateDecision"]>[1]){return this.#session.saveTemplateDecision(id,input);}
   executeSavedTemplateDecision(id:string){return this.#session.executeSavedTemplateDecision(id);}

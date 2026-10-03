@@ -250,7 +250,7 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
                 {card.chat && <Button variant="secondary" onClick={() => chat(card.chat!, card.chatProject)}>Открыть в беседе</Button>}
               </>}>
               {open && <aside aria-label="Подробности" className="rounded-[14px] bg-kumo-base p-4 sm:ml-[54px]">
-                <EntryDetails entry={entry} names={names} decision={decision} publishing={publishing} publish={publish} sharing={sharing} decideShare={decideShare}
+                <EntryDetails userId={userId} entry={entry} names={names} decision={decision} publishing={publishing} publish={publish} sharing={sharing} decideShare={decideShare}
                   reloadCollaborations={data.reloadCollaborations} reloadTemplates={async () => { setSelectedKey(""); await templates.reload(); }} reloadAlerts={alerts.reload} />
                 <div className="mt-3"><Button variant="ghost" size="sm" onClick={() => setSelectedKey("")}>Закрыть</Button></div>
               </aside>}
@@ -299,8 +299,8 @@ export default function MyWorkTab({ data }: { data: MemoryData }) {
   );
 }
 
-function EntryDetails({ entry, names, decision, publishing, publish, sharing, decideShare, reloadCollaborations, reloadTemplates, reloadAlerts }: {
-  entry: InboxEntry; names: Map<string, string>; decision: ReturnType<typeof useReviewDecision>; publishing: string;
+function EntryDetails({ userId, entry, names, decision, publishing, publish, sharing, decideShare, reloadCollaborations, reloadTemplates, reloadAlerts }: {
+  userId:string; entry: InboxEntry; names: Map<string, string>; decision: ReturnType<typeof useReviewDecision>; publishing: string;
   publish(review: PublicationReview): Promise<void>; sharing: string; decideShare(share: ShareRequest, approve: boolean): Promise<void>;
   reloadCollaborations(): Promise<void>; reloadTemplates(): Promise<void>; reloadAlerts(): Promise<void>;
 }) {
@@ -328,7 +328,7 @@ function EntryDetails({ entry, names, decision, publishing, publish, sharing, de
     case "acceptance":
       return <AcceptanceReview key={entry.key} item={entry.collaboration!} onDone={reloadCollaborations} />;
     case "template":
-      return <TemplateProposal key={entry.key} item={entry.template!.review} scope={entry.template!.scope} onDone={() => void reloadTemplates()} />;
+      return <TemplateProposal userId={userId} key={entry.key} item={entry.template!.review} scope={entry.template!.scope} onDone={() => void reloadTemplates()} />;
     case "intake":
       return <div className="space-y-3 text-[14px]">
         {entry.alert!.alert.detail && <p className="m-0 text-kumo-subtle">{entry.alert!.alert.detail}</p>}
