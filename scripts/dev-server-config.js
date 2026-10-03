@@ -24,3 +24,13 @@ export function getWranglerPortFromBackendHost(backendHost) {
 
   return url.port;
 }
+
+// Локальный сборщик Miniflare не учитывает observability из Worker-конфига.
+// Перевод настройки установки в отдельный переключатель Wrangler держится пином
+// версии и проверкой реального запуска без trace-store.
+export function configureLocalObservabilityEnvironment(env, { persistentServer = false } = {}) {
+  const value = env.SHELL_LOCAL_OBSERVABILITY ?? (persistentServer ? "false" : undefined);
+  if (value === undefined) return;
+  if (value !== "false" && value !== "true") throw new Error("SHELL_LOCAL_OBSERVABILITY должен быть true или false");
+  env.X_LOCAL_OBSERVABILITY = value;
+}

@@ -16,7 +16,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "jsonc-parser";
 import { configurePostgresState } from "./scripts/postgres-state-config.mjs";
-import { getWranglerPortFromBackendHost } from "./scripts/dev-server-config.js";
+import { configureLocalObservabilityEnvironment, getWranglerPortFromBackendHost } from "./scripts/dev-server-config.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PACKAGES_DIR = join(ROOT, "packages");
@@ -43,6 +43,9 @@ function loadDevVars() {
   }
 }
 loadDevVars();
+configureLocalObservabilityEnvironment(process.env, {
+  persistentServer: process.argv.includes("--prebuilt") && process.argv.includes("--no-watch"),
+});
 
 // Secrets must not travel as plain `vars`: wrangler prints every var at startup (the start of each
 // value ends up in the service journal) and the generated wrangler.dev.jsonc lies in the release
