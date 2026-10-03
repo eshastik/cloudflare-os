@@ -17,6 +17,9 @@ export const TELEGRAM_SETUP_REJECTED = "TELEGRAM_SETUP_REJECTED";
 /** Источник внешнего входа для личных ботов: префикс имён бесед Telegram. */
 export const TELEGRAM_SOURCE = "telegram";
 
+import { telegramStorage, telegramAlarms, TELEGRAM_RETIRED_KEY } from "./state-storage";
+import { PostgresActorKv, jsonState } from "@gadgets/backend-utils/postgres-actor-kv";
+
 type Env = Cloudflare.Env & ChatVoiceConfig;
 
 /** Зависимости ядра бота из объекта Durable Object; overrides — только для тестов. */
@@ -24,7 +27,7 @@ export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: Draft
   let exports = ctx.exports;
   let routeId = ctx.id.toString();
   return {
-    storage: ctx.storage.kv,
+    storage: telegramStorage(env, "telegram-bot", routeId, ctx.storage.kv),
     secretsKey: env.SHELL_SECRETS_KEY,
     publicBase: env.PUBLIC_BASE_URL,
     routeId,
@@ -64,9 +67,7 @@ export function personalBotDeps(ctx: DurableObjectState, env: Env, drafts: Draft
       decide: (owner, object, version, decision) => exports.UserDurableObject.getByName(owner).decideMnemosNotification(object, version, decision),
     },
     mnemosPrincipal: owner => exports.UserDurableObject.getByName(owner).mnemosPrincipal(),
-    setAlarm: at => {
-      ctx.waitUntil((at === null ? ctx.storage.deleteAlarm() : ctx.storage.setAlarm(at)).catch(() => {}));
-    },
+    setAlarm: at => telegramAlarms(env, ctx).setAlarm(at),
     ...overrides,
   };
 }
@@ -93,6 +94,23 @@ export class TelegramPersonalBot extends DurableObject<Env> {
     return this.#bot ??= new PersonalTelegramBot(personalBotDeps(this.ctx, this.env, this.#drafts, this.#voice));
   }
 
+  /** Только служебный маршрут переноса; пользовательские API не возвращают этот объект. */
+  async migrationSnapshot(retire: boolean): Promise<{ actorId: string; entries: [string, string][]; alarm: number | null }> {
+    if (this.env.SHELL_TELEGRAM_STATE_BACKEND !== undefined) throw new Error("Старое состояние Telegram уже отключено");
+    return this.#core().runStateMigration(async () => {
+      const alarm = await this.ctx.storage.getAlarm();
+      const entries: [string, string][] = [];
+      for (const [key, value] of this.ctx.storage.kv.list()) {
+        if (key !== TELEGRAM_RETIRED_KEY) entries.push([key, jsonState(value)]);
+      }
+      if (retire) {
+        this.ctx.storage.kv.put(TELEGRAM_RETIRED_KEY, true);
+        await this.ctx.storage.deleteAlarm();
+      }
+      return { actorId: this.ctx.id.toString(), entries, alarm };
+    }, retire);
+  }
+
   // Ошибки настройки уходят человеку словами; остальные — общим отказом без подробностей.
   async #human<T>(operation: () => Promise<T>): Promise<T> {
     try { return await operation(); }
@@ -106,7 +124,8 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   async #ensureAlarm(): Promise<void> {
     try {
       if (!await this.#core().wantsNotifications()) return;
-      if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + NOTIFY_FIRST_MS);
+      let alarms = telegramAlarms(this.env, this.ctx);
+      if (await alarms.getAlarm() === null) await alarms.setAlarm(Date.now() + NOTIFY_FIRST_MS);
     } catch { /* следующий вызов попробует снова */ }
   }
 
@@ -122,7 +141,13 @@ export class TelegramPersonalBot extends DurableObject<Env> {
         return Date.now() + 60_000;
       }
     })();
-    if (next !== null) await this.ctx.storage.setAlarm(next);
+    if (next !== null) await telegramAlarms(this.env, this.ctx).setAlarm(next);
+  }
+
+  /** Вызов расписания из PostgreSQL-диспетчера установки. */
+  async dispatchPostgresAlarm(): Promise<void> {
+    if (this.env.SHELL_TELEGRAM_STATE_BACKEND !== "postgres") throw new Error("Будильники Telegram ещё не перенесены");
+    await this.alarm();
   }
 
   /** Экран Mini App: проверка initData и расход одноразового токена. */
@@ -231,15 +256,30 @@ export class TelegramChatTarget extends WorkerEntrypoint<Env, TelegramTurnRef> {
 
 /** Занятость бота по его номеру: один бот — у одного пользователя. */
 export class TelegramBotClaim extends DurableObject<Cloudflare.Env> {
+  /** Только служебный маршрут переноса состояния закрепления бота. */
+  async migrationSnapshot(retire: boolean): Promise<{ actorId: string; entries: [string, string][]; alarm: null }> {
+    if (this.env.SHELL_TELEGRAM_STATE_BACKEND !== undefined) throw new Error("Старое закрепление Telegram уже отключено");
+    const entries: [string, string][] = [];
+    for (const [key, value] of this.ctx.storage.kv.list()) {
+      if (key !== TELEGRAM_RETIRED_KEY) entries.push([key, jsonState(value)]);
+    }
+    if (retire) this.ctx.storage.kv.put(TELEGRAM_RETIRED_KEY, true);
+    return { actorId: this.ctx.id.toString(), entries, alarm: null };
+  }
+
   async claim(owner: string): Promise<boolean> {
-    let holder = this.ctx.storage.kv.get<string>("owner");
+    let storage = telegramStorage(this.env, "telegram-claim", this.ctx.id.toString(), this.ctx.storage.kv);
+    if (storage instanceof PostgresActorKv) return storage.claimOwner(owner);
+    let holder = storage.get<string>("owner");
     if (holder && holder !== owner) return false;
-    this.ctx.storage.kv.put("owner", owner);
+    storage.put("owner", owner);
     return true;
   }
 
   async release(owner: string): Promise<void> {
-    if (this.ctx.storage.kv.get<string>("owner") === owner) this.ctx.storage.kv.delete("owner");
+    let storage = telegramStorage(this.env, "telegram-claim", this.ctx.id.toString(), this.ctx.storage.kv);
+    if (storage instanceof PostgresActorKv) return storage.releaseOwner(owner);
+    if (storage.get<string>("owner") === owner) storage.delete("owner");
   }
 }
 

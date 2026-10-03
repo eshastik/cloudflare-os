@@ -24,9 +24,22 @@ if (process.argv[3]) {
   const result = await build({
     stdin: { contents: `
       import { PostgresTextKv } from './packages/backend-utils/src/postgres-text-kv.ts';
+      import { PostgresActorKv } from './packages/backend-utils/src/postgres-actor-kv.ts';
       export default {async fetch(req,env){
         try {
           const b=await req.json();
+          if(b.actor){
+            const kv=new PostgresActorKv(env.DB.connectionString,b.tenant,b.actorType,b.actorId);
+            if(b.op==='put'){await kv.put(b.key,b.value);return Response.json({ok:true})}
+            if(b.op==='bad-json'){await kv.put(b.key,new Date());return Response.json({ok:true})}
+            if(b.op==='delete')return Response.json({deleted:await kv.delete(b.key)});
+            if(b.op==='list')return Response.json({entries:await kv.list({prefix:b.prefix})});
+            if(b.op==='alarm-get')return Response.json({alarm:await kv.getAlarm()});
+            if(b.op==='alarm-set'){await kv.setAlarm(b.at);return Response.json({ok:true})}
+            if(b.op==='claim')return Response.json({claimed:await kv.claimOwner(b.owner)});
+            if(b.op==='release'){await kv.releaseOwner(b.owner);return Response.json({ok:true})}
+            return Response.json({value:await kv.get(b.key)});
+          }
           const kv=new PostgresTextKv(env.DB.connectionString,b.tenant,b.namespace);
           if(b.op==='put'){await kv.put(b.key,b.value);return Response.json({ok:true})}
           if(b.op==='delete'){await kv.delete(b.key);return Response.json({ok:true})}
@@ -81,6 +94,49 @@ try {
   assert.deepEqual(await call({ ...a, key: "terminate", op: "put", value: "failure" }), { error: "error" });
   assert.deepEqual(await call({ ...a, key: "after-failure", op: "put", value: "healthy" }), { ok: true });
   assert.equal((await call({ ...a, key: "after-failure", op: "get" })).value, "healthy");
+  checks++;
+  const actor = {actor:true, tenant:"test-a", actorType:"telegram-bot", actorId:"a".repeat(64), key:"screen:токен\0"};
+  const state = {owner:"Иван", screen:{used:false, expiresAt:12345}, token:"sealed", items:[null,1,true,"\0🙂"]};
+  assert.deepEqual(await call({...actor, op:"put", value:state}), {ok:true});
+  assert.deepEqual((await call({...actor, op:"get"})).value, state);
+  checks++;
+  for(const other of [{...actor,tenant:"test-b"},{...actor,actorId:"b".repeat(64)},{...actor,actorType:"telegram-claim"}]) {
+    assert.deepEqual(await call({...other,op:"get"}), {});
+  }
+  checks++;
+  await worker.dispose();
+  worker=create();
+  assert.deepEqual((await call({...actor,op:"get"})).value,state);
+  checks++;
+  await call({...actor,key:"screen:%_",op:"put",value:1});
+  assert.deepEqual((await call({...actor,op:"list",prefix:"screen:%"})).entries, [["screen:%_",1]]);
+  assert.deepEqual(await call({...actor,key:"screen:%_",op:"delete"}), {deleted:true});
+  assert.deepEqual(await call({...actor,key:"screen:%_",op:"delete"}), {deleted:false});
+  checks++;
+  const claim = {...actor,actorType:"telegram-claim",actorId:"c".repeat(64)};
+  const contenders=["alice","bob"];
+  const results=await Promise.all(contenders.map(owner=>call({...claim,op:"claim",owner})));
+  assert.equal(results.filter(r=>r.claimed).length,1);
+  const winner=contenders[results.findIndex(r=>r.claimed)], loser=contenders.find(owner=>owner!==winner);
+  assert.deepEqual(await call({...claim,op:"claim",owner:winner}), {claimed:true});
+  await call({...claim,op:"release",owner:loser});
+  assert.deepEqual(await call({...claim,op:"claim",owner:loser}), {claimed:false});
+  await call({...claim,op:"release",owner:winner});
+  assert.deepEqual(await call({...claim,op:"claim",owner:loser}), {claimed:true});
+  checks++;
+  assert.deepEqual(await call({...actor,op:"bad-json"}), {error:"Error"});
+  assert.deepEqual((await call({...actor,op:"get"})).value,state);
+  checks++;
+  assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:null});
+  assert.deepEqual(await call({...actor,op:"alarm-set",at:1234567890}), {ok:true});
+  await worker.dispose();
+  worker=create();
+  assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:1234567890});
+  assert.deepEqual(await call({...actor,tenant:"test-b",op:"alarm-get"}), {alarm:null});
+  assert.deepEqual(await call({...actor,op:"alarm-set",at:-1}), {error:"Error"});
+  assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:1234567890});
+  assert.deepEqual(await call({...actor,op:"alarm-set",at:null}), {ok:true});
+  assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:null});
   checks++;
   console.log(JSON.stringify({ checks, pass: true, sqlitePersistence: false }));
 } finally {

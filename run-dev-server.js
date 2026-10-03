@@ -312,7 +312,7 @@ for (const gk of gatekeepers) {
   //   ENABLE_CLOUDFLARE_LIMITS=true DAILY_LLM_CALL_LIMIT=1 pnpm dev-server
   // without editing any config files.
   const OPTIONAL_FEATURE_VARS = [
-    "DISABLE_PASSWORD_AUTH", "AUTH_GATEKEEPERS", "LOGIN_ALIASES", "SHELL_SERVICE_TOKEN", "SHELL_SECRETS_KEY", "ENABLE_CLOUDFLARE_LIMITS", "PUBLIC_BASE_URL",
+    "DISABLE_PASSWORD_AUTH", "AUTH_GATEKEEPERS", "LOGIN_ALIASES", "SHELL_SERVICE_TOKEN", "SHELL_SECRETS_KEY", "SHELL_TELEGRAM_STATE_BACKEND", "ENABLE_CLOUDFLARE_LIMITS", "PUBLIC_BASE_URL",
     "DAILY_LLM_CALL_LIMIT", "MINIMUM_CLOUDFLARE_BALANCE",
     // Platform AI Gateway — makes the cross-provider model catalog available. The
     // ACCOUNT_ID/API_TOKEN pair is required whenever CF_AI_GATEWAY is set (all inference goes

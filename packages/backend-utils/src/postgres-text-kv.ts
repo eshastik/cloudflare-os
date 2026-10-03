@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { Client } from "pg";
+import { withPostgresState } from "./postgres-state";
 
 /** Текстовые каталоги платформы. Не принимает тела файлов или исполняемые RPC-ссылки. */
 export interface TextKv {
@@ -38,36 +38,9 @@ export class PostgresTextKv implements TextKv {
     if (!tenant || tenant.includes("\0")) throw new Error("Неверная область состояния оболочки");
   }
 
-  private async transaction<T>(write: boolean, operation: (client: Client) => Promise<T>): Promise<T> {
-    // Worker не может переносить сокет между контекстами запросов. Hyperdrive
-    // управляет пулом соединений; один клиент здесь принадлежит одной операции.
-    const client = new Client({
-      connectionString: this.connectionString,
-      connectionTimeoutMillis: 5_000,
-      query_timeout: 10_000,
-    });
-    let connectionError: Error | undefined;
-    // pg сообщает о разрыве также событием EventEmitter вне query Promise.
-    // Обработчик сохраняет отказ операции и не допускает необработанного исключения.
-    client.on("error", error => { connectionError = error; });
-    try {
-      await client.connect();
-      await client.query(write ? "BEGIN" : "BEGIN READ ONLY");
-      await client.query("SELECT set_config('app.tenant_id',$1,true),set_config('statement_timeout','5000',true)", [this.tenant]);
-      const result = await operation(client);
-      if (connectionError) throw connectionError;
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      try { await client.query("ROLLBACK"); } catch { /* Закрытие соединения завершает транзакцию при отказе связи. */ }
-      throw error;
-    } finally {
-      await client.end();
-    }
-  }
 
   async get(key: string): Promise<string | null> {
-    return this.transaction(false, async client => {
+    return withPostgresState(this.connectionString, this.tenant, false, async client => {
       const result = await client.query<{ value: Buffer }>(
         "SELECT value FROM mnemos_shell.text_kv WHERE tenant_id=$1 AND namespace=$2 AND key=$3",
         [this.tenant, this.namespace, Buffer.from(key, "utf8")],
@@ -77,7 +50,7 @@ export class PostgresTextKv implements TextKv {
   }
 
   async put(key: string, value: string): Promise<void> {
-    await this.transaction(true, async client => {
+    await withPostgresState(this.connectionString, this.tenant, true, async client => {
       await client.query(
         "INSERT INTO mnemos_shell.text_kv(tenant_id,namespace,key,value) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,namespace,key) DO UPDATE SET value=EXCLUDED.value",
         [this.tenant, this.namespace, Buffer.from(key, "utf8"), Buffer.from(value, "utf8")],
@@ -86,7 +59,7 @@ export class PostgresTextKv implements TextKv {
   }
 
   async delete(key: string): Promise<void> {
-    await this.transaction(true, async client => {
+    await withPostgresState(this.connectionString, this.tenant, true, async client => {
       await client.query(
         "DELETE FROM mnemos_shell.text_kv WHERE tenant_id=$1 AND namespace=$2 AND key=$3",
         [this.tenant, this.namespace, Buffer.from(key, "utf8")],

@@ -260,7 +260,7 @@ export interface PersonalBotDeps {
   /** Mnemos владельца для уведомлений: сессией человека через его подключение. */
   mnemos: TelegramMnemos;
   /** Будильник доставки уведомлений: время или null — снять. */
-  setAlarm(at: number | null): void;
+  setAlarm(at: number | null): void | Promise<void>;
   /** Открытый ключ Telegram для initData Mini App; тесты подают свой. */
   webAppPublicKey?: string;
   /** Аккаунт Mnemos владельца сейчас (для сессии Mini App); null — не подключён. */
@@ -345,11 +345,30 @@ function tokenContext(owner: string, botId: string): string {
 
 export class PersonalTelegramBot {
   #tail: Promise<unknown> = Promise.resolve();
+  #backgroundTasks = new Set<Promise<unknown>>();
+  #migrationRequested = false;
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
     let result = this.#tail.then(async () => await operation());
     this.#tail = result.catch(() => {});
     return result;
+  }
+
+  #background(promise: Promise<unknown>): void {
+    this.#backgroundTasks.add(promise);
+    this.deps.waitUntil(promise.then(
+      () => { this.#backgroundTasks.delete(promise); },
+      () => { this.#backgroundTasks.delete(promise); },
+    ));
+  }
+
+  /** Перед переносом дожидается начатых отправок без блокировки возвратных RPC. */
+  async runStateMigration<T>(operation: () => Promise<T>, retire = false): Promise<T> {
+    if (retire) {
+      this.#migrationRequested = true;
+      while (this.#backgroundTasks.size) await Promise.allSettled([...this.#backgroundTasks]);
+    }
+    return await this.#serialize(operation);
   }
 
   async state(owner: string): Promise<TelegramBotState> { return await this.#serialize(() => this.#runState(owner)); }
@@ -498,7 +517,7 @@ export class PersonalTelegramBot {
       for (let [key] of [...(await this.deps.storage.list({ prefix }))]) (await this.deps.storage.delete(key));
     }
     for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, APP_SESSIONS, ...NOTIFY_KEYS]) (await this.deps.storage.delete(key));
-    this.deps.setAlarm(null);
+    await this.deps.setAlarm(null);
     return { webhookRemoved: await this.#teardown(record) };
   }
 
@@ -519,10 +538,11 @@ export class PersonalTelegramBot {
   }
 
   #reply(record: BotRecord, chat: number, text: string): void {
-    this.deps.waitUntil(this.#api(record).then(api => api.sendText(chat, text)).catch(() => {}));
+    this.#background(this.#api(record).then(api => api.sendText(chat, text)).catch(() => {}));
   }
 
   async #runWebhook(request: Request): Promise<Response> {
+    if (this.#migrationRequested) return new Response(null, { status: 503, headers: { "Retry-After": "5" } });
     let reply = (status: number) => new Response(null, { status, headers: { "Cache-Control": "no-store" } });
     if (request.method !== "POST") return reply(405);
     let url = webhookUrl(this.deps.publicBase, this.deps.routeId);
@@ -536,8 +556,7 @@ export class PersonalTelegramBot {
     if (input === undefined) return reply(400);
     if (input === null) return reply(200);
 
-    // Дальше без ожиданий: прочитать, проверить и записать одним куском, чтобы параллельный
-    // вебхук или отключение не вклинились между проверкой и записью.
+    // Очередь не допускает другой вебхук или отключение между чтением и подтверждением записи.
     let current = (await this.#record());
     if (!current || current.secretSha256 !== record.secretSha256) return reply(200);
     if (current.seen.includes(input.update)) return reply(200);
@@ -552,11 +571,11 @@ export class PersonalTelegramBot {
       if (input.data?.startsWith("n:")) {
         let notice = (await claimNoticeCard(this.deps.storage, input.data, input.message, this.deps.now(),
           { unknown: CARD_UNKNOWN, busy: CARD_BUSY, stale: CARD_STALE }));
-        this.deps.waitUntil(this.#settleNotice(current, input, notice).catch(() => {}));
+        this.#background(this.#settleNotice(current, input, notice).catch(() => {}));
         return reply(200);
       }
       let claim = (await this.#claimCard(current, input));
-      this.deps.waitUntil(this.#settleCard(current, input, claim).catch(() => {}));
+      this.#background(this.#settleCard(current, input, claim).catch(() => {}));
       return reply(200);
     }
 
@@ -568,7 +587,7 @@ export class PersonalTelegramBot {
       current.connectedAt = this.deps.now();
       current.pairing = null;
       (await this.deps.storage.put(RECORD, current));
-      this.deps.setAlarm(this.deps.now() + NOTIFY_FIRST_MS);
+      await this.deps.setAlarm(this.deps.now() + NOTIFY_FIRST_MS);
       this.#reply(current, input.sender.id, PAIRED_REPLY);
       return reply(200);
     }
@@ -587,7 +606,7 @@ export class PersonalTelegramBot {
 
     // Ход агента долгий: Telegram ждёт ответа на вебхук недолго и повторит обновление, поэтому
     // отвечаем сразу, а работу доводим в фоне (повтор отсечёт список увиденных обновлений).
-    this.deps.waitUntil(this.#message(current, input).catch(() => {}));
+    this.#background(this.#message(current, input).catch(() => {}));
     return reply(200);
   }
 
@@ -925,7 +944,7 @@ export class PersonalTelegramBot {
     (await this.deps.storage.put(CARDS, cards));
   }
 
-  /** Проверка нажатия без ожиданий. Из callback_data берутся только тред и номер карточки, и оба
+  /** Проверка нажатия внутри очереди изменения состояния. Из callback_data берутся только тред и номер карточки, и оба
    *  сверяются с записью: карточка этого бота и владельца, то же сообщение, ещё не решена. */
   async #claimCard(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>):
       Promise<{ card: CardRecord; decision: "approve" | "reject" } | { answer: string }> {

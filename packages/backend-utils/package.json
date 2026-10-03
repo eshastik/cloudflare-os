@@ -23,6 +23,10 @@
     "./postgres-text-kv": {
       "types": "./src/postgres-text-kv.ts",
       "import": "./src/postgres-text-kv.ts"
+    },
+    "./postgres-actor-kv": {
+      "types": "./src/postgres-actor-kv.ts",
+      "import": "./src/postgres-actor-kv.ts"
     }
   },
   "scripts": {

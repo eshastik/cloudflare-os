@@ -30,11 +30,18 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
   status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
 });
 
+/** Служебные операции доступны только с приватным токеном установки. */
+export async function authorizeServiceRequest(req: Request, token: string | undefined): Promise<Response | null> {
+  if (!token || token.length < 32) return new Response("Not found", { status: 404 });
+  const header = req.headers.get("Authorization") ?? "";
+  if (!header.startsWith("Bearer ") || !(await sameToken(token, header.slice(7)))) return json(401, { error: "unauthorized" });
+  return null;
+}
+
 /** ?name=<имя> — сводка учётной записи; ?email=<почта> — куда входит эта почта и сводка той записи. */
 export async function handleServiceRoute(req: Request, deps: ServiceRouteDeps): Promise<Response> {
-  if (!deps.token || deps.token.length < 32) return new Response("Not found", { status: 404 });
-  const header = req.headers.get("Authorization") ?? "";
-  if (!header.startsWith("Bearer ") || !(await sameToken(deps.token, header.slice(7)))) return json(401, { error: "unauthorized" });
+  const denied = await authorizeServiceRequest(req, deps.token);
+  if (denied) return denied;
   if (req.method !== "GET") return json(405, { error: "method" });
   const url = new URL(req.url);
   const name = url.searchParams.get("name");

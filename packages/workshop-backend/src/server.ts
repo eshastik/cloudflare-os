@@ -32,6 +32,7 @@ import { connectRejected, CONNECT_FINISH_PATH, CONNECT_START_PATH, handleConnect
 import { gatekeeperLoginPolicy } from "./auth/login-policy.js";
 import { handleLoginFinish, handleLoginStart, LOGIN_FINISH_PATH, LOGIN_START_PATH, redeemLoginCode, loginRejected, type LoginPort } from "./auth/login-return.js";
 import { handleServiceRoute, SERVICE_ROUTE } from "./auth/service-route.js";
+import { handleTelegramStateRoute, TELEGRAM_STATE_ROUTE, TELEGRAM_ALARM_ROUTE } from "./telegram/state-route";
 import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
 import { ExternalMessageGateway } from "./external-message-gateway";
 import { handleTelegramAppOpen, handleTelegramWebhook, telegramBotFor, TelegramBotClaim, TelegramChatTarget, TelegramPersonalBot, TELEGRAM_APP_OPEN_PATH } from "./telegram/durable";
@@ -1152,6 +1153,10 @@ export default {
     // Подключение внешнего аккаунта на той же странице с привязкой к браузеру.
     if (url.pathname === CONNECT_START_PATH) return handleConnectStart(req, connectPort(ctx, env));
     if (url.pathname === CONNECT_FINISH_PATH) return handleConnectFinish(req, connectPort(ctx, env));
+
+    if (url.pathname === TELEGRAM_STATE_ROUTE || url.pathname === TELEGRAM_ALARM_ROUTE) {
+      return handleTelegramStateRoute(req, env, ctx.exports.TelegramPersonalBot, ctx.exports.TelegramBotClaim);
+    }
 
     if (url.pathname === SERVICE_ROUTE) {
       return handleServiceRoute(req, {
