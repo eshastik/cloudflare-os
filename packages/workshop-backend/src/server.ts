@@ -1,3 +1,4 @@
+import { avatarStorage } from "./avatar-storage";
 import { blueprintStorage } from "./blueprint-storage.js";
 import { captureBlueprintTemplate, readBlueprintTemplate } from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE } from "./workspace-title.js";
@@ -409,13 +410,12 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
         throw new Error("Avatar must be a JPEG or PNG image");
       }
     }
-    // Avatar data lives in KV (global), not the user's DO storage, so we
-    // read/write it directly here to avoid routing through the DO location.
+    // Изображение профиля хранится отдельно от объекта пользователя.
     let userId = this.user.id.name!;
     if (data) {
-      await this.env.AVATARS.put(userId, data);
+      await avatarStorage(this.env, this.env.AVATARS).put(userId, data);
     } else {
-      await this.env.AVATARS.delete(userId);
+      await avatarStorage(this.env, this.env.AVATARS).delete(userId);
     }
   }
   mnemosPrincipals(userIds: string[]): Promise<Record<string, string>> {
@@ -442,7 +442,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return notificationSettingsCall(() => this.user.saveMnemosNotificationSettings(kinds));
   }
   async getAvatar(userId: string): Promise<Uint8Array | null> {
-    let result = await this.env.AVATARS.get(userId, "arrayBuffer");
+    let result = await avatarStorage(this.env, this.env.AVATARS).get(userId);
     if (!result) return null;
     return new Uint8Array(result);
   }

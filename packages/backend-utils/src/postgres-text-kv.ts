@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { withPostgresState } from "./postgres-state";
+import { PostgresBinaryKv } from "./postgres-binary-kv";
 
 /** Текстовые каталоги платформы. Не принимает тела файлов или исполняемые RPC-ссылки. */
 export interface TextKv {
@@ -30,40 +30,22 @@ export function textKv(
 
 /** Каждая операция подтверждается COMMIT до ответа. В памяти процесса нет постоянного кэша. */
 export class PostgresTextKv implements TextKv {
-  constructor(
-    private readonly connectionString: string,
-    private readonly tenant: string,
-    private readonly namespace: "blueprints" | "context-collections",
-  ) {
-    if (!tenant || tenant.includes("\0")) throw new Error("Неверная область состояния оболочки");
+  readonly #bytes: PostgresBinaryKv;
+
+  constructor(connectionString: string, tenant: string, namespace: "blueprints" | "context-collections") {
+    this.#bytes = new PostgresBinaryKv(connectionString, tenant, namespace);
   }
 
-
   async get(key: string): Promise<string | null> {
-    return withPostgresState(this.connectionString, this.tenant, false, async client => {
-      const result = await client.query<{ value: Buffer }>(
-        "SELECT value FROM mnemos_shell.text_kv WHERE tenant_id=$1 AND namespace=$2 AND key=$3",
-        [this.tenant, this.namespace, Buffer.from(key, "utf8")],
-      );
-      return result.rows[0]?.value.toString("utf8") ?? null;
-    });
+    const bytes = await this.#bytes.get(key);
+    return bytes === null ? null : Buffer.from(bytes).toString("utf8");
   }
 
   async put(key: string, value: string): Promise<void> {
-    await withPostgresState(this.connectionString, this.tenant, true, async client => {
-      await client.query(
-        "INSERT INTO mnemos_shell.text_kv(tenant_id,namespace,key,value) VALUES($1,$2,$3,$4) ON CONFLICT(tenant_id,namespace,key) DO UPDATE SET value=EXCLUDED.value",
-        [this.tenant, this.namespace, Buffer.from(key, "utf8"), Buffer.from(value, "utf8")],
-      );
-    });
+    await this.#bytes.put(key, Buffer.from(value, "utf8"));
   }
 
   async delete(key: string): Promise<void> {
-    await withPostgresState(this.connectionString, this.tenant, true, async client => {
-      await client.query(
-        "DELETE FROM mnemos_shell.text_kv WHERE tenant_id=$1 AND namespace=$2 AND key=$3",
-        [this.tenant, this.namespace, Buffer.from(key, "utf8")],
-      );
-    });
+    await this.#bytes.delete(key);
   }
 }

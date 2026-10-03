@@ -25,9 +25,16 @@ if (process.argv[3]) {
     stdin: { contents: `
       import { PostgresTextKv } from './packages/backend-utils/src/postgres-text-kv.ts';
       import { PostgresActorKv } from './packages/backend-utils/src/postgres-actor-kv.ts';
+      import { PostgresBinaryKv } from './packages/backend-utils/src/postgres-binary-kv.ts';
       export default {async fetch(req,env){
         try {
           const b=await req.json();
+          if(b.binary){
+            const kv=new PostgresBinaryKv(env.DB.connectionString,b.tenant,'avatars');
+            if(b.op==='put'){await kv.put(b.key,new Uint8Array(b.value));return Response.json({ok:true})}
+            if(b.op==='delete'){await kv.delete(b.key);return Response.json({ok:true})}
+            const value=await kv.get(b.key);return Response.json({value:value===null?null:Array.from(value)});
+          }
           if(b.actor){
             const kv=new PostgresActorKv(env.DB.connectionString,b.tenant,b.actorType,b.actorId);
             if(b.op==='put'){await kv.put(b.key,b.value);return Response.json({ok:true})}
@@ -137,6 +144,21 @@ try {
   assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:1234567890});
   assert.deepEqual(await call({...actor,op:"alarm-set",at:null}), {ok:true});
   assert.deepEqual(await call({...actor,op:"alarm-get"}), {alarm:null});
+  checks++;
+  const avatar={binary:true,tenant:'test-a',key:'профиль\0🙂'};
+  const bytes=Array.from({length:256},(_,i)=>i);
+  assert.deepEqual(await call({...avatar,op:'put',value:bytes}),{ok:true});
+  assert.deepEqual((await call({...avatar,op:'get'})).value,bytes);
+  assert.equal((await call({...avatar,tenant:'test-b',op:'get'})).value,null);
+  checks++;
+  await worker.dispose();worker=create();
+  assert.deepEqual((await call({...avatar,op:'get'})).value,bytes);
+  assert.deepEqual(await call({...avatar,key:'terminate',op:'put',value:bytes}),{error:'error'});
+  assert.deepEqual((await call({...avatar,key:'terminate',op:'get'})).value,null);
+  await call({...avatar,tenant:'test-b',op:'put',value:[0,255]});
+  await call({...avatar,op:'delete'});
+  assert.equal((await call({...avatar,op:'get'})).value,null);
+  assert.deepEqual((await call({...avatar,tenant:'test-b',op:'get'})).value,[0,255]);
   checks++;
   console.log(JSON.stringify({ checks, pass: true, sqlitePersistence: false }));
 } finally {

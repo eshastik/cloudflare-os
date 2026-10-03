@@ -1,3 +1,4 @@
+import type { AvatarStateEnv } from "./avatar-storage";
 import type { TelegramStateEnv } from "./telegram/state-storage";
 import type { ProductAnalyticsRecord } from "./analytics";
 
@@ -6,7 +7,7 @@ import type { ProductAnalyticsRecord } from "./analytics";
 
 declare global {
   namespace Cloudflare {
-    interface Env extends TelegramStateEnv {
+    interface Env extends TelegramStateEnv, AvatarStateEnv {
       // Deployment-wide admin usernames.
       ADMINS?: string[];
 

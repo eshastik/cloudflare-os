@@ -27,6 +27,10 @@
     "./postgres-actor-kv": {
       "types": "./src/postgres-actor-kv.ts",
       "import": "./src/postgres-actor-kv.ts"
+    },
+    "./postgres-binary-kv": {
+      "types": "./src/postgres-binary-kv.ts",
+      "import": "./src/postgres-binary-kv.ts"
     }
   },
   "scripts": {
