@@ -78,6 +78,28 @@ export function createFrameStore(storage: CacheStorage | undefined = typeof cach
 
 let defaultStore: FrameStore | undefined
 
+/** Сборка оболочки закрепляет интерфейс Mnemos: открытая вкладка не смешивает версии при выпуске. */
+export async function releasedMnemosHtml(fallback: string): Promise<string> {
+  const hash = document.querySelector<HTMLMetaElement>('meta[name="mnemos-app-sha256"]')?.content
+  if (!hash || !HASH.test(hash)) return fallback
+  const response = await fetch(`/_mnemos-ui/${hash}.html`, { credentials: 'omit', redirect: 'error' })
+  if (!response.ok) throw new Error('Не удалось загрузить интерфейс Mnemos. Обновите страницу.')
+  const html = await response.text()
+  if (await sha256Hex(html) !== hash) throw new Error('Сборка интерфейса Mnemos повреждена.')
+  return html
+}
+
+async function releasedFrame(frame: GatekeeperAppFrame, appId: string): Promise<GatekeeperAppFrame> {
+  if (appId !== 'mnemos') return frame
+  try {
+    const html = await releasedMnemosHtml(frame.iframeHtml)
+    return html === frame.iframeHtml ? frame : { ...frame, iframeHtml: html, iframeHtmlSha256: await sha256Hex(html), iframeHtmlOmitted: false }
+  } catch (error) {
+    disposeGatekeeperFrame(frame)
+    throw error
+  }
+}
+
 /**
  * Запрос фрейма с учётом сохранённых сборок. Сохранённая сборка вставляется, только если её SHA-256
  * совпал с хешем от сервера; иначе копия удаляется и сборка запрашивается целиком.
@@ -91,7 +113,7 @@ export async function loadGatekeeperFrame(api: Pick<AuthenticatedApi, 'getGateke
     const hash = frame.iframeHtmlSha256
     const html = HASH.test(hash) ? await store.get(appId, hash) : undefined
     // Ответ capnweb менять нельзя (присваивание молча не действует), поэтому новый объект с теми же ссылками.
-    if (html !== undefined && await sha256Hex(html) === hash) return { ...frame, iframeHtml: html }
+    if (html !== undefined && await sha256Hex(html) === hash) return releasedFrame({ ...frame, iframeHtml: html }, appId)
     await store.delete(appId, hash).catch(() => {})
     disposeGatekeeperFrame(frame)
     frame = await api.getGatekeeperApp(appId, accountId)
@@ -101,5 +123,5 @@ export async function loadGatekeeperFrame(api: Pick<AuthenticatedApi, 'getGateke
   if (typeof hash === 'string' && HASH.test(hash) && frame.iframeHtml && await sha256Hex(frame.iframeHtml) === hash) {
     void store.put(appId, hash, frame.iframeHtml).catch(() => {})
   }
-  return frame
+  return releasedFrame(frame, appId)
 }
