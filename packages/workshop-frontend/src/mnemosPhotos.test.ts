@@ -72,12 +72,12 @@ it('склейка пользователей с принципалами: за�
   expect(await mnemosPrincipal({}, 'olga')).toBeNull()
 })
 
-it('фото из настроек пишется в оба места: Mnemos и профиль платформы; «Убрать» убирает из обоих', async () => {
+it('фото сохраняется в Mnemos без второй копии; «Убрать» снимает фото', async () => {
   const t = setup()
   vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })))
   await saveMyPhoto(t.api, 'u1', new File([new Uint8Array([1])], 'me.png', { type: 'image/png' }))
   expect(t.calls.map(c => c[0])).toEqual(['begin', 'save', 'platform-set'])
-  expect(t.calls.at(-1)).toEqual(['platform-set', [0xff, 0xd8, 0xff, 1, 2, 3]])
+  expect(t.calls.at(-1)).toEqual(['platform-set', null])
   expect((await refreshPhotos(t.api)).photos.has('me')).toBe(true)
   await clearMyPhoto(t.api, 'u1')
   expect(t.calls.slice(-2)).toEqual([['remove'], ['platform-set', null]])

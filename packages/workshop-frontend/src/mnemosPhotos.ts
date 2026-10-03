@@ -3,10 +3,10 @@ import type { RpcStub } from 'capnweb'
 import type { AuthenticatedApi } from '@gadgets/workshop-shared/api'
 import type { GatekeeperNativeDocumentWriteSelector, GatekeeperPersonPhoto } from '@gadgets/workshop-shared/gatekeeper'
 import { listAccounts, storesDocuments } from './accountCapabilities'
-import { compressAvatar } from './avatarUtils'
+import { avatarBlobUrl, compressAvatar } from './avatarUtils'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { useAuthenticatedApi } from './AuthContext'
-import { photoType } from './framePersonPhotos'
+import { FramePersonPhotos, photoType } from './framePersonPhotos'
 import { invalidateAvatarCache } from './useAvatar'
 
 // Фотографии людей Mnemos: человек сам ставит свою, видят все люди организации. Тело идёт
@@ -16,7 +16,7 @@ type Api = Pick<RpcStub<AuthenticatedApi>, 'subscribeConnectedAccounts' | 'getGa
 type Selector = RpcStub<GatekeeperNativeDocumentWriteSelector>
 
 /** Снимок фотографий одного подключения: me — служебный ключ вызывающего, photos — id → ссылка. */
-export type PhotoBook = { me: string; photos: Map<string, string>; origin: string }
+export type PhotoBook = { me: string; photos: Map<string, string>; origin: string; entries?: GatekeeperPersonPhoto[] }
 
 const EMPTY: PhotoBook = { me: '', photos: new Map(), origin: '' }
 /** Ссылки живут 15 минут; перечитываем раньше, чтобы показ не упирался в истёкшую подпись. */
@@ -25,6 +25,7 @@ const FRESH_MS = 10 * 60 * 1000
 let book: PhotoBook = EMPTY
 let loadedAt = 0
 let pending: Promise<PhotoBook> | null = null
+let photoApi: Api | null = null
 const listeners = new Set<() => void>()
 function publish(next: PhotoBook) { book = next; loadedAt = Date.now(); for (const l of listeners) l() }
 
@@ -53,10 +54,15 @@ async function withSelector<T>(api: Api, use: (selector: Selector, origin: strin
 
 /** Перечитать фотографии (без повторов, пока идёт чтение). Сбой оставляет прежний снимок. */
 export function refreshPhotos(api: Api): Promise<PhotoBook> {
-  pending ??= withSelector(api, async (selector, origin) => {
-    const [me, list] = await Promise.all([selector.reviewerIdentity(), selector.peoplePhotos()])
-    return { me, photos: photoMap(list.photos, origin), origin }
-  }).then(next => { publish(next ?? EMPTY); return book }, () => book).finally(() => { pending = null })
+  if (photoApi !== api) { photoApi = api; book = EMPTY; loadedAt = 0; pending = null; forgetMnemosPrincipals() }
+  if (!pending) {
+    const request = withSelector(api, async (selector, origin) => {
+      const [me, list] = await Promise.all([selector.reviewerIdentity(), selector.peoplePhotos()])
+      return { me, photos: photoMap(list.photos, origin), origin, entries: list.photos }
+    }).then(next => { if (photoApi === api) publish(next ?? EMPTY); return photoApi === api ? book : EMPTY }, () => photoApi === api ? book : EMPTY)
+      .finally(() => { if (pending === request) pending = null })
+    pending = request
+  }
   return pending
 }
 
@@ -64,16 +70,31 @@ export function refreshPhotos(api: Api): Promise<PhotoBook> {
 export function useMnemosPhotos(api: Api | null | undefined): PhotoBook {
   const current = useSyncExternalStore(l => { listeners.add(l); return () => { listeners.delete(l) } }, () => book, () => EMPTY)
   useEffect(() => {
-    if (api && Date.now() - loadedAt > FRESH_MS) void refreshPhotos(api)
+    if (api && (photoApi !== api || Date.now() - loadedAt > FRESH_MS)) void refreshPhotos(api)
   }, [api])
-  return current
+  return photoApi === api ? current : EMPTY
+}
+
+/** Загружаются только показанные фото; общий кэш использует версию, а не срок подписи. */
+function usePhotoFromBook(current: PhotoBook, id: string | null | undefined): string | null {
+  const [image, setImage] = useState<{ book: PhotoBook; id: string; url: string } | null>(null)
+  useEffect(() => {
+    if (!id || !current.entries) return
+    let active = true, url: string | null = null
+    const source = new FramePersonPhotos({ peoplePhotos: async () => ({ photos: current.entries! }) }, current.origin)
+    void source.photo(id).then(photo => {
+      if (active && photo) { url = avatarBlobUrl(photo.bytes); setImage({ book: current, id, url }) }
+    }).catch(() => {})
+    return () => { active = false; source.dispose(); if (url) URL.revokeObjectURL(url) }
+  }, [current, id])
+  return image?.book === current && image.id === id ? image.url : null
 }
 
 /** Ссылка на фото человека из общего снимка или null. Один снимок на вкладку: экраны своих чтений фото не делают. */
 export function useMnemosPhoto(id: string | undefined): string | null {
   const { authenticatedApi } = useAuthenticatedApi()
   const current = useMnemosPhotos(authenticatedApi)
-  return id ? current.photos.get(id) ?? null : null
+  return usePhotoFromBook(current, id)
 }
 
 // Пользователь оболочки → принципал Mnemos (склейка на сервере: принципал из справочника входа или
@@ -82,7 +103,9 @@ export function useMnemosPhoto(id: string | undefined): string | null {
 type PrincipalApi = { mnemosPrincipals?(ids: string[]): Promise<Record<string, string>> }
 const principals = new Map<string, { at: number; principal: string | null }>()
 const principalWaiters = new Map<string, ((principal: string | null) => void)[]>()
-let principalBatch: { api: PrincipalApi; ids: Set<string> } | null = null
+let principalBatch: { api: PrincipalApi; ids: Set<string>; generation: number } | null = null
+let principalApi: PrincipalApi | null = null
+let principalGeneration = 0
 
 async function flushPrincipals() {
   const batch = principalBatch
@@ -93,6 +116,7 @@ async function flushPrincipals() {
     const part = ids.slice(i, i + 200)
     let found: Record<string, string> | null = null
     try { found = await batch.api.mnemosPrincipals!(part) } catch { found = null }
+    if (batch.generation !== principalGeneration) return
     for (const id of part) {
       const principal = typeof found?.[id] === 'string' ? found[id]! : null
       // Сбой не запоминаем надолго: пустой ответ живёт столько же, сколько удачный, а сбой — до следующего запроса.
@@ -105,6 +129,7 @@ async function flushPrincipals() {
 
 /** Принципал Mnemos пользователя оболочки или null, пока связи нет. */
 export function mnemosPrincipal(api: PrincipalApi, userId: string): Promise<string | null> {
+  if (principalApi !== api) { forgetMnemosPrincipals(); principalApi = api }
   const known = principals.get(userId)
   if (known && Date.now() - known.at < FRESH_MS) return Promise.resolve(known.principal)
   if (typeof api.mnemosPrincipals !== 'function') return Promise.resolve(null)
@@ -114,7 +139,7 @@ export function mnemosPrincipal(api: PrincipalApi, userId: string): Promise<stri
     principalWaiters.set(userId, [resolve])
     if (!principalBatch || principalBatch.api !== api) {
       void flushPrincipals()
-      principalBatch = { api, ids: new Set() }
+      principalBatch = { api, ids: new Set(), generation: principalGeneration }
       setTimeout(() => void flushPrincipals(), 0)
     }
     principalBatch.ids.add(userId)
@@ -122,7 +147,11 @@ export function mnemosPrincipal(api: PrincipalApi, userId: string): Promise<stri
 }
 
 /** Для тестов: забыть склейку пользователей с принципалами. */
-export function forgetMnemosPrincipals() { principals.clear(); principalWaiters.clear(); principalBatch = null }
+export function forgetMnemosPrincipals() {
+  principalGeneration++
+  for (const waiting of principalWaiters.values()) for (const done of waiting) done(null)
+  principals.clear(); principalWaiters.clear(); principalBatch = null; principalApi = null
+}
 
 /**
  * Какое фото показать человеку в оболочке. Связан с Mnemos — только фото Mnemos (нет его — инициалы),
@@ -146,7 +175,8 @@ export function useUserMnemosPhoto(userId: string | null | undefined): { linked:
     return () => { current = false }
   }, [authenticatedApi, userId])
   const current = useMnemosPhotos(authenticatedApi)
-  return { linked: !!principal && !!current.me, url: principal ? current.photos.get(principal) ?? null : null }
+  const url = usePhotoFromBook(current, principal)
+  return { linked: !!principal && !!current.me, url }
 }
 
 /** Сумма SHA-256 в base64 — так её подписывает хранилище в x-amz-checksum-sha256. */
@@ -202,13 +232,13 @@ type PlatformAvatars = { getAvatar(userId: string): Promise<Uint8Array | null>; 
 type PhotoApi = Api & PlatformAvatars
 
 /**
- * Поставить свою фотографию везде: сначала в Mnemos (если подключение есть), затем в профиль платформы.
+ * Поставить свою фотографию везде: в Mnemos; отдельное фото платформы нужно только без подключения.
  * Сбой Mnemos останавливает запись, чтобы оболочка и приложение не разошлись.
  */
 export async function saveMyPhoto(api: PhotoApi, userId: string, file: File): Promise<Uint8Array> {
   const bytes = await compressAvatar(file)
-  await uploadPhotoBytes(api, bytes)
-  await api.setAvatar(bytes)
+  const savedInMnemos = await uploadPhotoBytes(api, bytes)
+  await api.setAvatar(savedInMnemos ? null : bytes)
   invalidateAvatarCache(userId)
   return bytes
 }
@@ -243,7 +273,10 @@ export async function carryPlatformPhoto(api: PhotoApi, userId: string): Promise
       console.debug('[фото] фото платформы не перенесено в Mnemos: не JPEG, PNG или WebP либо больше 512 КБ')
       return 'skipped'
     }
-    return await uploadPhotoBytes(api, bytes) ? 'carried' : 'skipped'
+    if (!await uploadPhotoBytes(api, bytes)) return 'skipped'
+    await api.setAvatar(null)
+    invalidateAvatarCache(userId)
+    return 'carried'
   } catch (error) {
     console.debug('[фото] фото платформы не перенесено в Mnemos:', error instanceof Error ? error.message : String(error))
     return 'skipped'

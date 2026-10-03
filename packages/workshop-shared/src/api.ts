@@ -331,6 +331,18 @@ export interface WorkspaceActivityReporting {
   delivery: "disabled" | "pending" | "sent" | "unavailable";
 }
 
+/** Изображение профиля: версия для кэша и краткоживущая ссылка S3. */
+export interface AvatarReference {
+  /** SHA-256 изображения; меняется вместе с его байтами. */
+  version: string;
+  /** Подписанная ссылка на чтение, не сохраняется в браузерном кэше. */
+  url: string;
+  /** Размер изображения в байтах. */
+  sizeBytes: number;
+  /** Проверенный сервером тип изображения. */
+  mediaType: string;
+}
+
 export interface AuthenticatedApi extends RpcTarget {
   /** Проверяет настройку серверного распознавания до запроса микрофона. */
   isChatVoiceAvailable(): Promise<boolean>;
@@ -428,6 +440,9 @@ export interface AuthenticatedApi extends RpcTarget {
   // Fetch a user's avatar image by user ID. Returns null if no avatar has been set.
   // Accepts any user ID so that other users' avatars can be displayed (e.g. in chat).
   getAvatar(userId: string): Promise<Uint8Array | null>;
+
+  /** Версия и ссылка изображения для чтения напрямую из S3. */
+  getAvatarReference(userId: string): Promise<AvatarReference | null>;
 
   // Принципалы Mnemos пользователей оболочки (до 200 за вызов) в организации вызывающего: по ним
   // аватар берёт фото человека из Mnemos. Пользователь без связи с Mnemos в ответе отсутствует.

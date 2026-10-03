@@ -9,7 +9,7 @@ import { User, Pencil, Check, X, Lock, Camera, Eye, EyeSlash, CaretLeft } from '
 import { Link } from '@tanstack/react-router'
 import { useAvatar } from './useAvatar'
 import { avatarBlobUrl } from './avatarUtils'
-import { saveMyPhoto, shownPhoto, useMnemosPhotos } from './mnemosPhotos'
+import { saveMyPhoto, shownPhoto, useMnemosPhoto, useMnemosPhotos } from './mnemosPhotos'
 import UsageSettings from './components/billing/UsageSettings'
 import { useDocumentTitle } from './useDocumentTitle'
 
@@ -119,9 +119,10 @@ export default function SettingsPage() {
   // Whether this account has a password (false for OAuth-created accounts). Null while loading.
   const [hasPassword, setHasPassword] = useState<boolean | null>(null)
 
-  const platformAvatar = useAvatar(authenticatedApi, userInfo?.id)
   const photos = useMnemosPhotos(authenticatedApi)
-  const avatarUrl = shownPhoto({ linked: !!photos.me, url: photos.me ? photos.photos.get(photos.me) ?? null : null }, platformAvatar)
+  const platformAvatar = useAvatar(authenticatedApi, photos.me ? null : userInfo?.id)
+  const sharedPhoto = useMnemosPhoto(photos.me || undefined)
+  const avatarUrl = shownPhoto({ linked: !!photos.me, url: sharedPhoto }, platformAvatar)
 
   // Determine whether to show the change-password section.
   useEffect(() => {

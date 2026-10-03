@@ -31,6 +31,10 @@
     "./postgres-binary-kv": {
       "types": "./src/postgres-binary-kv.ts",
       "import": "./src/postgres-binary-kv.ts"
+    },
+    "./postgres-state": {
+      "types": "./src/postgres-state.ts",
+      "import": "./src/postgres-state.ts"
     }
   },
   "scripts": {

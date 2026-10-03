@@ -35,9 +35,10 @@ export default function MnemosAvatar({ name, id, photo, size = 36, className = '
  */
 export function MyAvatar({ size, className }: { size: number; className?: string }) {
   const { authenticatedApi, currentUser } = useAuthenticatedApi()
-  const platform = useAvatar(authenticatedApi, currentUser?.id)
   const book = useMnemosPhotos(authenticatedApi)
+  const platform = useAvatar(authenticatedApi, book.me ? null : currentUser?.id)
+  const shared = useMnemosPhoto(book.me || undefined)
   useCarryPlatformPhoto(authenticatedApi, currentUser?.id, book)
-  const photo = shownPhoto({ linked: !!book.me, url: book.me ? book.photos.get(book.me) ?? null : null }, platform)
+  const photo = shownPhoto({ linked: !!book.me, url: shared }, platform)
   return <MnemosAvatar name={currentUser?.name || ''} id={book.me || currentUser?.id || 'me'} photo={photo} size={size} className={className} />
 }

@@ -60,7 +60,7 @@ export function PersonAvatar({
   // Один источник с встроенным приложением: человек связан с Mnemos — только фото Mnemos (нет его или
   // не загрузилось — инициалы); фото платформы — только когда связи с Mnemos нет.
   const mnemos = useUserMnemosPhoto(visible ? userId : null)
-  const platform = useAvatar(api, visible ? userId : null)
+  const platform = useAvatar(api, visible && !mnemos.linked ? userId : null)
   const [broken, setBroken] = useState<string[]>([])
   const candidate = shownPhoto(mnemos, platform)
   const url = candidate && !broken.includes(candidate) ? candidate : null

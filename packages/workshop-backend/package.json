@@ -24,6 +24,7 @@
     "@gadgets/error-reporting": "workspace:*",
     "@gadgets/typed-storage": "workspace:*",
     "@gadgets/workshop-shared": "workspace:*",
+    "aws4fetch": "1.0.20",
     "capnweb": "^0.8.0",
     "capnweb-validate": "0.2.1",
     "diff": "^8.0.4",

@@ -1,3 +1,4 @@
+import { clearAvatarMemory } from "./avatarCache"
 import { reportShellStage } from "./shellReadiness"
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { RpcStub } from 'capnweb'
@@ -61,7 +62,7 @@ export function AuthProvider({ children, authenticatedApi, onLogout }: AuthProvi
   useAccountAppearance(authenticatedApi, currentUser?.id)
 
   return (
-    <AuthContext.Provider value={{ authenticatedApi, logout: onLogout, currentUser, isAdmin, initialization }}>
+    <AuthContext.Provider value={{ authenticatedApi, logout: () => { clearAvatarMemory(); onLogout() }, currentUser, isAdmin, initialization }}>
       {children}
     </AuthContext.Provider>
   )

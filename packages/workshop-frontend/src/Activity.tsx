@@ -646,7 +646,8 @@ function HistoryRow({
 function ResolverBadge({ profileId, children }: { profileId: string; children: ReactNode }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // То же правило, что у аватаров людей: связан с Mnemos — фото Mnemos, без связи — фото платформы.
-  const avatarUrl = shownPhoto(useUserMnemosPhoto(profileId), useAvatar(authenticatedApi, profileId))
+  const mnemosPhoto = useUserMnemosPhoto(profileId)
+  const avatarUrl = shownPhoto(mnemosPhoto, useAvatar(authenticatedApi, mnemosPhoto.linked ? null : profileId))
   return (
     <span className="flex min-w-0 items-center gap-1 text-kumo-subtle">
       {avatarUrl && (

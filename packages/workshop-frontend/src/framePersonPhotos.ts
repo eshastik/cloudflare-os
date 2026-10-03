@@ -1,3 +1,4 @@
+import { browserPhoto } from './browserPhotoCache'
 import type { GatekeeperPersonPhoto } from '@gadgets/workshop-shared/gatekeeper'
 
 // Фотографии людей для встроенного приложения Mnemos. Фрейм сети не имеет (CSP connect-src 'none',
@@ -12,7 +13,7 @@ type Listing = Map<string, GatekeeperPersonPhoto>
 export const PHOTO_LIST_FRESH_MS = 10 * 60 * 1000
 /** Аватар сжимается в браузере до 256×256; больший ответ — не фотография человека. */
 export const MAX_PHOTO_BYTES = 1024 * 1024
-const MAX_CACHED_PHOTOS = 2000
+const MAX_CACHED_PHOTOS = 100
 const MAX_PARALLEL_DOWNLOADS = 6
 
 /** Тип картинки по первым байтам; всё прочее (в том числе SVG) не показывается. */
@@ -123,11 +124,13 @@ export class FramePersonPhotos {
     const url = new URL(photo.url)
     if (url.protocol !== 'https:' || url.origin !== this.#origin || url.username || url.password) return skip(photo.id, `ссылка не в хранилище подключения (${url.origin})`)
     const signal = AbortSignal.any([this.#lifetime.signal, AbortSignal.timeout(30_000)])
-    const response = await this.#fetch(url.href, { signal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' })
-    if (!response.ok) { await response.body?.cancel(); return skip(photo.id, `хранилище ответило ${response.status}`) }
-    const declared = Number(response.headers.get('content-length') ?? '0')
-    if (declared > MAX_PHOTO_BYTES) { await response.body?.cancel(); return skip(photo.id, 'больше 1 МБ') }
-    const bytes = new Uint8Array(await response.arrayBuffer())
+    const bytes = await browserPhoto(photo.sha256, async () => {
+      const response = await this.#fetch(url.href, { signal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' })
+      if (!response.ok) { await response.body?.cancel(); throw new Error(`Хранилище ответило ${response.status}`) }
+      const declared = Number(response.headers.get('content-length') ?? '0')
+      if (declared > MAX_PHOTO_BYTES) { await response.body?.cancel(); throw new Error('Фотография больше 1 МБ') }
+      return new Uint8Array(await response.arrayBuffer())
+    })
     if (bytes.byteLength > MAX_PHOTO_BYTES) return skip(photo.id, 'больше 1 МБ')
     const type = photoType(bytes)
     if (!type) return skip(photo.id, 'не JPEG, PNG или WebP')

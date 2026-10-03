@@ -441,6 +441,9 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   async saveNotificationSettings(kinds: Record<NotificationKind, boolean>): Promise<NotificationSettings | null> {
     return notificationSettingsCall(() => this.user.saveMnemosNotificationSettings(kinds));
   }
+  getAvatarReference(userId: string) {
+    return avatarStorage(this.env, this.env.AVATARS).reference(userId);
+  }
   async getAvatar(userId: string): Promise<Uint8Array | null> {
     let result = await avatarStorage(this.env, this.env.AVATARS).get(userId);
     if (!result) return null;

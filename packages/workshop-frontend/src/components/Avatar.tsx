@@ -24,16 +24,16 @@ interface AvatarProps {
 export default function Avatar(
   { src, background, size = 32, fallback, style, className = '' }: AvatarProps,
 ) {
-  const [imgError, setImgError] = useState(false)
+  const [failedSource, setFailedSource] = useState<string | undefined>()
 
   const baseClasses = `rounded-full flex items-center justify-center overflow-hidden flex-shrink-0 ${className}`
 
-  if (src && !imgError) {
+  if (src && failedSource !== src) {
     return (
       <img
         src={src}
         alt=""
-        onError={() => setImgError(true)}
+        onError={() => setFailedSource(src)}
         className={baseClasses}
         style={{ width: size, height: size, objectFit: 'cover', backgroundColor: background, ...style }}
       />

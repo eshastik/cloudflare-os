@@ -12,7 +12,10 @@ vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi
 vi.mock('./gatekeeperAppDownload', () => ({ downloadGatekeeperNativeReview: vi.fn<() => Promise<null>>(), downloadGatekeeperNativeDocument: download }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks() })
+afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+const cryptoModule = 'node:crypto'
+const { webcrypto } = await import(cryptoModule)
 
 const head = 'a'.repeat(64), shared = 'b'.repeat(64)
 class Empty extends RpcTarget {}
@@ -178,6 +181,15 @@ it('смена документа — из меню «…»: «Привязат�
 })
 
 it('«Поделиться»: люди списком по отделам, выбор щелчком, одна кнопка «Пригласить N»; право в строке сохраняется сразу; «Убрать»', async () => {
+  const photoBytes = new Uint8Array([255, 216, 255, 1, 2, 3])
+  vi.stubGlobal('crypto', webcrypto)
+  const photoSha = [...new Uint8Array(await webcrypto.subtle.digest('SHA-256', photoBytes))].map(b => b.toString(16).padStart(2, '0')).join('')
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(photoBytes)))
+  const BaseURL = URL
+  vi.stubGlobal('URL', class extends BaseURL {
+    static createObjectURL = () => 'blob:photo-preview'
+    static revokeObjectURL = () => {}
+  })
   const people = [
     { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов', mode: '' as string, canRead: true, canWrite: true, documentOnlyRead: false, documentOnlyWrite: false },
     { id: 'reader-1', name: 'Ольга Кузнецова', mode: 'read' as string, canRead: true, canWrite: false, documentOnlyRead: false, documentOnlyWrite: true },
@@ -206,7 +218,7 @@ it('«Поделиться»: люди списком по отделам, вы�
       { id: 'dev', name: 'Разработка', members: [{ id: 'owner', name: 'Александр Егоров' }, { id: 'user-FGTK3l4q5INoE4X1', name: 'Николай Деревцов' }, { id: 'outsider', name: 'Пётр Сидоров' }] },
       { id: 'law', name: 'Юристы', members: [{ id: 'reader-1', name: 'Ольга Кузнецова' }, { id: 'viewer-2', name: 'Анна Смирнова' }, { id: 'guest-3', name: 'Вера Гостева' }] },
     ] } }
-    async peoplePhotos() { return { photos: [{ id: 'reader-1', sha256: 'c'.repeat(64), url: 'https://objects.example/content/olga.jpg', expiresAt: '2026-09-24T12:00:00Z' }] } }
+    async peoplePhotos() { return { photos: [{ id: 'reader-1', sha256: photoSha, url: 'https://objects.example/content/olga.jpg', expiresAt: '2026-09-24T12:00:00Z' }] } }
     async sharedDocuments() { return { documents: [] } }
     async reviewerIdentity() { return 'owner' }
   }
@@ -234,7 +246,7 @@ it('«Поделиться»: люди списком по отделам, вы�
     expect(ownerRow.querySelector('[data-avatar]')?.textContent).toBe('АЕ')
     expect(ownerRow.textContent).toContain('Вы')
     const olga = [...panel().querySelectorAll('[data-share-person]')].find(r => r.textContent?.includes('Ольга Кузнецова'))!
-    expect(olga.querySelector('[data-avatar="photo"] img')?.getAttribute('src')).toBe('https://objects.example/content/olga.jpg')
+    await act(async () => { await vi.waitFor(() => expect(olga.querySelector('[data-avatar="photo"] img')?.getAttribute('src')).toBe('blob:photo-preview')) })
     // Свой отдел раскрыт первым; чужой свёрнут; уже имеющий доступ в кандидатах не повторяется.
     expect([...panel().querySelectorAll('[data-group]')].map(g => g.getAttribute('data-group'))).toEqual(['unit:dev', 'unit:law'])
     expect(panel().querySelector('[data-group="unit:dev"]')?.textContent).toContain('Мой отдел · Разработка')

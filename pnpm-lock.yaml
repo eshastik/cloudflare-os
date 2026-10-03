@@ -896,6 +896,9 @@ importers:
       '@gadgets/workshop-shared':
         specifier: workspace:*
         version: link:../workshop-shared
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       capnweb:
         specifier: ^0.8.0
         version: 0.8.0
