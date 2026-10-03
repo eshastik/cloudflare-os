@@ -72,7 +72,7 @@ import type { NativeDocumentSource, ObservationAuthorizer, AccountDescription, A
 
 import APP_HTML from "./generated/app.txt";
 
-interface Env { MNEMOS_WORKSPACE_ORIGIN?:string; MNEMOS_WORKSPACE_TOKEN?:string; MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string; /** Ключ оболочки для служебного чтения кода гаджета (app-code, ADR 0028 п. 4); в браузер не уходит. */ MNEMOS_SHELL_KEY?: string }
+interface Env { MNEMOS_WORKER_RELEASE?:string; MNEMOS_APP_SHA256?:string; MNEMOS_WORKSPACE_ORIGIN?:string; MNEMOS_WORKSPACE_TOKEN?:string; MNEMOS_WEBDAV_SERVERS?:string; MNEMOS_DRIVE_ORIGIN_KEY?:string; MNEMOS_IMAP_SERVERS?:string; MNEMOS_CALDAV_SERVERS?:string; MNEMOS_API_ORIGIN: string; MNEMOS_STORAGE_ORIGIN?: string; MNEMOS_LOGIN_CONFIG?: string; MNEMOS_LOGIN_PROFILES?: string; MNEMOS_CALENDAR_BRIDGE_TOKEN?: string; MNEMOS_MAIL_BRIDGE_TOKEN?: string; /** Ключ оболочки для служебного чтения кода гаджета (app-code, ADR 0028 п. 4); в браузер не уходит. */ MNEMOS_SHELL_KEY?: string }
 
 function callbackUrl(env: Env): string {
   try {
@@ -1797,6 +1797,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
 // Account preparation and credential installation are never generic HTTP RPC.
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if(new URL(request.url).pathname==="/gatekeeper/mnemos/runtime-version")return Response.json({worker_release:env.MNEMOS_WORKER_RELEASE??"",app_sha256:env.MNEMOS_APP_SHA256??""},{headers:{"Cache-Control":"no-store"}});
     let callbackUrl: string;
     try { callbackUrl = JSON.parse(env.MNEMOS_LOGIN_CONFIG ?? "").callbackUrl; }
     catch { return new Response("Страница не найдена", { status: 404 }); }

@@ -19,6 +19,19 @@ import { configurePostgresState } from "./scripts/postgres-state-config.mjs";
 import { configureLocalObservabilityEnvironment, getWranglerPortFromBackendHost } from "./scripts/dev-server-config.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+function writeGeneratedConfiguration(path, config) {
+  const data = JSON.stringify(config, null, 2) + "\n";
+  const writer = process.env.MNEMOS_CONFIG_WRITER;
+  if (writer) {
+    execFileSync("python3", [writer, "write-startup-config", path], { input: data, timeout: 5000 });
+  } else {
+    if (existsSync(path + ".writer-version")) {
+      throw new Error("Для этой конфигурации требуется MNEMOS_CONFIG_WRITER.");
+    }
+    writeFileSync(path, data);
+  }
+}
+
 const PACKAGES_DIR = join(ROOT, "packages");
 const WORKSHOP_BACKEND_DIR = join(PACKAGES_DIR, "workshop-backend");
 
@@ -194,7 +207,7 @@ function bindingName(gk) {
   }
 
   const outPath = join(ROOT, "wrangler.dev.jsonc");
-  writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
+  writeGeneratedConfiguration(outPath, config);
   console.log(`generated: ${outPath}`);
 }
 
@@ -283,7 +296,7 @@ for (const gk of gatekeepers) {
   if (gk.name === CONTEXT_GATEKEEPER_NAME) configurePostgresState(config, process.env);
   moveSecretsToDevVars(config, gk.dir);
   const outPath = join(gk.dir, "wrangler.dev.jsonc");
-  writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
+  writeGeneratedConfiguration(outPath, config);
   console.log(`generated: ${outPath}`);
 }
 
@@ -365,7 +378,7 @@ for (const gk of gatekeepers) {
   configurePostgresState(config, process.env);
   moveSecretsToDevVars(config, WORKSHOP_BACKEND_DIR);
   const outPath = join(ROOT, "packages", "workshop-backend", "wrangler.dev.jsonc");
-  writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
+  writeGeneratedConfiguration(outPath, config);
   console.log(`generated: ${outPath}`);
 }
 
