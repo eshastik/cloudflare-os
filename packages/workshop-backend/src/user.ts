@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 import { MAX_SPENDING_BATCH, isSpendingEntry, type SpendingEntry } from "@gadgets/workshop-shared/spending";
 import { displayWorkspaceTitle } from "./workspace-title.js";
 import { refreshAccountUiDescription } from "./account-ui-description";
@@ -1340,7 +1341,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
       await this.env.BLUEPRINT_CONTENT.delete(`${BLUEPRINT_SCREENSHOT_R2_PREFIX}${id}`);
 
       // Delete from KV.
-      await this.env.BLUEPRINTS.delete(id);
+      await blueprintStorage(this.env).delete(id);
     }
 
     if (publishedRecord?.featured === true) {

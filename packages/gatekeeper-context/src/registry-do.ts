@@ -1,3 +1,4 @@
+import { textKv } from "@gadgets/backend-utils/postgres-text-kv";
 // Per-domain registry of public collections. It serializes writes to the KV snapshot read by user
 // sessions when building their enabled collection set.
 
@@ -27,7 +28,7 @@ export class LibraryRegistryDurableObject extends DurableObject<Cloudflare.Env> 
 
   async #writeSnapshot(domain: string): Promise<void> {
     let collections = [...this.storage.publicCollections.list()];
-    await this.env.CONTEXT_COLLECTIONS.put(
+    await textKv(this.env, "context-collections", this.env.CONTEXT_COLLECTIONS).put(
       publicCollectionsKvKey(domain), JSON.stringify(collections));
   }
 

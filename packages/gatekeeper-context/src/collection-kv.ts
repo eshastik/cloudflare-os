@@ -1,3 +1,4 @@
+import { textKv, type PostgresStateEnv } from "@gadgets/backend-utils/postgres-text-kv";
 // KV helpers for the per-domain public-collections snapshot. The registry DO is the only writer;
 // user sessions read it when building their enabled collection set.
 
@@ -21,10 +22,10 @@ function parsePublicCollections(raw: string): ContextCollectionSummary[] {
 
 // The public collections for a domain (readable by every user in that domain).
 export async function listPublicCollectionsFromKv(
-  env: Pick<Cloudflare.Env, 'CONTEXT_COLLECTIONS'>,
+  env: Pick<Cloudflare.Env, 'CONTEXT_COLLECTIONS'> & PostgresStateEnv,
   domain: string,
 ): Promise<ContextCollectionSummary[]> {
-  let raw = await env.CONTEXT_COLLECTIONS.get(publicCollectionsKvKey(domain));
+  let raw = await textKv(env, "context-collections", env.CONTEXT_COLLECTIONS).get(publicCollectionsKvKey(domain));
   if (!raw) {
     return [];
   }

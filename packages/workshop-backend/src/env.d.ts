@@ -1,3 +1,4 @@
+import type { PostgresStateEnv } from "@gadgets/backend-utils/postgres-text-kv";
 import type { ProductAnalyticsRecord } from "./analytics";
 
 // Custom environment variable declarations that augment the auto-generated Cloudflare.Env.
@@ -5,7 +6,7 @@ import type { ProductAnalyticsRecord } from "./analytics";
 
 declare global {
   namespace Cloudflare {
-    interface Env {
+    interface Env extends PostgresStateEnv {
       // Deployment-wide admin usernames.
       ADMINS?: string[];
 

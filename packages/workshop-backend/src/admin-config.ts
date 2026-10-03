@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 // Deployment-wide admin configuration: a single object owned by the AdminSettings durable object and
 // mirrored to one reserved BLUEPRINTS KV key, so the per-(re)connect getServerConfig() path and the
 // agent can resolve it with a single cheap KV get.
@@ -291,7 +292,7 @@ export function serializeAdminConfig(config: AdminConfig): string {
 
 // Read the admin config from the KV mirror. Cheap enough for the hot path (a single KV get).
 export async function readAdminConfig(env: Cloudflare.Env): Promise<AdminConfig> {
-  return parseAdminConfig(await env.BLUEPRINTS.get(ADMIN_CONFIG_KEY));
+  return parseAdminConfig(await blueprintStorage(env).get(ADMIN_CONFIG_KEY));
 }
 
 // --- Resource-disable helpers ---

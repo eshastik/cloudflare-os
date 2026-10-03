@@ -15,6 +15,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "jsonc-parser";
+import { configurePostgresState } from "./scripts/postgres-state-config.mjs";
 import { getWranglerPortFromBackendHost } from "./scripts/dev-server-config.js";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -276,6 +277,7 @@ for (const gk of gatekeepers) {
     config.main = process.env.DEV_DRIVE_FIXTURE === "google" ? "../../scripts/local-google-drive-fixture-worker.ts" : "../../scripts/local-drive-fixture-worker.ts";
   }
 
+  if (gk.name === CONTEXT_GATEKEEPER_NAME) configurePostgresState(config, process.env);
   moveSecretsToDevVars(config, gk.dir);
   const outPath = join(gk.dir, "wrangler.dev.jsonc");
   writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");
@@ -357,6 +359,7 @@ for (const gk of gatekeepers) {
 
   config.build = { ...config.build, cwd: WORKSHOP_BACKEND_DIR };
 
+  configurePostgresState(config, process.env);
   moveSecretsToDevVars(config, WORKSHOP_BACKEND_DIR);
   const outPath = join(ROOT, "packages", "workshop-backend", "wrangler.dev.jsonc");
   writeFileSync(outPath, JSON.stringify(config, null, 2) + "\n");

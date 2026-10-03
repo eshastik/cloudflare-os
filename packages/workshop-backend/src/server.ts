@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 import { captureBlueprintTemplate, readBlueprintTemplate } from "./blueprint-template";
 import { DEFAULT_WORKSPACE_TITLE } from "./workspace-title.js";
 import { chatVoiceAvailable, transcribeChatVoice, type ChatVoiceConfig } from "./chat-voice";
@@ -663,7 +664,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
         ownerId: this.user.id.toString(),
       };
 
-      await this.env.BLUEPRINTS.put(blueprintId, JSON.stringify(kvRecord));
+      await blueprintStorage(this.env).put(blueprintId, JSON.stringify(kvRecord));
 
       await this.user.importBlueprint(blueprintId, metadata);
 
@@ -677,7 +678,7 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     } catch (err) {
       // Try to delete what we uploaded, but don't wait for results becasue there's nothing we
       // can do if they fail, and we already have an error to throw.
-      this.env.BLUEPRINTS.delete(blueprintId);
+      blueprintStorage(this.env).delete(blueprintId);
       this.env.BLUEPRINT_CONTENT.delete(r2Key);
       throw err;
     }

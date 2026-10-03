@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 import { visibleChatMessages } from "@gadgets/workshop-shared/api";
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext, UsedGadget} from "@gadgets/workshop-shared/api";
 import { findInvitees, notYetSignedInProfile, rankInvitees } from './user-directory.js';
@@ -6093,7 +6094,7 @@ class OverseerImpl implements AgentHooks {
       ownerId: this.ownerId,
       gadgetId: this.ctx.id.toString(),
     };
-    await this.env.BLUEPRINTS.put(record.id, JSON.stringify(kvRecord));
+    await blueprintStorage(this.env).put(record.id, JSON.stringify(kvRecord));
 
     // Clear dirty flag.
     record.dirty = false;
@@ -6105,7 +6106,7 @@ class OverseerImpl implements AgentHooks {
     if (!this.ownerId) throw new Error("Workspace not initialized.");
 
     // Delete from KV first (stops public access).
-    await this.env.BLUEPRINTS.delete(record.id);
+    await blueprintStorage(this.env).delete(record.id);
 
     // Delete all historical versions from R2.
     for (let v = 1; v <= record.metadata.version; v++) {

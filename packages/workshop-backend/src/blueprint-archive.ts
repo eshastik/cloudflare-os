@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 // Helpers around managing blueprints and encoding/decoding blueprint downloads (`.gadget` files).
 //
 // `.gadget` archives are streamed as a 24-byte prefix (magic, version, metadata byte length,
@@ -95,7 +96,7 @@ export async function readBlueprintKvRecord(
     return null;
   }
 
-  let raw = await env.BLUEPRINTS.get(blueprintId);
+  let raw = await blueprintStorage(env).get(blueprintId);
   if (!raw) {
     return null;
   }
@@ -106,7 +107,7 @@ export async function readBlueprintKvRecord(
 export async function listFeaturedBlueprintsFromKv(
   env: BlueprintKvEnv,
 ): Promise<BlueprintPublicInfo[]> {
-  let raw = await env.BLUEPRINTS.get(FEATURED_BLUEPRINTS_KEY);
+  let raw = await blueprintStorage(env).get(FEATURED_BLUEPRINTS_KEY);
   if (!raw) {
     return [];
   }

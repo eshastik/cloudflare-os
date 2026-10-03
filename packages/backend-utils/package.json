@@ -19,6 +19,10 @@
     "./error-reporting": {
       "types": "./src/error-reporting.ts",
       "import": "./src/error-reporting.ts"
+    },
+    "./postgres-text-kv": {
+      "types": "./src/postgres-text-kv.ts",
+      "import": "./src/postgres-text-kv.ts"
     }
   },
   "scripts": {
@@ -29,11 +33,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@gadgets/error-reporting": "workspace:*"
+    "@gadgets/error-reporting": "workspace:*",
+    "pg": "8.16.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.8",
     "@cloudflare/workers-types": "^5.20260722.1",
+    "@types/pg": "8.15.5",
     "vitest": "^4.1.10"
   }
 }

@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 // Installing the deployment's bundled output-format blueprints.
 //
 // The archives and their presentation come from a directory chosen at build time (see
@@ -67,7 +68,7 @@ async function installOne(env: InstallEnv, entry: BundledFormatBlueprint)
   await env.BLUEPRINT_CONTENT.put(`${entry.blueprintId}/${installed.version}`, contentBytes);
 
   let kvRecord: BlueprintKvRecord = {metadata: installed};
-  await env.BLUEPRINTS.put(entry.blueprintId, JSON.stringify(kvRecord));
+  await blueprintStorage(env).put(entry.blueprintId, JSON.stringify(kvRecord));
 
   return {id: entry.blueprintId, metadata: installed};
 }

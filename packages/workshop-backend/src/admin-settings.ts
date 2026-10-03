@@ -1,3 +1,4 @@
+import { blueprintStorage } from "./blueprint-storage.js";
 import { AdminApi, AdminFormat, AdminFormatPatch, AdminResourceVendor, AdminSettingsView, AmbientGatekeeperMode, BannerColor, BlueprintPublicInfo, MAX_ANNOUNCEMENT_LENGTH, MAX_INSTANCE_INSTRUCTIONS_LENGTH, MAX_SITE_NAME_LENGTH, isAmbientGatekeeperMode, isBannerColor, isHexColor } from '@gadgets/workshop-shared/api';
 import { GatekeeperVendor } from '@gadgets/workshop-shared/gatekeeper';
 import { DurableObject } from 'cloudflare:workers';
@@ -189,7 +190,7 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
 
   async #writeFeaturedSnapshot(): Promise<void> {
     let featured = [...this.storage.featuredBlueprints.list()];
-    await this.env.BLUEPRINTS.put(FEATURED_BLUEPRINTS_KEY, serializeFeaturedBlueprints(featured));
+    await blueprintStorage(this.env).put(FEATURED_BLUEPRINTS_KEY, serializeFeaturedBlueprints(featured));
   }
 
   // Reconcile the mirrored featured list to match the authoritative bit stored in the owner
@@ -227,7 +228,7 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
       throw new Error('Blueprint not found.');
     }
 
-    let raw = await this.env.BLUEPRINTS.get(blueprintId);
+    let raw = await blueprintStorage(this.env).get(blueprintId);
     if (!raw) {
       throw new Error('Blueprint not found.');
     }
@@ -311,7 +312,7 @@ export class AdminSettings extends DurableObject<Cloudflare.Env> {
       let next = mutate(current);
       this.storage.adminConfig.put(next);
       try {
-        await this.env.BLUEPRINTS.put(ADMIN_CONFIG_KEY, serializeAdminConfig(next));
+        await blueprintStorage(this.env).put(ADMIN_CONFIG_KEY, serializeAdminConfig(next));
       } catch (error) {
         this.storage.adminConfig.put(current);
         throw error;
