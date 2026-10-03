@@ -155,10 +155,10 @@ export type BotRecord = {
 };
 
 export interface PersonalBotStorage {
-  get<T>(key: string): T | undefined;
-  put<T>(key: string, value: T): void;
-  delete(key: string): boolean;
-  list<T>(options: { prefix: string }): Iterable<[string, T]>;
+  get<T>(key: string): T | undefined | Promise<T | undefined>;
+  put<T>(key: string, value: T): void | Promise<void>;
+  delete(key: string): boolean | Promise<boolean>;
+  list<T>(options: { prefix: string }): Iterable<[string, T]> | Promise<Iterable<[string, T]>>;
 }
 
 /** Ход агента: куда слать черновики и ответ. update — номер обновления Telegram, начавшего ход;
@@ -344,12 +344,49 @@ function tokenContext(owner: string, botId: string): string {
 }
 
 export class PersonalTelegramBot {
+  #tail: Promise<unknown> = Promise.resolve();
+
+  #serialize<T>(operation: () => Promise<T>): Promise<T> {
+    let result = this.#tail.then(async () => await operation());
+    this.#tail = result.catch(() => {});
+    return result;
+  }
+
+  async state(owner: string): Promise<TelegramBotState> { return await this.#serialize(() => this.#runState(owner)); }
+
+  async connect(owner: string, rawToken: string): Promise<TelegramBotState> { return await this.#serialize(() => this.#runConnect(owner, rawToken)); }
+
+  async renewCode(owner: string): Promise<TelegramBotState> { return await this.#serialize(() => this.#runRenewCode(owner)); }
+
+  async disconnect(owner: string): Promise<TelegramDisconnectResult> { return await this.#serialize(() => this.#runDisconnect(owner)); }
+
+  async webhook(request: Request): Promise<Response> { return await this.#serialize(() => this.#runWebhook(request)); }
+
+  async deliver(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> { return await this.#serialize(() => this.#runDeliver(ref, response)); }
+
+  async pollNotifications(): Promise<number | null> { return await this.#serialize(() => this.#runPollNotifications()); }
+
+  async openMiniApp(secret: unknown, initData: unknown): Promise<MiniAppOpenResult> { return await this.#serialize(() => this.#runOpenMiniApp(secret, initData)); }
+
+  async miniAppSession(secret: unknown): Promise<MiniAppSessionGrant | null> { return await this.#serialize(() => this.#runMiniAppSession(secret)); }
+
+  async endMiniAppSession(secret: unknown): Promise<void> { return await this.#serialize(() => this.#runEndMiniAppSession(secret)); }
+
+  async siteLink(owner: string, key: string | null): Promise<TelegramChatLink> { return await this.#serialize(() => this.#runSiteLink(owner, key)); }
+
+  async linkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> { return await this.#serialize(() => this.#runLinkSiteChat(owner, input)); }
+
+  async retrySiteDeletions(): Promise<void> { return await this.#serialize(() => this.#runRetrySiteDeletions()); }
+
+  async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> { return await this.#serialize(() => this.#runSiteEvent(owner, key, event)); }
+
+
   constructor(private deps: PersonalBotDeps) {}
 
-  #record(): BotRecord | undefined { return this.deps.storage.get<BotRecord>(RECORD); }
+  async #record(): Promise<BotRecord | undefined> { return (await this.deps.storage.get<BotRecord>(RECORD)); }
 
-  #mine(owner: string): BotRecord | undefined {
-    let record = this.#record();
+  async #mine(owner: string): Promise<BotRecord | undefined> {
+    let record = (await this.#record());
     if (record && record.owner !== owner) throw new Error("Telegram bot belongs to another user.");
     return record;
   }
@@ -371,24 +408,24 @@ export class PersonalTelegramBot {
 
   /** Состояние для экрана. Режим тредов перепроверяется getMe не чаще раза в минуту: его могут
    *  выключить в BotFather уже после подключения. Сбой Telegram оставляет прежний ответ. */
-  async state(owner: string): Promise<TelegramBotState> {
-    let record = this.#mine(owner);
+  async #runState(owner: string): Promise<TelegramBotState> {
+    let record = (await this.#mine(owner));
     if (record && this.deps.now() - (record.checkedAt ?? 0) >= THREADS_CHECK_MS && secretsKeyConfigured(this.deps.secretsKey)) {
       try {
         let identity = await (await this.#api(record)).identity();
-        let current = this.#mine(owner);
+        let current = (await this.#mine(owner));
         if (current && current.bot.id === identity.id && current.secretSha256 === record.secretSha256) {
           current.threads = identity.threads;
           current.bot = { id: identity.id, username: identity.username, title: identity.title };
           current.checkedAt = this.deps.now();
-          this.deps.storage.put(RECORD, current);
+          (await this.deps.storage.put(RECORD, current));
         }
       } catch { /* покажем последний известный ответ */ }
     }
-    return this.#describe(this.#mine(owner));
+    return this.#describe((await this.#mine(owner)));
   }
 
-  async connect(owner: string, rawToken: string): Promise<TelegramBotState> {
+  async #runConnect(owner: string, rawToken: string): Promise<TelegramBotState> {
     let token = typeof rawToken === "string" ? rawToken.trim() : "";
     if (!TELEGRAM_TOKEN.test(token)) {
       throw new TelegramSetupError("Это не похоже на токен бота. Скопируйте его из BotFather целиком: номер, двоеточие и около 35 символов.");
@@ -396,7 +433,7 @@ export class PersonalTelegramBot {
     if (!secretsKeyConfigured(this.deps.secretsKey)) throw new TelegramSetupError(SECRETS_KEY_MISSING);
     let url = webhookUrl(this.deps.publicBase, this.deps.routeId);
     if (!url) throw new TelegramSetupError("У установки не задан публичный адрес https (PUBLIC_BASE_URL), Telegram некуда присылать сообщения. Обратитесь к администратору установки.");
-    let previous = this.#mine(owner);
+    let previous = (await this.#mine(owner));
 
     let api = new TelegramBotApi(token, this.deps.fetch);
     let identity;
@@ -426,7 +463,7 @@ export class PersonalTelegramBot {
     if (previous && !sameBot) await this.#teardown(previous);
 
     let now = this.deps.now();
-    let current = this.#mine(owner);
+    let current = (await this.#mine(owner));
     let keepOwner = current && current.bot.id === identity.id && current.telegramOwner && current.connectedAt !== null;
     let record: BotRecord = {
       owner, mnemos,
@@ -438,29 +475,29 @@ export class PersonalTelegramBot {
       connectedAt: keepOwner ? current!.connectedAt : null,
       createdAt: now, seen: [],
     };
-    this.deps.storage.put(RECORD, record);
+    (await this.deps.storage.put(RECORD, record));
     return this.#describe(record);
   }
 
-  renewCode(owner: string): TelegramBotState {
-    let record = this.#mine(owner);
+  async #runRenewCode(owner: string): Promise<TelegramBotState> {
+    let record = (await this.#mine(owner));
     if (!record) throw new TelegramSetupError("Бот не подключён. Начните с токена от BotFather.");
     if (record.telegramOwner) return this.#describe(record);
     record.pairing = { code: pairingCode(), expiresAt: this.deps.now() + PAIRING_TTL_MS };
-    this.deps.storage.put(RECORD, record);
+    (await this.deps.storage.put(RECORD, record));
     return this.#describe(record);
   }
 
-  async disconnect(owner: string): Promise<TelegramDisconnectResult> {
-    let record = this.#mine(owner);
+  async #runDisconnect(owner: string): Promise<TelegramDisconnectResult> {
+    let record = (await this.#mine(owner));
     if (!record) return { webhookRemoved: true };
     // Запись удаляется до сетевых вызовов: даже если Telegram не ответит, вебхук сюда уже не пройдёт.
     // Связи тредов уходят вместе с ботом; беседы на сайте остаются.
-    this.deps.storage.delete(RECORD);
+    (await this.deps.storage.delete(RECORD));
     for (let prefix of [THREAD_PREFIX, REPLY_PREFIX, CARD_PREFIX, CARD_FOR_PREFIX, SCREEN_PREFIX, APP_SESSION_PREFIX, ...NOTIFY_KEY_PREFIXES]) {
-      for (let [key] of [...this.deps.storage.list({ prefix })]) this.deps.storage.delete(key);
+      for (let [key] of [...(await this.deps.storage.list({ prefix }))]) (await this.deps.storage.delete(key));
     }
-    for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, APP_SESSIONS, ...NOTIFY_KEYS]) this.deps.storage.delete(key);
+    for (let key of [REPLIES, CARDS, CARD_SEQ, SCREENS, APP_SESSIONS, ...NOTIFY_KEYS]) (await this.deps.storage.delete(key));
     this.deps.setAlarm(null);
     return { webhookRemoved: await this.#teardown(record) };
   }
@@ -485,11 +522,11 @@ export class PersonalTelegramBot {
     this.deps.waitUntil(this.#api(record).then(api => api.sendText(chat, text)).catch(() => {}));
   }
 
-  async webhook(request: Request): Promise<Response> {
+  async #runWebhook(request: Request): Promise<Response> {
     let reply = (status: number) => new Response(null, { status, headers: { "Cache-Control": "no-store" } });
     if (request.method !== "POST") return reply(405);
     let url = webhookUrl(this.deps.publicBase, this.deps.routeId);
-    let record = this.#record();
+    let record = (await this.#record());
     if (!record || !url || new URL(request.url).pathname !== new URL(url).pathname) return reply(404);
     let header = request.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
     if (!await sameSecret(await sha256(header), record.secretSha256)) return reply(401);
@@ -501,24 +538,24 @@ export class PersonalTelegramBot {
 
     // Дальше без ожиданий: прочитать, проверить и записать одним куском, чтобы параллельный
     // вебхук или отключение не вклинились между проверкой и записью.
-    let current = this.#record();
+    let current = (await this.#record());
     if (!current || current.secretSha256 !== record.secretSha256) return reply(200);
     if (current.seen.includes(input.update)) return reply(200);
     current.seen = [...current.seen, input.update].slice(-SEEN_UPDATES);
 
     let owner = current.telegramOwner;
     if (input.kind === "callback") {
-      this.deps.storage.put(RECORD, current);
+      (await this.deps.storage.put(RECORD, current));
       // Нажатие не владельца бота не отвечается и ничего не делает.
       if (!owner || input.sender.id !== owner.id) return reply(200);
       // Карточка занимается сразу, до ожиданий: второе нажатие застанет её занятой.
       if (input.data?.startsWith("n:")) {
-        let notice = claimNoticeCard(this.deps.storage, input.data, input.message, this.deps.now(),
-          { unknown: CARD_UNKNOWN, busy: CARD_BUSY, stale: CARD_STALE });
+        let notice = (await claimNoticeCard(this.deps.storage, input.data, input.message, this.deps.now(),
+          { unknown: CARD_UNKNOWN, busy: CARD_BUSY, stale: CARD_STALE }));
         this.deps.waitUntil(this.#settleNotice(current, input, notice).catch(() => {}));
         return reply(200);
       }
-      let claim = this.#claimCard(current, input);
+      let claim = (await this.#claimCard(current, input));
       this.deps.waitUntil(this.#settleCard(current, input, claim).catch(() => {}));
       return reply(200);
     }
@@ -526,24 +563,24 @@ export class PersonalTelegramBot {
     if (!owner) {
       let pairing = current.pairing;
       let valid = pairing && pairing.expiresAt > this.deps.now() && input.text === "/start " + pairing.code;
-      if (!valid) { this.deps.storage.put(RECORD, current); return reply(200); }
+      if (!valid) { (await this.deps.storage.put(RECORD, current)); return reply(200); }
       current.telegramOwner = { id: input.sender.id, name: input.sender.name, username: input.sender.username };
       current.connectedAt = this.deps.now();
       current.pairing = null;
-      this.deps.storage.put(RECORD, current);
+      (await this.deps.storage.put(RECORD, current));
       this.deps.setAlarm(this.deps.now() + NOTIFY_FIRST_MS);
       this.#reply(current, input.sender.id, PAIRED_REPLY);
       return reply(200);
     }
 
-    this.deps.storage.put(RECORD, current);
+    (await this.deps.storage.put(RECORD, current));
     // Ход — только от владельца бота; остальных бот не слышит.
     if (input.sender.id !== owner.id) return reply(200);
 
     // Служебные сообщения о треде записываются сразу, до следующего обновления: первое сообщение
     // треда должно застать, как тред назван.
     if (input.topic && input.thread !== null) {
-      this.#topicEvent(current, input.thread, input.topic);
+      (await this.#topicEvent(current, input.thread, input.topic));
       return reply(200);
     }
     if (input.topic) return reply(200);
@@ -556,12 +593,12 @@ export class PersonalTelegramBot {
 
   // ---- треды и беседы ----
 
-  #link(thread: number): ThreadLink | undefined {
-    return this.deps.storage.get<ThreadLink>(THREAD_PREFIX + thread);
+  async #link(thread: number): Promise<ThreadLink | undefined> {
+    return (await this.deps.storage.get<ThreadLink>(THREAD_PREFIX + thread));
   }
 
-  #putLink(link: ThreadLink): void {
-    this.deps.storage.put(THREAD_PREFIX + link.thread, link);
+  async #putLink(link: ThreadLink): Promise<void> {
+    (await this.deps.storage.put(THREAD_PREFIX + link.thread, link));
   }
 
   #newLink(record: BotRecord, thread: number, naming: ThreadNaming, title: string | null): ThreadLink {
@@ -571,13 +608,13 @@ export class PersonalTelegramBot {
     };
   }
 
-  #topicEvent(record: BotRecord, thread: number, topic: NonNullable<Extract<TelegramInput, { kind: "message" }>["topic"]>): void {
-    let link = this.#link(thread) ?? this.#newLink(record, thread, null, null);
+  async #topicEvent(record: BotRecord, thread: number, topic: NonNullable<Extract<TelegramInput, { kind: "message" }>["topic"]>): Promise<void> {
+    let link = (await this.#link(thread)) ?? this.#newLink(record, thread, null, null);
     let userNamed = topic.kind === "edited" || !topic.implicit;
     if (topic.kind === "created" && link.naming === "user") return;
     link.naming = userNamed ? "user" : "client";
     link.title = topic.name;
-    this.#putLink(link);
+    (await this.#putLink(link));
     // Название, которое человек дал треду, становится названием беседы (если беседа уже есть).
     if (userNamed && link.chatPath) {
       let owner = record.owner;
@@ -612,8 +649,8 @@ export class PersonalTelegramBot {
 
     // Тред беседы: из сообщения или новый, если сообщение пришло вне тредов (старый клиент).
     let link: ThreadLink;
-    let notice = input.replyTo !== null ? noticeFor(this.deps.storage, input.replyTo) : undefined;
-    let notifyThread = loadNotifyState(this.deps.storage).thread;
+    let notice = input.replyTo !== null ? (await noticeFor(this.deps.storage, input.replyTo)) : undefined;
+    let notifyThread = (await loadNotifyState(this.deps.storage)).thread;
     if (notice && input.thread !== null && input.thread === notifyThread) {
       // Ответ на уведомление — новая беседа об этом объекте, в своём треде.
       let title = (NOTICE_THREAD_PREFIX + notice.summary.replace(/\s+/g, " ").trim()).slice(0, 128);
@@ -622,11 +659,11 @@ export class PersonalTelegramBot {
       catch { await this.#say(record, NO_THREAD_REPLY, input.thread).catch(() => {}); return; }
       link = this.#newLink(record, thread, "bot", title);
       link.renamed = true;
-      this.#putLink(link);
+      (await this.#putLink(link));
       await api.send(chat, `Беседа по этому уведомлению — в треде «${title}».`, { thread: input.thread }).catch(() => {});
     } else if (input.thread !== null) {
       notice = undefined;
-      link = this.#link(input.thread) ?? this.#newLink(record, input.thread, null, null);
+      link = (await this.#link(input.thread)) ?? this.#newLink(record, input.thread, null, null);
       if (link.deletedOnSite) { await this.#say(record, DELETED_ON_SITE_REPLY, link.thread); return; }
     } else {
       notice = undefined;
@@ -635,7 +672,7 @@ export class PersonalTelegramBot {
       catch { await api.send(chat, NO_THREAD_REPLY).catch(() => {}); return; }
       link = this.#newLink(record, thread, "bot", NEW_THREAD_TITLE);
     }
-    this.#putLink(link);
+    (await this.#putLink(link));
     let ref: TelegramTurnRef = { route: this.deps.routeId, chat, thread: link.thread, update: input.update };
 
     let prompt = input.text;
@@ -675,13 +712,13 @@ export class PersonalTelegramBot {
     if (!result.accepted) {
       // Беседу удалили на сайте, а удаление до бота не дошло: связь треда снимается, пустая беседа
       // не создаётся.
-      if (result.deletedOnSite) this.deps.storage.delete(THREAD_PREFIX + link.thread);
+      if (result.deletedOnSite) (await this.deps.storage.delete(THREAD_PREFIX + link.thread));
       await this.#say(record, result.deletedOnSite ? DELETED_ON_SITE_REPLY : result.message, link.thread);
       return;
     }
-    let current = this.#link(link.thread) ?? link;
+    let current = (await this.#link(link.thread)) ?? link;
     current.chatPath = result.chatPath;
-    this.#putLink(current);
+    (await this.#putLink(current));
     this.#draft(api, ref, "Думаю…");
   }
 
@@ -695,16 +732,16 @@ export class PersonalTelegramBot {
   }
 
   /** Запись бота, если ход относится к нему и к его владельцу; иначе ход чужой или бот отключён. */
-  #turnRecord(ref: TelegramTurnRef): BotRecord | null {
-    let record = this.#record();
+  async #turnRecord(ref: TelegramTurnRef): Promise<BotRecord | null> {
+    let record = (await this.#record());
     if (!record?.telegramOwner || ref.route !== this.deps.routeId || ref.chat !== record.telegramOwner.id) return null;
     return record;
   }
 
   /** Промежуточное состояние хода → черновик в треде, не чаще лимита Telegram. */
   async progress(ref: TelegramTurnRef, progress: GadgetProgress): Promise<void> {
-    let record = this.#turnRecord(ref);
-    let current = this.#link(ref.thread);
+    let record = (await this.#turnRecord(ref));
+    let current = (await this.#link(ref.thread));
     if (!record || current?.unlinked || current?.deletedOnSite) return;
     let text = draftText(progress);
     if (!text.trim() || !this.deps.drafts.allow(this.deps.now())) return;
@@ -715,16 +752,16 @@ export class PersonalTelegramBot {
   /** Итог хода → сообщения в тред: текст, затем карточки решений. Повторный вызов (доставка «хотя
    *  бы один раз») продолжает с первого неотправленного куска. Сбой Telegram бросается: внешний вход
    *  повторит доставку. Ход с сайта (ref.site) идёт только в живой тред, связанный с беседой. */
-  async deliver(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> {
-    let record = this.#turnRecord(ref);
+  async #runDeliver(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> {
+    let record = (await this.#turnRecord(ref));
     if (!record) return;
     let site = ref.site !== undefined;
-    let existing = this.#link(ref.thread);
+    let existing = (await this.#link(ref.thread));
     // Тред беседы, удалённой на сайте, уходит: ответы в него не шлются.
     if (existing?.deletedOnSite) return;
     if (site && (!existing || existing.key !== this.#key(record, ref.thread) || existing.unlinked)) return;
     let stateKey = REPLY_PREFIX + (site ? "site:" + ref.site : ref.update);
-    let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
+    let state = (await this.deps.storage.get<ReplyState>(stateKey)) ?? { sent: 0, unthreaded: false };
     let link = existing ?? this.#newLink(record, ref.thread, null, null);
     if (response.title && link.naming !== "user" && !isDefaultWorkspaceTitle(response.title)) link.title = response.title;
 
@@ -741,18 +778,18 @@ export class PersonalTelegramBot {
       try {
         await send(threaded ? link.thread : undefined, !threaded && !state.unthreaded ? titleLead(link.title) : null);
       } catch (error) {
-        if (!threaded || !isThreadNotFound(error)) { this.#putLink(link); this.deps.storage.put(stateKey, state); throw error; }
+        if (!threaded || !isThreadNotFound(error)) { (await this.#putLink(link)); (await this.deps.storage.put(stateKey, state)); throw error; }
         // Тред удалён в Telegram: связь снимается, беседа остаётся. Ответ на ход из Telegram уходит
         // без треда с названием; ответ на ход с сайта остаётся на сайте.
         link.unlinked = true;
-        if (site) { this.#putLink(link); this.deps.storage.put(stateKey, { ...state, sent: items.length }); return; }
+        if (site) { (await this.#putLink(link)); (await this.deps.storage.put(stateKey, { ...state, sent: items.length })); return; }
         await send(undefined, state.unthreaded ? null : titleLead(link.title));
       }
       if (link.unlinked) state.unthreaded = true;
       state.sent = index + 1;
-      this.deps.storage.put(stateKey, state);
+      (await this.deps.storage.put(stateKey, state));
     }
-    this.#rememberReply(stateKey);
+    (await this.#rememberReply(stateKey));
 
     // Название треда — по названию беседы, если тред назвал не человек.
     if (!link.unlinked && !link.renamed && (link.naming === "client" || link.naming === "bot") &&
@@ -764,7 +801,7 @@ export class PersonalTelegramBot {
         if (isThreadNotFound(error)) link.unlinked = true;
       }
     }
-    this.#putLink(link);
+    (await this.#putLink(link));
   }
 
   #replyItems(response: GadgetResponse, link: ThreadLink): ({ kind: "chunk"; chunk: TelegramChunk } | { kind: "card"; decision: ExternalDecision } | { kind: "apps"; documents: AppDocument[] })[] {
@@ -833,12 +870,12 @@ export class PersonalTelegramBot {
     await api.send(chat, "Документы беседы можно открыть здесь, в Telegram:", { ...(thread !== undefined ? { thread } : {}), buttons: rows });
   }
 
-  #rememberReply(stateKey: string): void {
-    let replies = [...(this.deps.storage.get<(number | string)[]>(REPLIES) ?? []).map(String).filter(key => key !== stateKey), stateKey];
+  async #rememberReply(stateKey: string): Promise<void> {
+    let replies = [...((await this.deps.storage.get<(number | string)[]>(REPLIES)) ?? []).map(String).filter(key => key !== stateKey), stateKey];
     for (let old of replies.splice(0, Math.max(0, replies.length - KEPT_REPLIES))) {
-      this.deps.storage.delete(old.startsWith(REPLY_PREFIX) ? old : REPLY_PREFIX + old);
+      (await this.deps.storage.delete(old.startsWith(REPLY_PREFIX) ? old : REPLY_PREFIX + old));
     }
-    this.deps.storage.put(REPLIES, replies);
+    (await this.deps.storage.put(REPLIES, replies));
   }
 
   // ---- карточки решений (этап 4) ----
@@ -850,52 +887,52 @@ export class PersonalTelegramBot {
   /** Карточка действия в треде. Одно действие — одна карточка: повтор доставки второй не шлёт. */
   async #sendCard(api: TelegramBotApi, record: BotRecord, link: ThreadLink, decision: ExternalDecision, thread: number | undefined, lead: Lead): Promise<void> {
     let indexKey = CARD_FOR_PREFIX + link.key + ":" + decision.action;
-    let n = this.deps.storage.get<number>(indexKey);
-    let card = n !== undefined ? this.deps.storage.get<CardRecord>(CARD_PREFIX + n) : undefined;
+    let n = (await this.deps.storage.get<number>(indexKey));
+    let card = n !== undefined ? (await this.deps.storage.get<CardRecord>(CARD_PREFIX + n)) : undefined;
     if (card && (card.message !== null || card.state !== "pending")) return;
     let html = cardHtml(decision);
     if (html === null) return;
     if (!card) {
-      n = (this.deps.storage.get<number>(CARD_SEQ) ?? 0) + 1;
-      this.deps.storage.put(CARD_SEQ, n);
+      n = ((await this.deps.storage.get<number>(CARD_SEQ)) ?? 0) + 1;
+      (await this.deps.storage.put(CARD_SEQ, n));
       card = {
         n, thread: link.thread, key: link.key, workspace: link.workspace ?? null, action: decision.action,
         message: null, html, state: "pending", createdAt: this.deps.now(),
       };
-      this.deps.storage.put(CARD_PREFIX + n, card);
-      this.deps.storage.put(indexKey, n);
-      this.#rememberCard(n);
+      (await this.deps.storage.put(CARD_PREFIX + n, card));
+      (await this.deps.storage.put(indexKey, n));
+      (await this.#rememberCard(n));
     }
     let buttons: InlineButton[][] = [[
       { text: "Подтвердить", data: `d:${card.thread}:${card.n}:a` },
       { text: "Отклонить", data: `d:${card.thread}:${card.n}:r` },
     ]];
     let message = await api.send(record.telegramOwner!.id, (lead?.html ?? "") + card.html, { ...(thread !== undefined ? { thread } : {}), html: true, buttons });
-    let current = this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n) ?? card;
+    let current = (await this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n)) ?? card;
     current.message = message;
-    this.deps.storage.put(CARD_PREFIX + card.n, current);
+    (await this.deps.storage.put(CARD_PREFIX + card.n, current));
   }
 
-  #rememberCard(n: number): void {
-    let cards = [...(this.deps.storage.get<number[]>(CARDS) ?? []), n];
+  async #rememberCard(n: number): Promise<void> {
+    let cards = [...((await this.deps.storage.get<number[]>(CARDS)) ?? []), n];
     for (let old of cards.splice(0, Math.max(0, cards.length - KEPT_CARDS))) {
-      let record = this.deps.storage.get<CardRecord>(CARD_PREFIX + old);
-      if (record && this.deps.storage.get<number>(CARD_FOR_PREFIX + record.key + ":" + record.action) === old) {
-        this.deps.storage.delete(CARD_FOR_PREFIX + record.key + ":" + record.action);
+      let record = (await this.deps.storage.get<CardRecord>(CARD_PREFIX + old));
+      if (record && (await this.deps.storage.get<number>(CARD_FOR_PREFIX + record.key + ":" + record.action)) === old) {
+        (await this.deps.storage.delete(CARD_FOR_PREFIX + record.key + ":" + record.action));
       }
-      this.deps.storage.delete(CARD_PREFIX + old);
+      (await this.deps.storage.delete(CARD_PREFIX + old));
     }
-    this.deps.storage.put(CARDS, cards);
+    (await this.deps.storage.put(CARDS, cards));
   }
 
   /** Проверка нажатия без ожиданий. Из callback_data берутся только тред и номер карточки, и оба
    *  сверяются с записью: карточка этого бота и владельца, то же сообщение, ещё не решена. */
-  #claimCard(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>):
-      { card: CardRecord; decision: "approve" | "reject" } | { answer: string } {
+  async #claimCard(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>):
+      Promise<{ card: CardRecord; decision: "approve" | "reject" } | { answer: string }> {
     let match = CARD_DATA.exec(input.data ?? "");
     if (!match) return { answer: CARD_UNKNOWN };
     let thread = Number(match[1]);
-    let card = this.deps.storage.get<CardRecord>(CARD_PREFIX + Number(match[2]));
+    let card = (await this.deps.storage.get<CardRecord>(CARD_PREFIX + Number(match[2])));
     if (!card || card.thread !== thread || card.message === null || input.message !== card.message ||
         !card.key.startsWith(`${record.bot.id}:${record.telegramOwner!.id}:`)) {
       return { answer: CARD_UNKNOWN };
@@ -905,7 +942,7 @@ export class PersonalTelegramBot {
     if (card.state !== "pending" && !stuck) return { answer: CARD_STALE };
     card.state = "deciding";
     card.decidingAt = this.deps.now();
-    this.deps.storage.put(CARD_PREFIX + card.n, card);
+    (await this.deps.storage.put(CARD_PREFIX + card.n, card));
     return { card, decision: match[3] === "a" ? "approve" : "reject" };
   }
 
@@ -922,10 +959,10 @@ export class PersonalTelegramBot {
         ...(card.workspace ? { workspaceId: card.workspace } : {}),
       });
     } catch { result = null; }
-    let current = this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n) ?? card;
+    let current = (await this.deps.storage.get<CardRecord>(CARD_PREFIX + card.n)) ?? card;
     if (!result) {
       current.state = "pending";
-      this.deps.storage.put(CARD_PREFIX + card.n, current);
+      (await this.deps.storage.put(CARD_PREFIX + card.n, current));
       await api.answerCallback(input.id, CARD_FAILED);
       return;
     }
@@ -938,7 +975,7 @@ export class PersonalTelegramBot {
     } else if (result.status === "access_changed") {
       current.state = "stale"; answer = CARD_ACCESS_CHANGED; line = CARD_ACCESS_CHANGED;
     } else { current.state = "stale"; answer = CARD_DENIED; line = "Решение — в беседе на сайте"; }
-    this.deps.storage.put(CARD_PREFIX + card.n, current);
+    (await this.deps.storage.put(CARD_PREFIX + card.n, current));
     await api.answerCallback(input.id, answer).catch(() => {});
     await this.#closeCard(api, record, current, line);
   }
@@ -957,14 +994,14 @@ export class PersonalTelegramBot {
   // ---- уведомления (этап 5) ----
 
   /** Будильник нужен подключённому боту; зовётся при пробуждении объекта. */
-  wantsNotifications(): boolean {
-    let record = this.#record();
+  async wantsNotifications(): Promise<boolean> {
+    let record = (await this.#record());
     return !!record?.telegramOwner && record.connectedAt !== null;
   }
 
   /** Один проход доставки уведомлений. Возвращает, когда будить снова; null — бот не подключён. */
-  async pollNotifications(): Promise<number | null> {
-    let record = this.#record();
+  async #runPollNotifications(): Promise<number | null> {
+    let record = (await this.#record());
     if (!record?.telegramOwner || record.connectedAt === null) return null;
     let owner = record.owner;
     let chat = record.telegramOwner.id;
@@ -974,32 +1011,32 @@ export class PersonalTelegramBot {
       await deliverNotifications({
         storage: this.deps.storage, now: () => this.deps.now(), owner, chat, publicBase: this.deps.publicBase,
         api: await this.#api(record), mnemos: this.deps.mnemos,
-        screenUrl: target => this.#screenUrl(target, loadNotifyState(this.deps.storage).thread),
-        threadCreated: thread => {
+        screenUrl: async target => this.#screenUrl(target, (await loadNotifyState(this.deps.storage)).thread),
+        threadCreated: async thread => {
           // Тред уведомлений назван ботом и не переименовывается по названию беседы.
-          let current = this.#record();
+          let current = (await this.#record());
           if (!current || current.secretSha256 !== secret) return;
           let link = this.#newLink(current, thread, "user", NOTIFY_THREAD_TITLE);
-          this.#putLink(link);
+          (await this.#putLink(link));
         },
       });
     } catch (error) {
       if (error instanceof MnemosNotConnectedError) return this.deps.now() + NOTIFY_MAX_BACKOFF_MS;
       failed = true;
     }
-    let state = loadNotifyState(this.deps.storage);
+    let state = (await loadNotifyState(this.deps.storage));
     state.failures = failed ? state.failures + 1 : 0;
-    this.deps.storage.put("notify", state);
+    (await this.deps.storage.put("notify", state));
     return this.deps.now() + nextDelay(state);
   }
 
   /** Решение по кнопке уведомления — от имени владельца бота, через его Mnemos. */
   async #settleNotice(record: BotRecord, input: Extract<TelegramInput, { kind: "callback" }>,
-      claim: ReturnType<typeof claimNoticeCard>): Promise<void> {
+      claim: Awaited<ReturnType<typeof claimNoticeCard>>): Promise<void> {
     let api = await this.#api(record);
     if ("answer" in claim) { await api.answerCallback(input.id, claim.answer); return; }
     let result = await this.deps.mnemos.decide(record.owner, claim.card.object, claim.card.version, claim.decision).catch(() => null);
-    let { answer, line } = settleNoticeCard(this.deps.storage, claim.card, result);
+    let { answer, line } = (await settleNoticeCard(this.deps.storage, claim.card, result));
     await api.answerCallback(input.id, answer).catch(() => {});
     if (line === null || claim.card.message === null) return;
     let chat = record.telegramOwner!.id;
@@ -1021,17 +1058,17 @@ export class PersonalTelegramBot {
     let secret = randomSecret();
     // Хранится только хэш: токен из адреса кнопки не восстановить по хранилищу.
     let key = SCREEN_PREFIX + await sha256(secret);
-    this.deps.storage.put(key, { target, thread, expiresAt: this.deps.now() + SCREEN_TTL_MS, used: false } satisfies ScreenRecord);
-    let screens = [...(this.deps.storage.get<string[]>(SCREENS) ?? []), key];
-    for (let old of screens.splice(0, Math.max(0, screens.length - KEPT_SCREENS))) this.deps.storage.delete(old);
-    this.deps.storage.put(SCREENS, screens);
+    (await this.deps.storage.put(key, { target, thread, expiresAt: this.deps.now() + SCREEN_TTL_MS, used: false } satisfies ScreenRecord));
+    let screens = [...((await this.deps.storage.get<string[]>(SCREENS)) ?? []), key];
+    for (let old of screens.splice(0, Math.max(0, screens.length - KEPT_SCREENS))) (await this.deps.storage.delete(old));
+    (await this.deps.storage.put(SCREENS, screens));
     return `${origin}${MINI_APP_PATH}?t=${this.deps.routeId}.${secret}`;
   }
 
   /** Открыть экран Mini App. Сначала подпись Telegram и владелец бота, потом токен: без верных
    *  initData владельца токен не проверяется вовсе. Токен расходуется до любых ожиданий. */
-  async openMiniApp(secret: unknown, initData: unknown): Promise<MiniAppOpenResult> {
-    let record = this.#record();
+  async #runOpenMiniApp(secret: unknown, initData: unknown): Promise<MiniAppOpenResult> {
+    let record = (await this.#record());
     if (!record?.telegramOwner || record.connectedAt === null || typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) {
       return { status: "denied" };
     }
@@ -1041,57 +1078,57 @@ export class PersonalTelegramBot {
     let session = randomSecret();
     let sessionKey = APP_SESSION_PREFIX + await sha256(session);
     let principal = identity && this.deps.mnemosPrincipal ? await this.deps.mnemosPrincipal(record.owner).catch(() => null) : null;
-    let current = this.#record();
+    let current = (await this.#record());
     if (!identity || !current?.telegramOwner || current.connectedAt === null || current.secretSha256 !== record.secretSha256 || identity.userId !== current.telegramOwner.id) {
       return { status: "denied" };
     }
-    let screen = this.deps.storage.get<ScreenRecord>(key);
+    let screen = (await this.deps.storage.get<ScreenRecord>(key));
     if (!screen) return { status: "denied" };
     let site = this.#siteUrlFor(screen.target.path);
     if (screen.used || screen.expiresAt <= this.deps.now()) return { status: "expired", siteUrl: site };
     screen.used = true;
-    this.deps.storage.put(key, screen);
+    (await this.deps.storage.put(key, screen));
     let document = screen.target.document;
     if (!document) return { status: "ok", title: screen.target.title, siteUrl: site };
     let now = this.deps.now();
-    this.deps.storage.put(sessionKey, {
+    (await this.deps.storage.put(sessionKey, {
       owner: current.owner, botSecret: current.secretSha256, telegramUser: current.telegramOwner.id, document, principal,
       createdAt: now, expiresAt: now + APP_SESSION_IDLE_MS,
-    } satisfies AppSessionRecord);
-    let sessions = [...(this.deps.storage.get<string[]>(APP_SESSIONS) ?? []), sessionKey];
-    for (let old of sessions.splice(0, Math.max(0, sessions.length - KEPT_APP_SESSIONS))) this.deps.storage.delete(old);
-    this.deps.storage.put(APP_SESSIONS, sessions);
+    } satisfies AppSessionRecord));
+    let sessions = [...((await this.deps.storage.get<string[]>(APP_SESSIONS)) ?? []), sessionKey];
+    for (let old of sessions.splice(0, Math.max(0, sessions.length - KEPT_APP_SESSIONS))) (await this.deps.storage.delete(old));
+    (await this.deps.storage.put(APP_SESSIONS, sessions));
     return { status: "ok", title: screen.target.title, siteUrl: site, session: `${this.deps.routeId}.${session}` };
   }
 
   /** Действующая сессия Mini App и что она разрешает; null — истекла, отозвана или чужая. Каждый
    *  успешный вызов продлевает её (не дольше APP_SESSION_MAX_MS от выдачи). */
-  async miniAppSession(secret: unknown): Promise<MiniAppSessionGrant | null> {
+  async #runMiniAppSession(secret: unknown): Promise<MiniAppSessionGrant | null> {
     if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) return null;
     let key = APP_SESSION_PREFIX + await sha256(secret);
-    let session = this.deps.storage.get<AppSessionRecord>(key);
+    let session = (await this.deps.storage.get<AppSessionRecord>(key));
     if (!session) return null;
-    let record = this.#record();
+    let record = (await this.#record());
     let now = this.deps.now();
     if (!record?.telegramOwner || record.connectedAt === null || record.secretSha256 !== session.botSecret ||
         record.owner !== session.owner || record.telegramOwner.id !== session.telegramUser ||
         session.expiresAt <= now || now - session.createdAt >= APP_SESSION_MAX_MS) {
-      this.deps.storage.delete(key);
+      (await this.deps.storage.delete(key));
       return null;
     }
     let next = Math.min(now + APP_SESSION_IDLE_MS, session.createdAt + APP_SESSION_MAX_MS);
     if (next - session.expiresAt >= APP_SESSION_TOUCH_MS) {
       session.expiresAt = next;
-      this.deps.storage.put(key, session);
+      (await this.deps.storage.put(key, session));
     }
     return { owner: session.owner, document: session.document, principal: session.principal, endsAt: session.createdAt + APP_SESSION_MAX_MS };
   }
 
   /** Удалить сессию Mini App: зовёт сервер Mini App, когда страница закрыта (close() или обрыв
    *  связи), сессия отказала по сроку или сменился аккаунт Mnemos. */
-  async endMiniAppSession(secret: unknown): Promise<void> {
+  async #runEndMiniAppSession(secret: unknown): Promise<void> {
     if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) return;
-    this.deps.storage.delete(APP_SESSION_PREFIX + await sha256(secret));
+    (await this.deps.storage.delete(APP_SESSION_PREFIX + await sha256(secret)));
   }
 
   #siteUrlFor(path: string): string | null {
@@ -1104,17 +1141,17 @@ export class PersonalTelegramBot {
 
   // ---- беседа сайта ↔ тред (этап 3) ----
 
-  #linkByKey(record: BotRecord, key: string): ThreadLink | null {
+  async #linkByKey(record: BotRecord, key: string): Promise<ThreadLink | null> {
     let prefix = `${record.bot.id}:${record.telegramOwner!.id}:`;
     if (typeof key !== "string" || !key.startsWith(prefix)) return null;
     let thread = Number(key.slice(prefix.length));
     if (!Number.isSafeInteger(thread) || thread <= 0) return null;
-    let link = this.#link(thread);
+    let link = (await this.#link(thread));
     return link && link.key === key ? link : null;
   }
 
-  #connected(owner: string): BotRecord | null {
-    let record = this.#mine(owner);
+  async #connected(owner: string): Promise<BotRecord | null> {
+    let record = (await this.#mine(owner));
     return record?.telegramOwner && record.connectedAt !== null ? record : null;
   }
 
@@ -1124,31 +1161,31 @@ export class PersonalTelegramBot {
   }
 
   /** Можно ли перенести беседу владельца в Telegram и идёт ли она уже в треде (key — её тред). */
-  siteLink(owner: string, key: string | null): TelegramChatLink {
-    let record = this.#connected(owner);
+  async #runSiteLink(owner: string, key: string | null): Promise<TelegramChatLink> {
+    let record = (await this.#connected(owner));
     if (!record) return { status: "unavailable" };
-    return this.#linkState(record, key ? this.#linkByKey(record, key) : null);
+    return this.#linkState(record, key ? (await this.#linkByKey(record, key)) : null);
   }
 
   /** «Продолжить в Telegram»: живой тред остаётся, иначе бот создаёт новый с названием беседы и
    *  первым сообщением — кратким содержанием. Возвращает ключ треда для беседы. */
-  async linkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> {
-    let record = this.#connected(owner);
+  async #runLinkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> {
+    let record = (await this.#connected(owner));
     if (!record) return { state: { status: "unavailable" }, key: null };
-    let previous = input.previousKey ? this.#linkByKey(record, input.previousKey) : null;
+    let previous = input.previousKey ? (await this.#linkByKey(record, input.previousKey)) : null;
     if (previous && !previous.unlinked && !previous.deletedOnSite) return { state: this.#linkState(record, previous), key: previous.key };
 
     let title = (typeof input.title === "string" ? input.title.replace(/[\r\n]+/g, " ").trim() : "").slice(0, 128) || SITE_THREAD_TITLE;
     let api = await this.#api(record);
     let chat = record.telegramOwner!.id;
     let thread = await api.createTopic(chat, title);
-    let current = this.#connected(owner);
+    let current = (await this.#connected(owner));
     if (!current || current.bot.id !== record.bot.id) return { state: { status: "unavailable" }, key: null };
     let link = this.#newLink(current, thread, "bot", title);
     link.renamed = !isDefaultWorkspaceTitle(title);
     link.workspace = /^[0-9a-f]{64}$/.test(input.workspace) ? input.workspace : null;
     link.chatPath = typeof input.chatPath === "string" && input.chatPath.startsWith("/workspace/") ? input.chatPath : null;
-    this.#putLink(link);
+    (await this.#putLink(link));
     let summary = typeof input.summary === "string" ? input.summary.slice(0, 12000) : "";
     for (let chunk of telegramChunks(summary)) {
       // Тред уже создан: без краткого содержания он всё равно рабочий.
@@ -1161,80 +1198,80 @@ export class PersonalTelegramBot {
   async #deleteThread(api: TelegramBotApi, chat: number, thread: number): Promise<boolean> {
     try { await api.deleteTopic(chat, thread); }
     catch (error) { if (!isThreadNotFound(error)) return false; }
-    if (this.#link(thread)?.deletedOnSite) this.deps.storage.delete(THREAD_PREFIX + thread);
+    if ((await this.#link(thread))?.deletedOnSite) (await this.deps.storage.delete(THREAD_PREFIX + thread));
     return true;
   }
 
   /** Повтор удаления тредов бесед, удалённых на сайте. Зовёт будильник бота. */
-  async retrySiteDeletions(): Promise<void> {
-    let record = this.#record();
+  async #runRetrySiteDeletions(): Promise<void> {
+    let record = (await this.#record());
     if (!record?.telegramOwner || record.connectedAt === null) return;
-    let pending = [...this.deps.storage.list<ThreadLink>({ prefix: THREAD_PREFIX })].filter(([, link]) => link.deletedOnSite);
+    let pending = [...(await this.deps.storage.list<ThreadLink>({ prefix: THREAD_PREFIX }))].filter(([, link]) => link.deletedOnSite);
     if (!pending.length) return;
     let api = await this.#api(record);
     for (let [, link] of pending) await this.#deleteThread(api, record.telegramOwner.id, link.thread);
   }
 
   /** Событие беседы сайта для её треда. Чужой или устаревший ключ ничего не делает. */
-  async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
-    let record = this.#connected(owner);
+  async #runSiteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
+    let record = (await this.#connected(owner));
     if (!record) return;
-    let link = this.#linkByKey(record, key);
+    let link = (await this.#linkByKey(record, key));
     if (!link) return;
     let api = await this.#api(record);
     let chat = record.telegramOwner!.id;
-    let gone = (error: unknown) => {
+    let gone = async (error: unknown) => {
       if (!isThreadNotFound(error)) throw error;
-      let current = this.#link(link.thread);
-      if (current) { current.unlinked = true; this.#putLink(current); }
+      let current = (await this.#link(link.thread));
+      if (current) { current.unlinked = true; (await this.#putLink(current)); }
     };
     switch (event.type) {
       case "human": {
         if (link.unlinked || link.deletedOnSite || typeof event.text !== "string" || !event.text.trim()) return;
         let stateKey = REPLY_PREFIX + "human:" + event.id;
-        let state = this.deps.storage.get<ReplyState>(stateKey) ?? { sent: 0, unthreaded: false };
+        let state = (await this.deps.storage.get<ReplyState>(stateKey)) ?? { sent: 0, unthreaded: false };
         let chunks = telegramChunks(event.text.slice(0, 16000));
         for (let index = state.sent; index < chunks.length; index++) {
           try { await this.#sendChunk(api, chat, chunks[index], link.thread, index === 0 ? siteLead(event.author) : null); }
-          catch (error) { this.deps.storage.put(stateKey, state); gone(error); return; }
+          catch (error) { (await this.deps.storage.put(stateKey, state)); (await gone(error)); return; }
           state.sent = index + 1;
-          this.deps.storage.put(stateKey, state);
+          (await this.deps.storage.put(stateKey, state));
         }
-        this.#rememberReply(stateKey);
+        (await this.#rememberReply(stateKey));
         return;
       }
       case "rename": {
         let title = typeof event.title === "string" ? event.title.replace(/[\r\n]+/g, " ").trim().slice(0, 128) : "";
         // Название, которое тред получил от человека (или неизвестно как), не трогаем.
         if (link.unlinked || link.deletedOnSite || !title || title === link.title || (link.naming !== "client" && link.naming !== "bot")) return;
-        try { await api.renameTopic(chat, link.thread, title); } catch (error) { gone(error); return; }
-        let current = this.#link(link.thread) ?? link;
+        try { await api.renameTopic(chat, link.thread, title); } catch (error) { (await gone(error)); return; }
+        let current = (await this.#link(link.thread)) ?? link;
         current.title = title;
         current.renamed = true;
-        this.#putLink(current);
+        (await this.#putLink(current));
         return;
       }
       case "archived": {
         if (link.unlinked || link.deletedOnSite) return;
-        try { await api.send(chat, ARCHIVED_NOTICE, { thread: link.thread }); } catch (error) { gone(error); }
+        try { await api.send(chat, ARCHIVED_NOTICE, { thread: link.thread }); } catch (error) { (await gone(error)); }
         return;
       }
       case "deleted": {
-        if (link.unlinked) { this.deps.storage.delete(THREAD_PREFIX + link.thread); return; }
+        if (link.unlinked) { (await this.deps.storage.delete(THREAD_PREFIX + link.thread)); return; }
         // Сначала отметка: с этого момента тред не ведёт в беседу, даже если Telegram не ответит.
         // Удаление треда повторяет будильник бота (retrySiteDeletions); сайту удаление подтверждено.
         link.deletedOnSite = true;
-        this.#putLink(link);
+        (await this.#putLink(link));
         await this.#deleteThread(api, chat, link.thread);
         return;
       }
       case "decided": {
-        let n = this.deps.storage.get<number>(CARD_FOR_PREFIX + link.key + ":" + event.action);
-        let card = n !== undefined ? this.deps.storage.get<CardRecord>(CARD_PREFIX + n) : undefined;
+        let n = (await this.deps.storage.get<number>(CARD_FOR_PREFIX + link.key + ":" + event.action));
+        let card = n !== undefined ? (await this.deps.storage.get<CardRecord>(CARD_PREFIX + n)) : undefined;
         // Карточка, решённая в Telegram, закрыта своим нажатием; зависшую «решается» закрывает сайт.
         if (!card || (card.state !== "pending" && card.state !== "deciding")) return;
         card.state = event.state === "approved" ? "approved" : "rejected";
-        this.deps.storage.put(CARD_PREFIX + card.n, card);
+        (await this.deps.storage.put(CARD_PREFIX + card.n, card));
         await this.#closeCard(api, record, card, event.state === "approved" ? "Подтверждено на сайте" : "Отклонено на сайте");
         return;
       }

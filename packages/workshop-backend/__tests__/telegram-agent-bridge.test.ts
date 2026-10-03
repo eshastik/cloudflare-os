@@ -415,7 +415,7 @@ describe("беседа сайта → тред", () => {
     expect(h.calls[0]).toEqual({ method: "createForumTopic", body: { chat_id: ALICE, name: "Смета на ремонт" } });
     expect(messages(h.calls)).toEqual([expect.objectContaining({ message_thread_id: 500, parse_mode: "HTML", text: expect.stringContaining("<b>Вы:</b> посчитай смету") })]);
     expect(h.link(500)).toMatchObject({ workspace: WORKSPACE, naming: "bot", title: "Смета на ремонт", chatPath: `/workspace/${WORKSPACE}?chat=3` });
-    expect(h.bot.siteLink(OWNER, `${BOT}:${ALICE}:500`)).toMatchObject({ status: "linked" });
+    expect(await h.bot.siteLink(OWNER, `${BOT}:${ALICE}:500`)).toMatchObject({ status: "linked" });
     // Повтор, пока тред жив, второго треда не создаёт.
     h.calls.length = 0;
     expect((await h.bot.linkSiteChat(OWNER, siteInput(`${BOT}:${ALICE}:500`))).key).toBe(`${BOT}:${ALICE}:500`);
@@ -426,11 +426,11 @@ describe("беседа сайта → тред", () => {
     let h = await harness();
     h.map.set("bot", { ...(h.map.get("bot") as BotRecord), telegramOwner: null, connectedAt: null });
     expect(await h.bot.linkSiteChat(OWNER, siteInput())).toEqual({ state: { status: "unavailable" }, key: null });
-    expect(h.bot.siteLink(OWNER, null)).toEqual({ status: "unavailable" });
+    expect(await h.bot.siteLink(OWNER, null)).toEqual({ status: "unavailable" });
     let ok = await harness();
     await ok.bot.linkSiteChat(OWNER, siteInput());
-    expect(ok.bot.siteLink(OWNER, `999:${ALICE}:500`)).toMatchObject({ status: "available" });
-    expect(() => ok.bot.siteLink("mallory@example.ru", `${BOT}:${ALICE}:500`)).toThrow();
+    expect(await ok.bot.siteLink(OWNER, `999:${ALICE}:500`)).toMatchObject({ status: "available" });
+    await expect(ok.bot.siteLink("mallory@example.ru", `${BOT}:${ALICE}:500`)).rejects.toThrow();
   });
 
   it("сообщение в перенесённом треде идёт в беседу сайта по её номеру", async () => {
@@ -448,7 +448,7 @@ describe("беседа сайта → тред", () => {
     h.tg.goneThreads.add(500);
     await h.bot.siteEvent(OWNER, key!, { type: "human", id: "w:3:10", text: "Ещё вопрос" });
     expect(h.link(500)?.unlinked).toBe(true);
-    expect(h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
+    expect(await h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
     h.calls.length = 0;
     let again = await h.bot.linkSiteChat(OWNER, siteInput(key));
     expect(again.key).toBe(`${BOT}:${ALICE}:501`);
@@ -520,7 +520,7 @@ describe("зеркало сайта в тред", () => {
     // Сайту удаление подтверждено: объект бота принял его и повторит сам.
     await expect(h.bot.siteEvent(OWNER, key, { type: "deleted" })).resolves.toBeUndefined();
     expect(h.link(500)).toMatchObject({ deletedOnSite: true });
-    expect(h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
+    expect(await h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
     // Сообщение в этот тред в беседу не идёт: ответ «удалена», хода нет.
     await send(h, inThread(ALICE, 500, { text: "Ещё вопрос" }));
     expect(h.submits).toEqual([]);
@@ -548,7 +548,7 @@ describe("зеркало сайта в тред", () => {
     expect(h.submits).toHaveLength(1);
     expect(h.link(500)).toBeUndefined();
     expect(messages(h.calls).at(-1)).toMatchObject({ message_thread_id: 500, text: DELETED_ON_SITE_REPLY });
-    expect(h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
+    expect(await h.bot.siteLink(OWNER, key)).toMatchObject({ status: "available" });
   });
 
   it("событие с чужим ключом ничего не делает", async () => {

@@ -93,9 +93,9 @@ export interface TelegramMnemos {
 }
 
 export interface NotifyStorage {
-  get<T>(key: string): T | undefined;
-  put<T>(key: string, value: T): void;
-  delete(key: string): boolean;
+  get<T>(key: string): T | undefined | Promise<T | undefined>;
+  put<T>(key: string, value: T): void | Promise<void>;
+  delete(key: string): boolean | Promise<boolean>;
 }
 
 export const KIND_TITLES: Record<NotificationKind, string> = {
@@ -174,25 +174,25 @@ export type NotifyContext = {
   /** Адрес Mini App для документа (одноразовый токен экрана); null — Mini App недоступна. */
   screenUrl(target: { title: string; path: string }): Promise<string | null>;
   /** Тред «Уведомления» создан: объект бота заводит для него связь (название не меняется). */
-  threadCreated(thread: number): void;
+  threadCreated(thread: number): void | Promise<void>;
 };
 
-export function loadNotifyState(storage: NotifyStorage): NotifyState {
-  return storage.get<NotifyState>(STATE) ?? { thread: null, sent: null, acked: null, window: null, failures: 0 };
+export async function loadNotifyState(storage: NotifyStorage): Promise<NotifyState> {
+  return (await storage.get<NotifyState>(STATE)) ?? { thread: null, sent: null, acked: null, window: null, failures: 0 };
 }
 
-function saveState(storage: NotifyStorage, state: NotifyState): void {
-  storage.put(STATE, state);
+async function saveState(storage: NotifyStorage, state: NotifyState): Promise<void> {
+  (await storage.put(STATE, state));
 }
 
-export function noticeFor(storage: NotifyStorage, message: number): NoticeRecord | undefined {
-  return storage.get<NoticeRecord>(NOTICE_PREFIX + message);
+export async function noticeFor(storage: NotifyStorage, message: number): Promise<NoticeRecord | undefined> {
+  return (await storage.get<NoticeRecord>(NOTICE_PREFIX + message));
 }
 
-function remember(storage: NotifyStorage, listKey: string, prefix: string, key: number): void {
-  let list = [...(storage.get<number[]>(listKey) ?? []).filter(k => k !== key), key];
-  for (let old of list.splice(0, Math.max(0, list.length - KEPT_NOTICES))) storage.delete(prefix + old);
-  storage.put(listKey, list);
+async function remember(storage: NotifyStorage, listKey: string, prefix: string, key: number): Promise<void> {
+  let list = [...((await storage.get<number[]>(listKey)) ?? []).filter(k => k !== key), key];
+  for (let old of list.splice(0, Math.max(0, list.length - KEPT_NOTICES))) (await storage.delete(prefix + old));
+  (await storage.put(listKey, list));
 }
 
 /** Следующий будильник после прохода: обычный шаг или отступ после сбоев. */
@@ -204,7 +204,7 @@ export function nextDelay(state: NotifyState): number {
 /** Один проход доставки. Бросает при сбое Mnemos или Telegram: то, что успело уйти, записано. */
 export async function deliverNotifications(ctx: NotifyContext): Promise<void> {
   let { storage } = ctx;
-  let state = loadNotifyState(storage);
+  let state = (await loadNotifyState(storage));
   let read = async () => {
     let out = await ctx.mnemos.read(ctx.owner, state.sent, NOTIFY_PAGE);
     if (!out) throw new MnemosNotConnectedError();
@@ -217,14 +217,14 @@ export async function deliverNotifications(ctx: NotifyContext): Promise<void> {
     let reread = state.sent !== null;
     state.principal = first.principal;
     state.sent = null; state.acked = null; state.stuck = null;
-    saveState(storage, state);
+    (await saveState(storage, state));
     if (reread) first = await read();
   }
   let principal = first.principal;
   // Отправленное, но не подтверждённое в прошлый раз (сбой между отправкой и подтверждением).
   if (state.sent !== null && (state.acked === null || state.acked < state.sent)) {
     state.acked = await ctx.mnemos.ack(ctx.owner, state.sent, principal);
-    saveState(storage, state);
+    (await saveState(storage, state));
   }
   for (let run = 0; run < NOTIFY_PAGES_PER_RUN; run++) {
     let out = run === 0 ? first : await read();
@@ -236,22 +236,22 @@ export async function deliverNotifications(ctx: NotifyContext): Promise<void> {
       catch (error) {
         if (!permanentRefusal(error)) throw error;
         let attempts = state.stuck?.sequence === item.sequence ? state.stuck.attempts + 1 : 1;
-        if (attempts < NOTIFY_MAX_ATTEMPTS) { state.stuck = { sequence: item.sequence, attempts }; saveState(storage, state); throw error; }
+        if (attempts < NOTIFY_MAX_ATTEMPTS) { state.stuck = { sequence: item.sequence, attempts }; (await saveState(storage, state)); throw error; }
         // Постоянный отказ на одном событии не держит очередь человека: событие пропускается.
         logger.warn("telegram notification skipped", { event: "telegram.notify.skipped", sequence: item.sequence, error });
       }
       state.stuck = null;
       state.sent = item.sequence;
-      saveState(storage, state);
+      (await saveState(storage, state));
     }
     // Скрытые события (выключенный вид, снят доступ) курсор проходит молча.
     if (state.sent === null || page.next_after > state.sent) {
       state.sent = page.next_after;
-      saveState(storage, state);
+      (await saveState(storage, state));
     }
     if (state.acked === null || state.acked < state.sent) {
       state.acked = await ctx.mnemos.ack(ctx.owner, state.sent, principal);
-      saveState(storage, state);
+      (await saveState(storage, state));
     }
     if (!page.more) break;
   }
@@ -279,11 +279,11 @@ async function deliverOne(ctx: NotifyContext, state: NotifyState, item: MnemosNo
   let rows: InlineButton[][] = [];
   let card: NoticeCard | null = null;
   if (buttons && ticket.version !== null) {
-    let n = (ctx.storage.get<number>(NCARD_SEQ) ?? 0) + 1;
-    ctx.storage.put(NCARD_SEQ, n);
+    let n = ((await ctx.storage.get<number>(NCARD_SEQ)) ?? 0) + 1;
+    (await ctx.storage.put(NCARD_SEQ, n));
     card = { n, message: null, object: item.object, version: ticket.version, html, state: "pending" };
-    ctx.storage.put(NCARD_PREFIX + n, card);
-    remember(ctx.storage, NCARDS, NCARD_PREFIX, n);
+    (await ctx.storage.put(NCARD_PREFIX + n, card));
+    (await remember(ctx.storage, NCARDS, NCARD_PREFIX, n));
     rows.push([
       { text: buttons.approve, data: `n:${n}:a` },
       ...(buttons.reject ? [{ text: buttons.reject, data: `n:${n}:r` }] : []),
@@ -299,20 +299,20 @@ async function deliverOne(ctx: NotifyContext, state: NotifyState, item: MnemosNo
   let message = await sendToThread(ctx, state, html, rows, plain);
   window.count++;
   if (card) {
-    let current = ctx.storage.get<NoticeCard>(NCARD_PREFIX + card.n) ?? card;
+    let current = (await ctx.storage.get<NoticeCard>(NCARD_PREFIX + card.n)) ?? card;
     current.message = message;
-    ctx.storage.put(NCARD_PREFIX + card.n, current);
+    (await ctx.storage.put(NCARD_PREFIX + card.n, current));
   }
-  ctx.storage.put(NOTICE_PREFIX + message, { sequence: item.sequence, kind: item.kind, object: item.object, summary: item.summary } satisfies NoticeRecord);
-  remember(ctx.storage, NOTICES, NOTICE_PREFIX, message);
+  (await ctx.storage.put(NOTICE_PREFIX + message, { sequence: item.sequence, kind: item.kind, object: item.object, summary: item.summary } satisfies NoticeRecord));
+  (await remember(ctx.storage, NOTICES, NOTICE_PREFIX, message));
 }
 
 async function ensureThread(ctx: NotifyContext, state: NotifyState): Promise<number> {
   if (state.thread !== null) return state.thread;
   let thread = await ctx.api.createTopic(ctx.chat, NOTIFY_THREAD_TITLE);
   state.thread = thread;
-  saveState(ctx.storage, state);
-  ctx.threadCreated(thread);
+  (await saveState(ctx.storage, state));
+  await ctx.threadCreated(thread);
   return thread;
 }
 
@@ -332,7 +332,7 @@ async function sendToThread(ctx: NotifyContext, state: NotifyState, html: string
   catch (error) {
     if (!isThreadNotFound(error)) throw error;
     state.thread = null;
-    saveState(ctx.storage, state);
+    (await saveState(ctx.storage, state));
     thread = await ensureThread(ctx, state);
     return sendIn(thread);
   }
@@ -353,16 +353,16 @@ async function flushSummary(ctx: NotifyContext, state: NotifyState): Promise<voi
     try {
       await ctx.api.editText(ctx.chat, window.summary, html, { html: true, ...(rows.length ? { buttons: rows } : {}) });
       window.reported = window.suppressed;
-      saveState(ctx.storage, state);
+      (await saveState(ctx.storage, state));
       return;
     } catch (error) {
-      if (isNotModified(error)) { window.reported = window.suppressed; saveState(ctx.storage, state); return; }
+      if (isNotModified(error)) { window.reported = window.suppressed; (await saveState(ctx.storage, state)); return; }
       // Сводку удалили — пришлём новую.
     }
   }
   window.summary = await sendToThread(ctx, state, html, rows);
   window.reported = window.suppressed;
-  saveState(ctx.storage, state);
+  (await saveState(ctx.storage, state));
 }
 
 // ---- кнопки решений ----
@@ -371,12 +371,12 @@ export const NOTICE_CARD_DECIDING_MS = 2 * 60 * 1000;
 
 export type NoticeClaim = { card: NoticeCard; decision: "approve" | "reject" } | { answer: string };
 
-/** Проверка нажатия без ожиданий: карточка этого бота, то же сообщение, ещё не решена. */
-export function claimNoticeCard(storage: NotifyStorage, data: string | null, message: number | null, now: number,
-    texts: { unknown: string; busy: string; stale: string }): NoticeClaim {
+/** Проверка нажатия с сохранением решения перед внешним вызовом: карточка этого бота, то же сообщение, ещё не решена. */
+export async function claimNoticeCard(storage: NotifyStorage, data: string | null, message: number | null, now: number,
+    texts: { unknown: string; busy: string; stale: string }): Promise<NoticeClaim> {
   let match = NOTICE_DATA.exec(data ?? "");
   if (!match) return { answer: texts.unknown };
-  let card = storage.get<NoticeCard>(NCARD_PREFIX + Number(match[1]));
+  let card = (await storage.get<NoticeCard>(NCARD_PREFIX + Number(match[1])));
   if (!card || card.message === null || message !== card.message) return { answer: texts.unknown };
   let buttons = DECISION_BUTTONS[card.object.type];
   if (!buttons || (match[2] === "r" && !buttons.reject)) return { answer: texts.unknown };
@@ -385,17 +385,17 @@ export function claimNoticeCard(storage: NotifyStorage, data: string | null, mes
   if (card.state !== "pending" && !stuck) return { answer: texts.stale };
   card.state = "deciding";
   card.decidingAt = now;
-  storage.put(NCARD_PREFIX + card.n, card);
+  (await storage.put(NCARD_PREFIX + card.n, card));
   return { card, decision: match[2] === "a" ? "approve" : "reject" };
 }
 
 /** Итог решения для карточки: строка под текстом и короткая подсказка на нажатие. */
-export function settleNoticeCard(storage: NotifyStorage, card: NoticeCard, result: NotificationDecisionResult | null):
-    { answer: string; line: string | null } {
-  let current = storage.get<NoticeCard>(NCARD_PREFIX + card.n) ?? card;
+export async function settleNoticeCard(storage: NotifyStorage, card: NoticeCard, result: NotificationDecisionResult | null):
+    Promise<{ answer: string; line: string | null }> {
+  let current = (await storage.get<NoticeCard>(NCARD_PREFIX + card.n)) ?? card;
   if (!result) {
     current.state = "pending";
-    storage.put(NCARD_PREFIX + card.n, current);
+    (await storage.put(NCARD_PREFIX + card.n, current));
     return { answer: "Не получилось. Повторите через минуту или решите на сайте.", line: null };
   }
   let buttons = DECISION_BUTTONS[card.object.type]!;
@@ -403,7 +403,7 @@ export function settleNoticeCard(storage: NotifyStorage, card: NoticeCard, resul
   if ("reason" in result) { current.state = "stale"; line = result.reason.slice(0, 200); }
   else if (result.status === "approved") { current.state = "approved"; line = buttons.approved; }
   else { current.state = "rejected"; line = buttons.rejected; }
-  storage.put(NCARD_PREFIX + card.n, current);
+  (await storage.put(NCARD_PREFIX + card.n, current));
   return { answer: line, line };
 }
 

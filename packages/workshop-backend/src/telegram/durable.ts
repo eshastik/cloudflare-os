@@ -85,18 +85,12 @@ async function recordVoiceSpend(user: { recordOwnSpending(entries: ReturnType<ty
  *  (TelegramChatTarget) и беседа владельца (siteLink, linkSiteChat, siteEvent — объект выбирается
  *  по имени владельца беседы); по HTTP открыт один вебхук. */
 export class TelegramPersonalBot extends DurableObject<Env> {
-  #tail: Promise<unknown> = Promise.resolve();
+  #bot: PersonalTelegramBot | undefined;
   #drafts = new DraftLimiter();
   #voice = { busy: false };
 
-  #serialize<T>(operation: () => Promise<T>): Promise<T> {
-    let result = this.#tail.then(operation);
-    this.#tail = result.catch(() => {});
-    return result;
-  }
-
   #core(): PersonalTelegramBot {
-    return new PersonalTelegramBot(personalBotDeps(this.ctx, this.env, this.#drafts, this.#voice));
+    return this.#bot ??= new PersonalTelegramBot(personalBotDeps(this.ctx, this.env, this.#drafts, this.#voice));
   }
 
   // Ошибки настройки уходят человеку словами; остальные — общим отказом без подробностей.
@@ -111,14 +105,14 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   /** Будильник уведомлений у подключённого бота, если его нет (после выпуска или сбоя). */
   async #ensureAlarm(): Promise<void> {
     try {
-      if (!this.#core().wantsNotifications()) return;
+      if (!await this.#core().wantsNotifications()) return;
       if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + NOTIFY_FIRST_MS);
     } catch { /* следующий вызов попробует снова */ }
   }
 
   /** Доставка уведомлений Mnemos: по очереди с остальными отправками бота. */
   async alarm(): Promise<void> {
-    let next = await this.#serialize(async () => {
+    let next = await (async () => {
       // Треды бесед, удалённых на сайте, которые Telegram не удалил с первого раза.
       try { await this.#core().retrySiteDeletions(); }
       catch (error) { logger.warn("telegram thread deletion not retried", { event: "telegram.site.delete.failed", error }); }
@@ -127,7 +121,7 @@ export class TelegramPersonalBot extends DurableObject<Env> {
         logger.warn("telegram notifications not delivered", { event: "telegram.notify.failed", error });
         return Date.now() + 60_000;
       }
-    });
+    })();
     if (next !== null) await this.ctx.storage.setAlarm(next);
   }
 
@@ -153,58 +147,58 @@ export class TelegramPersonalBot extends DurableObject<Env> {
   }
 
   async connectBot(owner: string, token: string): Promise<TelegramBotState> {
-    return this.#serialize(() => this.#human(() => this.#core().connect(owner, token)));
+    return this.#human(() => this.#core().connect(owner, token));
   }
 
   async renewCode(owner: string): Promise<TelegramBotState> {
-    return this.#serialize(() => this.#human(async () => this.#core().renewCode(owner)));
+    return this.#human(async () => this.#core().renewCode(owner));
   }
 
   async disconnectBot(owner: string): Promise<TelegramDisconnectResult> {
-    return this.#serialize(() => this.#human(() => this.#core().disconnect(owner)));
+    return this.#human(() => this.#core().disconnect(owner));
   }
 
   /** Итог хода агента для треда. Ответы одного бота уходят по очереди: порядок кусков и учёт
    *  отправленного не перемешиваются. */
   async deliverResponse(ref: TelegramTurnRef, response: GadgetResponse): Promise<void> {
-    return this.#serialize(async () => {
+    return (async () => {
       try { await this.#core().deliver(ref, response); }
       catch (error) {
         logger.warn("telegram reply not delivered", { event: "telegram.reply.failed", error });
         // Внешний вход повторит доставку позже; подробности наружу не нужны.
         throw new Error("Telegram reply is not delivered yet.");
       }
-    });
+    })();
   }
 
   /** Можно ли продолжить беседу в Telegram и идёт ли она уже в треде. */
   async siteLink(owner: string, key: string | null): Promise<TelegramChatLink> {
     this.ctx.waitUntil(this.#ensureAlarm());
-    try { return this.#core().siteLink(owner, key); }
+    try { return await this.#core().siteLink(owner, key); }
     catch { return { status: "unavailable" }; }
   }
 
   /** «Продолжить в Telegram» для беседы сайта. */
   async linkSiteChat(owner: string, input: SiteChatInput): Promise<{ state: TelegramChatLink; key: string | null }> {
-    return this.#serialize(async () => {
+    return (async () => {
       try { return await this.#core().linkSiteChat(owner, input); }
       catch (error) {
         logger.warn("telegram thread for site chat not created", { event: "telegram.site.link.failed", error });
         throw new Error("Не получилось создать тред в Telegram. Повторите через минуту.");
       }
-    });
+    })();
   }
 
   /** Событие беседы сайта (сообщение человека, название, архив, удаление, решение). По очереди с
    *  ответами: сообщение человека уходит раньше ответа агента на него. */
   async siteEvent(owner: string, key: string, event: SiteEvent): Promise<void> {
-    return this.#serialize(async () => {
+    return (async () => {
       try { await this.#core().siteEvent(owner, key, event); }
       catch (error) {
         logger.warn("telegram site event not delivered", { event: "telegram.site.event.failed", operation: event.type, error });
         throw new Error("Telegram site event is not delivered.");
       }
-    });
+    })();
   }
 
   async deliverProgress(ref: TelegramTurnRef, progress: GadgetProgress): Promise<void> {

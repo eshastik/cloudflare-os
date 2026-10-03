@@ -85,10 +85,10 @@ function fakeMnemos() {
 async function harness(options: { publicKey?: string } = {}) {
   let map = new Map<string, unknown>();
   let storage = {
-    get: <T>(key: string) => structuredClone(map.get(key)) as T | undefined,
-    put: <T>(key: string, value: T) => { map.set(key, structuredClone(value)); },
-    delete: (key: string) => map.delete(key),
-    list: <T>({ prefix }: { prefix: string }) => [...map.entries()].filter(([key]) => key.startsWith(prefix)) as [string, T][],
+    get: async <T>(key: string) => { await Promise.resolve(); return structuredClone(map.get(key)) as T | undefined; },
+    put: async <T>(key: string, value: T) => { await Promise.resolve(); map.set(key, structuredClone(value)); },
+    delete: async (key: string) => { await Promise.resolve(); return map.delete(key); },
+    list: async <T>({ prefix }: { prefix: string }) => { await Promise.resolve(); return [...map.entries()].filter(([key]) => key.startsWith(prefix)) as [string, T][]; },
   };
   let calls: Call[] = [];
   let tg = { goneThreads: new Set<number>(), failSends: new Set<number>(), sends: 0, nextThread: 900, goneMessages: new Set<number>(),
@@ -546,6 +546,13 @@ describe("экран Mini App", () => {
       status: "ok", title: "С вами поделились документом «План»", siteUrl: "https://mnemos.example.ru/gatekeepers/mnemos?section=my-work",
     });
     expect(await h.bot.openMiniApp(secret, await data())).toMatchObject({ status: "expired" });
+  });
+
+  it("один одноразовый токен не открывается дважды при параллельных запросах к async хранилищу", async () => {
+    let { h, secret, data } = await miniApp();
+    let signed = await data();
+    let results = await Promise.all([h.bot.openMiniApp(secret, signed), h.bot.openMiniApp(secret, signed)]);
+    expect(results.map(result => result.status).sort()).toEqual(["expired", "ok"]);
   });
 
   it("initData другого человека — отказ, и токен не расходуется", async () => {

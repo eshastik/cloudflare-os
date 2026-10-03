@@ -232,7 +232,7 @@ describe("привязка Telegram-аккаунта владельца", () => 
     expect((await h.bot.state(OWNER)).status).toBe("pairing");
     expect(sent(h.calls)).toEqual([]);
     // Новый код работает.
-    let renewed = h.bot.renewCode(OWNER);
+    let renewed = await h.bot.renewCode(OWNER);
     if (renewed.status !== "pairing") throw new Error();
     expect(renewed.code).not.toBe(state.code);
     await h.bot.webhook(hook(privateText(ALICE, "/start " + renewed.code), secret));
