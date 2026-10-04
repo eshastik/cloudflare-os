@@ -21,7 +21,7 @@ test('читает методику и нативную форму точных 
  const out=await readWorkTemplateMaterials(f.session,'https://storage.example',refs,async(url,init)=>{calls.push({url,init});return f.fetcher(url,init);});
  assert.equal(f.reads(),2);assert.equal(out.materials.length,2);assert.equal(out.materials[0].content.type,'text');assert.deepEqual(out.materials[1].content,{type:'native',snapshot:native});assert.deepEqual(out.materials.map(m=>m.reference),refs);
  assert.equal(out.materials[1].reference.revision,5);assert.equal(out.materials[1].sourceHead,source.source_head);
- for(const call of calls as {init:RequestInit}[]){assert.equal(call.init.redirect,'error');assert.equal(call.init.headers,undefined);}
+ for(const call of calls as {init:RequestInit}[]){assert.equal(call.init.redirect,'manual');assert.equal(call.init.headers,undefined);}
 });
 
 test('отзыв после объектного чтения отвергает весь набор',async()=>{
@@ -30,8 +30,9 @@ test('отзыв после объектного чтения отвергает
 });
 
 test('сумма, усечение, размер, источник, срок и повреждённый снимок не дают содержимое',async()=>{
- for(const scenario of ['checksum','truncated','oversized','foreign','expired','wrong head','native format']){
+ for(const scenario of ['checksum','truncated','oversized','foreign','expired','wrong head','native format','redirect']){
   const f=await fixture();let fetcher=f.fetcher;
+  if(scenario==='redirect')fetcher=async()=>new Response(null,{status:302,headers:{location:'https://foreign.example/source'}});
   if(scenario==='checksum')f.tickets[0].sha256_hex='0'.repeat(64);
   if(scenario==='truncated')fetcher=async()=>new Response(new Uint8Array());
   if(scenario==='oversized')f.tickets[0].size_bytes=1024*1024+1;

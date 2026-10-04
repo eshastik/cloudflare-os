@@ -25,7 +25,7 @@ export async function readWorkTemplateMaterials(
   total+=ticket.size_bytes;if(total>MAX_SELECTION_BYTES)throw new Error('Набор шаблонов превышает четыре МиБ.');
   const target=new URL(ticket.url);
   if(target.origin!==storageOrigin||target.username||target.password||target.hash)throw new Error('Содержимое шаблона находится вне хранилища Mnemos.');
-  const response=await fetcher(target.href,{method:'GET',redirect:'error',signal});
+  const response=await fetcher(target.href,{method:'GET',redirect:'manual',signal});
   if(response.status!==200)throw new Error('Хранилище не отдало точный снимок шаблона.');
   const data=await readBounded(response,ticket.size_bytes);
   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),b=>b.toString(16).padStart(2,'0')).join('');
