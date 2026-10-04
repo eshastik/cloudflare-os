@@ -91,6 +91,8 @@ export interface LibraryAccount {
   /** Тот же метод аккаунта, без копии его RPC-контракта. */
   readTemplateMaterialsForAgent?:UserAccount['readTemplateMaterialsForAgent'];
   createTemplateDocumentForAgent?:UserAccount['createTemplateDocumentForAgent'];
+  readNativeDraftForAgent?:UserAccount['readNativeDraftForAgent'];
+  saveNativeDraftForAgent?:UserAccount['saveNativeDraftForAgent'];
   /** Текст файла из беседы сессией человека: узел — его личная версия. */
   readChatDocumentText?(project: string, node: string, offset?: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
 }
@@ -227,6 +229,8 @@ function release(value: unknown, depth = 0): void {
 }
 
 interface SessionCalls {
+  readNativeDraft(queue:RpcStub<ApprovalQueue>,...input:Parameters<UserAccount['readNativeDraftForAgent']>):ReturnType<UserAccount['readNativeDraftForAgent']>;
+  saveNativeDraft(queue:RpcStub<ApprovalQueue>,...input:Parameters<UserAccount['saveNativeDraftForAgent']>):ReturnType<UserAccount['saveNativeDraftForAgent']>;
   createTemplateDocument(queue:RpcStub<ApprovalQueue>,input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]):ReturnType<UserAccount['createTemplateDocumentForAgent']>;
   readTemplates(queue:RpcStub<ApprovalQueue>,references:WorkTemplateReference[]):ReturnType<UserAccount['readTemplateMaterialsForAgent']>;
   listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage>;
@@ -255,6 +259,8 @@ export class MnemosLibrarySession extends RpcTarget {
   #queue: RpcStub<ApprovalQueue>;
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
   async createTemplateDocument(input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]){return this.#calls.createTemplateDocument(this.#queue,input);}
+  async readNativeDraft(...input:Parameters<UserAccount['readNativeDraftForAgent']>){return this.#calls.readNativeDraft(this.#queue,...input);}
+  async saveNativeDraft(...input:Parameters<UserAccount['saveNativeDraftForAgent']>){return this.#calls.saveNativeDraft(this.#queue,...input);}
   async readTemplates(references:WorkTemplateReference[]){return this.#calls.readTemplates(this.#queue,references);}
   async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
   async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
@@ -359,6 +365,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return new MnemosLibrarySession({
         createTemplateDocument:(q,input)=>this.#createTemplateDocument(q,input),
         readTemplates:(q,references)=>this.#readTemplates(q,references),
+        readNativeDraft:(q,...input)=>this.#readNativeDraft(q,...input),
+        saveNativeDraft:(q,...input)=>this.#saveNativeDraft(q,...input),
         listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
         readPersonalDocument: (q, project, node) => this.#readPersonalDocument(q, project, node),
         readChatFile: (q, project, node, offset, archivePath) => this.#readChatFile(q, project, node, offset, archivePath),
@@ -677,6 +685,19 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const result=await this.#data(()=>account.createTemplateDocumentForAgent!(frozen));
     await queue.authorizeObservation({ownerOnly:true,title:'Документ создан',description:result.name,activity:{kind:'mnemos.template.created',scopeId:result.project,subject:result.name,items:[{name:result.name,documentId:result.document.node_id,projectId:result.project}]}});
     return result;
+  }
+  async #readNativeDraft(queue:RpcStub<ApprovalQueue>,project:string,node:string){
+    identifier(project,'проект');identifier(node,'документ');
+    await this.#authorizePersonal(queue,{kind:'mnemos.native.read',scopeId:project,subject:node});
+    const account=this.#account();if(!account.readNativeDraftForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.readNativeDraftForAgent!(project,node));
+  }
+  async #saveNativeDraft(queue:RpcStub<ApprovalQueue>,...input:Parameters<UserAccount['saveNativeDraftForAgent']>){
+    const [project,node,expectedHead,snapshot]=structuredClone(input);
+    identifier(project,'проект');identifier(node,'документ');
+    await queue.authorizeObservation({ownerOnly:true,title:'Заполнение документа',description:'Сохранение нативной формы в личном черновике без публикации.',activity:{kind:'mnemos.native.edit',scopeId:project,subject:node}});
+    const account=this.#account();if(!account.saveNativeDraftForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.saveNativeDraftForAgent!(project,node,expectedHead,snapshot));
   }
   async #readTemplates(queue:RpcStub<ApprovalQueue>,references:WorkTemplateReference[]){
     const refs=checkedTemplateReferences(references);

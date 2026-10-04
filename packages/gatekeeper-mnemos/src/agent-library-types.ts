@@ -18,6 +18,8 @@ type MnemosChatFileText =
 /** Координаты точной личной либо общей версии. Нулевая версия запрещена. */
 type MnemosTemplateReference={template_id:string;revision:number;scope_id?:never;template_key?:never}|{scope_id:string;template_key:string;revision:number;template_id?:never};
 
+/** Данные нативного документа; HTML блока сохраняет оформление редактора. */
+type MnemosNativeDocument={format:"cloudflareos.document";formatVersion:1;document:{title:string;blocks:Array<{id:string;html:string;[key:string]:unknown}>;[key:string]:unknown}};
 interface MnemosLibrary {
   /** Прочитать весь выбранный набор из сообщения (1–16 версий). Права человека и агента
    * проверяются заново. Не заменяйте недоступную версию другой. content.type="native"
@@ -27,6 +29,12 @@ interface MnemosLibrary {
    * requestId выбирается один раз и сохраняется при потере ответа; повтор не создаёт дубликат.
    * Метод не публикует документ. После отказа не подменяйте версии и не выдавайте копию за готовый результат. */
   createTemplateDocument(input:{project:string;form:MnemosTemplateReference;references:MnemosTemplateReference[];requestId:string;name:string;parentId?:string}):Promise<{project:string;name:string;operationId:string;document:{node_id:string;head:string};references:MnemosTemplateReference[];contentType:string}>;
+  /** Читает текущую личную форму документа. Изменяйте snapshot, сохраняя блоки и оформление.
+   * head передаётся в saveNativeDraft. Таблицы и презентации пока не поддерживаются. */
+  readNativeDraft(project:string,document:string):Promise<{project:string;document:string;name:string;head:string;snapshot:MnemosNativeDocument}>;
+  /** Сохраняет заполненную форму в Mnemos. Параллельная правка даёт отказ: перечитайте форму,
+   * объедините изменения и повторите с новым head. Результат открывается в редакторе; публикация отдельная. */
+  saveNativeDraft(project:string,document:string,expectedHead:string,snapshot:MnemosNativeDocument):Promise<{project:string;document:string;head:string;status:"saved"}>;
   readTemplates(references:MnemosTemplateReference[]):Promise<{materials:Array<{
     reference:MnemosTemplateReference;title:string;purpose:string;kind:"document"|"guidance"|"agent_instructions"|"skill";
     sourceHead:string;contentType:string;

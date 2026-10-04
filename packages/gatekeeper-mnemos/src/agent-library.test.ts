@@ -1005,3 +1005,17 @@ test('создание по шаблонам проходит авторизац
  const denied=await library.startSession(authorizer(state,true) as any);await assert.rejects(denied.createTemplateDocument(input));assert.equal(inputs.length,1);
  session[Symbol.dispose]();denied[Symbol.dispose]();
 });
+
+
+test('нативная форма читается и сохраняется только после личной авторизации агента',async()=>{
+ const {library,state,account}=fixture();const calls:unknown[]=[];
+ (account as Record<string,unknown>).readNativeDraftForAgent=async(...args:unknown[])=>{calls.push(['read',...args]);state.calls.push('agent:native-read');return {head:HEAD_A,snapshot:{format:'cloudflareos.document',formatVersion:1,document:{title:'ТЗ',blocks:[]}}};};
+ (account as Record<string,unknown>).saveNativeDraftForAgent=async(...args:unknown[])=>{calls.push(['save',...args]);state.calls.push('agent:native-save');return {project:'p1',document:'node',head:HEAD_B,status:'saved'};};
+ const auth=authorizer(state);const session=await library.startSession(auth as any);
+ const read=await session.readNativeDraft('p1','node');await session.saveNativeDraft('p1','node',read.head,read.snapshot);
+ assert.equal(calls.length,2);assert.ok(state.calls.indexOf('authorize')<state.calls.indexOf('agent:native-read'));
+ assert.equal((auth.seen.at(-1) as any).ownerOnly,true);
+ const denied=await library.startSession(authorizer(state,true) as any);
+ await assert.rejects(denied.readNativeDraft('p1','node'));await assert.rejects(denied.saveNativeDraft('p1','node',read.head,read.snapshot));assert.equal(calls.length,2);
+ session[Symbol.dispose]();denied[Symbol.dispose]();
+});

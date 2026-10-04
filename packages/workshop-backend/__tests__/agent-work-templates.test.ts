@@ -9,3 +9,10 @@ test('отсутствие, смена владельца и неоднозна�
  for(const bindings of [[],[{name:'OTHER',mnemosAccount:{ownerId:'other',accountId:7}}],[{name:'A',mnemosAccount:{ownerId:'sender',accountId:7}},{name:'B',mnemosAccount:{ownerId:'sender',accountId:7}}]])expect(selectedWorkTemplatesPrompt([selected],bindings)).toContain('"binding":null');
  expect(selectedWorkTemplatesPrompt(undefined,[])).toBe('');
 });
+
+test('нативная форма заполняется и сохраняется перед объявлением результата',()=>{
+ const prompt=selectedWorkTemplatesPrompt([selected],[{name:'MNEMOS',mnemosAccount:{ownerId:'sender',accountId:7}}]);
+ expect(prompt).toContain('readNativeDraft');expect(prompt).toContain('saveNativeDraft');
+ expect(prompt).toContain('с сохранением структуры и оформления');
+ expect(prompt).toContain('только после подтверждённого сохранения заполненной формы');
+});

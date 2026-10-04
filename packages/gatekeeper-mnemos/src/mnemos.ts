@@ -1,3 +1,5 @@
+import {readAgentNativeDocument,saveAgentNativeDocument} from './agent-native-document.ts';
+import type {NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document';
 import {createTemplateDocument,type TemplateDocumentInput} from './create-template-document.ts';
 import {readWorkTemplateMaterials} from './read-work-template-materials.ts';
 import {templateSelectionChoices} from './work-template-selection.ts';
@@ -1098,6 +1100,18 @@ export class UserAccount extends DurableObject<Env> {
     await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
     const session=this.#account().agentSession();
     try{return await createTemplateDocument(session,input);}finally{session.dispose();}
+  }
+  /** Чтение личной нативной формы в пределах выданной агенту области. */
+  async readNativeDraftForAgent(project:string,node:string){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await readAgentNativeDocument(session,this.#origins().storageOrigin??'',project,node);}finally{session.dispose();}
+  }
+  /** Запись нативной формы не использует полномочия сессии человека. */
+  async saveNativeDraftForAgent(project:string,node:string,expectedHead:string,snapshot:NativeDocumentSnapshot){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await saveAgentNativeDocument(session,this.#origins().storageOrigin??'',project,node,expectedHead,snapshot);}finally{session.dispose();}
   }
   async readForAgent(input: AgentReadRequest) {
     const session = this.#account().session();
