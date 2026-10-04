@@ -308,6 +308,23 @@ describe('GadgetUI RPC recovery', () => {
     send.mockRestore()
   })
 
+  it('отмечает ожидание экспорта и возвращает исходный снимок через RPC', async () => {
+    let finish!: (value: unknown) => void
+    const pending = new Promise(resolve => { finish = resolve })
+    class ExportTarget extends TestGadgetTarget { exportDocumentSnapshot() { return pending } }
+    const gadget = fakeGadget('native', 'document.body.textContent = "native"', vi.fn(async () => new RpcStub(new ExportTarget('native')) as unknown as RpcStub<TestGadget>))
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" />))
+    await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const frame = container.querySelector('iframe')!
+    const child = connectIframe(frame)
+    const reading = (child as any).exportDocumentSnapshot()
+    await vi.waitFor(() => expect(frame.getAttribute('data-native-export-rpc')).toBe('pending'))
+    const snapshot = { format: 'cloudflareos.document', formatVersion: 1, document: { revision: 3 } }
+    finish(snapshot)
+    await expect(reading).resolves.toEqual(snapshot)
+    await vi.waitFor(() => expect(frame.getAttribute('data-native-export-rpc')).toBe('complete'))
+  })
+
   it('keeps the iframe while redirecting calls to the replacement gadget client', async () => {
     const first = fakeGadget('first', 'document.body.textContent = "first"')
     await act(async () => {

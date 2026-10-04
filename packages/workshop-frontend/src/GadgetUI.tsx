@@ -323,9 +323,22 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
                 return Reflect.get(target, property, receiver)
               }
               const pending = pendingGadgetStubRef.current
-              return pending
+              const call = pending
                 ? (...args: any[]) => pending.promise.then(stub => stub[property](...args))
                 : gadgetStubRef.current[property]
+              if (property !== 'exportDocumentSnapshot') return call
+              return (...args: any[]) => {
+                const frame = iframeRef.current
+                frame?.setAttribute('data-native-export-rpc', 'pending')
+                let response
+                try { response = call(...args) }
+                catch (caught) { frame?.setAttribute('data-native-export-rpc', 'failed'); throw caught }
+                void Promise.resolve(response).then(
+                  () => frame?.setAttribute('data-native-export-rpc', 'complete'),
+                  () => frame?.setAttribute('data-native-export-rpc', 'failed'),
+                )
+                return response
+              }
             },
           })
           rpcSessionRef.current = newMessagePortRpcSession(port, forwardingTarget)
