@@ -1,3 +1,4 @@
+import DocumentTemplateOrigin from './DocumentTemplateOrigin'
 import HistoryPreparingNotice from './HistoryPreparingNotice'
 import type {NativeDocumentLaunch} from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -122,6 +123,8 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
   const shared = data?.access && data.access !== 'owner'
   const showConflict = section === 'conflict' || model?.kind === 'conflict'
   const current = rows[selected] ?? null, previous = rows[selected + 1] ?? null
+  const originHead=current?.head??(current?.id.startsWith('private:')?current.id.slice(8):'')
+  const originSource=!status.busy?status.comparison()?.downloads:null
   const restoreRow = selected === 0 ? previous : current
   const title = data?.name ? `Версии «${data.name}»` : 'Версии'
   useEffect(() => { setSelected(0); setComparison(null) }, [binding?.scope, binding?.resource, rows.length])
@@ -252,6 +255,8 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
         <h3 className="m-0 text-[15px] leading-5 font-semibold text-kumo-default">Конфликт с новой публикацией</h3>
         <NativeDocumentConflict format={format} initialScope={binding.scope} initialResource={binding.resource || undefined} onResolved={status.refresh} onClose={() => onSection(null)} />
       </Section>}
+
+      {binding && originSource && /^[a-f0-9]{64}$/.test(originHead) && <DocumentTemplateOrigin key={JSON.stringify([binding.accountId,binding.scope,binding.resource,originHead])} source={originSource} project={binding.scope} node={binding.resource} head={originHead} />}
 
       {binding && <Section name="history">
         <ol aria-label="Версии документа" className="m-0 -mx-3 flex list-none flex-col gap-0.5 p-0">

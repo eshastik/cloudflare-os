@@ -521,6 +521,8 @@ export interface GatekeeperNativeDocumentDownload extends RpcTarget {
 
 /** Human-side selector; selected capabilities cannot switch documents or versions. */
 export interface GatekeeperNativeDocumentSelector extends RpcTarget {
+  /** Прочитать происхождение точного снимка при текущих правах; null — шаблоны не использовались. Старые адаптеры не поддерживают метод. */
+  templateOrigin(scope:string,resource:string,head:string):Promise<import("./work-template.js").DocumentTemplateOriginView|null>;
   /** Bind a native approval preview to one immutable review side and decision version. */
   selectReview(review: string, resource: string, version: number, side: 'before' | 'after', format: NativeDocumentFormat): Promise<RpcStub<GatekeeperNativeReviewDownload>>;
   /** List readable service scopes from this connected account. */
@@ -539,6 +541,8 @@ export interface GatekeeperNativeDocumentSelector extends RpcTarget {
     resourceUrl: string;
     /** Immutable, non-deleted native versions available to this account. */
     publications: { id: string; recordedAt: string; actor: string;
+      /** Точный снимок опубликованной версии для чтения происхождения; отсутствует у старых адаптеров. */
+      head?: string;
       /** Имя того, кто сохранил личную версию (владелец или приглашённый); нет у старых служб. */
       author?: string;
       /** Verified human owner when the publication actor is an agent; absent for older services. */

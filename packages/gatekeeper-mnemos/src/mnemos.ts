@@ -1,3 +1,4 @@
+import {readDocumentTemplateOriginView} from "./work-template-origin.ts";
 import {listAgentTemplateScopes,listAgentTemplates,resolveAgentTemplate} from './agent-template-discovery.ts';
 import {readAgentNativeDocument,saveAgentNativeDocument} from './agent-native-document.ts';
 import type {NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document';
@@ -1232,6 +1233,7 @@ class MnemosNativeDocumentSelector extends RpcTarget {
     return { scopes: (await this.#session.listProjects()).projects.map(p => ({ id: p.id, name: p.name })) };
   }
   async documents(project: string, cursor: string) { return listNativeDocuments(this.#session, project, cursor); }
+  async templateOrigin(project:string,node:string,head:string){return readDocumentTemplateOriginView(this.#session,project,node,head);}
   async publications(project: string, node: string, cursor: string) {
     const resourceUrl = documentResourceUrl(this.#origin, { projectId: project, nodeId: node });
     // Приложение (ADR 0028) открывается и версионируется так же, как документ.
@@ -1267,7 +1269,7 @@ class MnemosNativeDocumentSelector extends RpcTarget {
       const page = await this.#session.nodeHistory(project, node, cursor, 50);
       return { resourceUrl, historyLimited, ...(!cursor && page.events.length ? { sharedDeleted: !page.events[0].exists } : {}), publications: [...privateVersions, ...page.events.flatMap(event => {
         const format = formatOf(event.content_type || "");
-        return event.exists && format ? [{ id: event.event_id, recordedAt: event.recorded_at, actor: event.actor, onBehalfOf: event.on_behalf_of, format }] : [];
+        return event.exists && format ? [{ id: event.event_id, head: event.head, recordedAt: event.recorded_at, actor: event.actor, onBehalfOf: event.on_behalf_of, format }] : [];
       })], nextCursor: page.next_cursor || "" };
     } catch (error) {
       if ((privateVersions.length||cursor==='') && error instanceof MnemosAPIError && [403, 404].includes(error.status)) return {resourceUrl, publications: privateVersions, nextCursor: "", historyLimited};

@@ -29,7 +29,7 @@ type Decision = PublicationReview['domains'][number]['decisions'][number] & { co
 /** Какой документ Mnemos открыт в редакторе и с какой ревизией редактора он последний раз совпадал. */
 export type DocumentBinding = NativeMnemosBinding
 export type Participant = Awaited<ReturnType<Selector['participants']>>['participants'][number]
-export type HistoryEntry = { id: string; label: string; recordedAt: string; actor: string; author?: string; onBehalfOf?: string; personal: boolean }
+export type HistoryEntry = { head?: string; id: string; label: string; recordedAt: string; actor: string; author?: string; onBehalfOf?: string; personal: boolean }
 /** Право на документ: свой, правка по приглашению или только чтение. */
 export type DocumentAccess = 'owner' | 'write' | 'read'
 /** conflict null — черновик не прочитан; participants null — приглашённые не прочитаны; head — текущая версия документа;
@@ -255,7 +255,7 @@ function describeHistory(page: Awaited<ReturnType<Downloads['publications']>>, f
   const label = (id: string, index: number) => complete ? `v${published.length - index}` : `v${id.slice(0, 7)}`
   const history: HistoryEntry[] = items.map(p => {
     const personal = p.id.startsWith('private:')
-    return { id: p.id, recordedAt: p.recordedAt, actor: p.actor, ...(p.author ? { author: p.author } : {}), onBehalfOf: p.onBehalfOf, personal, label: personal ? (p.actor ? 'Версия участника' : 'Личная версия') : label(p.id, published.indexOf(p)) }
+    return { id: p.id, ...(p.head ? {head:p.head} : {}), recordedAt: p.recordedAt, actor: p.actor, ...(p.author ? { author: p.author } : {}), onBehalfOf: p.onBehalfOf, personal, label: personal ? (p.actor ? 'Версия участника' : 'Личная версия') : label(p.id, published.indexOf(p)) }
   })
   return { history, sharedVersion: published.length ? label(published[0].id, 0) : '—' }
 }

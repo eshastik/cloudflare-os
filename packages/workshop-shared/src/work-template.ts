@@ -59,3 +59,36 @@ export interface WorkTemplateMaterial extends ChatWorkTemplateChoice {
  /** Текст методики либо нативные данные формы; неподдерживаемые форматы отвергаются. */
  content:{type:'text';text:string}|{type:'native';snapshot:import('./native-document.js').NativeDocumentSnapshot};
 }
+
+/** Серверная запись происхождения выбранного снимка результата. Ссылки не дают прав. */
+export interface WorkTemplateDocumentOrigin {
+ /** Проект результата. */
+ project_id:string;
+ /** Документ результата. */
+ node_id:string;
+ /** Точный читаемый снимок результата. */
+ head:string;
+ /** Человек, начавший работу. */
+ initiated_by:string;
+ /** Принципал исполнившего агента; пусто для работы человека. */
+ executed_by:string;
+ /** Стабильный идентификатор операции создания. */
+ operation_id:string;
+ /** Время создания в миллисекундах Unix. */
+ created_at_ms:number;
+ /** Точная версия формы. */
+ form:WorkTemplateReference;
+ /** Полный набор применённых версий. */
+ inputs:Array<{
+  /** Версия в личном либо общем каталоге. */
+  reference:WorkTemplateReference;
+  /** Исходный снимок этой версии. */
+  source_head:string;
+ }>;
+}
+
+/** Происхождение с названиями материалов, прочитанными из тех же точных версий. */
+export interface DocumentTemplateOriginView extends WorkTemplateDocumentOrigin {
+ /** Подписи всех входов в исходном порядке. */
+ materials:ChatWorkTemplateChoice[];
+}

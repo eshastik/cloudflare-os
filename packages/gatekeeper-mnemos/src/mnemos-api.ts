@@ -1,3 +1,4 @@
+import {checkedDocumentTemplateOrigin} from "./work-template-origin.ts";
 import {checkedTemplateReferences,validTemplateSelection,type WorkTemplateReference,type WorkTemplateSelection} from "./work-template-selection.ts";
 import { HISTORY_PREPARING, historyPreparingMessage, historyProgress, type HistoryProgress } from "./history-preparing.ts";
 import { REPOSITORY_FAILURES, REPOSITORY_FAILURE_CODES, checkedCodeFromFiles, type CodeFromFilesResult, checkedRecord, checkedRepositoryOverview, type CapabilityChange, type GitOwnership, type GitOwnershipTransfer, type RepositoryFailureCode, type RepositoryInput, type RepositoryOverview, type RepositoryRecord, type RepositoryResult } from "./git-repositories.ts";
@@ -485,6 +486,11 @@ export class MnemosAPI {
     if(!out||!Array.isArray(out.templates)||out.templates.length>100||typeof out.next_cursor!=="string")throw new MnemosAPIError(502);
     let previous=cursor;for(const item of out.templates){if(!validWorkTemplate(item)||item.project_id!==project||item.template_id<=previous)throw new MnemosAPIError(502);previous=item.template_id;}
     if(out.next_cursor&&(out.next_cursor<=cursor||out.next_cursor<previous))throw new MnemosAPIError(502);return out;
+  }
+  async readDocumentTemplateOrigin(project:string,node:string,version:string,signal?:AbortSignal):Promise<import("@gadgets/workshop-shared/work-template").WorkTemplateDocumentOrigin|null> {
+    segment(project);segment(node);head(version);if(/^0+$/.test(version))throw new MnemosAPIError(400);
+    const out=await this.#request<unknown>(`/v1/projects/${segment(project)}/documents/${segment(node)}/versions/${version}/template-origin`,"GET",signal);
+    try{return checkedDocumentTemplateOrigin(out,project,node,version);}catch{throw new MnemosAPIError(502);}
   }
   async readWorkTemplate(id:string,revision:number,signal?:AbortSignal):Promise<WorkTemplateVersion>{
     if(!Number.isSafeInteger(revision)||revision<0)throw new MnemosAPIError(400);

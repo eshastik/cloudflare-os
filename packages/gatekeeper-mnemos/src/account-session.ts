@@ -1325,6 +1325,7 @@ export class MnemosAccountSession {
   async readScopedWorkTemplate(scope:string,key:string,revision:number){this.#check();const out=await this.#client.readScopedWorkTemplate(scope,key,revision,this.#lifetime.signal);this.#check();return out;}
   async listWorkTemplates(project:string,cursor="") {this.#check();const out=await this.#client.listWorkTemplates(project,cursor,this.#lifetime.signal);this.#check();return out;}
   async saveWorkTemplateSnapshot(id:string,input:Parameters<MnemosAPI["saveWorkTemplate"]>[1]) {this.#check();const out=await this.#client.saveWorkTemplate(id,input,this.#lifetime.signal);this.#check();return out;}
+  async readDocumentTemplateOrigin(project:string,node:string,head:string){this.#check();const out=await this.#client.readDocumentTemplateOrigin(project,node,head,this.#lifetime.signal);this.#check();return out;}
   async readWorkTemplate(id:string,revision:number) {this.#check();const out=await this.#client.readWorkTemplate(id,revision,this.#lifetime.signal);this.#check();return out;}
   private templateActions(){
     const source=this.requestStorage;const prefix=this.templateActor?'agent-template:'+encodeURIComponent(this.templateActor)+':':'';
