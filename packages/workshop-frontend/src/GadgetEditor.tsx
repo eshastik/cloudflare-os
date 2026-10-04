@@ -49,7 +49,7 @@ import { FormatGlyph } from './components/format/FormatVisuals'
 import ShareModal from './ShareModal'
 import { GadgetPresence } from './components/GadgetPresence'
 import BlueprintModal from './BlueprintModal'
-import BlueprintTemplateSave from './BlueprintTemplateSave'
+import DocumentTemplateSave from './DocumentTemplateSave'
 import TopBarNotice from './TopBarNotice'
 import { WorkshopButton, WorkshopIconButton, WorkshopInput } from './components/WorkshopControls'
 import { useActions } from './useActions'
@@ -1996,7 +1996,7 @@ export default function GadgetEditor() {
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
           <Dialog.Title className="sr-only">Личный шаблон документа</Dialog.Title>
           <Dialog.Description className="sr-only">Сохраните текущую форму для следующих задач. Предложение команде выполняется отдельно.</Dialog.Description>
-          <BlueprintTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} nativeOnly blueprint={{id:`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`,title:selectedGadgetSummary?.title??'Шаблон документа',description:''}} format="cloudflareos.document" snapshotSource={nativeSnapshotSource} onClose={()=>setDocumentTemplateOpen(false)}/>
+          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 

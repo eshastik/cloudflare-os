@@ -9,10 +9,12 @@ import {listAccounts, storesDocuments, openBlueprintTemplatesFrame} from './acco
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
 import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from './gatekeeperAppUpload'
 
-export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false}: {nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
+export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject}: {preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
+  const [contextNotice,setContextNotice]=useState('')
+  const preferredAccount=preferredProject?.accountId, preferredScope=preferredProject?.projectId
   const [projects,setProjects] = useState<{id:string;name:string}[]>([])
   const [project,setProject] = useState('')
   const [scopes,setScopes] = useState<{scope_id:string;revision:number;level:string;name:string;enabled:boolean}[]>([])
@@ -20,6 +22,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const [title,setTitle] = useState(blueprint.title), [purpose,setPurpose] = useState(blueprint.description || blueprint.title)
   const [busy,setBusy] = useState(false), [error,setError] = useState(''), [version,setVersion] = useState<GatekeeperTemplateVersion|null>(null)
   const [accountsLoading,setAccountsLoading]=useState(true)
+  const [accountsReload,setAccountsReload]=useState(0),[pendingUnavailable,setPendingUnavailable]=useState(false)
   const [libraryState,setLibraryState]=useState<'idle'|'loading'|'ready'|'error'>('idle')
   const [libraryReload,setLibraryReload]=useState(0)
   const [scopesLoading,setScopesLoading]=useState(false),[scopesError,setScopesError]=useState(''),[scopesReload,setScopesReload]=useState(0)
@@ -32,23 +35,30 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   useEffect(() => {
     let cancelled = false
     lifetime.current = new AbortController()
+    setAccountsLoading(true);setContextNotice('');setPendingUnavailable(false)
     void listAccounts(api).then(items => {
       if(cancelled)return
       const choices=items.filter(storesDocuments).map(item=>({id:item.id,name:item.description.displayName||item.description.uniqueName||item.vendorId}))
       setAccounts(choices);setAccountsLoading(false)
       let saved: {account?:number}|null=null
       try {saved=JSON.parse(sessionStorage.getItem(pendingKey)||'null')} catch {}
-      if(saved?.account!==undefined&&choices.some(item=>item.id===saved!.account))setAccount(saved.account)
-      else if(choices.length===1)setAccount(choices[0].id)
+      if(saved?.account!==undefined){
+        if(choices.some(item=>item.id===saved!.account))setAccount(saved.account)
+        else {setAccount(null);setPendingUnavailable(true);setContextNotice('Библиотека начатого сохранения недоступна. Квитанция сохранена; новое сохранение не начато. Восстановите доступ и повторите загрузку.')}
+      }else if(preferredAccount!==undefined&&preferredAccount!==null){
+        if(choices.some(item=>item.id===preferredAccount))setAccount(preferredAccount)
+        else {setAccount(null);setContextNotice('Библиотека документа недоступна. Выберите другую библиотеку явно.')}
+      }else if(choices.length===1)setAccount(choices[0].id)
     }).catch(()=>{if(!cancelled){setError('Не удалось прочитать библиотеки.');setAccountsLoading(false)}})
     return()=>{cancelled=true;lifetime.current.abort();creator.current?.[Symbol.dispose]();disposeGatekeeperFrame(frame.current)}
-  },[api,pendingKey])
+  },[api,pendingKey,preferredAccount,accountsReload])
   useEffect(()=>{
     let cancelled=false
     setProjects([]);setProject('');setScopes([]);setScope('');setError('');setVersion(null);setLocked(false);setProposed(false);setPrevious(undefined)
     creator.current?.[Symbol.dispose]();creator.current=null
     disposeGatekeeperFrame(frame.current);frame.current=null
     if(account===null){setLibraryState('idle');return}
+    setContextNotice('')
     setLibraryState('loading')
     void openBlueprintTemplatesFrame(api,account).then(async value=>{
       if(cancelled){disposeGatekeeperFrame(value);return}
@@ -59,7 +69,12 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       const result=await value.blueprintTemplates.selector.projects()
       if(cancelled)return
       setProjects(result.projects)
-      if(!latest&&result.projects.length===1)setProject(result.projects[0].id)
+      if(!latest){
+        if(preferredScope&&(preferredAccount===null||preferredAccount===account)){
+          if(result.projects.some(item=>item.id===preferredScope))setProject(preferredScope)
+          else setContextNotice('Проект документа недоступен для сохранения шаблона. Выберите другой проект явно.')
+        }else if(result.projects.length===1)setProject(result.projects[0].id)
+      }
       let saved:{account:number;id:string}|null=null
       try{saved=JSON.parse(sessionStorage.getItem(pendingKey)||'null')}catch{}
       if(saved?.account===account){
@@ -68,12 +83,12 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         creator.current=resumed
         const state=await resumed.state()
         if(cancelled)return
-        setProject(state.project);setTitle(state.title);setPurpose(state.purpose);setVersion(state.version);setLocked(true)
+        setProject(state.project);setTitle(state.title);setPurpose(state.purpose);setVersion(state.version);setLocked(true);setContextNotice('')
       }
       setLibraryState('ready')
     }).catch(()=>{if(!cancelled){setError('Не удалось открыть библиотеку шаблонов.');setLibraryState('error')}})
     return()=>{cancelled=true}
-  },[api,account,libraryReload,sourceKey])
+  },[api,account,libraryReload,sourceKey,preferredAccount,preferredScope])
   useEffect(()=>{
     let cancelled=false;setScopes([]);setScope('');setScopesError('');
     const selector=frame.current?.blueprintTemplates?.selector;
@@ -90,7 +105,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     return()=>{cancelled=true}
   },[account,libraryState,scopesReload])
   async function save(){
-    if(busy||libraryState!=='ready'||account===null||!frame.current?.blueprintTemplates)return
+    if(busy||pendingUnavailable||libraryState!=='ready'||account===null||!frame.current?.blueprintTemplates)return
     setBusy(true);setError('')
     const signal=lifetime.current.signal
     try {
@@ -143,6 +158,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     <div><h3 className="m-0 text-[17px] font-medium">{version?'Шаблон сохранён':previous?'Новая версия шаблона':'Сохранить личный шаблон'}</h3><p className="mt-1 text-[13px] leading-5 text-kumo-subtle">{format?'Текущее содержимое станет исходной версией для новых документов.':'Сохраните гаджет и его содержимое для следующих задач.'}</p></div>
     {accountsLoading&&<p role="status" className="text-[13px] text-kumo-subtle">Загрузка библиотек…</p>}
     {!accountsLoading&&!accounts.length&&!error&&<p className="text-[13px] text-kumo-subtle">Нет доступной библиотеки для сохранения шаблона.</p>}
+    {contextNotice&&<p role="status" className="text-[13px] text-kumo-subtle">{contextNotice}</p>}
     {libraryState==='loading'&&<p role="status" className="text-[13px] text-kumo-subtle">Подготовка сохранения…</p>}
     {version?<div className="space-y-4">
       <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p></div>
@@ -157,8 +173,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       </div>
       <WorkshopButton disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</WorkshopButton>
     </div>:<fieldset disabled={busy||accountsLoading||libraryState==='loading'} className="space-y-3 border-0 p-0">
-      {accounts.length!==1&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-      <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>setProject(e.target.value)}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      {(accounts.length!==1||account===null)&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked||pendingUnavailable} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+      <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>{setProject(e.target.value);setContextNotice('')}}><option value="">Выберите проект</option>{locked&&project&&!projects.some(item=>item.id===project)&&<option value={project}>Проект начатого сохранения</option>}{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label className="block text-[13px]">Название<input className={field} disabled={locked||libraryState!=='ready'} value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label className="block text-[13px]">Для каких задач<textarea rows={2} className={field} disabled={locked||libraryState!=='ready'} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
       {previous&&<p className="text-[12px] text-kumo-subtle">Будет создана новая версия. Ранее созданные документы сохранят использованную версию.</p>}
@@ -166,7 +182,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       <p className="text-[12px] text-kumo-subtle">Сохранение не отправляет шаблон на согласование. Это отдельный шаг.</p>
     </fieldset>}
     {error&&<p role="alert" className="text-[13px] text-kumo-danger">{error}</p>}
+    {pendingUnavailable&&<WorkshopButton disabled={accountsLoading} onClick={()=>setAccountsReload(v=>v+1)}>Повторить загрузку библиотек</WorkshopButton>}
     {libraryState==='error'&&<WorkshopButton onClick={()=>setLibraryReload(v=>v+1)}>Повторить загрузку библиотеки</WorkshopButton>}
-    <WorkshopButton disabled={busy} onClick={onClose}>Назад к шаблонам</WorkshopButton>
+    <WorkshopButton disabled={busy} onClick={onClose}>{nativeOnly?'Закрыть':'Назад к шаблонам'}</WorkshopButton>
   </section>
 }

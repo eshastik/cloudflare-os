@@ -3,14 +3,15 @@ import React from 'react'
 import {createRoot} from 'react-dom/client'
 import {beforeEach, afterEach, expect, test, vi} from 'vitest'
 import BlueprintTemplateSave from './BlueprintTemplateSave'
-const mocks=vi.hoisted(()=>({api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, nativeUpload:vi.fn<(...args: unknown[]) => Promise<unknown>>(),upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
+const mocks=vi.hoisted(()=>({accounts:vi.fn<(...args:unknown[])=>Promise<unknown>>(),api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, nativeUpload:vi.fn<(...args: unknown[]) => Promise<unknown>>(),upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
-vi.mock('./accountCapabilities',()=>({listAccounts:async()=>[{id:8,vendorId:'memory',description:{displayName:'Компания'}}],storesDocuments:()=>true,openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{storageOrigin:'https://objects.example',selector:mocks.selector}})}))
+vi.mock('./accountCapabilities',()=>({listAccounts:()=>mocks.accounts(),storesDocuments:()=>true,openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{storageOrigin:'https://objects.example',selector:mocks.selector}})}))
 vi.mock('./gatekeeperAppUpload',()=>({uploadGatekeeperNativeDocument:(...args:unknown[])=>mocks.nativeUpload(...args),uploadGatekeeperBlueprintTemplate:(...args:unknown[])=>mocks.upload(...args)}))
 vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 let root:ReturnType<typeof createRoot>, container:HTMLDivElement
 beforeEach(()=>{
   vi.clearAllMocks();sessionStorage.clear();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true
+  mocks.accounts.mockResolvedValue([{id:8,vendorId:'memory',description:{displayName:'Компания'}}])
   mocks.selector.latest.mockResolvedValue(null)
   mocks.selector.projects.mockResolvedValue({projects:[{id:'project',name:'Проект'}]})
   mocks.selector.scopes.mockResolvedValueOnce({scopes:[{scope_id:'company',revision:1,level:'organization',name:'Компания',enabled:true},{scope_id:'department',revision:2,level:'department',name:'Финансовый отдел',enabled:true}],next_cursor:'groups'}).mockResolvedValue({scopes:[{scope_id:'finance',revision:4,level:'group',name:'Финансовая группа',enabled:true}]})
@@ -90,4 +91,40 @@ test('Документ сохраняется в каталог нативным
  expect(read).toHaveBeenCalledOnce();expect(mocks.nativeUpload.mock.calls[0].slice(0,3)).toEqual([snapshot,'cloudflareos.document','https://objects.example']);
  expect(mocks.api.captureBlueprintTemplate).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();
  expect(mocks.creator.checkpoint).toHaveBeenCalledWith('native-upload');expect(mocks.creator.save).toHaveBeenCalledOnce();expect(mocks.creator.propose).not.toHaveBeenCalled();
+});
+
+test('Проект документа выбирается по точному подключению, а не первой позиции',async()=>{
+ mocks.accounts.mockResolvedValue([{id:7,vendorId:'memory',description:{displayName:'Другая'}},{id:8,vendorId:'memory',description:{displayName:'Компания'}}]);
+ mocks.selector.projects.mockResolvedValue({projects:[{id:'other',name:'Другой'},{id:'document-project',name:'Проект документа'}]});
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} preferredProject={{accountId:8,projectId:'document-project'}} onClose={()=>{}}/>));
+ const selects=container.querySelectorAll('select');expect(selects[0].value).toBe('8');expect(selects[1].value).toBe('document-project');
+ await React.act(async()=>button('Сохранить личный шаблон').click());expect(mocks.selector.prepare.mock.calls[0][0]).toBe('document-project');
+});
+
+test('Недоступный проект или подключение не заменяются первым доступным',async()=>{
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} preferredProject={{accountId:8,projectId:'missing'}} onClose={()=>{}}/>));
+ expect(container.querySelector('select')?.value).toBe('');expect(button('Сохранить личный шаблон').disabled).toBe(true);expect(container.textContent).toContain('Проект документа недоступен');
+ await React.act(async()=>{const project=container.querySelector('select')!;project.value='project';project.dispatchEvent(new Event('change',{bubbles:true}))});expect(button('Сохранить личный шаблон').disabled).toBe(false);
+ await React.act(async()=>root.render(<BlueprintTemplateSave key="other" blueprint={{id:'other',title:'Отчёт',description:'Форма'}} preferredProject={{accountId:99,projectId:'missing'}} onClose={()=>{}}/>));
+ expect(container.querySelector('select')?.value).toBe('');expect(button('Сохранить личный шаблон').disabled).toBe(true);expect(container.textContent).toContain('Библиотека документа недоступна');
+});
+
+test('Повторное открытие продолжает сохранение в прежнем проекте, несмотря на новый контекст',async()=>{
+ sessionStorage.setItem('mnemos-blueprint-save:bp',JSON.stringify({account:8,id:'pending'}));
+ mocks.selector.resume.mockResolvedValue(mocks.creator);mocks.creator.state.mockResolvedValue({upload:'upload',project:'project',title:'Сохранённое название',purpose:'Сохранённое назначение',version:null});
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} preferredProject={{accountId:99,projectId:'other'}} onClose={()=>{}}/>));
+ expect(container.querySelector('select')?.value).toBe('project');expect(container.querySelector('input')?.value).toBe('Сохранённое название');
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(mocks.selector.resume).toHaveBeenCalledWith('pending');expect(mocks.selector.prepare).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();expect(mocks.creator.save).toHaveBeenCalledOnce();
+});
+
+test('Недоступная библиотека pending останавливает новую операцию и сохраняет квитанцию',async()=>{
+ const pending={account:99,id:'lost-answer'};sessionStorage.setItem('mnemos-blueprint-save:bp',JSON.stringify(pending));
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} preferredProject={{accountId:8,projectId:'project'}} onClose={()=>{}}/>));
+ expect(container.textContent).toContain('Библиотека начатого сохранения недоступна');expect(container.querySelector('select')?.disabled).toBe(true);expect(button('Сохранить личный шаблон').disabled).toBe(true);
+ expect(mocks.selector.prepare).not.toHaveBeenCalled();expect(sessionStorage.getItem('mnemos-blueprint-save:bp')).toBe(JSON.stringify(pending));
+ mocks.accounts.mockResolvedValue([{id:99,vendorId:'memory',description:{displayName:'Восстановленная'}}]);mocks.selector.resume.mockResolvedValue(mocks.creator);mocks.creator.state.mockResolvedValue({upload:'upload',project:'project',title:'Прежний шаблон',purpose:'Прежнее назначение',version:null});
+ await React.act(async()=>button('Повторить загрузку библиотек').click());
+ expect(mocks.selector.resume).toHaveBeenCalledWith('lost-answer');expect(button('Сохранить личный шаблон').disabled).toBe(false);
+ await React.act(async()=>button('Сохранить личный шаблон').click());expect(mocks.selector.prepare).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();expect(mocks.creator.save).toHaveBeenCalledOnce();
 });
