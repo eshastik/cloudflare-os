@@ -135,6 +135,12 @@ export interface Management extends WebDAVManagement, ImapManagement, CalDAVMana
  saveTemplateDecision:MnemosAccountSession["saveTemplateDecision"];
  executeSavedTemplateDecision:MnemosAccountSession["executeSavedTemplateDecision"];
  resolveWorkTemplate:MnemosAccountSession["resolveWorkTemplate"];
+ /** Читать сохранённые разрешения своего агента для отдельных областей. */
+ listTemplateAgentGrants:MnemosAccountSession["listTemplateAgentGrants"];
+ /** Читать разрешение владельца на шаблоны области для своего агента. */
+ readTemplateAgentGrant:MnemosAccountSession["readTemplateAgentGrant"];
+ /** Выдать или отозвать разрешение с проверкой ревизии. */
+ setTemplateAgentGrant:MnemosAccountSession["setTemplateAgentGrant"];
  listManagedTemplateScopes:MnemosAccountSession["listManagedTemplateScopes"];
  setTemplateScope:MnemosAccountSession["setTemplateScope"];
  listTemplateReviewScopes:MnemosAccountSession["listTemplateReviewScopes"];

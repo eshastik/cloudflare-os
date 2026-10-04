@@ -54,3 +54,9 @@ export function validTemplateScopeConfig(v:TemplateScopeConfig):boolean {
 
 export interface PersonalWorkTemplateSelection {template_id:string;revision:number}
 export interface WorkTemplateResolution {selected_scope_id:string;template_key:string;personal?:WorkTemplateVersion;scoped?:ScopedWorkTemplateVersion}
+
+/** Разрешение владельца агенту читать опубликованные шаблоны области. */
+export interface TemplateAgentGrant {binding_id:string;scope_id:string;revision:number;enabled:boolean}
+
+/** Страница сохранённых разрешений; список не зависит от нынешнего членства. */
+export interface TemplateAgentGrantPage {grants:TemplateAgentGrant[];next_cursor?:string}

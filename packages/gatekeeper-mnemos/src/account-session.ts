@@ -1307,6 +1307,12 @@ export class MnemosAccountSession {
   async saveTemplateDecision(id:string,input:TemplateDecisionInput){return this.templateReviewActions().save(id,input);}
   executeSavedTemplateDecision(id:string){return this.templateReviewActions().execute(id);}
   async resolveWorkTemplate(scope:string,key:string,personal?:Parameters<MnemosAPI["resolveWorkTemplate"]>[2]){this.#check();const out=await this.#client.resolveWorkTemplate(scope,key,personal,this.#lifetime.signal);this.#check();return out;}
+  /** Список собственных разрешений позволяет отозвать доступ и без членства в области. */
+  async listTemplateAgentGrants(binding:string,cursor=""){this.#check();const out=await this.#client.listTemplateAgentGrants(binding,cursor,this.#lifetime.signal);this.#check();return out;}
+  /** Человек читает разрешение своего агента; в агентский каталог метод не входит. */
+  async readTemplateAgentGrant(binding:string,scope:string){this.#check();const out=await this.#client.readTemplateAgentGrant(binding,scope,this.#lifetime.signal);this.#check();return out;}
+  /** Изменение разрешения подтверждается сервером и действующей сессией человека. */
+  async setTemplateAgentGrant(binding:string,scope:string,expected:number,enabled:boolean){this.#check();const out=await this.#client.setTemplateAgentGrant(binding,scope,expected,enabled,this.#lifetime.signal);this.#check();return out;}
   async listManagedTemplateScopes(cursor=""){this.#check();const out=await this.#client.listTemplateScopes(cursor,this.#lifetime.signal,"manage");this.#check();return out;}
   async setTemplateScope(id:string,expected:number,config:Parameters<MnemosAPI["setTemplateScope"]>[2]){this.#check();const out=await this.#client.setTemplateScope(id,expected,config,this.#lifetime.signal);this.#check();return out;}
   async listTemplateReviewScopes(cursor=""){this.#check();const out=await this.#client.listTemplateScopes(cursor,this.#lifetime.signal,"review");this.#check();return out;}

@@ -395,11 +395,42 @@ export class MnemosAPI {
     const out=await this.#request<WorkTemplateResolution>(`/v1/template-scopes/${segment(scope)}/templates/${segment(key)}/resolve`,"POST",signal,body);
     if(!out||out.selected_scope_id!==scope||out.template_key!==key||(personal?!!out.scoped||!out.personal||!validWorkTemplate(out.personal)||out.personal.template_id!==personal.template_id||out.personal.revision!==personal.revision:!!out.personal||!out.scoped||!validScopedWorkTemplate(out.scoped)||out.scoped.template_key!==key))throw new MnemosAPIError(502);return out;
   }
+  /** Сохранённые разрешения своего агента, в том числе для отзыва после потери членства. */
+  async listTemplateAgentGrants(binding:string,cursor="",signal?:AbortSignal):Promise<import("./work-templates.ts").TemplateAgentGrantPage>{
+    segment(binding);if(cursor!=="")segment(cursor);
+    const out=await this.#request<import("./work-templates.ts").TemplateAgentGrantPage>(`/v1/agent-connections/${segment(binding)}/template-grants?cursor=${encodeURIComponent(cursor)}`,"GET",signal);
+    if(!out||!Array.isArray(out.grants)||out.grants.length>100)throw new MnemosAPIError(502);
+    const encoder=new TextEncoder();
+    const compare=(a:string,b:string)=>{const left=encoder.encode(a),right=encoder.encode(b);for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i])return left[i]-right[i];}return left.length-right.length;};
+    let previous=cursor;
+    for(const grant of out.grants){
+      if(!grant||grant.binding_id!==binding||typeof grant.scope_id!=="string"||!grant.scope_id||grant.scope_id.length>255||compare(grant.scope_id,previous)<=0||!Number.isSafeInteger(grant.revision)||grant.revision<1||typeof grant.enabled!=="boolean")throw new MnemosAPIError(502);
+      previous=grant.scope_id;
+    }
+    if(out.next_cursor!==undefined&&(typeof out.next_cursor!=="string"||!out.next_cursor||out.grants.length!==100||out.next_cursor!==previous))throw new MnemosAPIError(502);
+    return out;
+  }
+  /** Текущее разрешение своего агента на опубликованные шаблоны области. */
+  async readTemplateAgentGrant(binding:string,scope:string,signal?:AbortSignal):Promise<import("./work-templates.ts").TemplateAgentGrant>{
+    segment(binding);segment(scope);
+    const out=await this.#request<import("./work-templates.ts").TemplateAgentGrant>(`/v1/template-scopes/${segment(scope)}/agent-grants/${segment(binding)}`,"GET",signal);
+    if(!out||out.binding_id!==binding||out.scope_id!==scope||!Number.isSafeInteger(out.revision)||out.revision<0||typeof out.enabled!=="boolean"||(out.revision===0&&out.enabled))throw new MnemosAPIError(502);
+    return out;
+  }
+  /** Выдача и отзыв используют прочитанную ревизию; сервер проверяет владельца. */
+  async setTemplateAgentGrant(binding:string,scope:string,expected:number,enabled:boolean,signal?:AbortSignal):Promise<import("./work-templates.ts").TemplateAgentGrant>{
+    segment(binding);segment(scope);
+    if(!Number.isSafeInteger(expected)||expected<0||expected>=Number.MAX_SAFE_INTEGER||typeof enabled!=="boolean")throw new MnemosAPIError(400);
+    const out=await this.#request<import("./work-templates.ts").TemplateAgentGrant>(`/v1/template-scopes/${segment(scope)}/agent-grants/${segment(binding)}`,"PUT",signal,{expected_revision:expected,enabled});
+    if(!out||out.binding_id!==binding||out.scope_id!==scope||out.revision!==expected+1||out.enabled!==enabled)throw new MnemosAPIError(502);
+    return out;
+  }
   async setTemplateScope(id:string,expected:number,config:TemplateScopeConfig,signal?:AbortSignal):Promise<TemplateScope>{
     segment(id);if(!Number.isSafeInteger(expected)||expected<0||expected>=Number.MAX_SAFE_INTEGER||!validTemplateScopeConfig(config)||config.parent_id===id)throw new MnemosAPIError(400);
-    const body={expected_revision:expected,level:config.level,parent_id:config.parent_id,reader_group_id:config.reader_group_id,name:config.name,enabled:config.enabled,approvers:config.approvers.toSorted(),...(config.review_requirements===undefined?{}:{review_requirements:config.review_requirements.map(r=>({domain_id:r.domain_id,approvers:r.approvers.toSorted()})).toSorted((a,b)=>a.domain_id.localeCompare(b.domain_id))})};
+    const requirements=(items:NonNullable<TemplateScopeConfig["review_requirements"]>)=>items.map(r=>({domain_id:r.domain_id,approvers:r.approvers.toSorted()})).toSorted((a,b)=>a.domain_id<b.domain_id?-1:a.domain_id>b.domain_id?1:0);
+    const body={expected_revision:expected,level:config.level,parent_id:config.parent_id,reader_group_id:config.reader_group_id,name:config.name,enabled:config.enabled,approvers:config.approvers.toSorted(),...(config.review_requirements===undefined?{}:{review_requirements:requirements(config.review_requirements)})};
     const out=await this.#request<TemplateScope>(`/v1/template-scopes/${segment(id)}`,"PUT",signal,body);
-    if(!out||!validTemplateScopeConfig(out)||out.scope_id!==id||out.revision!==expected+1||out.level!==body.level||out.parent_id!==body.parent_id||out.reader_group_id!==body.reader_group_id||out.name!==body.name||out.enabled!==body.enabled||JSON.stringify([...out.approvers].sort())!==JSON.stringify(body.approvers)||(body.review_requirements!==undefined&&JSON.stringify(out.review_requirements??[])!==JSON.stringify(body.review_requirements)))throw new MnemosAPIError(502);return out;
+    if(!out||!validTemplateScopeConfig(out)||out.scope_id!==id||out.revision!==expected+1||out.level!==body.level||out.parent_id!==body.parent_id||out.reader_group_id!==body.reader_group_id||out.name!==body.name||out.enabled!==body.enabled||JSON.stringify([...out.approvers].sort())!==JSON.stringify(body.approvers)||(body.review_requirements!==undefined&&JSON.stringify(requirements(out.review_requirements??[]))!==JSON.stringify(requirements(body.review_requirements))))throw new MnemosAPIError(502);return out;
   }
   async listTemplateScopes(cursor="",signal?:AbortSignal,mode:"member"|"review"|"manage"="member"):Promise<TemplateScopePage>{
     if(typeof cursor!=="string"||cursor.length>255)throw new MnemosAPIError(400);

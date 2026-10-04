@@ -1,3 +1,4 @@
+import TemplateScopeRules from "./TemplateScopeRules.tsx";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PROJECT_VISIBILITIES, type ProjectSharingSettings, type ProjectVisibility } from "../src/project-sharing.ts";
 import { useUi } from "./host.ts";
@@ -111,6 +112,7 @@ export default function RulesTab() {
       </Card>
       <div aria-live="polite" className="min-h-[20px]">{busy ? <span className="text-[13px] text-kumo-subtle">Сохраняем…</span> : notice && <Notice tone={notice.tone}>{notice.text}</Notice>}</div>
     </section>}
+    <TemplateScopeRules />
     <p className="m-0 text-[13px] text-kumo-subtle">Согласования документов задаются в каждом проекте — на его странице, в блоке «Согласование». Запросы на согласование приходят во «Входящие». Изменения правил применяются сразу.</p>
   </section>;
 }

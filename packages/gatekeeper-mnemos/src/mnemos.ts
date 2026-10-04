@@ -1638,6 +1638,12 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   executeSavedTemplateDecision(id:string){return this.#session.executeSavedTemplateDecision(id);}
   async resolveWorkTemplate(scope:string,key:string,personal?:Parameters<MnemosAccountSession["resolveWorkTemplate"]>[2]){return this.#session.resolveWorkTemplate(scope,key,personal);}
   async listManagedTemplateScopes(cursor=""){return this.#session.listManagedTemplateScopes(cursor);}
+  /** Только человеку-владельцу: список сохранённых разрешений своего агента. */
+  async listTemplateAgentGrants(binding:string,cursor=""){return this.#session.listTemplateAgentGrants(binding,cursor);}
+  /** Разрешения шаблонов доступны только управляющему интерфейсу человека. */
+  async readTemplateAgentGrant(binding:string,scope:string){return this.#session.readTemplateAgentGrant(binding,scope);}
+  /** Сервер проверяет владельца агента и текущую ревизию разрешения. */
+  async setTemplateAgentGrant(binding:string,scope:string,expected:number,enabled:boolean){return this.#session.setTemplateAgentGrant(binding,scope,expected,enabled);}
   async setTemplateScope(id:string,expected:number,config:Parameters<MnemosAccountSession["setTemplateScope"]>[2]){return this.#session.setTemplateScope(id,expected,config);}
   async listTemplateReviewScopes(cursor=""){return this.#session.listTemplateReviewScopes(cursor);}
   async listTemplateProposals(scope:string,cursor=""){return this.#session.listTemplateProposals(scope,cursor);}

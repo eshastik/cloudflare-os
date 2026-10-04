@@ -1,3 +1,4 @@
+import TemplateAgentAccess from "./TemplateAgentAccess.tsx";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatBudgetUSD, parseBudgetUSD } from "../app/budget-money.ts";
 import { projectExpenses, type ProjectExpenses } from "../app/budget-overview.ts";
@@ -64,6 +65,7 @@ function AgentCard({ agent, title, data }: { agent: AgentConnection; title: stri
   const ui = useUi();
   const [confirming, setConfirming] = useState(false);
   const [editingScope, setEditingScope] = useState(false);
+  const [editingTemplates, setEditingTemplates] = useState(false);
   const [history, setHistory] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -118,6 +120,8 @@ function AgentCard({ agent, title, data }: { agent: AgentConnection; title: stri
           {!agent.revoked && agent.runtime_id === "workshop" && <><Pill className="mt-2" aria-expanded={editingScope} onClick={() => setEditingScope(!editingScope)}>Изменить проекты агента</Pill>{editingScope && <WorkshopScope agent={agent} data={data} onDone={() => setEditingScope(false)} />}</>}
           {!ownerAccess && !agent.revoked && agent.runtime_id !== "workshop" && admin && <><Pill className="mt-2" aria-expanded={editingScope} onClick={() => setEditingScope(!editingScope)}>Настроить доступ к проекту</Pill>{editingScope && <AgentProjectAccess agent={agent} data={data} />}</>}
         </dd>
+        {!agent.revoked && <><dt className="m-0 text-kumo-subtle">Шаблоны</dt>
+          <dd className="m-0"><Pill aria-expanded={editingTemplates} onClick={() => setEditingTemplates(!editingTemplates)}>Настроить доступ к шаблонам</Pill>{editingTemplates && <TemplateAgentAccess binding={agent.binding_id} />}</dd></>}
         <dt className="m-0 text-kumo-subtle">Сейчас</dt>
         <dd className="m-0 flex flex-wrap items-center gap-2">{task ? `${(task.message ?? "").slice(0, 100) || "задача"} — ${taskState}` : "задач нет"}{agent.managed_runtime === true && <Pill tone="ghost" aria-expanded={history} onClick={() => setHistory(!history)}>{history ? "Скрыть историю" : "История задач"}</Pill>}</dd>
         {absences.length > 0 && <><dt className="m-0 text-kumo-subtle">Замещение</dt>
