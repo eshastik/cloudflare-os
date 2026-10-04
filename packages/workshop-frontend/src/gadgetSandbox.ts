@@ -27,6 +27,13 @@ let gadget;  // RPC stub to the gadget's server-side Durable Object.
   gadget = newMessagePortRpcSession(port1);
 }
 
+// Отметка доставки не содержит данных документа и помогает отличить потерянное сообщение от зависшего экспорта.
+window.addEventListener('message', event => {
+  if (event.source === window.parent && event.data?.type === 'native-snapshot-request' && event.ports.length === 1) {
+    document.documentElement.dataset.nativeSnapshotRequest = 'received';
+  }
+});
+
 // Monkey-patch console to forward logs to the parent frame.
 for (let level of ['debug', 'info', 'log', 'warn', 'error']) {
   let original = console[level];
