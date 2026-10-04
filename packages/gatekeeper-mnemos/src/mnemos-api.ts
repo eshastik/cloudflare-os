@@ -454,7 +454,7 @@ export class MnemosAPI {
     if(typeof cursor!=="string"||cursor.length>255)throw new MnemosAPIError(400);
     const out=await this.#request<TemplateScopePage>(`/v1/template-scopes?mode=${mode}&cursor=${encodeURIComponent(cursor)}`,"GET",signal);
     if(!out||!Array.isArray(out.scopes)||out.scopes.length>100)throw new MnemosAPIError(502);
-    let previous=cursor;for(const v of out.scopes){if(!v||typeof v.scope_id!=="string"||v.scope_id<=previous||!Number.isSafeInteger(v.revision)||v.revision<1||(mode==="manage"?typeof v.enabled!=="boolean"||!validTemplateScopeConfig(v):!v.enabled)||!["organization","department","group"].includes(v.level)||typeof v.name!=="string"||!v.name)throw new MnemosAPIError(502);previous=v.scope_id;}
+    let previous=cursor;for(const v of out.scopes){if(!v||typeof v.scope_id!=="string"||compareUTF8(v.scope_id,previous)<=0||!Number.isSafeInteger(v.revision)||v.revision<1||(mode==="manage"?typeof v.enabled!=="boolean"||!validTemplateScopeConfig(v):!v.enabled)||!["organization","department","group"].includes(v.level)||typeof v.name!=="string"||!v.name)throw new MnemosAPIError(502);previous=v.scope_id;}
     if(out.next_cursor&&(out.scopes.length!==100||out.next_cursor!==previous))throw new MnemosAPIError(502);return out;
   }
   async listScopedWorkTemplates(scope:string,cursor="",signal?:AbortSignal):Promise<ScopedWorkTemplatePage>{

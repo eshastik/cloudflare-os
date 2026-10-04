@@ -51,3 +51,15 @@ test('каталог принимает порядок UTF-8 сервера и �
   await assert.rejects(listAgentTemplates(broken,'team',''),e=>e instanceof MnemosAPIError&&e.status===502);
  }
 });
+
+test('области и курсор используют порядок UTF-8 сервера',async()=>{
+ const scopes=['\uE000','😀'].map(scope_id=>({scope_id,level:'group',name:'Команда',parent_id:'department',revision:1,enabled:true}));
+ const api=new MnemosAPI('https://memory.example',async()=>'agent-token',async()=>Response.json({scopes}));
+ assert.deepEqual((await listAgentTemplateScopes(api,'')).scopes.map(v=>v.scopeId),['\uE000','😀']);
+ const after=new MnemosAPI('https://memory.example',async()=>'agent-token',async()=>Response.json({scopes:[scopes[1]]}));
+ assert.equal((await listAgentTemplateScopes(after,'\uE000')).scopes[0].scopeId,'😀');
+ for(const invalid of [scopes.toReversed(),[scopes[0],scopes[0]]]){
+  const broken=new MnemosAPI('https://memory.example',async()=>'agent-token',async()=>Response.json({scopes:invalid}));
+  await assert.rejects(listAgentTemplateScopes(broken,''),e=>e instanceof MnemosAPIError&&e.status===502);
+ }
+});
