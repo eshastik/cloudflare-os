@@ -1,4 +1,5 @@
-import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
+import type {ChatTemplateSeed} from './chatTemplateSeed'
+import type {ChatWorkTemplate,ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { AttachmentFileIcon, attachmentAppearance } from "./components/chat/attachmentAppearance";
 import { displayChatTitle } from './chatTitle'
 import SmartLink from './components/SmartLink';
@@ -2011,7 +2012,11 @@ export const ChatInput = ({
   onFolderProjectCreated,
   settings,
   documentProject,
+  templateSeed,
+  onTemplateSeedConsumed,
 }: {
+  templateSeed?:ChatTemplateSeed;
+  onTemplateSeedConsumed?(id:string):void;
   /** Первый выбранный проект: место для документов и начальный каталог личных шаблонов. */
   documentProject?: { accountId: number; projectId: string };
   /** Настройки беседы в нижней строке поля ввода, рядом с «+»: проекты и работа с кодом. */
@@ -2104,7 +2109,9 @@ export const ChatInput = ({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ChatTemplate | null>(null);
-  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null); }, [chatKey]);
+  const [pendingTemplate,setPendingTemplate]=useState<ChatWorkTemplate|null>(null);
+  const consumedTemplateSeed=useRef<string|null>(null);
+  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null);setPendingTemplate(null); }, [chatKey]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -2156,6 +2163,18 @@ export const ChatInput = ({
   const promptCardRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<ComposerMirrorHandle>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const templateForTask=(materials:ChatWorkTemplate[]):ChatTemplate=>({id:JSON.stringify(materials.map(item=>[item.accountId,item.reference])),title:materials.map(item=>item.title+' · версия '+item.reference.revision).join('; '),description:'',mnemos:materials});
+  useEffect(()=>{
+    if(!templateSeed||(chatKey??null)!==templateSeed.chatId||consumedTemplateSeed.current===templateSeed.id)return;
+    consumedTemplateSeed.current=templateSeed.id;
+    const item=templateSeed.template;
+    if(!selectedTemplate)setSelectedTemplate(templateForTask([item]));
+    else if(!selectedTemplate.mnemos?.some(existing=>existing.accountId===item.accountId&&JSON.stringify(existing.reference)===JSON.stringify(item.reference)))setPendingTemplate(item);
+    else setPendingTemplate(null);
+    onTemplateSeedConsumed?.(templateSeed.id);
+    requestAnimationFrame(()=>composerTextareaRef.current?.focus());
+  },[templateSeed,chatKey,onTemplateSeedConsumed]);
+
 
   // Keep inputValue in a ref so handleCursorChange can read it without re-binding.
   const inputValueRef = useRef(inputValue);
@@ -3513,6 +3532,14 @@ export const ChatInput = ({
           </div>
         )}
 
+        {pendingTemplate&&<div role="status" className="mx-3 mb-2 space-y-2 rounded-lg border border-kumo-line px-3 py-2 text-[12px]">
+          <p>Сохранён шаблон «{pendingTemplate.title}», версия {pendingTemplate.reference.revision}. {selectedTemplate&&!selectedTemplate.mnemos?'В задаче выбран шаблон приложения. Замена требует подтверждения.':'Добавить его к материалам этой задачи?'}</p>
+          {selectedTemplate?.mnemos&&selectedTemplate.mnemos.length>=16&&<p>Уже выбрано 16 материалов. Уберите один через выбор шаблонов.</p>}
+          <div className="flex flex-wrap gap-2"><WorkshopButton disabled={!!selectedTemplate?.mnemos&&selectedTemplate.mnemos.length>=16} onClick={()=>{
+            const existing=selectedTemplate?.mnemos??[];
+            setSelectedTemplate(templateForTask(existing.some(item=>item.accountId===pendingTemplate.accountId&&JSON.stringify(item.reference)===JSON.stringify(pendingTemplate.reference))?existing:[...existing,pendingTemplate]));setPendingTemplate(null);composerTextareaRef.current?.focus();
+          }}>{selectedTemplate&&!selectedTemplate.mnemos?'Заменить выбранный шаблон':'Добавить сохранённый шаблон'}</WorkshopButton><WorkshopButton onClick={()=>setPendingTemplate(null)}>Отмена</WorkshopButton></div>
+        </div>}
         {selectedTemplate && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
           <Blueprint size={15} className="shrink-0" />
           <button type="button" onClick={() => setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`} title={selectedTemplate.title}>{selectedTemplate.mnemos ? <><span className="block font-medium">Материалы для задачи: {selectedTemplate.mnemos.length}</span><span className="block truncate text-kumo-subtle">{selectedTemplate.mnemos.map(item=>item.title).join(", ")}</span></> : selectedTemplate.title}</button>
@@ -4274,6 +4301,8 @@ type ConnectionAcceptState = {
 };
 
 interface ChatInterfaceProps {
+  templateSeed?:ChatTemplateSeed;
+  onTemplateSeedConsumed?(id:string):void;
   overseer: RpcStub<Overseer>;
   selectedChatId: number | null;
   onNavigateToChat: (
@@ -4521,6 +4550,8 @@ function ChatInterface({
   outputOfWorkpiece,
   workspaceGadgets,
   openMnemosApp,
+  templateSeed,
+  onTemplateSeedConsumed,
 }: ChatInterfaceProps) {
   // Persistent cache that survives reconnects
   const toasts = useKumoToastManager();
@@ -7083,6 +7114,7 @@ function ChatInterface({
       {(sidebarMode || chatList.length === 0) && <div className="flex-shrink-0 border-t border-kumo-line">
         <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
           <ChatInput
+            templateSeed={templateSeed} onTemplateSeedConsumed={onTemplateSeedConsumed}
             createCapsuleGatekeeper={(accountId, url) =>
               overseer.newGatekeeper(accountId, url)
             }
@@ -7993,6 +8025,7 @@ function ChatInterface({
                     </div>
                   )}
                   <ChatInput
+                    templateSeed={templateSeed} onTemplateSeedConsumed={onTemplateSeedConsumed}
                     documentProject={chatProjectList[0] && {accountId:chatProjectList[0].accountId,projectId:chatProjectList[0].projectId}}
                     settings={
                       <ProjectChips

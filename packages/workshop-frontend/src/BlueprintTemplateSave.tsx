@@ -1,3 +1,4 @@
+import type {ChatWorkTemplate} from '@gadgets/workshop-shared/work-template'
 import {useEffect, useRef, useState} from 'react'
 import {WorkshopButton} from './components/WorkshopControls'
 import type {RpcStub} from 'capnweb'
@@ -9,7 +10,7 @@ import {listAccounts, storesDocuments, openBlueprintTemplatesFrame} from './acco
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
 import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from './gatekeeperAppUpload'
 
-export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject}: {preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
+export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse}: {onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
@@ -161,7 +162,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     {contextNotice&&<p role="status" className="text-[13px] text-kumo-subtle">{contextNotice}</p>}
     {libraryState==='loading'&&<p role="status" className="text-[13px] text-kumo-subtle">Подготовка сохранения…</p>}
     {version?<div className="space-y-4">
-      <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p></div>
+      <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p>{onUse&&account!==null&&<WorkshopButton className="mt-3" tone="primary" onClick={()=>onUse({accountId:account,reference:{template_id:version.template_id,revision:version.revision},title:version.title,purpose:version.purpose,kind:'document'})}>Использовать в задаче</WorkshopButton>}</div>
       <div className="rounded-xl border border-kumo-line p-3"><h4 className="m-0 text-[14px] font-medium">Предложить команде</h4>
        {proposed?<p role="status" className="mt-2 text-[13px]">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<div className="mt-2 space-y-3">
         <p className="text-[13px] leading-5 text-kumo-subtle">Личная версия уже доступна вам. Для общего применения выберите группу и отправьте эту версию на согласование.</p>

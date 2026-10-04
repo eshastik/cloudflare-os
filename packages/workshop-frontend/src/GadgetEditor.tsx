@@ -1,3 +1,4 @@
+import type {ChatTemplateSeed} from './chatTemplateSeed'
 import ChatTemplateLibrary from './ChatTemplateLibrary'
 import {Dialog, DropdownMenu} from '@cloudflare/kumo'
 import { reportShellStage } from "./shellReadiness"
@@ -509,6 +510,7 @@ export default function GadgetEditor() {
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false)
   const [documentTemplateOpen,setDocumentTemplateOpen]=useState(false)
+  const [templateSeed,setTemplateSeed]=useState<ChatTemplateSeed|undefined>()
   const [sharedTemplatesOpen,setSharedTemplatesOpen]=useState(false)
   const [previewMode, _setPreviewMode] = useState(false)
   // Панель «Версия» нативного документа монтируется порталом справа от колонки редактора.
@@ -1262,7 +1264,7 @@ export default function GadgetEditor() {
 
   // ── reload UI when preview branch/code changes ────────────────────────────────
   useEffect(() => { setUiReloadTrigger(t => t + 1) }, [previewChatId, proposedChanges])
-  useEffect(()=>setDocumentTemplateOpen(false),[selectedGadgetId,previewChatId])
+  useEffect(()=>setDocumentTemplateOpen(false),[selectedGadgetId,previewChatId,effectiveSelectedChatId])
 
   // ── user info ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1584,6 +1586,8 @@ export default function GadgetEditor() {
                   key={id}
                   overseer={overseer.stub}
                   selectedChatId={effectiveSelectedChatId}
+                  templateSeed={templateSeed}
+                  onTemplateSeedConsumed={seedId=>setTemplateSeed(current=>current?.id===seedId?undefined:current)}
                   onNavigateToChat={navigateToChat}
                   onProposedChangesChange={setProposedChanges}
                   onDraftProposedChangesChange={setDraftProposedChanges}
@@ -1996,7 +2000,7 @@ export default function GadgetEditor() {
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
           <Dialog.Title className="sr-only">Личный шаблон документа</Dialog.Title>
           <Dialog.Description className="sr-only">Сохраните текущую форму для следующих задач. Предложение команде выполняется отдельно.</Dialog.Description>
-          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onClose={()=>setDocumentTemplateOpen(false)}/>
+          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,template});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 

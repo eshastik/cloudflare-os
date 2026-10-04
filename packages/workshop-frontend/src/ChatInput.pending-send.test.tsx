@@ -128,3 +128,32 @@ test("Удаление загружаемого файла прекращает 
     expect(host.querySelector('button[aria-label^="Повторить загрузку"]')).toBeNull();
   } finally { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); }
 });
+
+test('Сохранённая версия добавляется только в свою беседу и не меняет набранный текст',async()=>{
+ const onSend=vi.fn<(...args:unknown[])=>Promise<void>>(async()=>{}),consumed=vi.fn<(...args:unknown[])=>void>();
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+ const form={accountId:7,reference:{template_id:'form',revision:5},title:'Форма ТЗ',purpose:'ТЗ',kind:'document' as const};
+ const method={accountId:7,reference:{template_id:'method',revision:3},title:'Методика',purpose:'Порядок',kind:'guidance' as const};
+ const render=(id:string,template:typeof form|typeof method,chatId=4)=>root.render(<ChatInput chatKey={4} templateSeed={{id,chatId,template}} onTemplateSeedConsumed={consumed} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={onSend} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}} seedText="Моя неотправленная задача" seedNonce={1}/>);
+ try{
+  await act(async()=>render('first',form));expect(host.querySelector('textarea')?.value).toBe('Моя неотправленная задача');expect(host.textContent).toContain('Материалы для задачи: 1');expect(onSend).not.toHaveBeenCalled();
+  await act(async()=>render('wrong-chat',method,9));expect(host.textContent).not.toContain('Сохранён шаблон');expect(consumed).toHaveBeenCalledTimes(1);
+  await act(async()=>render('duplicate',form));expect(host.textContent).toContain('Материалы для задачи: 1');expect(host.textContent).not.toContain('Добавить сохранённый шаблон');
+  await act(async()=>render('second',method));expect(host.textContent).toContain('Добавить его к материалам этой задачи');expect(host.textContent).toContain('Материалы для задачи: 1');
+  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');
+  expect(host.querySelector('textarea')?.value).toBe('Моя неотправленная задача');expect(onSend).not.toHaveBeenCalled();
+  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(onSend.mock.calls[0][0]).toBe('Моя неотправленная задача');expect(onSend.mock.calls[0][5]).toEqual([{accountId:7,reference:form.reference},{accountId:7,reference:method.reference}]);
+  await act(async()=>render('second',method));expect(host.textContent).not.toContain('Материалы для задачи');
+ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
+});
+
+test('Сохранённый шаблон не вытесняет материалы при достигнутом пределе 16',async()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+ const render=(index:number)=>root.render(<ChatInput chatKey={4} templateSeed={{id:String(index),chatId:4,template:{accountId:7,reference:{template_id:'form-'+index,revision:1},title:'Форма '+index,purpose:'Задача',kind:'document'}}} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={()=>{}} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}}/>);
+ try{
+  for(let index=0;index<16;index++){await act(async()=>render(index));if(index)await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!.click())}
+  await act(async()=>render(16));const add=[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!;expect(add.disabled).toBe(true);expect(host.textContent).toContain('Материалы для задачи: 16');expect(host.textContent).toContain('Уже выбрано 16 материалов');
+  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Отмена')!.click());expect(host.textContent).toContain('Материалы для задачи: 16');
+ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
+});

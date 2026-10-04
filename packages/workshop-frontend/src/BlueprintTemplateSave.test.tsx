@@ -128,3 +128,12 @@ test('Недоступная библиотека pending останавлива
  expect(mocks.selector.resume).toHaveBeenCalledWith('lost-answer');expect(button('Сохранить личный шаблон').disabled).toBe(false);
  await React.act(async()=>button('Сохранить личный шаблон').click());expect(mocks.selector.prepare).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();expect(mocks.creator.save).toHaveBeenCalledOnce();
 });
+
+test('После сохранения точную версию можно передать в задачу только явным действием',async()=>{
+ const use=vi.fn<(...args:unknown[])=>void>();
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly blueprint={{id:'editor',title:'ТЗ',description:'Форма'}} format="cloudflareos.document" snapshotSource={{current:async()=>({format:'cloudflareos.document',formatVersion:1,document:{title:'ТЗ',blocks:[]}})}} onUse={use} onClose={()=>{}}/>));
+ expect([...container.querySelectorAll('button')].some(item=>item.textContent==='Использовать в задаче')).toBe(false);
+ await React.act(async()=>button('Сохранить личный шаблон').click());expect(use).not.toHaveBeenCalled();
+ await React.act(async()=>button('Использовать в задаче').click());
+ expect(use).toHaveBeenCalledWith({accountId:8,reference:{template_id:'template',revision:1},title:'Отчёт',purpose:'Финансовый отчёт',kind:'document'});expect(mocks.creator.propose).not.toHaveBeenCalled();
+});
