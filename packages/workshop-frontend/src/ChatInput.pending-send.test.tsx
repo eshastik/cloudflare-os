@@ -2,7 +2,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, test, vi } from "vitest";
-vi.mock("./AuthContext", () => ({ useAuthenticatedApi: () => ({ authenticatedApi: {} }) }));
+const api=vi.hoisted(()=>({}));
+vi.mock("./AuthContext", () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }));
 vi.mock("./useVendorBranding", () => ({ useVendorBranding: () => ({}) }));
 vi.mock("./components/chat/FolderProjectCard", () => ({ FolderProjectCard: () => null, useFolderProject: () => ({ offer: () => {} }) }));
 const { upload } = vi.hoisted(() => ({ upload: vi.fn(async (_api: unknown, file: {name: string; blob?: Blob}, _options: {retryId?: string; signal?: AbortSignal}) => ({id: file.name, name: file.name, mimeType: "application/pdf"})) }));
@@ -162,6 +163,11 @@ test('Сохранённый шаблон не вытесняет материа
  vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});const host=document.createElement('div');document.body.append(host);const root=createRoot(host);const send=vi.fn<(...args:unknown[])=>Promise<void>>(async()=>{});
  const form={accountId:7,reference:{template_id:'form',revision:5},title:'Форма',purpose:'ТЗ',kind:'document' as const},method={accountId:7,reference:{template_id:'method',revision:3},title:'Методика',purpose:'ТЗ',kind:'guidance' as const};
  const render=(id:string,templates:Array<typeof form|typeof method>)=>root.render(<ChatInput chatKey={4} templateSeed={{id,chatId:4,templates}} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={send} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}} seedText="Подготовь ТЗ" seedNonce={1}/>);
- try{await act(async()=>render('form',[form]));await act(async()=>render('both',[form,method,method]));expect(host.textContent).toContain('Материалы для задачи: 1');expect(send).not.toHaveBeenCalled();await act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Добавить выбранные материалы')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');expect(host.querySelector('textarea')?.value).toBe('Подготовь ТЗ');await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(send.mock.calls[0][5]).toEqual([{accountId:7,reference:form.reference},{accountId:7,reference:method.reference}]);
+ try{await act(async()=>render('form',[form]));await act(async()=>render('both',[form,method,method]));expect(host.textContent).toContain('Материалы для задачи: 1');expect(send).not.toHaveBeenCalled();await act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Добавить выбранные материалы')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');expect(host.textContent).toContain('Форма документа · версия 5 · Личный');expect(host.textContent).toContain('Методика · версия 3 · Личный');
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Посмотреть выбранный шаблон: Методика · версия 3"]')!.click());expect(document.querySelector('[aria-label="Содержимое шаблона"]')).not.toBeNull();await act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Назад к задаче')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Убрать из задачи: Форма · версия 5"]')!.click());expect(host.textContent).toContain('Материалы для задачи: 1');expect(host.textContent).not.toContain('Форма документа');expect(host.querySelector('textarea')?.value).toBe('Подготовь ТЗ');
+ await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Убрать из задачи: Методика · версия 3"]')!.click());expect(host.querySelector('[aria-label="Материалы для задачи"]')).toBeNull();expect(host.querySelector('textarea')?.value).toBe('Подготовь ТЗ');
+ await act(async()=>render('reset',[form,method]));await act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Убрать все материалы')!.click());expect(host.querySelector('[aria-label="Материалы для задачи"]')).toBeNull();
+ await act(async()=>render('method-only',[method]));await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(send.mock.calls[0][5]).toEqual([{accountId:7,reference:method.reference}]);
  }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
  })

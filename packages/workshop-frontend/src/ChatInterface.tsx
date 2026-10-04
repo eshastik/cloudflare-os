@@ -1,3 +1,5 @@
+import TaskTemplateMaterials from './TaskTemplateMaterials'
+import WorkTemplatePreview from './WorkTemplatePreview'
 import type {ChatTemplateSeed} from './chatTemplateSeed'
 import type {ChatWorkTemplate,ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { AttachmentFileIcon, attachmentAppearance } from "./components/chat/attachmentAppearance";
@@ -2110,8 +2112,9 @@ export const ChatInput = ({
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ChatTemplate | null>(null);
   const [pendingTemplates,setPendingTemplates]=useState<ChatWorkTemplate[]>([]);
+  const [taskTemplatePreview,setTaskTemplatePreview]=useState<ChatWorkTemplate|null>(null);
   const consumedTemplateSeed=useRef<string|null>(null);
-  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null);setPendingTemplates([]); }, [chatKey]);
+  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null);setPendingTemplates([]);setTaskTemplatePreview(null); }, [chatKey]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -3543,10 +3546,10 @@ export const ChatInput = ({
             setSelectedTemplate(templateForTask([...existing,...additions]));setPendingTemplates([]);composerTextareaRef.current?.focus();
           }}>{selectedTemplate&&!selectedTemplate.mnemos?'Заменить выбранный шаблон':'Добавить выбранные материалы'}</WorkshopButton><WorkshopButton onClick={()=>setPendingTemplates([])}>Отмена</WorkshopButton></div>
         </div>}
-        {selectedTemplate && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
-          <Blueprint size={15} className="shrink-0" />
-          <button type="button" onClick={() => setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`} title={selectedTemplate.title}>{selectedTemplate.mnemos ? <><span className="block font-medium">Материалы для задачи: {selectedTemplate.mnemos.length}</span><span className="block truncate text-kumo-subtle">{selectedTemplate.mnemos.map(item=>item.title).join(", ")}</span></> : selectedTemplate.title}</button>
-          <WorkshopIconButton aria-label="Убрать шаблон" className="!h-6 !w-6" onClick={() => setSelectedTemplate(null)}><X size={13} /></WorkshopIconButton>
+        {selectedTemplate?.mnemos?.length ? <TaskTemplateMaterials items={selectedTemplate.mnemos} onChoose={()=>setTemplatePickerOpen(true)} onPreview={setTaskTemplatePreview} onRemove={item=>{
+          setSelectedTemplate(current=>{if(!current?.mnemos)return current;const remaining=current.mnemos.filter(existing=>existing.accountId!==item.accountId||JSON.stringify(existing.reference)!==JSON.stringify(item.reference));return remaining.length?templateForTask(remaining):null;});composerTextareaRef.current?.focus();
+        }} onClear={()=>{setSelectedTemplate(null);composerTextareaRef.current?.focus();}}/> : selectedTemplate && !selectedTemplate.mnemos && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
+          <Blueprint size={15} className="shrink-0"/><button type="button" onClick={()=>setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`} title={selectedTemplate.title}>{selectedTemplate.title}</button><WorkshopIconButton aria-label="Убрать шаблон" className="!h-6 !w-6" onClick={()=>setSelectedTemplate(null)}><X size={13}/></WorkshopIconButton>
         </div>}
         {/* Footer row: connection/options left, model + send right */}
         <div className="flex items-end justify-between gap-1.5 px-3 pb-1.5">
@@ -3657,6 +3660,9 @@ export const ChatInput = ({
         </div>
       </div>
 
+      {taskTemplatePreview&&<WorkTemplatePreview backLabel="Назад к задаче" item={taskTemplatePreview} selected={!!selectedTemplate?.mnemos?.some(item=>item.accountId===taskTemplatePreview.accountId&&JSON.stringify(item.reference)===JSON.stringify(taskTemplatePreview.reference))} atLimit={(selectedTemplate?.mnemos?.length??0)>=16} onBack={()=>{setTaskTemplatePreview(null);composerTextareaRef.current?.focus();}} onClose={()=>{setTaskTemplatePreview(null);composerTextareaRef.current?.focus();}} onToggle={item=>{
+        setSelectedTemplate(current=>{const existing=current?.mnemos??[];const chosen=existing.some(other=>other.accountId===item.accountId&&JSON.stringify(other.reference)===JSON.stringify(item.reference));const next=chosen?existing.filter(other=>other.accountId!==item.accountId||JSON.stringify(other.reference)!==JSON.stringify(item.reference)):existing.length<16?[...existing,item]:existing;return next.length?templateForTask(next):null;});
+      }}/>}
       {templatePickerOpen && <ChatTemplatePicker initialSelected={selectedTemplate?.mnemos} preferredProject={documentProject} onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
     </div>
   );

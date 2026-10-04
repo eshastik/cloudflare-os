@@ -12,7 +12,7 @@ import {WorkshopButton} from './components/WorkshopControls'
 type State={status:'loading'}|{status:'error'}|{status:'ready';material:ChatWorkTemplateChoice;content:string|NativeDocumentSnapshot}
 const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
 
-export default function WorkTemplatePreview({item,selected,atLimit,onToggle,onBack,onClose}:{item:ChatWorkTemplate;selected:boolean;atLimit:boolean;onToggle(item:ChatWorkTemplate):void;onBack():void;onClose():void}){
+export default function WorkTemplatePreview({item,selected,atLimit,onToggle,onBack,onClose,backLabel="Назад к выбору"}:{item:ChatWorkTemplate;selected:boolean;atLimit:boolean;onToggle(item:ChatWorkTemplate):void;onBack():void;onClose():void;backLabel?:string}){
  const {authenticatedApi}=useAuthenticatedApi(),[state,setState]=useState<State>({status:'loading'}),[reload,setReload]=useState(0)
  const key=JSON.stringify([item.accountId,item.reference])
  useEffect(()=>{
@@ -43,6 +43,6 @@ export default function WorkTemplatePreview({item,selected,atLimit,onToggle,onBa
    {state.status==='error'&&<div className="space-y-3"><p role="alert">Содержимое недоступно. Проверьте доступ и подключение. Просмотр поддерживает текст и нативную форму документа размером до 1 МиБ.</p><WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить просмотр</WorkshopButton></div>}
    {state.status==='ready'&&<>{state.material.purpose&&<p className="mb-4 text-[13px] text-kumo-subtle">{state.material.purpose}</p>}{typeof state.content==='string'?<pre className="whitespace-pre-wrap break-words font-sans text-[14px] leading-6">{state.content}</pre>:<div className="space-y-3 text-[14px] leading-6"><h2 className="text-[18px] font-medium">{String(state.content.document.title)}</h2>{(state.content.document.blocks as {html:string}[]).map((block,index)=><div key={index} className="break-words [&_h1]:text-xl [&_h2]:text-lg [&_h3]:font-medium [&_table]:w-full [&_td]:border [&_td]:border-kumo-line [&_td]:p-2 [&_th]:border [&_th]:border-kumo-line [&_th]:p-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{__html:DOMPurify.sanitize(block.html,{ALLOWED_TAGS:['p','div','span','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','b','i','u','s','blockquote','table','tr','thead','tbody','td','th','br','hr','pre','code'],ALLOWED_ATTR:['colspan','rowspan']})}}/>)}</div>}</>}
   </div>
-  <div className="flex shrink-0 flex-wrap justify-between gap-2 border-t border-kumo-line px-5 py-4"><WorkshopButton onClick={onBack}>Назад к выбору</WorkshopButton><WorkshopButton tone="primary" disabled={state.status!=='ready'||!selected&&atLimit} onClick={()=>{if(state.status==='ready')onToggle({...item,...state.material})}}>{selected?'Убрать из задачи':'Выбрать для задачи'}</WorkshopButton></div>
+  <div className="flex shrink-0 flex-wrap justify-between gap-2 border-t border-kumo-line px-5 py-4"><WorkshopButton onClick={onBack}>{backLabel}</WorkshopButton><WorkshopButton tone="primary" disabled={state.status!=='ready'||!selected&&atLimit} onClick={()=>{if(state.status==='ready')onToggle({...item,...state.material})}}>{selected?'Убрать из задачи':'Выбрать для задачи'}</WorkshopButton></div>
  </Dialog></Dialog.Root>
 }
