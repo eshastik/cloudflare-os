@@ -454,6 +454,10 @@ export interface GatekeeperTemplateScopeConfig {
   approvers: string[];
 }
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  /** Выдаёт метаданные и билет прямого чтения точной версии; содержимое через RPC не передаётся. */
+  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
+  /** Повторно проверяет текущие права и исходный снимок перед показом загруженного содержимого. */
+  validatePreview(reference: import('./work-template.js').WorkTemplateReference, sourceHead:string): Promise<void>;
   /** Читает доступные для управления уровни и разрешённые администратору справочники. */
   configuration(): Promise<{scopes: (GatekeeperTemplateScopeConfig & {scope_id:string;revision:number})[]; people:{id:string;name:string}[]; groups:{id:string;name:string}[]}>;
   /** Сохраняет область с проверкой текущей ревизии и полномочий на сервере. */

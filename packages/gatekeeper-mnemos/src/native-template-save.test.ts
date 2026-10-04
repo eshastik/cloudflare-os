@@ -37,3 +37,13 @@ test('нативная форма сохраняется без Blueprint, по�
  await next.creator.issue(100,'checksum');await next.creator.checkpoint('upload');const changed=await next.creator.save();
  assert.equal(changed.template_id,saved.template_id);assert.equal(changed.revision,2);assert.equal(saved.revision,1);
 });
+
+test('просмотр общей версии выдаёт только метаданные и билет, а показ требует текущего доступа',async()=>{
+ const ref={scope_id:'team',template_key:'form',revision:5},head='a'.repeat(64);let denied=false;
+ const source={title:'Форма',purpose:'ТЗ',kind:'document',source_head:head,content_type:'application/vnd.cloudflareos.document+json',project_id:'private-project',node_id:'private-node'};
+ const session={async beginWorkTemplateDownload(reference:unknown){assert.deepEqual(reference,ref);return {source,ticket:{url:'https://objects.example/form',method:'GET',size_bytes:100,sha256_hex:'b'.repeat(64),expires_at:new Date(Date.now()+60_000).toISOString()}}},async readWorkTemplateSelection(references:unknown){if(denied)throw Error('denied');assert.deepEqual(references,[ref]);return {materials:[{scoped:{source}}]}}};
+ const templates=new BlueprintTemplates(session as any,{} as any),preview=await templates.preview(ref);
+ assert.deepEqual(preview.material.reference,ref);assert.equal(preview.sourceHead,head);assert.equal(JSON.stringify(preview).includes('private-project'),false);assert.equal(JSON.stringify(preview).includes('private-node'),false);
+ await templates.validatePreview(ref,head);denied=true;await assert.rejects(templates.validatePreview(ref,head),/denied/);denied=false;
+ await assert.rejects(templates.validatePreview(ref,'c'.repeat(64)));source.content_type='application/octet-stream';await assert.rejects(templates.preview(ref));
+});

@@ -172,3 +172,9 @@ export async function downloadGatekeeperNativeReview(
   onMetadata?.(ticket.metadata)
   return snapshot
 }
+
+/** Текст точной версии рабочего шаблона; права перепроверяются до его показа человеку. */
+export async function downloadGatekeeperWorkTemplateText(storageOrigin:string,ticket:GatekeeperDownloadTicket,signal:AbortSignal,validateAccess:()=>Promise<void>):Promise<string>{
+ const text=await downloadVerifiedText(storageOrigin,ticket,signal,1024*1024)
+ await validateAccess();signal.throwIfAborted();return text
+}

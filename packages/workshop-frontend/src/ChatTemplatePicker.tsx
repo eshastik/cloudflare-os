@@ -1,3 +1,4 @@
+import WorkTemplatePreview from './WorkTemplatePreview'
 import { useEffect, useState, useRef } from 'react'
 import { Dialog } from '@cloudflare/kumo'
 import { Blueprint, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
@@ -77,6 +78,7 @@ const templateSelectionKey=(item:ChatWorkTemplate)=>JSON.stringify([item.account
 export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string}}){
  const {authenticatedApi}=useAuthenticatedApi();
  const [legacy,setLegacy]=useState(false);
+ const [preview,setPreview]=useState<ChatWorkTemplate|null>(null);
  const [selected,setSelected]=useState<ChatWorkTemplate[]>(()=>[...initialSelected]);
  const [accounts,setAccounts]=useState<Array<{accountId:number;title:string}>>([]);
  const [accountId,setAccountId]=useState<number|null>(initialSelected[0]?.accountId??preferredProject?.accountId??null);
@@ -124,7 +126,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
   return()=>{active=false;};
  },[authenticatedApi,accountId,projects,reload,catalogState,preferredProjectAccount,preferredProjectId]);
  useEffect(()=>{
-  let active=true;++generation.current;setItems([]);setCursor('');if(catalogState!=='ready'){setLoading(catalogState==='loading');return;}if(accountId===null||scopeId===null&&!projectId){setLoading(false);return;}
+  let active=true;++generation.current;setPreview(null);setItems([]);setCursor('');if(catalogState!=='ready'){setLoading(catalogState==='loading');return;}if(accountId===null||scopeId===null&&!projectId){setLoading(false);return;}
   setLoading(true);setError('');
   void authenticatedApi.listChatTemplates(accountId,scopeId,'',scopeId===null?projectId:undefined).then(page=>{if(active){setItems(page.templates.map(item=>({...item,accountId})));setCursor(page.nextCursor);setLoading(false);}},()=>{if(active){setError('Выбранный каталог недоступен. Повторите запрос или выберите другую область.');setLoading(false);}});
   return()=>{active=false;};
@@ -142,6 +144,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const filters=[['all','Все'],['document','Формы'],['guidance','Методики'],['agent_instructions','Инструкции'],['skill','Навыки']] as const;
  const chosen=(item:ChatWorkTemplate)=>selected.some(s=>templateSelectionKey(s)===templateSelectionKey(item));
  const remove=(item:ChatWorkTemplate)=>setSelected(old=>old.filter(s=>templateSelectionKey(s)!==templateSelectionKey(item)));
+ if(preview)return <WorkTemplatePreview item={preview} selected={chosen(preview)} atLimit={selected.length>=16} onBack={()=>setPreview(null)} onClose={onClose} onToggle={item=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)}/>;
  const shown=items.filter(item=>(kind==='all'||item.kind===kind)&&(item.title+' '+item.purpose).toLocaleLowerCase('ru').includes(query.trim().toLocaleLowerCase('ru')));
  const selectClass='h-9 w-full min-w-0 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-brand';
  return <Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}>
@@ -165,10 +168,10 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
     {error&&<p role="alert" className="px-2 py-2 text-[13px]">{error} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton></p>}
     {loading&&<p role="status" className="px-2 py-4 text-[13px] text-kumo-subtle">Загрузка шаблонов…</p>}
     {!loading&&!error&&!shown.length&&<div className="px-2 py-6 text-[13px] text-kumo-subtle">{accountId===null?(accounts.length?'Выберите библиотеку для поиска шаблонов.':'Библиотека Mnemos пока недоступна.'):scopeId===null&&!projectId?(accountId===preferredProjectAccount?'Проект беседы недоступен в этой библиотеке. Выберите другой проект.':'Выберите проект для личных шаблонов.'):query||kind!=='all'?'Совпадений нет. Измените запрос или вид шаблона.':'В этой области шаблонов пока нет.'}</div>}
-    {shown.map(item=><button key={templateSelectionKey(item)} type="button" aria-pressed={chosen(item)} disabled={!chosen(item)&&selected.length>=16} onClick={()=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)} className={'mb-1 flex w-full items-start gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-kumo-brand disabled:opacity-50 '+(chosen(item)?'border-kumo-brand bg-kumo-tint':'border-transparent hover:bg-kumo-tint')}>
+    {shown.map(item=><div key={templateSelectionKey(item)} className="mb-2"><button type="button" aria-pressed={chosen(item)} disabled={!chosen(item)&&selected.length>=16} onClick={()=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)} className={'mb-1 flex w-full items-start gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-kumo-brand disabled:opacity-50 '+(chosen(item)?'border-kumo-brand bg-kumo-tint':'border-transparent hover:bg-kumo-tint')}>
      <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-kumo-default">{item.title}</span><span className="mt-1 block text-[12px] text-kumo-subtle">{kinds[item.kind]} · версия {item.reference.revision}</span>{item.purpose&&<span className="mt-1 block text-[13px] leading-5 text-kumo-subtle">{item.purpose}</span>}</span>
      <span aria-hidden="true" className={'mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border '+(chosen(item)?'border-kumo-brand bg-kumo-brand text-white':'border-kumo-line')}>{chosen(item)&&<Check size={14} weight="bold"/>}</span>
-    </button>)}
+    </button><button type="button" aria-label={'Посмотреть: '+item.title} onClick={()=>setPreview(item)} className="ml-3 rounded-lg px-2 py-1 text-[12px] text-kumo-subtle underline underline-offset-2 hover:text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-brand">Посмотреть содержимое</button></div>)}
     {cursor&&<WorkshopButton className="mt-2" disabled={loading} onClick={()=>void more()}>Загрузить ещё шаблоны</WorkshopButton>}
    </div>
    <div className="shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4">

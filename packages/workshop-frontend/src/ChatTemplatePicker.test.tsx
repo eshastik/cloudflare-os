@@ -59,6 +59,10 @@ it('выбирает точные версии формы и методики б
   expect(api.listOwnBlueprints).not.toHaveBeenCalled();
   for(const title of ['Методика ТЗ','Форма ТЗ'])await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith(title))!.click());
   expect(selected).not.toHaveBeenCalled();
+  await React.act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());
+  expect(document.querySelector('[aria-label="Содержимое шаблона"]')).not.toBeNull();
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Назад к выбору')!.click());
+  expect(document.querySelector('[aria-label="Рабочие шаблоны Mnemos"]')?.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2);
   await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('Использовать выбранные (2)'))!.click());
   const chosen=selected.mock.calls[0][0];
   expect(chosen.mnemos.map((item:{reference:unknown})=>item.reference)).toEqual([{template_id:'method',revision:3},{template_id:'form',revision:5}]);

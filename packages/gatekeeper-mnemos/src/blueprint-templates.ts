@@ -1,3 +1,4 @@
+import {checkedTemplateReferences,type WorkTemplateReference} from '@gadgets/workshop-shared/work-template'
 import { RpcStub, RpcTarget } from 'cloudflare:workers'
 import type { AccountStorage, MnemosAccountSession } from './account-session'
 import { BLUEPRINT_TEMPLATE_MIME, MAX_BLUEPRINT_TEMPLATE_BYTES } from '@gadgets/workshop-shared/blueprint-template'
@@ -8,6 +9,20 @@ type Capture = { nativeFormat?: "cloudflareos.document"; blueprint?: string; tem
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
+  async preview(reference:WorkTemplateReference){
+    const ref=checkedTemplateReferences([reference])[0]
+    const issued=await this.session.beginWorkTemplateDownload(ref),source=issued.source,ticket=issued.ticket
+    if(ticket.size_bytes>1024*1024||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Просмотр доступен для снимков до одного МиБ')
+    if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))throw new Error('Просмотр этого формата пока не поддерживается')
+    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},sourceHead:source.source_head,
+      ticket:{url:ticket.url,method:ticket.method,size_bytes:ticket.size_bytes,sha256_hex:ticket.sha256_hex,content_type:source.content_type}}
+  }
+  async validatePreview(reference:WorkTemplateReference,sourceHead:string){
+    const ref=checkedTemplateReferences([reference])[0]
+    if(!/^[a-f0-9]{64}$/.test(sourceHead))throw new Error('Некорректный снимок')
+    const material=(await this.session.readWorkTemplateSelection([ref])).materials[0]
+    if((material.personal??material.scoped!.source).source_head!==sourceHead)throw new Error('Снимок шаблона изменился')
+  }
   async configuration() {
     const scopes = []; let cursor = ''
     do { const page = await this.session.listManagedTemplateScopes(cursor); scopes.push(...page.scopes); cursor=page.next_cursor||'' } while(cursor)
