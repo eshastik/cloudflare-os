@@ -1993,8 +1993,8 @@ export default function GadgetEditor() {
 
       {documentTemplateOpen && selectedGadgetStub && selectedGadgetId && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
-          <Dialog.Title className="sr-only">Личный шаблон документа</Dialog.Title>
-          <Dialog.Description className="sr-only">Сохраните текущую форму для следующих задач. Предложение команде выполняется отдельно.</Dialog.Description>
+          <Dialog.Title className="sr-only">Личный рабочий шаблон</Dialog.Title>
+          <Dialog.Description className="sr-only">Выберите, как использовать материал: форма, методика, инструкция или навык. Предложение команде выполняется отдельно.</Dialog.Description>
           <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
