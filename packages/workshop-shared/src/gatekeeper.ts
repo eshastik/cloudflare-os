@@ -429,10 +429,10 @@ export interface GatekeeperTextUploadIssuer extends RpcTarget {
 
 /** Приём файлов организации до выбора проекта; доступен только доверенному хосту. */
 export interface GatekeeperTemplateVersion {
-  template_id: string; revision: number; title: string; purpose: string; project_id: string;
+  template_id: string; revision: number; title: string; purpose: string; project_id: string; kind?: import('./work-template.js').WorkTemplateKind;
 }
 export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
-  state(): Promise<{upload: string; project: string; title: string; purpose: string; version: GatekeeperTemplateVersion | null}>;
+  state(): Promise<{upload: string; project: string; title: string; purpose: string; kind?: import('./work-template.js').WorkTemplateKind; version: GatekeeperTemplateVersion | null}>;
   propose(scope: string, scopeRevision: number): Promise<{proposal_id: string; target_scope_id: string}>;
   issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
   checkpoint(upload: string): Promise<void>;
@@ -477,7 +477,7 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
   projects(): Promise<{projects: {id: string; name: string}[]}>;
   latest(blueprint:string): Promise<GatekeeperTemplateVersion|null>;
   /** Готовит личный снимок: без nativeFormat — совместимый Blueprint; с ним — данные документа без кода. */
-  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document"): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
+  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind?: import('./work-template.js').WorkTemplateKind): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
   resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
 }
 

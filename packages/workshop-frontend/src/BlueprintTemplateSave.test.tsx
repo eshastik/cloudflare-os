@@ -87,7 +87,7 @@ test('Документ сохраняется в каталог нативным
  await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly blueprint={{id:'editor',title:'ТЗ',description:'Форма требований'}} format="cloudflareos.document" snapshotSource={{current:read}} onClose={()=>{}}/>));
  await React.act(async()=>button('Сохранить личный шаблон').click());
  expect(mocks.selector.latest).toHaveBeenCalledWith('native-document:editor');
- expect(mocks.selector.prepare).toHaveBeenCalledWith('project','ТЗ','Форма требований',undefined,'native-document:editor','cloudflareos.document');
+ expect(mocks.selector.prepare).toHaveBeenCalledWith('project','ТЗ','Форма требований',undefined,'native-document:editor','cloudflareos.document','document');
  expect(read).toHaveBeenCalledOnce();expect(mocks.nativeUpload.mock.calls[0].slice(0,3)).toEqual([snapshot,'cloudflareos.document','https://objects.example']);
  expect(mocks.api.captureBlueprintTemplate).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();
  expect(mocks.creator.checkpoint).toHaveBeenCalledWith('native-upload');expect(mocks.creator.save).toHaveBeenCalledOnce();expect(mocks.creator.propose).not.toHaveBeenCalled();
@@ -136,4 +136,16 @@ test('После сохранения точную версию можно пе�
  await React.act(async()=>button('Сохранить личный шаблон').click());expect(use).not.toHaveBeenCalled();
  await React.act(async()=>button('Использовать в задаче').click());
  expect(use).toHaveBeenCalledWith({accountId:8,reference:{template_id:'template',revision:1},title:'Отчёт',purpose:'Финансовый отчёт',kind:'document'});expect(mocks.creator.propose).not.toHaveBeenCalled();
+});
+
+test.each(['guidance','agent_instructions','skill'] as const)('Документ сохраняется как %s и возвращается в задачу с этим видом',async kind=>{
+ const snapshot={format:'cloudflareos.document' as const,formatVersion:1 as const,document:{title:'Материал',blocks:[{id:'step',html:'<p>Проверь критерии приёмки</p>'}]}};
+ const onUse=vi.fn<(...args:unknown[])=>void>();
+ mocks.creator.save.mockResolvedValue({template_id:'method',revision:1,title:'Материал',purpose:'Порядок работы',project_id:'project',kind});
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly blueprint={{id:'editor',title:'Материал',description:'Порядок работы'}} format="cloudflareos.document" snapshotSource={{current:async()=>snapshot}} onUse={onUse} onClose={()=>{}}/>));
+ await React.act(async()=>{const select=container.querySelector<HTMLSelectElement>('[aria-label="Вид шаблона"]')!;select.value=kind;select.dispatchEvent(new Event('change',{bubbles:true}));});
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Материал','Порядок работы',undefined,'native-document:editor:'+kind,'cloudflareos.document',kind);
+ expect(mocks.nativeUpload.mock.calls[0][0]).toEqual(snapshot);expect(mocks.api.captureBlueprintTemplate).not.toHaveBeenCalled();expect(mocks.creator.propose).not.toHaveBeenCalled();
+ await React.act(async()=>button('Использовать в задаче').click());expect(onUse).toHaveBeenCalledWith(expect.objectContaining({kind,reference:{template_id:'method',revision:1}}));
 });

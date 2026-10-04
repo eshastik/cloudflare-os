@@ -64,9 +64,9 @@ test('общий Blueprint копируется по точной версии, 
  }finally{await mf.dispose()}
 });
 
-test('Новая версия Blueprint сохраняет историю, проверяет проект и читается после новой сессии',async()=>{
- const head='a'.repeat(64),mime='application/vnd.mnemos.blueprint-template+json';
- let version={template_id:'stable',revision:1,title:'Отчёт',kind:'document',purpose:'План',project_id:'project',node_id:'old',source_head:head,content_type:mime,user_id:'alice',agent_id:'',created_at:'2026-09-15T00:00:00Z'};
+for(const kind of ['document','guidance','agent_instructions','skill']) test('Версия '+kind+' сохраняет вид и читается после новой сессии',async()=>{
+ const head='a'.repeat(64),mime=kind==='document'?'application/vnd.mnemos.blueprint-template+json':'application/vnd.cloudflareos.document+json';
+ let version={template_id:'stable',revision:1,title:'Отчёт',kind,purpose:'План',project_id:'project',node_id:'old',source_head:head,content_type:mime,user_id:'alice',agent_id:'',created_at:'2026-09-15T00:00:00Z'};
  let writes=0,creates=0,promotions=0;
  const scope={scope_id:'finance',revision:4,level:'group',parent_id:'department',reader_group_id:'readers',name:'Финансы',enabled:true,approvers:['reviewer']};
  const mf=new Miniflare({workers:[{
@@ -91,7 +91,7 @@ test('Новая версия Blueprint сохраняет историю, пр�
  try{
  if(input.propose){using creator=await frame.blueprintTemplates.selector.resume(input.id);return Response.json(await creator.propose('finance',4));}
  if(input.latest)return Response.json(await frame.blueprintTemplates.selector.latest('bp'));
- const prepared=await frame.blueprintTemplates.selector.prepare(input.project||'project','Отчёт','План',{template_id:'stable',revision:1},'bp');using creator=prepared.creator;
+ const prepared=await frame.blueprintTemplates.selector.prepare(input.project||'project','Отчёт','План',{template_id:'stable',revision:1},'bp',${kind==='document'?'undefined':JSON.stringify('cloudflareos.document')},input.kind||${JSON.stringify(kind)});using creator=prepared.creator;
  const ticket=await creator.issue(2,'a'.repeat(43)+'=');await creator.checkpoint(ticket.upload_id);
  const saved=await creator.save();await creator.save();return Response.json({...saved,capture:prepared.id});
  }catch{return new Response('denied',{status:403})}
@@ -99,7 +99,9 @@ test('Новая версия Blueprint сохраняет историю, пр�
  try{
  const driver=await mf.getWorker('driver');const call=input=>driver.fetch('https://driver.test',{method:'POST',body:JSON.stringify(input)});
  assert.equal((await call({project:'other'})).status,403);assert.equal(creates,0);
- const saved=await call({});assert.equal(saved.status,200);const result=await saved.json();assert.equal(result.revision,2);assert.equal(creates,1);assert.equal(writes,1);
+ assert.equal((await call({kind:'invalid'})).status,403);assert.equal(creates,0);
+ if(kind!=='document'){assert.equal((await call({kind:'document'})).status,403);assert.equal(creates,0);}
+ const saved=await call({});assert.equal(saved.status,200);const result=await saved.json();assert.equal(result.revision,2);assert.equal(result.kind,kind);assert.equal(creates,1);assert.equal(writes,1);
  const latest=await (await call({latest:true})).json();assert.equal(latest.template_id,'stable');assert.equal(latest.revision,2);
  assert.equal(promotions,0);const proposed=await call({propose:true,id:result.capture});assert.equal(proposed.status,200);assert.equal((await proposed.json()).expected_catalogue_revision,7);assert.equal(promotions,1);
  }finally{await mf.dispose();}

@@ -1,4 +1,4 @@
-import type {ChatWorkTemplate} from '@gadgets/workshop-shared/work-template'
+import type {ChatWorkTemplate,WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import {useEffect, useRef, useState} from 'react'
 import {WorkshopButton} from './components/WorkshopControls'
 import type {RpcStub} from 'capnweb'
@@ -31,7 +31,10 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const frame = useRef<GatekeeperUiFrame|null>(null)
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
-  const sourceKey = nativeOnly ? `native-document:${blueprint.id}` : blueprint.id
+  const [kind,setKind] = useState<WorkTemplateKind>('document')
+  const sourceKey = nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
+  const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
+  const descriptions={document:'Текущее содержимое станет исходной формой для новых документов.',guidance:'Описывает порядок работы и требования к результату. Можно использовать вместе с формой документа.',agent_instructions:'Задаёт поведение агента в выбранной задаче. Инструкция не расширяет его права.',skill:'Описывает выполнение конкретной операции. Выбирается для задач, где эта операция нужна.'}
   const pendingKey = `mnemos-blueprint-save:${sourceKey}`
   useEffect(() => {
     let cancelled = false
@@ -84,7 +87,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         creator.current=resumed
         const state=await resumed.state()
         if(cancelled)return
-        setProject(state.project);setTitle(state.title);setPurpose(state.purpose);setVersion(state.version);setLocked(true);setContextNotice('')
+        setProject(state.project);setTitle(state.title);setPurpose(state.purpose);setKind(state.kind??state.version?.kind??'document');setVersion(state.version);setLocked(true);setContextNotice('')
       }
       setLibraryState('ready')
     }).catch(()=>{if(!cancelled){setError('Не удалось открыть библиотеку шаблонов.');setLibraryState('error')}})
@@ -116,7 +119,9 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(!creator.current){
         if(saved?.account===account)creator.current=await store.selector.resume(saved.id) as RpcStub<GatekeeperBlueprintTemplateCreator>
         else {
-          const prepared=await store.selector.prepare(project,title,purpose,previous,sourceKey,...(nativeOnly ? ["cloudflareos.document" as const] : []))
+          const prepared=nativeOnly
+            ? await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind)
+            : await store.selector.prepare(project,title,purpose,previous,sourceKey)
           creator.current=prepared.creator as RpcStub<GatekeeperBlueprintTemplateCreator>
           sessionStorage.setItem(pendingKey,JSON.stringify({account,id:prepared.id}));setLocked(true)
         }
@@ -156,13 +161,13 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   }
   const field='mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-kumo-brand'
   return <section aria-label="Версия рабочего шаблона" className="space-y-4 p-1">
-    <div><h3 className="m-0 text-[17px] font-medium">{version?'Шаблон сохранён':previous?'Новая версия шаблона':'Сохранить личный шаблон'}</h3><p className="mt-1 text-[13px] leading-5 text-kumo-subtle">{format?'Текущее содержимое станет исходной версией для новых документов.':'Сохраните гаджет и его содержимое для следующих задач.'}</p></div>
+    <div><h3 className="m-0 text-[17px] font-medium">{version?'Шаблон сохранён':previous?'Новая версия шаблона':'Сохранить личный шаблон'}</h3><p className="mt-1 text-[13px] leading-5 text-kumo-subtle">{nativeOnly?descriptions[kind]:format?'Текущее содержимое станет исходной версией для новых документов.':'Сохраните гаджет и его содержимое для следующих задач.'}</p></div>
     {accountsLoading&&<p role="status" className="text-[13px] text-kumo-subtle">Загрузка библиотек…</p>}
     {!accountsLoading&&!accounts.length&&!error&&<p className="text-[13px] text-kumo-subtle">Нет доступной библиотеки для сохранения шаблона.</p>}
     {contextNotice&&<p role="status" className="text-[13px] text-kumo-subtle">{contextNotice}</p>}
     {libraryState==='loading'&&<p role="status" className="text-[13px] text-kumo-subtle">Подготовка сохранения…</p>}
     {version?<div className="space-y-4">
-      <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p>{onUse&&account!==null&&<WorkshopButton className="mt-3" tone="primary" onClick={()=>onUse({accountId:account,reference:{template_id:version.template_id,revision:version.revision},title:version.title,purpose:version.purpose,kind:'document'})}>Использовать в задаче</WorkshopButton>}</div>
+      <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p>{onUse&&account!==null&&<WorkshopButton className="mt-3" tone="primary" onClick={()=>onUse({accountId:account,reference:{template_id:version.template_id,revision:version.revision},title:version.title,purpose:version.purpose,kind:version.kind??kind})}>Использовать в задаче</WorkshopButton>}</div>
       <div className="rounded-xl border border-kumo-line p-3"><h4 className="m-0 text-[14px] font-medium">Предложить команде</h4>
        {proposed?<p role="status" className="mt-2 text-[13px]">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<div className="mt-2 space-y-3">
         <p className="text-[13px] leading-5 text-kumo-subtle">Личная версия уже доступна вам. Для общего применения выберите группу и отправьте эту версию на согласование.</p>
@@ -176,6 +181,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     </div>:<fieldset disabled={busy||accountsLoading||libraryState==='loading'} className="space-y-3 border-0 p-0">
       {(accounts.length!==1||account===null)&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked||pendingUnavailable} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>{setProject(e.target.value);setContextNotice('')}}><option value="">Выберите проект</option>{locked&&project&&!projects.some(item=>item.id===project)&&<option value={project}>Проект начатого сохранения</option>}{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      {nativeOnly&&<label className="block text-[13px]">Вид шаблона<select aria-label="Вид шаблона" className={field} disabled={locked||libraryState!=='ready'} value={kind} onChange={e=>setKind(e.target.value as WorkTemplateKind)}>{Object.entries(kinds).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
       <label className="block text-[13px]">Название<input className={field} disabled={locked||libraryState!=='ready'} value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label className="block text-[13px]">Для каких задач<textarea rows={2} className={field} disabled={locked||libraryState!=='ready'} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
       {previous&&<p className="text-[12px] text-kumo-subtle">Будет создана новая версия. Ранее созданные документы сохранят использованную версию.</p>}
