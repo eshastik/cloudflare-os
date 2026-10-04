@@ -53,6 +53,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const [isInvalidated, setIsInvalidated] = useState(false)
   const [iframeGeneration, setIframeGeneration] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [loadedFrame, setLoadedFrame] = useState<{ html: string; generation: number; trigger: number | undefined } | null>(null)
   const accent = useOptionalAccentColor()
   const mode = useHostThemeMode()
   const themeRef = useRef<HostTheme>({ mode, accent })
@@ -66,7 +67,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   activityVisibleRef.current = isVisible
   useEffect(() => {
     const target = iframeRef.current?.contentWindow
-    if (!nativeSnapshotSource || !target || !isVisible || isInvalidated || loading || error || !sandboxedHtml) return
+    if (!nativeSnapshotSource || !target || !isVisible || isInvalidated || loading || error || !sandboxedHtml ||
+        loadedFrame?.html !== sandboxedHtml || loadedFrame.generation !== iframeGeneration || loadedFrame.trigger !== reloadTrigger) return
     const lifetime = new AbortController()
     const read = queueNativeSnapshots((format, signal) =>
       requestNativeSnapshot(target, format, AbortSignal.any([signal, lifetime.signal])))
@@ -75,7 +77,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       lifetime.abort()
       if (nativeSnapshotSource.current === read) nativeSnapshotSource.current = null
     }
-  }, [nativeSnapshotSource, gadget, chatId, isVisible, loading, error, sandboxedHtml, hasLoaded, isInvalidated, iframeGeneration, reloadTrigger])
+  }, [nativeSnapshotSource, gadget, chatId, isVisible, loading, error, sandboxedHtml, hasLoaded, isInvalidated, iframeGeneration, reloadTrigger, loadedFrame])
   const readinessRef = useRef<ReturnType<typeof startWorkspaceUIReadiness> | null>(null)
   useEffect(() => () => { readinessRef.current?.finish("abandoned") }, [])
   useEffect(() => { if (!isVisible) readinessRef.current?.finish("abandoned") }, [isVisible])
@@ -468,6 +470,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
         key={`${reloadTrigger}:${iframeGeneration}`}
         ref={iframeRef}
         srcDoc={sandboxedHtml}
+        onLoad={() => setLoadedFrame({ html: sandboxedHtml, generation: iframeGeneration, trigger: reloadTrigger })}
         style={{
           display: 'block',
           width: '100%',

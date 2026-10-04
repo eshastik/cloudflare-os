@@ -12,7 +12,7 @@ import { WorkshopButton } from './components/WorkshopControls'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
 import { openNativeDownloadsFrame, storesDocuments } from './accountCapabilities'
 import { downloadGatekeeperNativeDocument } from './gatekeeperAppDownload'
-import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
+import { waitForNativeSnapshotSource, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 type Pending = { accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
 /** Ограничиваем также подготовку: до apply могут зависнуть адрес и каталог версий. */
@@ -251,8 +251,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     setBusy(true); setError('')
     try {
       setPhase('editor-snapshot')
-      const flush = snapshotSource.current
-      if (!flush) throw new Error()
+      const flush = await wait(waitForNativeSnapshotSource(snapshotSource, signal))
       const current = await wait(flush(format, signal)), revision = current.document.revision
       if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || (resume && resume.revision !== revision)) throw new Error()
       const intent: Pending = resume ?? { accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }

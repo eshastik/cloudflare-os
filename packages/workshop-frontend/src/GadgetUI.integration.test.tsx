@@ -284,11 +284,21 @@ describe('GadgetUI RPC recovery', () => {
   })
 
   it('requests native data from the visible frame and cancels the request when it is hidden', async () => {
+    const addListener = HTMLIFrameElement.prototype.addEventListener
+    const pendingLoads: (() => void)[] = []
+    const loadListener = vi.spyOn(HTMLIFrameElement.prototype, 'addEventListener').mockImplementation(function (type, listener, options) {
+      if (type !== 'load') { addListener.call(this, type, listener, options); return }
+      pendingLoads.push(() => { addListener.call(this, type, listener, options); this.dispatchEvent(new Event('load')) })
+    })
     const gadget = fakeGadget('native', 'document.body.textContent = "native"')
     const source: { current: NativeSnapshotSource | null } = { current: null }
     await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" nativeSnapshotSource={source} />))
-    await vi.waitFor(() => expect(source.current).not.toBeNull())
+    await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
     const frame = container.querySelector('iframe')!
+    expect(source.current).toBeNull()
+    loadListener.mockRestore()
+    await act(async () => { for (const finishLoad of pendingLoads) finishLoad() })
+    expect(source.current).not.toBeNull()
     const send = vi.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => {})
     const pending = source.current!('cloudflareos.document', new AbortController().signal).then(() => 'resolved', () => 'cancelled')
     expect(send).toHaveBeenCalledWith({ type: 'native-snapshot-request', format: 'cloudflareos.document' }, '*', expect.any(Array))

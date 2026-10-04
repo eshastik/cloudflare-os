@@ -43,3 +43,17 @@ it('запросы снимка к редактору идут по очеред
   const aborted = new AbortController(); aborted.abort()
   await expect(read('cloudflareos.document', aborted.signal)).rejects.toThrow()
 })
+
+it('ждёт источник после загрузки фрейма и отменяет ожидание закрытого редактора', async () => {
+  const { waitForNativeSnapshotSource } = await import('./nativeSnapshotSource')
+  const source = { current: null as import('./nativeSnapshotSource').NativeSnapshotSource | null }
+  const controller = new AbortController()
+  const pending = waitForNativeSnapshotSource(source, controller.signal)
+  const read: import('./nativeSnapshotSource').NativeSnapshotSource = async format => ({ format, formatVersion: 1, document: { revision: 3 } })
+  source.current = read
+  await expect(pending).resolves.toBe(read)
+  source.current = null
+  const cancelled = waitForNativeSnapshotSource(source, controller.signal)
+  controller.abort()
+  await expect(cancelled).rejects.toThrow('Редактор не готов')
+})

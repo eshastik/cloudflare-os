@@ -46,3 +46,20 @@ export function queueNativeSnapshots(read: NativeSnapshotSource): NativeSnapshot
     return turn
   }
 }
+
+/** Фрейм устанавливает обработчик снимков при загрузке. До этого запрос нельзя отправлять. */
+export function waitForNativeSnapshotSource(source: NativeSnapshotSourceRef, signal: AbortSignal): Promise<NativeSnapshotSource> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const lifetime = AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+    const cleanup = () => { if (timer !== undefined) clearTimeout(timer); lifetime.removeEventListener('abort', cancel) }
+    const cancel = () => { cleanup(); reject(new Error('Редактор не готов к открытию документа.')) }
+    const check = () => {
+      if (lifetime.aborted) { cancel(); return }
+      if (source.current) { cleanup(); resolve(source.current); return }
+      timer = setTimeout(check, 20)
+    }
+    lifetime.addEventListener('abort', cancel, { once: true })
+    check()
+  })
+}
