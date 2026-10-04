@@ -3,10 +3,10 @@ import React from 'react'
 import {createRoot} from 'react-dom/client'
 import {beforeEach, afterEach, expect, test, vi} from 'vitest'
 import BlueprintTemplateSave from './BlueprintTemplateSave'
-const mocks=vi.hoisted(()=>({api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
+const mocks=vi.hoisted(()=>({api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, nativeUpload:vi.fn<(...args: unknown[]) => Promise<unknown>>(),upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
 vi.mock('./accountCapabilities',()=>({listAccounts:async()=>[{id:8,vendorId:'memory',description:{displayName:'Компания'}}],storesDocuments:()=>true,openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{storageOrigin:'https://objects.example',selector:mocks.selector}})}))
-vi.mock('./gatekeeperAppUpload',()=>({uploadGatekeeperBlueprintTemplate:(...args:unknown[])=>mocks.upload(...args)}))
+vi.mock('./gatekeeperAppUpload',()=>({uploadGatekeeperNativeDocument:(...args:unknown[])=>mocks.nativeUpload(...args),uploadGatekeeperBlueprintTemplate:(...args:unknown[])=>mocks.upload(...args)}))
 vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 let root:ReturnType<typeof createRoot>, container:HTMLDivElement
 beforeEach(()=>{
@@ -19,7 +19,7 @@ beforeEach(()=>{
   mocks.creator.save.mockResolvedValue({template_id:'template',revision:1,title:'Отчёт',purpose:'Финансовый отчёт',project_id:'project'})
   mocks.creator.propose.mockResolvedValue({proposal_id:'proposal',target_scope_id:'finance'})
   mocks.api.captureBlueprintTemplate.mockImplementation(async()=>new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{}'));controller.close()}}))
-  mocks.upload.mockResolvedValue('upload')
+  mocks.upload.mockResolvedValue('upload');mocks.nativeUpload.mockResolvedValue('native-upload')
   container=document.createElement('div');document.body.append(container);root=createRoot(container)
 })
 afterEach(async()=>{await React.act(async()=>root.unmount());container.remove()})
@@ -78,4 +78,16 @@ test('отказ групп не мешает личному сохранени�
  await React.act(async()=>{const scope=container.querySelector('select')!;scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}));});
  await React.act(async()=>button('Предложить для общего применения').click());
  expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4);
+});
+
+test('Документ сохраняется в каталог нативным снимком без создания Blueprint',async()=>{
+ const snapshot={format:'cloudflareos.document' as const,formatVersion:1 as const,document:{title:'ТЗ',blocks:[{id:'heading',html:'<h1>Требования</h1>'}]}};
+ const read=vi.fn<(...args:unknown[])=>Promise<typeof snapshot>>().mockResolvedValue(snapshot);
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly blueprint={{id:'editor',title:'ТЗ',description:'Форма требований'}} format="cloudflareos.document" snapshotSource={{current:read}} onClose={()=>{}}/>));
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(mocks.selector.latest).toHaveBeenCalledWith('native-document:editor');
+ expect(mocks.selector.prepare).toHaveBeenCalledWith('project','ТЗ','Форма требований',undefined,'native-document:editor','cloudflareos.document');
+ expect(read).toHaveBeenCalledOnce();expect(mocks.nativeUpload.mock.calls[0].slice(0,3)).toEqual([snapshot,'cloudflareos.document','https://objects.example']);
+ expect(mocks.api.captureBlueprintTemplate).not.toHaveBeenCalled();expect(mocks.upload).not.toHaveBeenCalled();
+ expect(mocks.creator.checkpoint).toHaveBeenCalledWith('native-upload');expect(mocks.creator.save).toHaveBeenCalledOnce();expect(mocks.creator.propose).not.toHaveBeenCalled();
 });

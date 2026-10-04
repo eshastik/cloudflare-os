@@ -49,6 +49,7 @@ import { FormatGlyph } from './components/format/FormatVisuals'
 import ShareModal from './ShareModal'
 import { GadgetPresence } from './components/GadgetPresence'
 import BlueprintModal from './BlueprintModal'
+import BlueprintTemplateSave from './BlueprintTemplateSave'
 import TopBarNotice from './TopBarNotice'
 import { WorkshopButton, WorkshopIconButton, WorkshopInput } from './components/WorkshopControls'
 import { useActions } from './useActions'
@@ -507,6 +508,7 @@ export default function GadgetEditor() {
   const [activityClosing, setActivityClosing] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false)
+  const [documentTemplateOpen,setDocumentTemplateOpen]=useState(false)
   const [sharedTemplatesOpen,setSharedTemplatesOpen]=useState(false)
   const [previewMode, _setPreviewMode] = useState(false)
   // Панель «Версия» нативного документа монтируется порталом справа от колонки редактора.
@@ -1260,6 +1262,7 @@ export default function GadgetEditor() {
 
   // ── reload UI when preview branch/code changes ────────────────────────────────
   useEffect(() => { setUiReloadTrigger(t => t + 1) }, [previewChatId, proposedChanges])
+  useEffect(()=>setDocumentTemplateOpen(false),[selectedGadgetId,previewChatId])
 
   // ── user info ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1754,6 +1757,11 @@ export default function GadgetEditor() {
               </div>
             )}
 
+            {!paneShowsActivity && !narrow && selectedNativeFormat==='cloudflareos.document' && selectedGadgetStub && <DropdownMenu>
+              <DropdownMenu.Trigger render={<WorkshopIconButton aria-label="Действия с шаблоном" title="Действия с шаблоном" disabled={activeTab!=='app'||previewMode}><DotsThree size={18}/></WorkshopIconButton>}/>
+              <DropdownMenu.Content className={MENU_CONTENT}><DropdownMenu.Item className={MENU_ITEM} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item></DropdownMenu.Content>
+            </DropdownMenu>}
+
             {!paneShowsActivity && !narrow && (
               <GadgetExportMenu
                 gadget={selectedGadgetStub}
@@ -1797,6 +1805,7 @@ export default function GadgetEditor() {
                       {tab.label}{activeTab === tab.value ? ' ✓' : ''}
                     </DropdownMenu.Item>
                   ))}
+                  {selectedNativeFormat==='cloudflareos.document' && <DropdownMenu.Item className={MENU_ITEM} disabled={activeTab!=='app'||previewMode} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item>}
                   {exportActions.actions.map(action => (
                     <DropdownMenu.Item key={action.key} disabled={!selectedGadgetStub || !!exportActions.exporting || activeTab !== 'app' || previewMode} onClick={action.run} className={MENU_ITEM}>
                       {exportActions.exporting ? 'Готовлю файл…' : action.label}
@@ -1980,6 +1989,14 @@ export default function GadgetEditor() {
             setWorkspaceVisibility('open',result.gadgetId!)
             await navigate({to:'/workspace/$id',params:{id:id!},search:(prev:Record<string,unknown>)=>({...prev,chat:effectiveSelectedChatId,w:result.gadgetId})})
           }}}/>
+        </Dialog>
+      </Dialog.Root>}
+
+      {documentTemplateOpen && selectedGadgetStub && selectedGadgetId && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
+        <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
+          <Dialog.Title className="sr-only">Личный шаблон документа</Dialog.Title>
+          <Dialog.Description className="sr-only">Сохраните текущую форму для следующих задач. Предложение команде выполняется отдельно.</Dialog.Description>
+          <BlueprintTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} nativeOnly blueprint={{id:`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`,title:selectedGadgetSummary?.title??'Шаблон документа',description:''}} format="cloudflareos.document" snapshotSource={nativeSnapshotSource} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 

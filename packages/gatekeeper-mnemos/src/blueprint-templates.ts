@@ -4,7 +4,7 @@ import { BLUEPRINT_TEMPLATE_MIME, MAX_BLUEPRINT_TEMPLATE_BYTES } from '@gadgets/
 import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
-type Capture = { blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number} }
+type Capture = { nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
@@ -83,16 +83,18 @@ export class BlueprintTemplates extends RpcTarget {
     if(!saved)return null
     return this.session.readWorkTemplate(saved.template_id,0)
   }
-  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string) {
+  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document") {
+    if(nativeFormat!==undefined&&nativeFormat!=="cloudflareos.document")throw new Error("Поддерживается шаблон документа");
+    const contentType=nativeFormat ? "application/vnd.cloudflareos.document+json" : BLUEPRINT_TEMPLATE_MIME;
     if (!title.trim() || title.length > 200 || !purpose.trim() || purpose.length > 2000) throw new Error('Укажите название и назначение шаблона')
     if(blueprint!==undefined&&(!blueprint||blueprint.length>256))throw new Error("Некорректный шаблон гаджета")
     if(previous){
       if(!previous.template_id||!Number.isSafeInteger(previous.revision)||previous.revision<1)throw new Error('Некорректная предыдущая версия')
       const version=await this.session.readWorkTemplate(previous.template_id,previous.revision)
-      if(version.project_id!==project||version.content_type!==BLUEPRINT_TEMPLATE_MIME)throw new Error('Версия относится к другому проекту или формату')
+      if(version.project_id!==project||version.content_type!==contentType)throw new Error('Версия относится к другому проекту или формату')
     }
     const { head } = await this.session.openDraft(project)
-    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '', blueprint, ...(previous?{template:previous.template_id,expectedRevision:previous.revision}:{}) }
+    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '', blueprint, nativeFormat, ...(previous?{template:previous.template_id,expectedRevision:previous.revision}:{}) }
     this.storage.put(`blueprint-template:${capture.id}`, capture)
     return { id: capture.id, creator: new RpcStub(new BlueprintTemplateCreator(this.session, this.storage, capture.id)) }
   }
@@ -112,9 +114,11 @@ class BlueprintTemplateCreator extends RpcTarget {
   }
   async state() { const capture = this.read(); return { upload: capture.upload, project: capture.project, title: capture.title, purpose: capture.purpose, version: capture.version ?? null } }
   async issue(size: number, checksum: string) {
-    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_BLUEPRINT_TEMPLATE_BYTES) throw new Error("Снимок шаблона слишком большой")
+    if (!Number.isSafeInteger(size) || size < 0 || size > (this.read().nativeFormat ? 1024*1024 : MAX_BLUEPRINT_TEMPLATE_BYTES)) throw new Error("Снимок шаблона слишком большой")
     if (this.read().upload || this.issued.size >= 4) throw new Error('Загрузка уже зафиксирована')
-    const ticket = await this.session.beginProjectUpload(this.read().project, size, checksum)
+    const ticket = this.read().nativeFormat
+      ? await this.session.beginNativeUpload(this.read().project, size, checksum)
+      : await this.session.beginProjectUpload(this.read().project, size, checksum)
     this.issued.add(ticket.upload_id)
     return ticket
   }
@@ -150,8 +154,8 @@ class BlueprintTemplateCreator extends RpcTarget {
     // Повтор проходит через API: сохранённый receipt не заменяет актуальную проверку доступа.
     if (capture.version) return this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
     const created = await this.session.createPrivateDocument(capture.project, {
-      request_id: capture.id, expected_head: capture.head, parent_id: '', name: `${capture.title}.mnemos-template`,
-      content_type: BLUEPRINT_TEMPLATE_MIME, upload_id: capture.upload, message: 'Снимок Blueprint для согласования',
+      request_id: capture.id, expected_head: capture.head, parent_id: '', name: `${capture.title}.${capture.nativeFormat ? "mnemos-document" : "mnemos-template"}`,
+      content_type: capture.nativeFormat ? "application/vnd.cloudflareos.document+json" : BLUEPRINT_TEMPLATE_MIME, upload_id: capture.upload, message: 'Личный снимок рабочего шаблона',
     })
     const version = await this.session.saveWorkTemplateSnapshot(capture.template??capture.id, {
       expected_revision: capture.expectedRevision??0, title: capture.title, purpose: capture.purpose, kind: 'document',

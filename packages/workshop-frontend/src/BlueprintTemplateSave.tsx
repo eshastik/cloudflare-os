@@ -7,9 +7,9 @@ import type {NativeSnapshotSourceRef} from './nativeSnapshotSource'
 import {useAuthenticatedApi} from './AuthContext'
 import {listAccounts, storesDocuments, openBlueprintTemplatesFrame} from './accountCapabilities'
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
-import {uploadGatekeeperBlueprintTemplate} from './gatekeeperAppUpload'
+import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from './gatekeeperAppUpload'
 
-export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose}: {blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
+export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false}: {nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
@@ -27,7 +27,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const frame = useRef<GatekeeperUiFrame|null>(null)
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
-  const pendingKey = `mnemos-blueprint-save:${blueprint.id}`
+  const sourceKey = nativeOnly ? `native-document:${blueprint.id}` : blueprint.id
+  const pendingKey = `mnemos-blueprint-save:${sourceKey}`
   useEffect(() => {
     let cancelled = false
     lifetime.current = new AbortController()
@@ -52,7 +53,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     void openBlueprintTemplatesFrame(api,account).then(async value=>{
       if(cancelled){disposeGatekeeperFrame(value);return}
       frame.current=value
-      const latest=await value.blueprintTemplates.selector.latest(blueprint.id)
+      const latest=await value.blueprintTemplates.selector.latest(sourceKey)
       if(cancelled)return
       if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);setTitle(latest.title);setPurpose(latest.purpose)}
       const result=await value.blueprintTemplates.selector.projects()
@@ -72,7 +73,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       setLibraryState('ready')
     }).catch(()=>{if(!cancelled){setError('Не удалось открыть библиотеку шаблонов.');setLibraryState('error')}})
     return()=>{cancelled=true}
-  },[api,account,libraryReload])
+  },[api,account,libraryReload,sourceKey])
   useEffect(()=>{
     let cancelled=false;setScopes([]);setScope('');setScopesError('');
     const selector=frame.current?.blueprintTemplates?.selector;
@@ -99,7 +100,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(!creator.current){
         if(saved?.account===account)creator.current=await store.selector.resume(saved.id) as RpcStub<GatekeeperBlueprintTemplateCreator>
         else {
-          const prepared=await store.selector.prepare(project,title,purpose,previous,blueprint.id)
+          const prepared=await store.selector.prepare(project,title,purpose,previous,sourceKey,...(nativeOnly ? ["cloudflareos.document" as const] : []))
           creator.current=prepared.creator as RpcStub<GatekeeperBlueprintTemplateCreator>
           sessionStorage.setItem(pendingKey,JSON.stringify({account,id:prepared.id}));setLocked(true)
         }
@@ -111,9 +112,16 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(!state.upload){
         const snapshot=format ? await snapshotSource?.current?.(format,signal) : undefined
         if(format&&!snapshot)throw Error('Редактор ещё не готов')
-        const stream=await api.captureBlueprintTemplate(blueprint.id,snapshot)
-        const bytes=new Uint8Array(await new Response(stream).arrayBuffer())
-        const upload=await uploadGatekeeperBlueprintTemplate(bytes,store.storageOrigin,async(size,checksum)=>operation.issue(size,checksum),signal)
+        let upload:string
+        const issue=async(size:number,checksum:string)=>operation.issue(size,checksum)
+        if(nativeOnly){
+          if(!snapshot||snapshot.format!=="cloudflareos.document"||new TextEncoder().encode(JSON.stringify(snapshot)).length>1024*1024)throw Error("Поддерживается документ до одного МиБ")
+          upload=await uploadGatekeeperNativeDocument(snapshot,"cloudflareos.document",store.storageOrigin,issue,signal)
+        }else{
+          const stream=await api.captureBlueprintTemplate(blueprint.id,snapshot)
+          const bytes=new Uint8Array(await new Response(stream).arrayBuffer())
+          upload=await uploadGatekeeperBlueprintTemplate(bytes,store.storageOrigin,issue,signal)
+        }
         await operation.checkpoint(upload)
       }
       signal.throwIfAborted()
