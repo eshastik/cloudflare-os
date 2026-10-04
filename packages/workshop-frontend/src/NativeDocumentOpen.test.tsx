@@ -161,7 +161,7 @@ it.each(['prepare', 'binding'] as const)('зависшее открытие до
   const reconnect = vi.fn(), onOpened = vi.fn(async () => {if (mode === 'binding' && onOpened.mock.calls.length === 1) await first})
   let attemptSignal!: AbortSignal
   try {
-    await act(async () => {root.render(<NativeDocumentOpen gadget={gadget} format="cloudflareos.spreadsheet" snapshotSource={{current: async (_format, signal) => {attemptSignal = signal; return {format: 'cloudflareos.spreadsheet', formatVersion: 1, document: {revision: currentRevision}}}}} reconnect={reconnect} onOpened={onOpened} openingTimeoutMs={25} />)})
+    await act(async () => {root.render(<NativeDocumentOpen gadget={gadget} format="cloudflareos.spreadsheet" snapshotSource={{current: async (_format, signal) => {attemptSignal = signal; return {format: 'cloudflareos.spreadsheet', formatVersion: 1, document: {revision: currentRevision}}}}} reconnect={reconnect} onOpened={onOpened} openingTimeoutMs={100} />)})
     await act(async () => {await new Promise<void>(resolve => {if (attemptSignal.aborted) resolve(); else attemptSignal.addEventListener('abort', () => resolve(), {once: true})})})
     expect(host.textContent).toContain('Открытие заняло слишком много времени')
     const beforeRetry = [...calls]
@@ -179,15 +179,15 @@ it.each(['prepare', 'binding'] as const)('зависшее открытие до
   } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
 })
 
-it('зависший список версий заканчивается ошибкой до чтения содержимого', async () => {
+it.each(['request', 'transition'] as const)('ожидание версий ограничено до чтения содержимого: %s', async mode => {
  const {useAuthenticatedApi} = await import('./AuthContext')
- const source = {scopes: async () => ({scopes: [{id: 'project', name: 'Project'}]}), documents: async () => ({documents: [{id: 'doc', name: 'Document'}], nextCursor: '', truncated: false}), publications: async () => new Promise<never>(() => {}), [Symbol.dispose]() {}}
+ const source = {scopes: async () => ({scopes: [{id: 'project', name: 'Project'}]}), documents: async () => ({documents: [{id: 'doc', name: 'Document'}], nextCursor: '', truncated: false}), publications: async () => mode === 'request' ? new Promise<never>(() => {}) : {resourceUrl: '', publications: [], nextCursor: ''}, [Symbol.dispose]() {}}
  Object.assign(useAuthenticatedApi().authenticatedApi, {getGatekeeperApp: async () => ({nativeDownloads: {selector: source}})})
  const prepared = vi.fn(), host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
  try {
   await act(async () => root.render(<NativeDocumentOpen gadget={{getId: async () => 8, prepareNativeDocumentRead: prepared} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" initialAccountId={3} initialScope="project" initialResource="doc" initialPublication="publication" autoApply snapshotSource={{current: null}} reconnect={() => {}} openingTimeoutMs={20} />))
   await act(async () => {await new Promise(resolve => setTimeout(resolve, 40))})
-  expect(host.textContent).toContain('Не удалось прочитать публикации')
+  expect(host.textContent).toContain('Открытие заняло слишком много времени')
   expect(host.textContent).toContain('Повторить открытие'); expect(prepared).not.toHaveBeenCalled()
  } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
 })

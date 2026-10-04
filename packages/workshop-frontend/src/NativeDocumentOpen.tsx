@@ -97,7 +97,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     return () => clearTimeout(timer)
   }, [preparing])
   const [docCursor, setDocCursor] = useState(''), [pubCursor, setPubCursor] = useState(''), [truncated, setTruncated] = useState(false)
-  const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState(''), [timedOut, setTimedOut] = useState(false)
   const selector = useRef<RpcStub<GatekeeperNativeDocumentSelector> | null>(null)
   const storageOrigin = useRef('')
   const writer = useRef<RpcStub<GatekeeperNativeDocumentWriteSelector> | null>(null)
@@ -310,6 +310,12 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   }
   // Открытие без кнопки: один раз, когда заданная версия выбрана и адрес документа прочитан.
   const autoTried = useRef(false)
+  // Общий срок включает ожидание React-состояния между запросами, а не только сами RPC.
+  useEffect(() => {
+    if (!auto) return
+    const timer = setTimeout(() => { autoTried.current = true; lifetime.current.abort(); setTimedOut(true); setBusy(false) }, openingTimeoutMs)
+    return () => clearTimeout(timer)
+  }, [auto, openingTimeoutMs])
   useEffect(() => {
     if (!auto || autoTried.current || busy || loading) return
     if (!resume && (accountId === null || !resourceUrl || !publication || publication !== initialPublication)) return
@@ -327,14 +333,15 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   // На телефоне поле выбора 40 px и шрифт 16 px: мельче iOS приближает страницу при касании.
   const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[13px]'
   const opening = resume?.label || documents.find(d => d.id === document)?.name || ''
+  const openingError = timedOut ? 'Открытие заняло слишком много времени. Повторите попытку.' : error
   if (auto) return <section aria-label="Открытие документа" className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
-      {error ? <p role="alert" className="m-0 text-kumo-danger">{error}</p>
+      {openingError ? <p role="alert" className="m-0 text-kumo-danger">{openingError}</p>
         : <p role="status" className="m-0">{opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
-      {preparing && !error && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
+      {preparing && !openingError && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
-        {error && <WorkshopButton className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
-        {error && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={retry}>Повторить открытие</WorkshopButton>}
+        {openingError && !timedOut && <WorkshopButton className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
+        {openingError && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={retry}>Повторить открытие</WorkshopButton>}
       </div>
     </section>
   return <section className="flex flex-col gap-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">
