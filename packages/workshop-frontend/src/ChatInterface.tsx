@@ -2109,9 +2109,9 @@ export const ChatInput = ({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ChatTemplate | null>(null);
-  const [pendingTemplate,setPendingTemplate]=useState<ChatWorkTemplate|null>(null);
+  const [pendingTemplates,setPendingTemplates]=useState<ChatWorkTemplate[]>([]);
   const consumedTemplateSeed=useRef<string|null>(null);
-  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null);setPendingTemplate(null); }, [chatKey]);
+  useEffect(() => { setTemplatePickerOpen(false); setSelectedTemplate(null);setPendingTemplates([]); }, [chatKey]);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
   // leaving the chat dismisses it.
   const [sendHiccup, setSendHiccup] = useState<{ chatKey?: number | null } | null>(null);
@@ -2163,14 +2163,15 @@ export const ChatInput = ({
   const promptCardRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<ComposerMirrorHandle>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingAdditions=pendingTemplates.filter(item=>!selectedTemplate?.mnemos?.some(existing=>existing.accountId===item.accountId&&JSON.stringify(existing.reference)===JSON.stringify(item.reference)));
   const templateForTask=(materials:ChatWorkTemplate[]):ChatTemplate=>({id:JSON.stringify(materials.map(item=>[item.accountId,item.reference])),title:materials.map(item=>item.title+' · версия '+item.reference.revision).join('; '),description:'',mnemos:materials});
   useEffect(()=>{
     if(!templateSeed||(chatKey??null)!==templateSeed.chatId||consumedTemplateSeed.current===templateSeed.id)return;
     consumedTemplateSeed.current=templateSeed.id;
-    const item=templateSeed.template;
-    if(!selectedTemplate)setSelectedTemplate(templateForTask([item]));
-    else if(!selectedTemplate.mnemos?.some(existing=>existing.accountId===item.accountId&&JSON.stringify(existing.reference)===JSON.stringify(item.reference)))setPendingTemplate(item);
-    else setPendingTemplate(null);
+    const incoming=templateSeed.templates.filter((item,index,all)=>all.findIndex(other=>other.accountId===item.accountId&&JSON.stringify(other.reference)===JSON.stringify(item.reference))===index);
+    if(!incoming.length){onTemplateSeedConsumed?.(templateSeed.id);return;}
+    if(!selectedTemplate&&incoming.length<=16){setSelectedTemplate(templateForTask(incoming));setPendingTemplates([]);}
+    else setPendingTemplates(incoming.filter(item=>!selectedTemplate?.mnemos?.some(existing=>existing.accountId===item.accountId&&JSON.stringify(existing.reference)===JSON.stringify(item.reference))));
     onTemplateSeedConsumed?.(templateSeed.id);
     requestAnimationFrame(()=>composerTextareaRef.current?.focus());
   },[templateSeed,chatKey,onTemplateSeedConsumed]);
@@ -3532,13 +3533,15 @@ export const ChatInput = ({
           </div>
         )}
 
-        {pendingTemplate&&<div role="status" className="mx-3 mb-2 space-y-2 rounded-lg border border-kumo-line px-3 py-2 text-[12px]">
-          <p>Сохранён шаблон «{pendingTemplate.title}», версия {pendingTemplate.reference.revision}. {selectedTemplate&&!selectedTemplate.mnemos?'В задаче выбран шаблон приложения. Замена требует подтверждения.':'Добавить его к материалам этой задачи?'}</p>
-          {selectedTemplate?.mnemos&&selectedTemplate.mnemos.length>=16&&<p>Уже выбрано 16 материалов. Уберите один через выбор шаблонов.</p>}
-          <div className="flex flex-wrap gap-2"><WorkshopButton disabled={!!selectedTemplate?.mnemos&&selectedTemplate.mnemos.length>=16} onClick={()=>{
+        {pendingTemplates.length>0&&<div role="status" className="mx-3 mb-2 space-y-2 rounded-lg border border-kumo-line px-3 py-2 text-[12px]">
+          <p>Выбраны материалы: {pendingTemplates.map(item=>`${item.title} · версия ${item.reference.revision}`).join("; ")}. {selectedTemplate&&!selectedTemplate.mnemos?'В задаче выбран шаблон приложения. Замена требует подтверждения.':'Добавить их к материалам этой задачи?'}</p>
+          {(selectedTemplate?.mnemos?.length??0)+pendingAdditions.length>16&&<p>Можно выбрать до 16 материалов. Уберите лишние через выбор шаблонов.</p>}
+          <div className="flex flex-wrap gap-2"><WorkshopButton disabled={(selectedTemplate?.mnemos?.length??0)+pendingAdditions.length>16} onClick={()=>{
             const existing=selectedTemplate?.mnemos??[];
-            setSelectedTemplate(templateForTask(existing.some(item=>item.accountId===pendingTemplate.accountId&&JSON.stringify(item.reference)===JSON.stringify(pendingTemplate.reference))?existing:[...existing,pendingTemplate]));setPendingTemplate(null);composerTextareaRef.current?.focus();
-          }}>{selectedTemplate&&!selectedTemplate.mnemos?'Заменить выбранный шаблон':'Добавить сохранённый шаблон'}</WorkshopButton><WorkshopButton onClick={()=>setPendingTemplate(null)}>Отмена</WorkshopButton></div>
+            const additions=pendingTemplates.filter(item=>!existing.some(other=>other.accountId===item.accountId&&JSON.stringify(other.reference)===JSON.stringify(item.reference)));
+            if(existing.length+additions.length>16)return;
+            setSelectedTemplate(templateForTask([...existing,...additions]));setPendingTemplates([]);composerTextareaRef.current?.focus();
+          }}>{selectedTemplate&&!selectedTemplate.mnemos?'Заменить выбранный шаблон':'Добавить выбранные материалы'}</WorkshopButton><WorkshopButton onClick={()=>setPendingTemplates([])}>Отмена</WorkshopButton></div>
         </div>}
         {selectedTemplate && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
           <Blueprint size={15} className="shrink-0" />

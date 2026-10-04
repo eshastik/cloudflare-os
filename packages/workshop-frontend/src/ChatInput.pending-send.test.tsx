@@ -135,13 +135,13 @@ test('Сохранённая версия добавляется только в
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
  const form={accountId:7,reference:{template_id:'form',revision:5},title:'Форма ТЗ',purpose:'ТЗ',kind:'document' as const};
  const method={accountId:7,reference:{template_id:'method',revision:3},title:'Методика',purpose:'Порядок',kind:'guidance' as const};
- const render=(id:string,template:typeof form|typeof method,chatId=4)=>root.render(<ChatInput chatKey={4} templateSeed={{id,chatId,template}} onTemplateSeedConsumed={consumed} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={onSend} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}} seedText="Моя неотправленная задача" seedNonce={1}/>);
+ const render=(id:string,template:typeof form|typeof method,chatId=4)=>root.render(<ChatInput chatKey={4} templateSeed={{id,chatId,templates:[template]}} onTemplateSeedConsumed={consumed} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={onSend} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}} seedText="Моя неотправленная задача" seedNonce={1}/>);
  try{
   await act(async()=>render('first',form));expect(host.querySelector('textarea')?.value).toBe('Моя неотправленная задача');expect(host.textContent).toContain('Материалы для задачи: 1');expect(onSend).not.toHaveBeenCalled();
-  await act(async()=>render('wrong-chat',method,9));expect(host.textContent).not.toContain('Сохранён шаблон');expect(consumed).toHaveBeenCalledTimes(1);
-  await act(async()=>render('duplicate',form));expect(host.textContent).toContain('Материалы для задачи: 1');expect(host.textContent).not.toContain('Добавить сохранённый шаблон');
-  await act(async()=>render('second',method));expect(host.textContent).toContain('Добавить его к материалам этой задачи');expect(host.textContent).toContain('Материалы для задачи: 1');
-  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');
+  await act(async()=>render('wrong-chat',method,9));expect(host.textContent).not.toContain('Выбраны материалы');expect(consumed).toHaveBeenCalledTimes(1);
+  await act(async()=>render('duplicate',form));expect(host.textContent).toContain('Материалы для задачи: 1');expect(host.textContent).not.toContain('Добавить выбранные материалы');
+  await act(async()=>render('second',method));expect(host.textContent).toContain('Добавить их к материалам этой задачи');expect(host.textContent).toContain('Материалы для задачи: 1');
+  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить выбранные материалы')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');
   expect(host.querySelector('textarea')?.value).toBe('Моя неотправленная задача');expect(onSend).not.toHaveBeenCalled();
   await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(onSend.mock.calls[0][0]).toBe('Моя неотправленная задача');expect(onSend.mock.calls[0][5]).toEqual([{accountId:7,reference:form.reference},{accountId:7,reference:method.reference}]);
   await act(async()=>render('second',method));expect(host.textContent).not.toContain('Материалы для задачи');
@@ -150,10 +150,18 @@ test('Сохранённая версия добавляется только в
 
 test('Сохранённый шаблон не вытесняет материалы при достигнутом пределе 16',async()=>{
  vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
- const render=(index:number)=>root.render(<ChatInput chatKey={4} templateSeed={{id:String(index),chatId:4,template:{accountId:7,reference:{template_id:'form-'+index,revision:1},title:'Форма '+index,purpose:'Задача',kind:'document'}}} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={()=>{}} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}}/>);
+ const render=(index:number)=>root.render(<ChatInput chatKey={4} templateSeed={{id:String(index),chatId:4,templates:[{accountId:7,reference:{template_id:'form-'+index,revision:1},title:'Форма '+index,purpose:'Задача',kind:'document'}]}} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={()=>{}} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}}/>);
  try{
-  for(let index=0;index<16;index++){await act(async()=>render(index));if(index)await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!.click())}
-  await act(async()=>render(16));const add=[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить сохранённый шаблон')!;expect(add.disabled).toBe(true);expect(host.textContent).toContain('Материалы для задачи: 16');expect(host.textContent).toContain('Уже выбрано 16 материалов');
+  for(let index=0;index<16;index++){await act(async()=>render(index));if(index)await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить выбранные материалы')!.click())}
+  await act(async()=>render(16));const add=[...host.querySelectorAll('button')].find(b=>b.textContent==='Добавить выбранные материалы')!;expect(add.disabled).toBe(true);expect(host.textContent).toContain('Материалы для задачи: 16');expect(host.textContent).toContain('Можно выбрать до 16 материалов');
   await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Отмена')!.click());expect(host.textContent).toContain('Материалы для задачи: 16');
  }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
 });
+
+ test('Набор из библиотеки сохраняет точные версии и передаётся в отправку без дублей',async()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});const host=document.createElement('div');document.body.append(host);const root=createRoot(host);const send=vi.fn<(...args:unknown[])=>Promise<void>>(async()=>{});
+ const form={accountId:7,reference:{template_id:'form',revision:5},title:'Форма',purpose:'ТЗ',kind:'document' as const},method={accountId:7,reference:{template_id:'method',revision:3},title:'Методика',purpose:'ТЗ',kind:'guidance' as const};
+ const render=(id:string,templates:Array<typeof form|typeof method>)=>root.render(<ChatInput chatKey={4} templateSeed={{id,chatId:4,templates}} createCapsuleGatekeeper={async()=>null} getOverseer={async()=>({}) as never} onSend={send} isAgentActive={false} models={[]} selectedModel={null} onModelChange={()=>{}} seedText="Подготовь ТЗ" seedNonce={1}/>);
+ try{await act(async()=>render('form',[form]));await act(async()=>render('both',[form,method,method]));expect(host.textContent).toContain('Материалы для задачи: 1');expect(send).not.toHaveBeenCalled();await act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent==='Добавить выбранные материалы')!.click());expect(host.textContent).toContain('Материалы для задачи: 2');expect(host.querySelector('textarea')?.value).toBe('Подготовь ТЗ');await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(send.mock.calls[0][5]).toEqual([{accountId:7,reference:form.reference},{accountId:7,reference:method.reference}]);
+ }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
+ })

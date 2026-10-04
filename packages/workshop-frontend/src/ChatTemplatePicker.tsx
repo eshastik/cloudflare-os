@@ -75,7 +75,7 @@ function BlueprintTemplatePicker({ onSelect, onClose, onBack }: { onSelect(templ
 const templateSelectionKey=(item:ChatWorkTemplate)=>JSON.stringify([item.accountId,item.reference]);
 
 /** Рабочие материалы Mnemos и явный вход к старым ссылкам Blueprint. */
-export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string}}){
+export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject,onOtherTemplates}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string};onOtherTemplates?(selected:ChatWorkTemplate[]):void}){
  const {authenticatedApi}=useAuthenticatedApi();
  const [legacy,setLegacy]=useState(false);
  const [preview,setPreview]=useState<ChatWorkTemplate|null>(null);
@@ -177,7 +177,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
    <div className="shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4">
     {selected.length>0&&<div className="mb-3" aria-label="Выбранные шаблоны"><p className="mb-2 text-[12px] text-kumo-subtle">Выбрано: {selected.length}. Версии закрепятся после отправки задачи.</p><ul className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{selected.map(item=><li key={templateSelectionKey(item)} className="flex max-w-full items-center gap-1 rounded-lg border border-kumo-line py-1 pl-2 text-[12px]"><span className="min-w-0 truncate" title={item.title}>{item.title} · версия {item.reference.revision}</span><WorkshopIconButton aria-label={'Убрать: '+item.title} className="!h-6 !w-6" onClick={()=>remove(item)}><X size={12}/></WorkshopIconButton></li>)}</ul></div>}
     {selected.length>=16&&<p role="status" className="mb-3 text-[12px] text-kumo-subtle">Можно выбрать до 16 материалов. Уберите один, чтобы добавить другой.</p>}
-    <div className="flex flex-wrap items-center justify-between gap-2"><WorkshopButton onClick={()=>setLegacy(true)}>Другие шаблоны</WorkshopButton><WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton><WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
    </div>
   </Dialog>
  </Dialog.Root>;

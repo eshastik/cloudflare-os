@@ -1546,7 +1546,7 @@ export default function GadgetEditor() {
                   <DropdownMenu.Item onClick={() => setIsEditingTitle(true)} className={MENU_ITEM}>Переименовать</DropdownMenu.Item>
                 )}
                 {effectiveSelectedChatId !== null && (
-                  <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблон беседы</DropdownMenu.Item>
+                  <DropdownMenu.Item onClick={() => setSharedTemplatesOpen(true)} className={MENU_ITEM}>Шаблоны для задачи</DropdownMenu.Item>
                 )}
                 {effectiveSelectedChatId !== null && !metadata.owner && (
                   <TelegramContinueItem overseer={overseer.stub} chatId={effectiveSelectedChatId} />
@@ -1981,10 +1981,7 @@ export default function GadgetEditor() {
         </div>
       )}
 
-      {sharedTemplatesOpen&&overseer&&effectiveSelectedChatId!==null&&<Dialog.Root open onOpenChange={open=>setSharedTemplatesOpen(open)}>
-        <Dialog size="lg" className="max-h-[85vh] overflow-y-auto">
-          <div className="flex items-center justify-between"><Dialog.Title>Шаблон для беседы</Dialog.Title><WorkshopButton onClick={()=>setSharedTemplatesOpen(false)}>Закрыть</WorkshopButton></div>
-          <ChatTemplateLibrary overseer={overseer.stub} chatId={effectiveSelectedChatId} viewerId={userInfo?.id} key={`${id}:${effectiveSelectedChatId}`} conversation={{key:`${id}:${effectiveSelectedChatId}`,apply:async(bytes,operationId,signal)=>{
+      {sharedTemplatesOpen&&overseer&&effectiveSelectedChatId!==null&&<ChatTemplateLibrary overseer={overseer.stub} chatId={effectiveSelectedChatId} viewerId={userInfo?.id} onClose={()=>setSharedTemplatesOpen(false)} onSelect={templates=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates});setSharedTemplatesOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} key={`${id}:${effectiveSelectedChatId}`} conversation={{key:`${id}:${effectiveSelectedChatId}`,apply:async(bytes,operationId,signal)=>{
             const result=await overseer.stub.importTemplateIntoChat(new Response(new Uint8Array(bytes)).body!,effectiveSelectedChatId,operationId)
             signal.throwIfAborted()
             if(result.error)throw new Error(result.error)
@@ -1992,15 +1989,13 @@ export default function GadgetEditor() {
             setActiveTab('app')
             setWorkspaceVisibility('open',result.gadgetId!)
             await navigate({to:'/workspace/$id',params:{id:id!},search:(prev:Record<string,unknown>)=>({...prev,chat:effectiveSelectedChatId,w:result.gadgetId})})
-          }}}/>
-        </Dialog>
-      </Dialog.Root>}
+          }}}/>}
 
       {documentTemplateOpen && selectedGadgetStub && selectedGadgetId && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
           <Dialog.Title className="sr-only">Личный шаблон документа</Dialog.Title>
           <Dialog.Description className="sr-only">Сохраните текущую форму для следующих задач. Предложение команде выполняется отдельно.</Dialog.Description>
-          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,template});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
+          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 
