@@ -286,7 +286,7 @@ describe('GadgetUI RPC recovery', () => {
   it('requests native data from the visible frame and cancels the request when it is hidden', async () => {
     const addListener = HTMLIFrameElement.prototype.addEventListener
     const pendingLoads: (() => void)[] = []
-    const loadListener = vi.spyOn(HTMLIFrameElement.prototype, 'addEventListener').mockImplementation(function (type, listener, options) {
+    const loadListener = vi.spyOn(HTMLIFrameElement.prototype, 'addEventListener').mockImplementation(function (this: HTMLIFrameElement, type, listener, options) {
       if (type !== 'load') { addListener.call(this, type, listener, options); return }
       pendingLoads.push(() => { addListener.call(this, type, listener, options); this.dispatchEvent(new Event('load')) })
     })
