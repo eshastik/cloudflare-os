@@ -3515,7 +3515,7 @@ export const ChatInput = ({
 
         {selectedTemplate && <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-kumo-tint px-2.5 py-2 text-[12px] text-kumo-subtle">
           <Blueprint size={15} className="shrink-0" />
-          <button type="button" onClick={() => setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`}>{selectedTemplate.title}</button>
+          <button type="button" onClick={() => setTemplatePickerOpen(true)} className="min-w-0 flex-1 truncate text-left text-kumo-default" aria-label={`Изменить шаблон: ${selectedTemplate.title}`} title={selectedTemplate.title}>{selectedTemplate.mnemos ? <><span className="block font-medium">Материалы для задачи: {selectedTemplate.mnemos.length}</span><span className="block truncate text-kumo-subtle">{selectedTemplate.mnemos.map(item=>item.title).join(", ")}</span></> : selectedTemplate.title}</button>
           <WorkshopIconButton aria-label="Убрать шаблон" className="!h-6 !w-6" onClick={() => setSelectedTemplate(null)}><X size={13} /></WorkshopIconButton>
         </div>}
         {/* Footer row: connection/options left, model + send right */}
@@ -3627,7 +3627,7 @@ export const ChatInput = ({
         </div>
       </div>
 
-      {templatePickerOpen && <ChatTemplatePicker onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
+      {templatePickerOpen && <ChatTemplatePicker initialSelected={selectedTemplate?.mnemos} onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
     </div>
   );
 };

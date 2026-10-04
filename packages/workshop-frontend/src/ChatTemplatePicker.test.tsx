@@ -41,7 +41,7 @@ it('выбор возвращает Blueprint в беседу без созда�
   const root = createRoot(host), selected = vi.fn<() => void>(), close = vi.fn<() => void>()
   try {
     await React.act(async () => root.render(<><textarea defaultValue="Неотправленная задача" /><ChatTemplatePicker onSelect={selected} onClose={close} /></>))
-    await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent?.includes('Старые шаблоны Blueprint'))!.click())
+    await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent?.includes('Другие шаблоны'))!.click())
     const choice = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('Договор'))!
     await React.act(async () => choice.click())
     expect(selected).toHaveBeenCalledWith({ id: 'contract', title: 'Договор', description: 'Для клиента' })
@@ -79,5 +79,30 @@ it('отказ выбранной области не заменяется ли�
   await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Повторить')!.click());
   expect(api.listChatTemplates).toHaveBeenLastCalledWith(7,'department','',undefined);
   expect(document.querySelector<HTMLSelectElement>('[aria-label="Область шаблонов"]')?.value).toBe('department');
+ }finally{await React.act(async()=>root.unmount());host.remove();}
+});
+
+it('при повторном открытии сохраняет точные версии и позволяет убрать материал через фильтр',async()=>{
+ setup();const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn();
+ const initial=[{accountId:7,reference:{template_id:'method',revision:3},title:'Методика ТЗ',purpose:'Подготовить ТЗ',kind:'guidance' as const},{accountId:7,reference:{template_id:'form',revision:5},title:'Форма ТЗ',purpose:'Создать документ',kind:'document' as const}];
+ try{
+  await React.act(async()=>root.render(<ChatTemplatePicker initialSelected={initial} onSelect={selected} onClose={()=>{}}/>));
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Другие шаблоны')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Назад к рабочим шаблонам')!.click());
+  const catalog=document.querySelector('[aria-label="Рабочие шаблоны Mnemos"]')!;
+  expect(catalog.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2);
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Формы')!.click());
+  expect(catalog.textContent).toContain('Форма ТЗ');expect(catalog.textContent).not.toContain('Методика ТЗ');
+  expect(document.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Методика ТЗ · версия 3');
+  await React.act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="Убрать: Методика ТЗ"]')!.click());
+  expect(initial).toHaveLength(2);expect(selected).not.toHaveBeenCalled();
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Использовать выбранные (1)')!.click());
+  expect(selected.mock.calls[0][0].mnemos).toEqual([initial[1]]);
+  const shared=[{...initial[1],reference:{scope_id:'later-page',template_key:'form',revision:5}}];
+  api.listChatTemplates.mockResolvedValue({templates:shared,nextCursor:''});
+  await React.act(async()=>root.render(<ChatTemplatePicker key="shared" initialSelected={shared} onSelect={selected} onClose={()=>{}}/>));
+  const scope=document.querySelector<HTMLSelectElement>('[aria-label="Область шаблонов"]')!;
+  expect(scope.value).toBe('later-page');expect(scope.selectedOptions[0].textContent).toBe('Область выбранного шаблона');
+  expect(api.listChatTemplates).toHaveBeenLastCalledWith(7,'later-page','',undefined);
  }finally{await React.act(async()=>root.unmount());host.remove();}
 });
