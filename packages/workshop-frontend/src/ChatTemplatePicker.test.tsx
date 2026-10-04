@@ -106,3 +106,27 @@ it('при повторном открытии сохраняет точные �
   expect(api.listChatTemplates).toHaveBeenLastCalledWith(7,'later-page','',undefined);
  }finally{await React.act(async()=>root.unmount());host.remove();}
 });
+
+it('начинает с проекта беседы и не подменяет недоступный проект или выбранную общую область',async()=>{
+ setup();api.listChatTemplateAccounts.mockResolvedValue([{accountId:7,title:'Личная библиотека'},{accountId:9,title:'Рабочая библиотека'}]);
+ api.listChatProjects.mockResolvedValue([{accountId:7,projectId:'source',title:'Другой проект'},{accountId:9,projectId:'noise',title:'Первый в списке'},{accountId:9,projectId:'task',title:'Проект беседы'}]);
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+ try{
+  await React.act(async()=>root.render(<ChatTemplatePicker preferredProject={{accountId:9,projectId:'task'}} onSelect={()=>{}} onClose={()=>{}}/>));
+  expect(api.listChatTemplates.mock.calls.every(call=>call[0]===9&&call[1]===null&&call[3]==='task')).toBe(true);
+  expect(api.listChatTemplates).toHaveBeenCalledWith(9,null,'','task');
+  expect(document.querySelector<HTMLSelectElement>('[aria-label="Проект личных шаблонов"]')?.value).toBe('task');
+  api.listChatTemplates.mockClear();
+  await React.act(async()=>root.render(<ChatTemplatePicker key="missing" preferredProject={{accountId:9,projectId:'unavailable'}} onSelect={()=>{}} onClose={()=>{}}/>));
+  expect(api.listChatTemplates).not.toHaveBeenCalled();
+  expect(document.body.textContent).toContain('Проект беседы недоступен');
+  expect(document.querySelector<HTMLSelectElement>('[aria-label="Проект личных шаблонов"]')?.value).toBe('');
+  await React.act(async()=>{const select=document.querySelector<HTMLSelectElement>('[aria-label="Проект личных шаблонов"]')!;select.value='noise';select.dispatchEvent(new Event('change',{bubbles:true}));});
+  expect(api.listChatTemplates).toHaveBeenCalledWith(9,null,'','noise');
+  api.listChatTemplates.mockClear();
+  const selected=[{accountId:7,reference:{scope_id:'department',template_key:'form',revision:5},title:'Форма',purpose:'Документ',kind:'document' as const}];
+  await React.act(async()=>root.render(<ChatTemplatePicker key="shared-context" preferredProject={{accountId:9,projectId:'task'}} initialSelected={selected} onSelect={()=>{}} onClose={()=>{}}/>));
+  expect(api.listChatTemplates.mock.calls.every(call=>call[0]===7&&call[1]==='department')).toBe(true);
+  expect(api.listChatTemplates).toHaveBeenCalledWith(7,'department','',undefined);
+ }finally{await React.act(async()=>root.unmount());host.remove();}
+});

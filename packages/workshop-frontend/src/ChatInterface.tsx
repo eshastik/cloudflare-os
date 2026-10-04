@@ -2012,7 +2012,7 @@ export const ChatInput = ({
   settings,
   documentProject,
 }: {
-  /** Для ещё не созданной беседы: проект, куда лягут прикреплённые документы (первый выбранный). */
+  /** Первый выбранный проект: место для документов и начальный каталог личных шаблонов. */
   documentProject?: { accountId: number; projectId: string };
   /** Настройки беседы в нижней строке поля ввода, рядом с «+»: проекты и работа с кодом. */
   settings?: ReactNode;
@@ -3627,7 +3627,7 @@ export const ChatInput = ({
         </div>
       </div>
 
-      {templatePickerOpen && <ChatTemplatePicker initialSelected={selectedTemplate?.mnemos} onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
+      {templatePickerOpen && <ChatTemplatePicker initialSelected={selectedTemplate?.mnemos} preferredProject={documentProject} onClose={() => { setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} onSelect={template => { setSelectedTemplate(template); setTemplatePickerOpen(false); composerTextareaRef.current?.focus(); }} />}
     </div>
   );
 };
@@ -7993,6 +7993,7 @@ function ChatInterface({
                     </div>
                   )}
                   <ChatInput
+                    documentProject={chatProjectList[0] && {accountId:chatProjectList[0].accountId,projectId:chatProjectList[0].projectId}}
                     settings={
                       <ProjectChips
                         projects={chatProjectList}

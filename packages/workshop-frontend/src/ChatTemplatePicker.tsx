@@ -74,12 +74,12 @@ function BlueprintTemplatePicker({ onSelect, onClose, onBack }: { onSelect(templ
 const templateSelectionKey=(item:ChatWorkTemplate)=>JSON.stringify([item.accountId,item.reference]);
 
 /** Рабочие материалы Mnemos и явный вход к старым ссылкам Blueprint. */
-export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[]}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[]}){
+export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string}}){
  const {authenticatedApi}=useAuthenticatedApi();
  const [legacy,setLegacy]=useState(false);
  const [selected,setSelected]=useState<ChatWorkTemplate[]>(()=>[...initialSelected]);
  const [accounts,setAccounts]=useState<Array<{accountId:number;title:string}>>([]);
- const [accountId,setAccountId]=useState<number|null>(initialSelected[0]?.accountId??null);
+ const [accountId,setAccountId]=useState<number|null>(initialSelected[0]?.accountId??preferredProject?.accountId??null);
  const [scopes,setScopes]=useState<Array<{scopeId:string;title:string}>>([]);
  const [scopeCursor,setScopeCursor]=useState('');
  const [scopeId,setScopeId]=useState<string|null>(initialSelected[0]&&'scope_id' in initialSelected[0].reference?initialSelected[0].reference.scope_id??null:null);
@@ -96,21 +96,39 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[]}
  const [error,setError]=useState('');
  const [query,setQuery]=useState('');
  const [reload,setReload]=useState(0);
+ const [catalogState,setCatalogState]=useState<'loading'|'ready'|'error'>('loading');
+ const preferredAccount=initialSelected[0]?.accountId??preferredProject?.accountId??null;
+ const preferredProjectId=preferredProject?.projectId;
+ const preferredProjectAccount=preferredProject?.accountId;
  const [kind,setKind]=useState<ChatWorkTemplate['kind']|'all'>('all');
- useEffect(()=>{let active=true;void Promise.all([authenticatedApi.listChatTemplateAccounts(),authenticatedApi.listChatProjects()]).then(([value,projects])=>{if(active){setProjects(projects);setAccounts(value);setAccountId(old=>value.some(a=>a.accountId===old)?old:value[0]?.accountId??null);if(!value.length)setLoading(false);}},()=>{if(active){setError('Не удалось загрузить подключения Mnemos.');setLoading(false);}});return()=>{active=false;};},[authenticatedApi,reload]);
  useEffect(()=>{
+  let active=true;setCatalogState('loading');setError('');
+  void Promise.all([authenticatedApi.listChatTemplateAccounts(),authenticatedApi.listChatProjects()]).then(([value,availableProjects])=>{
+   if(!active)return;
+   setProjects(availableProjects);setAccounts(value);
+   setAccountId(old=>value.some(a=>a.accountId===old)?old:preferredAccount===null?value[0]?.accountId??null:null);
+   setCatalogState('ready');
+  },()=>{if(active){setError('Не удалось загрузить библиотеки Mnemos.');setCatalogState('error');}});
+  return()=>{active=false;};
+ },[authenticatedApi,reload,preferredAccount]);
+ useEffect(()=>{
+  if(catalogState!=='ready')return;
   let active=true;setScopeError('');
   if(scopeAccount.current!==accountId){scopeAccount.current=accountId;setScopes([]);setScopeCursor('');setScopeId(null);scopeRequest.current=null;setScopeBusy(false);}
-  setProjectId(old=>projects.some(p=>p.accountId===accountId&&p.projectId===old)?old:projects.find(p=>p.accountId===accountId)?.projectId??'');
+  setProjectId(old=>{
+   if(projects.some(p=>p.accountId===accountId&&p.projectId===old))return old;
+   if(accountId===preferredProjectAccount)return projects.some(p=>p.accountId===accountId&&p.projectId===preferredProjectId)?preferredProjectId??'':'';
+   return projects.find(p=>p.accountId===accountId)?.projectId??'';
+  });
   if(accountId!==null)void authenticatedApi.listChatTemplateScopes(accountId).then(page=>{if(active){setScopes(old=>[...page.scopes,...old.filter(scope=>scope.scopeId===scopeId&&!page.scopes.some(fresh=>fresh.scopeId===scope.scopeId))]);setScopeCursor(page.nextCursor);}},()=>{if(active)setScopeError('Области шаблонов не загрузились. Личный каталог можно открыть отдельно.');});
   return()=>{active=false;};
- },[authenticatedApi,accountId,projects,reload]);
+ },[authenticatedApi,accountId,projects,reload,catalogState,preferredProjectAccount,preferredProjectId]);
  useEffect(()=>{
-  let active=true;++generation.current;setItems([]);setCursor('');if(accountId===null||scopeId===null&&!projectId){setLoading(false);return;}
+  let active=true;++generation.current;setItems([]);setCursor('');if(catalogState!=='ready'){setLoading(catalogState==='loading');return;}if(accountId===null||scopeId===null&&!projectId){setLoading(false);return;}
   setLoading(true);setError('');
   void authenticatedApi.listChatTemplates(accountId,scopeId,'',scopeId===null?projectId:undefined).then(page=>{if(active){setItems(page.templates.map(item=>({...item,accountId})));setCursor(page.nextCursor);setLoading(false);}},()=>{if(active){setError('Выбранный каталог недоступен. Повторите запрос или выберите другую область.');setLoading(false);}});
   return()=>{active=false;};
- },[authenticatedApi,accountId,scopeId,projectId,reload]);
+ },[authenticatedApi,accountId,scopeId,projectId,reload,catalogState]);
  const more=async()=>{if(accountId===null)return;const current=generation.current;setLoading(true);try{const page=await authenticatedApi.listChatTemplates(accountId,scopeId,cursor,scopeId===null?projectId:undefined);if(current!==generation.current)return;setItems(old=>[...old,...page.templates.map(item=>({...item,accountId}))]);setCursor(page.nextCursor);}catch{if(current===generation.current)setError('Следующая страница не загрузилась.');}finally{if(current===generation.current)setLoading(false);}};
  const moreScopes=async()=>{
   if(accountId===null||scopeRequest.current!==null)return;
@@ -133,9 +151,9 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[]}
     <WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>
    </div>
    <div className="flex shrink-0 flex-wrap gap-3 px-5 pb-4">
-    {accounts.length>1&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Библиотека<select className={selectClass+' mt-1'} aria-label="Подключение Mnemos" value={accountId??''} onChange={event=>setAccountId(Number(event.target.value))}>{accounts.map(a=><option key={a.accountId} value={a.accountId}>{a.title}</option>)}</select></label>}
+    {(accounts.length>1||accountId===null&&accounts.length>0)&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Библиотека<select className={selectClass+' mt-1'} aria-label="Подключение Mnemos" value={accountId??''} onChange={event=>setAccountId(Number(event.target.value))}><option value="" disabled>Выберите библиотеку</option>{accounts.map(a=><option key={a.accountId} value={a.accountId}>{a.title}</option>)}</select></label>}
     {accountId!==null&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Где искать<select className={selectClass+' mt-1'} aria-label="Область шаблонов" value={scopeId??''} onChange={event=>setScopeId(event.target.value||null)}><option value="">Личные шаблоны</option>{scopeId&&!scopes.some(scope=>scope.scopeId===scopeId)&&<option value={scopeId}>Область выбранного шаблона</option>}{scopes.map(scope=><option key={scope.scopeId} value={scope.scopeId}>{scope.title}</option>)}</select></label>}
-    {accountId!==null&&scopeId===null&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Проект<select className={selectClass+' mt-1'} aria-label="Проект личных шаблонов" value={projectId} onChange={event=>setProjectId(event.target.value)}>{projects.filter(p=>p.accountId===accountId).map(p=><option key={p.projectId} value={p.projectId}>{p.title}</option>)}</select></label>}
+    {accountId!==null&&scopeId===null&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Проект<select className={selectClass+' mt-1'} aria-label="Проект личных шаблонов" value={projectId} onChange={event=>setProjectId(event.target.value)}><option value="" disabled>Выберите проект</option>{projects.filter(p=>p.accountId===accountId).map(p=><option key={p.projectId} value={p.projectId}>{p.title}</option>)}</select></label>}
     {scopeCursor&&<WorkshopButton className="self-end" disabled={scopeBusy} onClick={()=>void moreScopes()}>Ещё области</WorkshopButton>}
    </div>
    <label className="mx-5 mb-3 flex h-10 shrink-0 items-center gap-2 rounded-lg border border-kumo-line px-3 focus-within:border-kumo-brand"><MagnifyingGlass size={16} className="text-kumo-subtle"/><input autoFocus aria-label="Поиск шаблона" placeholder="Название или назначение…" value={query} onChange={event=>setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"/></label>
@@ -146,7 +164,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[]}
     {scopeError&&<p role="alert" className="px-2 py-2 text-[13px]">{scopeError} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить загрузку областей</WorkshopButton></p>}
     {error&&<p role="alert" className="px-2 py-2 text-[13px]">{error} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton></p>}
     {loading&&<p role="status" className="px-2 py-4 text-[13px] text-kumo-subtle">Загрузка шаблонов…</p>}
-    {!loading&&!error&&!shown.length&&<div className="px-2 py-6 text-[13px] text-kumo-subtle">{accountId===null?'Библиотека Mnemos пока недоступна.':query||kind!=='all'?'Совпадений нет. Измените запрос или вид шаблона.':'В этой области шаблонов пока нет.'}</div>}
+    {!loading&&!error&&!shown.length&&<div className="px-2 py-6 text-[13px] text-kumo-subtle">{accountId===null?(accounts.length?'Выберите библиотеку для поиска шаблонов.':'Библиотека Mnemos пока недоступна.'):scopeId===null&&!projectId?(accountId===preferredProjectAccount?'Проект беседы недоступен в этой библиотеке. Выберите другой проект.':'Выберите проект для личных шаблонов.'):query||kind!=='all'?'Совпадений нет. Измените запрос или вид шаблона.':'В этой области шаблонов пока нет.'}</div>}
     {shown.map(item=><button key={templateSelectionKey(item)} type="button" aria-pressed={chosen(item)} disabled={!chosen(item)&&selected.length>=16} onClick={()=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)} className={'mb-1 flex w-full items-start gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-kumo-brand disabled:opacity-50 '+(chosen(item)?'border-kumo-brand bg-kumo-tint':'border-transparent hover:bg-kumo-tint')}>
      <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-kumo-default">{item.title}</span><span className="mt-1 block text-[12px] text-kumo-subtle">{kinds[item.kind]} · версия {item.reference.revision}</span>{item.purpose&&<span className="mt-1 block text-[13px] leading-5 text-kumo-subtle">{item.purpose}</span>}</span>
      <span aria-hidden="true" className={'mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border '+(chosen(item)?'border-kumo-brand bg-kumo-brand text-white':'border-kumo-line')}>{chosen(item)&&<Check size={14} weight="bold"/>}</span>
