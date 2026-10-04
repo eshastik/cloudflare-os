@@ -15,6 +15,15 @@ import { downloadGatekeeperNativeDocument } from './gatekeeperAppDownload'
 import type { NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
 type Pending = { accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
+/** Ограничиваем также подготовку: до apply могут зависнуть адрес и каталог версий. */
+async function boundedOpening<T>(operation: Promise<T>, timeoutMs: number, disposeLate?: (value: T) => void): Promise<T> {
+  let expired = false
+  let timer!: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { expired = true; reject(new Error('Opening timed out')) }, timeoutMs) })
+  try { return await Promise.race([operation.then(value => { if (expired) { if (disposeLate) disposeLate(value); else (value as Partial<Disposable> | null)?.[Symbol.dispose]?.(); throw new Error('Opening timed out') }; return value }), timeout]) }
+  finally { clearTimeout(timer) }
+}
+
 /** Что открыто в редакторе: адрес документа в Mnemos для привязки состояния. */
 export type NativeOpenResult = { accountId: number; scope: string; resource: string; publication?: string
   /** Ревизия редактора сразу после того, как в него встала открытая версия; undefined — редактор её не сообщил. */
@@ -25,6 +34,7 @@ type Props = {
   open?: boolean; initialAccountId?: number; initialScope?: string; initialResource?: string; initialPublication?: string; onOpened?(result: NativeOpenResult): void | Promise<void>; onClose?(): void
   /** Открыть заданную версию сразу, без кнопки: «Открыть» из «Входящих», новая версия после чужой правки, возврат версии. */
   autoApply?: boolean
+  openingTimeoutMs?: number
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
 type Publication = { id: string; recordedAt: string; actor: string; onBehalfOf?: string; recordedBy?: {actor: string; onBehalfOf: string}; format: MnemosNodeFormat }
@@ -49,24 +59,25 @@ export function readPendingNativeOpen(storageKey: string, format: NativeDocument
 }
 
 export default function NativeDocumentOpen({ open = true, onClose, ...props }: Props) {
-  const [closed, setClosed] = useState(false), [key, setKey] = useState(''), [pending, setPending] = useState<Pending | null>(null)
+  const [closed, setClosed] = useState(false), [key, setKey] = useState(''), [pending, setPending] = useState<Pending | null>(null), [attempt, setAttempt] = useState(0), [loadError, setLoadError] = useState(false)
   useEffect(() => {
     let cancelled = false
-    setClosed(false); setKey(''); setPending(null)
-    void props.gadget.getId().then(id => {
+    setClosed(false); setKey(''); setPending(null); setLoadError(false)
+    void boundedOpening(props.gadget.getId(), props.openingTimeoutMs ?? 20000).then(id => {
       if (cancelled) return
       const storageKey = nativeOpenKey(id)
       setKey(storageKey)
       setPending(readPendingNativeOpen(storageKey, props.format))
-    }).catch(() => {})
+    }).catch(() => { if (!cancelled) setLoadError(true) })
     return () => { cancelled = true }
-  }, [props.gadget, props.format])
+  }, [props.gadget, props.format, attempt])
   function close() { sessionStorage.removeItem(key); setPending(null); setClosed(true); onClose?.() }
+  if (loadError && open) return <section aria-label="Открытие документа"><p role="alert">Не удалось открыть рабочее место. Повторите попытку.</p><WorkshopButton onClick={() => setAttempt(value => value + 1)}>Повторить открытие</WorkshopButton></section>
   if (!key || closed || (!open && !pending)) return null
-  return <OpenSection {...props} storageKey={key} resume={pending} close={close} />
+  return <OpenSection key={attempt} {...props} storageKey={key} resume={pending} close={close} retry={() => { setPending(readPendingNativeOpen(key, props.format)); setAttempt(value => value + 1) }} />
 }
 
-function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void }) {
+function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply, openingTimeoutMs = 20000, retry }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void; retry(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // Незавершённое открытие продолжается само: человек уже выбрал документ до перезагрузки. «Выбрать версию»
   // после ошибки переводит карточку в ручной выбор и забывает незавершённое открытие.
@@ -121,13 +132,13 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     setLoading(true); setError('')
     void (async () => {
       try {
-        frame = await openNativeDownloadsFrame(authenticatedApi, accountId)
+        frame = await boundedOpening(openNativeDownloadsFrame(authenticatedApi, accountId), openingTimeoutMs, disposeGatekeeperFrame)
         if (cancelled) { disposeGatekeeperFrame(frame); return }
         if (!frame?.nativeDownloads) throw new Error()
         selector.current = frame.nativeDownloads.selector as RpcStub<GatekeeperNativeDocumentSelector>
         writer.current = frame.nativeWrites?.selector as RpcStub<GatekeeperNativeDocumentWriteSelector> | undefined || null
         storageOrigin.current = frame.nativeWrites?.storageOrigin || ''
-        const page = await selector.current.scopes()
+        const page = await boundedOpening(selector.current.scopes(), openingTimeoutMs)
         if (!cancelled) { setScopes(page.scopes); setSourceVersion(v => v + 1) }
       } catch { if (!cancelled) setError('Подключение недоступно. Переподключите его в разделе «Подключения».') }
       finally { if (!cancelled) setLoading(false) }
@@ -140,7 +151,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     setDocument(old => old === initialResource && scope === initialScope ? old : '')
     if (!scope || !selector.current) return
     setLoading(true); setError('')
-    void selector.current.documents(scope, '').then(page => {
+    void boundedOpening(selector.current.documents(scope, ''), openingTimeoutMs).then(page => {
       if (!cancelled) { setDocuments(page.documents); setDocCursor(page.nextCursor); setTruncated(page.truncated) }
     }).catch(() => { if (!cancelled) setError('Не удалось прочитать документы.') }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -151,7 +162,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     if (!scope || !document || !selector.current) { setPreparing(null); return }
     if (/\.(docx|xlsx)$/i.test(documents.find(d => d.id === document)?.name || '')) return
     setLoading(true); setError('')
-    void selector.current.publications(scope, document, '').then(page => {
+    void boundedOpening(selector.current.publications(scope, document, ''), openingTimeoutMs).then(page => {
       if (!cancelled) { setPreparing(null); setPublications(page.publications.filter(p => p.format === format)); setPubCursor(page.nextCursor); setHistoryLimited(old=>old||!!page.historyLimited); setResourceUrl(page.resourceUrl); setSharedDeleted(page.sharedDeleted) }
     }).catch(error => {
       if (cancelled) return
@@ -220,17 +231,30 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   }
   async function apply() {
     if (busy || loading || (!resume && (accountId === null || !resourceUrl || !publication))) return
-    const signal = lifetime.current.signal
+    const deadline = new AbortController()
+    const attemptTimer = setTimeout(() => deadline.abort(new Error('Opening timed out')), openingTimeoutMs)
+    const signal = AbortSignal.any([lifetime.current.signal, deadline.signal])
+    // Ожидание RPC заканчивается вместе с попыткой; поздний ответ не продолжает открытие.
+    async function wait<T>(operation: Promise<T>): Promise<T> {
+      signal.throwIfAborted()
+      let cancel!: () => void
+      const aborted = new Promise<never>((_, reject) => { cancel = () => reject(signal.reason); signal.addEventListener('abort', cancel, { once: true }) })
+      try { return await Promise.race([operation.then(value => {
+        if (signal.aborted) { (value as Partial<Disposable> | null)?.[Symbol.dispose]?.(); throw signal.reason }
+        return value
+      }), aborted]) }
+      finally { signal.removeEventListener('abort', cancel) }
+    }
     setBusy(true); setError('')
     try {
       const flush = snapshotSource.current
       if (!flush) throw new Error()
-      const current = await flush(format, signal), revision = current.document.revision
+      const current = await wait(flush(format, signal)), revision = current.document.revision
       if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || (resume && resume.revision !== revision)) throw new Error()
       const intent: Pending = resume ?? { accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify(intent))
-      const prepared = await gadget.prepareNativeDocumentRead(intent.accountId, intent.resourceUrl, intent.publication)
+      const prepared = await wait(gadget.prepareNativeDocumentRead(intent.accountId, intent.resourceUrl, intent.publication))
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify({ ...intent, sourceId: prepared.sourceId }))
       if (prepared.restartRequired) {
@@ -260,26 +284,29 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
         })
         signal.throwIfAborted(); reconnect(); return
       }
-      const read = await gadget.readNativeDocument(prepared.sourceId)
+      const read = await wait(gadget.readNativeDocument(prepared.sourceId))
       // Ревизию после восстановления сообщает сам редактор (ответ restore или getDocument на сервере гаджета):
       // запрос снимка у окна редактора сразу после восстановления отказывает, пока оно перерисовывается.
       let opened: number | undefined
       try {
-        const ticket = await read.download.issue()
-        const snapshot = await downloadGatekeeperNativeDocument(read.storageOrigin, ticket, format, signal, () => read.download.validate())
-        const editor = await gadget.connectToGadget() as RpcStub<NativeDocumentEditor>
+        const ticket = await wait(read.download.issue())
+        const snapshot = await wait(downloadGatekeeperNativeDocument(read.storageOrigin, ticket, format, signal, () => read.download.validate()))
+        const editor = await wait(gadget.connectToGadget()) as RpcStub<NativeDocumentEditor>
         try {
-          await read.download.validate(); signal.throwIfAborted()
-          const restored = await editor.restoreDocumentSnapshot(snapshot, revision)
-          opened = editorRevision(restored) ?? editorRevision(await (async () => editor.getDocument())().catch(() => undefined))
+          await wait(read.download.validate()); signal.throwIfAborted()
+          const restored = await wait(editor.restoreDocumentSnapshot(snapshot, revision))
+          opened = editorRevision(restored) ?? editorRevision(await wait((async () => editor.getDocument())().catch(() => undefined)))
         } finally { editor[Symbol.dispose]() }
       } finally { read[Symbol.dispose]() }
       signal.throwIfAborted()
-      if (intent.scope && intent.resource) await onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })
-      close(); reconnect()
+      // Если запись в редактор уже завершилась, повтор сверяет именно эту ревизию.
+      // Правки человека после неё по-прежнему запрещают автоматическое восстановление.
+      if (opened !== undefined) sessionStorage.setItem(storageKey, JSON.stringify({ ...intent, sourceId: prepared.sourceId, revision: opened }))
+      if (intent.scope && intent.resource) await wait(Promise.resolve(onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })))
+      signal.throwIfAborted(); close(); reconnect()
     } catch {
-      if (!signal.aborted) setError('Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
-    } finally { if (!signal.aborted) setBusy(false) }
+      if (!lifetime.current.signal.aborted) setError(deadline.signal.aborted ? 'Открытие заняло слишком много времени. Повторите попытку.' : 'Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
+    } finally { clearTimeout(attemptTimer); if (!lifetime.current.signal.aborted) setBusy(false) }
   }
   // Открытие без кнопки: один раз, когда заданная версия выбрана и адрес документа прочитан.
   const autoTried = useRef(false)
@@ -306,7 +333,8 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       {preparing && !error && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
-        {error && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
+        {error && <WorkshopButton className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
+        {error && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={retry}>Повторить открытие</WorkshopButton>}
       </div>
     </section>
   return <section className="flex flex-col gap-2 text-[13px] leading-[18px] tracking-[-0.25px] text-kumo-default">

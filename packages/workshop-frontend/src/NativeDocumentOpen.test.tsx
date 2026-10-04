@@ -139,3 +139,55 @@ it.each([[false, false, false], [true, false, false], [false, true, false], [tru
     await act(async () => { root.unmount() }); host.remove(); sessionStorage.clear()
   }
 })
+
+it.each(['prepare', 'binding'] as const)('зависшее открытие допускает повтор без позднего продолжения: %s', async mode => {
+  sessionStorage.clear()
+  const calls: string[] = []
+  let completeFirst!: (value: {sourceId: number; restartRequired: boolean}) => void
+  const first = new Promise<{sourceId: number; restartRequired: boolean}>(resolve => { completeFirst = resolve })
+  const prepared = vi.fn(async (...args: unknown[]) => { calls.push('prepare'); expect(args).toEqual([3, 'https://example.test/document', 'publication']); return mode === 'prepare' && prepared.mock.calls.length === 1 ? first : {sourceId: 9, restartRequired: false} })
+  class Download extends RpcTarget {
+    async issue() { calls.push('issue'); return {} }
+    async validate() { calls.push('validate') }
+  }
+  let currentRevision = 4
+  class Editor extends RpcTarget {
+    async restoreDocumentSnapshot(_snapshot: unknown, revision: number) { calls.push('restore'); expect(revision).toBe(currentRevision); return {revision: ++currentRevision} }
+  }
+  const gadget = {getId: async () => 7, prepareNativeDocumentRead: prepared, readNativeDocument: async () => {calls.push('read'); return {storageOrigin: 'https://example.test', download: new RpcStub(new Download()), [Symbol.dispose]() {}}}, connectToGadget: async () => new RpcStub(new Editor()), onRpcBroken() {}} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']
+  const key = 'mnemos-native-open:' + location.pathname + ':7'
+  sessionStorage.setItem(key, JSON.stringify({accountId: 3, resourceUrl: 'https://example.test/document', publication: 'publication', revision: 4, label: 'Fixture', scope: 'project', resource: 'document', format: 'cloudflareos.spreadsheet', at: Date.now()}))
+  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  const reconnect = vi.fn(), onOpened = vi.fn(async () => {if (mode === 'binding' && onOpened.mock.calls.length === 1) await first})
+  let attemptSignal!: AbortSignal
+  try {
+    await act(async () => {root.render(<NativeDocumentOpen gadget={gadget} format="cloudflareos.spreadsheet" snapshotSource={{current: async (_format, signal) => {attemptSignal = signal; return {format: 'cloudflareos.spreadsheet', formatVersion: 1, document: {revision: currentRevision}}}}} reconnect={reconnect} onOpened={onOpened} openingTimeoutMs={25} />)})
+    await act(async () => {await new Promise<void>(resolve => {if (attemptSignal.aborted) resolve(); else attemptSignal.addEventListener('abort', () => resolve(), {once: true})})})
+    expect(host.textContent).toContain('Открытие заняло слишком много времени')
+    const beforeRetry = [...calls]
+    expect(calls.filter(call => call === 'prepare')).toHaveLength(1)
+    if (mode === 'binding') expect(JSON.parse(sessionStorage.getItem(key)!).revision).toBe(5)
+    await act(async () => {completeFirst({sourceId: 9, restartRequired: false})})
+    expect(calls).toEqual(beforeRetry); expect(reconnect).not.toHaveBeenCalled()
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Повторить открытие')!
+    await act(async () => {retry.click()})
+    await act(async () => {await vi.waitFor(() => expect(onOpened).toHaveBeenCalledTimes(mode === 'binding' ? 2 : 1), {timeout: 500, interval: 5})})
+    expect(calls.filter(call => call === 'read')).toHaveLength(mode === 'binding' ? 2 : 1)
+    expect(calls.filter(call => call === 'restore')).toHaveLength(mode === 'binding' ? 2 : 1)
+    expect(onOpened).toHaveBeenCalledWith({accountId: 3, scope: 'project', resource: 'document', publication: 'publication', revision: mode === 'binding' ? 6 : 5})
+    expect(reconnect).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBeNull()
+  } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
+})
+
+it('зависший список версий заканчивается ошибкой до чтения содержимого', async () => {
+ const {useAuthenticatedApi} = await import('./AuthContext')
+ const source = {scopes: async () => ({scopes: [{id: 'project', name: 'Project'}]}), documents: async () => ({documents: [{id: 'doc', name: 'Document'}], nextCursor: '', truncated: false}), publications: async () => new Promise<never>(() => {}), [Symbol.dispose]() {}}
+ Object.assign(useAuthenticatedApi().authenticatedApi, {getGatekeeperApp: async () => ({nativeDownloads: {selector: source}})})
+ const prepared = vi.fn(), host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+ try {
+  await act(async () => root.render(<NativeDocumentOpen gadget={{getId: async () => 8, prepareNativeDocumentRead: prepared} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" initialAccountId={3} initialScope="project" initialResource="doc" initialPublication="publication" autoApply snapshotSource={{current: null}} reconnect={() => {}} openingTimeoutMs={20} />))
+  await act(async () => {await new Promise(resolve => setTimeout(resolve, 40))})
+  expect(host.textContent).toContain('Не удалось прочитать публикации')
+  expect(host.textContent).toContain('Повторить открытие'); expect(prepared).not.toHaveBeenCalled()
+ } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
+})
