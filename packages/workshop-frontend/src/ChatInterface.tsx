@@ -136,6 +136,7 @@ import type { AgentStep } from "@gadgets/workshop-shared/code-work";
 import { chatListState, codeAnsweredMessageSeqs, upsertAgentStep } from "./codeWorkSteps";
 import { CodeWorkRow } from "./components/chat/CodeWorkRow";
 import { CodeChangesCard } from "./components/chat/CodeChangesCard";
+import TemplateDocumentResults from "./components/chat/TemplateDocumentResults";
 import { GadgetWorkCard, hideGadgetLinks, savedGadgetResources } from "./components/chat/GadgetWorkCard";
 import { ProjectChips } from "./components/chat/ProjectChips";
 import { CodeModeSwitch, useCodeWorkAllowed } from "./components/chat/CodeModeSwitch";
@@ -1788,6 +1789,7 @@ export const ThinkingTraceRow = memo(function ThinkingTraceRow({
 function WorkRunFromContext({ group, open, onToggle, inProgress }: { group: ToolCallGroup; open: boolean; onToggle: (key: string) => void; inProgress: boolean }) {
   const { projectNames, gadgetNames, workspaceGadgets, openDocument } = useContext(WorkRunContext);
   return (
+    <>
     <WorkRun
       batches={group.batches!}
       projectNames={projectNames}
@@ -1800,6 +1802,8 @@ function WorkRunFromContext({ group, open, onToggle, inProgress }: { group: Tool
       onToggle={() => onToggle(group.key)}
       openDocument={openDocument}
     />
+    <TemplateDocumentResults batches={group.batches!} openDocument={openDocument}/>
+    </>
   );
 }
 
