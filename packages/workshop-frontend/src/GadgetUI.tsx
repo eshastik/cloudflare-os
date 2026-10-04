@@ -54,6 +54,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
   const [iframeGeneration, setIframeGeneration] = useState(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [loadedFrame, setLoadedFrame] = useState<{ html: string; generation: number; trigger: number | undefined } | null>(null)
+  const nativeReadinessId = useRef<string | null>(null)
+  const [nativeReadyFrame, setNativeReadyFrame] = useState<{ window: Window; id: string } | null>(null)
   const accent = useOptionalAccentColor()
   const mode = useHostThemeMode()
   const themeRef = useRef<HostTheme>({ mode, accent })
@@ -69,6 +71,8 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
     const target = iframeRef.current?.contentWindow
     if (!nativeSnapshotSource || !target || !isVisible || isInvalidated || loading || error || !sandboxedHtml ||
         loadedFrame?.html !== sandboxedHtml || loadedFrame.generation !== iframeGeneration || loadedFrame.trigger !== reloadTrigger) return
+    // Загрузка HTML не означает, что редактор уже прочитал документ через RPC.
+    if (nativeReadinessId.current && (nativeReadyFrame?.window !== target || nativeReadyFrame.id !== nativeReadinessId.current)) return
     const lifetime = new AbortController()
     const read = queueNativeSnapshots((format, signal) =>
       requestNativeSnapshot(target, format, AbortSignal.any([signal, lifetime.signal])))
@@ -77,7 +81,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
       lifetime.abort()
       if (nativeSnapshotSource.current === read) nativeSnapshotSource.current = null
     }
-  }, [nativeSnapshotSource, gadget, chatId, isVisible, loading, error, sandboxedHtml, hasLoaded, isInvalidated, iframeGeneration, reloadTrigger, loadedFrame])
+  }, [nativeSnapshotSource, gadget, chatId, isVisible, loading, error, sandboxedHtml, hasLoaded, isInvalidated, iframeGeneration, reloadTrigger, loadedFrame, nativeReadyFrame])
   const readinessRef = useRef<ReturnType<typeof startWorkspaceUIReadiness> | null>(null)
   useEffect(() => () => { readinessRef.current?.finish("abandoned") }, [])
   useEffect(() => { if (!isVisible) readinessRef.current?.finish("abandoned") }, [isVisible])
@@ -142,6 +146,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
 
   const reloadIframe = (reason: unknown) => {
     resetConnection(reason)
+    setNativeReadyFrame(null)
     setIframeGeneration(generation => generation + 1)
   }
 
@@ -248,7 +253,10 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           const supportsReadiness = /type:\s*["']native-ui-readiness["']/.test(bundle.jsCode)
           resolveSupport(supportsReadiness)
           if (!supportsReadiness) attempt?.finish("abandoned")
-          const html = createSandboxedHtml(bundle.jsCode, attempt?.observationId, themeRef.current)
+          const readinessId = attempt?.observationId ?? crypto.randomUUID()
+          nativeReadinessId.current = supportsReadiness ? readinessId : null
+          setNativeReadyFrame(null)
+          const html = createSandboxedHtml(bundle.jsCode, readinessId, themeRef.current)
           setSandboxedHtml(html)
         } else {
           resolveSupport(true)
@@ -298,6 +306,7 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
 
       if (event.data === 'handshake' && event.ports && event.ports[0]) {
         const port = event.ports[0]
+        setNativeReadyFrame(null)
         // Фрейм мог перезагрузиться со старой разметкой: тема и акцент отправляются заново.
         sendTheme()
         let gadgetStub: any = null
@@ -359,6 +368,10 @@ function GadgetUISession({ gadget, height, reloadTrigger, isVisible = true, chat
           message: event.data.message,
         })
       } else if (event.data?.type === 'native-ui-readiness') {
+        if (nativeReadinessId.current && event.data.attempt === nativeReadinessId.current) {
+          if (event.data.outcome === 'ready') setNativeReadyFrame({ window: event.source as Window, id: nativeReadinessId.current })
+          else if (event.data.outcome === 'error') { setNativeReadyFrame(null); setError('Не удалось загрузить документ в редакторе') }
+        }
         const attempt = readinessRef.current
         if (attempt && event.data.attempt === attempt.observationId) {
           if (!activityVisibleRef.current || document.visibilityState !== "visible") attempt.finish("abandoned")

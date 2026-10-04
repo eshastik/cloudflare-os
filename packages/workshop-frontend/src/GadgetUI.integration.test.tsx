@@ -308,6 +308,27 @@ describe('GadgetUI RPC recovery', () => {
     send.mockRestore()
   })
 
+  it('ждёт готовности документа после загрузки HTML и отвергает чужую попытку', async () => {
+    const gadget = fakeGadget('native', 'window.parent.postMessage({ type: "native-ui-readiness" }, "*")')
+    const source: { current: NativeSnapshotSource | null } = { current: null }
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" nativeSnapshotSource={source} />))
+    await vi.waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const frame = container.querySelector('iframe')!
+    await act(async () => frame.dispatchEvent(new Event('load')))
+    expect(source.current).toBeNull()
+    const script = decodeURIComponent(frame.srcdoc)
+    const id = JSON.parse(script.match(/const nativeUIReadinessAttempt = ("[^"]+");/)![1])
+    const notify = (attempt: string, sender: Window | null = frame.contentWindow) => window.dispatchEvent(new MessageEvent('message', {
+      source: sender, origin: 'null', data: { type: 'native-ui-readiness', attempt, outcome: 'ready' },
+    }))
+    await act(async () => { notify('stale'); notify(id, window) })
+    expect(source.current).toBeNull()
+    await act(async () => { notify(id) })
+    expect(source.current).not.toBeNull()
+    await act(async () => root.render(<GadgetUI gadget={gadget.stub} height="100px" isVisible={false} nativeSnapshotSource={source} />))
+    expect(source.current).toBeNull()
+  })
+
   it('отмечает ожидание экспорта и возвращает исходный снимок через RPC', async () => {
     let finish!: (value: unknown) => void
     const pending = new Promise(resolve => { finish = resolve })

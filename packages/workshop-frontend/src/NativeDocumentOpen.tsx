@@ -101,6 +101,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   }, [preparing])
   const [docCursor, setDocCursor] = useState(''), [pubCursor, setPubCursor] = useState(''), [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState(''), [timedOut, setTimedOut] = useState(false), [phase, setPhase] = useState('versions')
+  const [attemptError, setAttemptError] = useState('')
   const selector = useRef<RpcStub<GatekeeperNativeDocumentSelector> | null>(null)
   const storageOrigin = useRef('')
   const writer = useRef<RpcStub<GatekeeperNativeDocumentWriteSelector> | null>(null)
@@ -248,7 +249,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       }), aborted]) }
       finally { signal.removeEventListener('abort', cancel) }
     }
-    setBusy(true); setError('')
+    setBusy(true); setError(''); setAttemptError('')
     try {
       setPhase('snapshot-source')
       const flush = await wait(waitForNativeSnapshotSource(snapshotSource, signal))
@@ -320,17 +321,17 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       if (intent.scope && intent.resource) await wait(Promise.resolve(onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })))
       signal.throwIfAborted(); setPhase('complete'); close(); reconnect()
     } catch {
-      if (!lifetime.current.signal.aborted) setError(deadline.signal.aborted ? 'Открытие заняло слишком много времени. Повторите попытку.' : 'Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
+      if (!lifetime.current.signal.aborted) setAttemptError(deadline.signal.aborted ? 'Открытие заняло слишком много времени. Повторите попытку.' : 'Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
     } finally { clearTimeout(attemptTimer); if (!lifetime.current.signal.aborted) setBusy(false) }
   }
   // Открытие без кнопки: один раз, когда заданная версия выбрана и адрес документа прочитан.
   const autoTried = useRef(false)
   // Общий срок включает ожидание React-состояния между запросами, а не только сами RPC.
   useEffect(() => {
-    if (!auto) return
+    if (!auto || attemptError) return
     const timer = setTimeout(() => { autoTried.current = true; lifetime.current.abort(); setTimedOut(true); setBusy(false) }, openingTimeoutMs)
     return () => clearTimeout(timer)
-  }, [auto, openingTimeoutMs])
+  }, [auto, openingTimeoutMs, attemptError])
   useEffect(() => {
     if (!auto || autoTried.current || busy || loading) return
     if (!resume && (accountId === null || !resourceUrl || !publication || publication !== initialPublication)) return
@@ -343,12 +344,12 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     if (!publications.some(p => p.id === initialPublication) && !pubCursor) setError('Этой версии документа больше нет. Выберите другую.')
   }, [auto, resume, busy, loading, resourceUrl, publications, pubCursor, initialPublication])
   function chooseManually() {
-    sessionStorage.removeItem(storageKey); setResume(null); setManual(true); setError(''); setLoading(true)
+    sessionStorage.removeItem(storageKey); setResume(null); setManual(true); setError(''); setAttemptError(''); setLoading(true)
   }
   // На телефоне поле выбора 40 px и шрифт 16 px: мельче iOS приближает страницу при касании.
   const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[13px]'
   const opening = resume?.label || documents.find(d => d.id === document)?.name || ''
-  const openingError = timedOut ? 'Открытие заняло слишком много времени. Повторите попытку.' : error
+  const openingError = timedOut ? 'Открытие заняло слишком много времени. Повторите попытку.' : attemptError || error
   if (auto) return <section aria-label="Открытие документа" data-opening-phase={phase} data-opening-loading={loading} data-opening-ready={!!resourceUrl} data-opening-has-version={!!publication} data-opening-version-matches={publication === initialPublication} data-opening-resumed={!!resume} data-opening-attempted={autoTried.current} className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
       {openingError ? <p role="alert" className="m-0 text-kumo-danger">{openingError}</p>
         : <p role="status" className="m-0">{opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
@@ -391,7 +392,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       {notice && <p role="status">{notice}</p>}
       {loading && <p role="status">Загрузка…</p>}
       {preparing && <HistoryPreparingNotice progress={preparing} subject="Публикации документа появятся" />}
-      {error && <p role="alert" className="m-0 text-kumo-danger">{error}</p>}
+      {(attemptError || error) && <p role="alert" className="m-0 text-kumo-danger">{attemptError || error}</p>}
       <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
         <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-8 sm:w-auto" disabled={loading || busy || (!resume && !publication)} onClick={() => { void apply() }}>{busy ? 'Открываю…' : 'Открыть версию'}</WorkshopButton></div>
   </section>

@@ -72,6 +72,12 @@ it.each(['restart', 'restart_probe', 'changed', 'revoked', 'restore'] as const)(
       expect(JSON.parse(sessionStorage.getItem(key)!).sourceId).toBe(9)
     } else if (mode === 'changed') {
       expect(calls).toEqual(['flush']); expect(reconnect).not.toHaveBeenCalled()
+      vi.useFakeTimers()
+      try {
+        await act(async () => vi.advanceTimersByTimeAsync(20_000))
+        expect(document.body.textContent).toContain('Документ не открылся')
+        expect(document.body.textContent).not.toContain('Открытие заняло слишком много времени')
+      } finally { vi.useRealTimers() }
     } else if (mode === 'revoked') {
       expect(calls).toEqual(['flush', 'prepare', 'read', 'issue', 'validate']); expect(reconnect).not.toHaveBeenCalled()
     } else {
