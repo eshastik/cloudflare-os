@@ -15,6 +15,7 @@ function fixture(){
   async saveDraftDocument(_p:string,_n:string,_u:string,head:string){if(head!==state.head)throw Error('Конфликт');state.saves++;state.head=NEXT;return {head:NEXT};},
  } as Parameters<typeof readAgentNativeDocument>[0];
  const fetcher=(async(_url:unknown,init?:RequestInit)=>{
+  assert.equal(init?.redirect,'manual');
   if(init?.method==='PUT'){state.puts++;state.uploaded=new TextDecoder().decode(init.body as Uint8Array);if(state.drift)state.head=NEXT;return new Response(null,{status:200});}
   state.gets++;return new Response(state.body);
  }) as typeof fetch;
@@ -69,5 +70,15 @@ test('неподтверждённое сохранение не выдаётс�
  for(const receipt of [{},{head:''},{head:'0'.repeat(64)},{head:'неверная версия'}]){
   const {api,fetcher}=fixture();api.saveDraftDocument=async()=>receipt as any;
   await assert.rejects(saveAgentNativeDocument(api,ORIGIN,'project','node',HEAD,snapshot,fetcher),/не подтвердил/);
+ }
+});
+
+test('перенаправление чтения или загрузки не выдаёт содержимое и не сохраняет версию',async()=>{
+ for(const status of [301,302,307,308]){
+  const {api,state}=fixture();
+  const redirected:typeof fetch=async(_url,init)=>{assert.equal(init?.redirect,'manual');return new Response(null,{status,headers:{location:'https://foreign.test/doc'}});};
+  await assert.rejects(readAgentNativeDocument(api,ORIGIN,'project','node',redirected),/не отдало/);
+  await assert.rejects(saveAgentNativeDocument(api,ORIGIN,'project','node',HEAD,snapshot,redirected),/не приняло/);
+  assert.equal(state.saves,0);
  }
 });

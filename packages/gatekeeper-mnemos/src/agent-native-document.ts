@@ -41,7 +41,7 @@ export async function readAgentNativeDocument(session:Session,origin:string,proj
  const doc=await current(session,project,node);
  const ticket=await session.beginDraftDownload(project,node,doc.head,0);
  if(ticket.method!=='GET'||ticket.node_id!==node||ticket.head!==doc.head||ticket.term_index!==0||!Number.isSafeInteger(ticket.size_bytes)||ticket.size_bytes<0||ticket.size_bytes>LIMIT||!Number.isFinite(Date.parse(ticket.expires_at))||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Mnemos не подтвердил точную версию документа.');
- const response=await fetcher(storageUrl(origin,ticket.url),{redirect:'error',signal:AbortSignal.timeout(20_000)});
+ const response=await fetcher(storageUrl(origin,ticket.url),{redirect:'manual',signal:AbortSignal.timeout(20_000)});
  if(response.status!==200||!response.body)throw new Error('Хранилище не отдало документ.');
  const reader=response.body.getReader();const chunks:Uint8Array[]=[];let size=0;
  try{
@@ -67,7 +67,7 @@ export async function saveAgentNativeDocument(session:Session,origin:string,proj
  const ticket=await session.beginNativeUpload(project,data.length,checksum);
  const url=storageUrl(origin,ticket.url);
  if(ticket.method!=='PUT'||ticket.content_length!==data.length||ticket.checksum_header.toLowerCase()!=='x-amz-checksum-sha256'||ticket.checksum_value!==checksum)throw new Error('Mnemos не подтвердил загрузку документа.');
- const response=await fetcher(url,{method:'PUT',redirect:'error',signal:AbortSignal.timeout(20_000),headers:{[ticket.checksum_header]:checksum},body:data});
+ const response=await fetcher(url,{method:'PUT',redirect:'manual',signal:AbortSignal.timeout(20_000),headers:{[ticket.checksum_header]:checksum},body:data});
  await response.body?.cancel();
  if(!response.ok)throw new Error('Хранилище не приняло документ.');
  await current(session,project,node,expectedHead);
