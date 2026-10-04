@@ -100,7 +100,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     return () => clearTimeout(timer)
   }, [preparing])
   const [docCursor, setDocCursor] = useState(''), [pubCursor, setPubCursor] = useState(''), [truncated, setTruncated] = useState(false)
-  const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState(''), [timedOut, setTimedOut] = useState(false)
+  const [loading, setLoading] = useState(!resume), [busy, setBusy] = useState(false), [error, setError] = useState(''), [timedOut, setTimedOut] = useState(false), [phase, setPhase] = useState('versions')
   const selector = useRef<RpcStub<GatekeeperNativeDocumentSelector> | null>(null)
   const storageOrigin = useRef('')
   const writer = useRef<RpcStub<GatekeeperNativeDocumentWriteSelector> | null>(null)
@@ -250,6 +250,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
     }
     setBusy(true); setError('')
     try {
+      setPhase('editor-snapshot')
       const flush = snapshotSource.current
       if (!flush) throw new Error()
       const current = await wait(flush(format, signal)), revision = current.document.revision
@@ -257,10 +258,12 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       const intent: Pending = resume ?? { accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify(intent))
+      setPhase('prepare-source')
       const prepared = await wait(gadget.prepareNativeDocumentRead(intent.accountId, intent.resourceUrl, intent.publication))
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify({ ...intent, sourceId: prepared.sourceId }))
       if (prepared.restartRequired) {
+        setPhase('reconnect')
         // Перезагрузка для этого открытия уже была: вторая означала бы петлю перезагрузок без открытия.
         if (resume?.sourceId !== undefined) throw new Error('Restart repeated')
         // Wait for the old session to close: reloading on the prepare response can reconnect
@@ -287,17 +290,24 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
         })
         signal.throwIfAborted(); reconnect(); return
       }
+      setPhase('read-source')
       const read = await wait(gadget.readNativeDocument(prepared.sourceId))
       // Ревизию после восстановления сообщает сам редактор (ответ restore или getDocument на сервере гаджета):
       // запрос снимка у окна редактора сразу после восстановления отказывает, пока оно перерисовывается.
       let opened: number | undefined
       try {
+        setPhase('download-ticket')
         const ticket = await wait(read.download.issue())
+        setPhase('download')
         const snapshot = await wait(downloadGatekeeperNativeDocument(read.storageOrigin, ticket, format, signal, () => read.download.validate()))
+        setPhase('connect-editor')
         const editor = await wait(gadget.connectToGadget()) as RpcStub<NativeDocumentEditor>
         try {
+          setPhase('validate')
           await wait(read.download.validate()); signal.throwIfAborted()
+          setPhase('restore')
           const restored = await wait(editor.restoreDocumentSnapshot(snapshot, revision))
+          setPhase('revision')
           opened = editorRevision(restored) ?? editorRevision(await wait((async () => editor.getDocument())().catch(() => undefined)))
         } finally { editor[Symbol.dispose]() }
       } finally { read[Symbol.dispose]() }
@@ -305,8 +315,9 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       // Если запись в редактор уже завершилась, повтор сверяет именно эту ревизию.
       // Правки человека после неё по-прежнему запрещают автоматическое восстановление.
       if (opened !== undefined) sessionStorage.setItem(storageKey, JSON.stringify({ ...intent, sourceId: prepared.sourceId, revision: opened }))
+      setPhase('binding')
       if (intent.scope && intent.resource) await wait(Promise.resolve(onOpened?.({ accountId: intent.accountId, scope: intent.scope, resource: intent.resource, publication: intent.publication, ...(opened !== undefined ? { revision: opened } : {}) })))
-      signal.throwIfAborted(); close(); reconnect()
+      signal.throwIfAborted(); setPhase('complete'); close(); reconnect()
     } catch {
       if (!lifetime.current.signal.aborted) setError(deadline.signal.aborted ? 'Открытие заняло слишком много времени. Повторите попытку.' : 'Документ не открылся: он изменился или доступ закрыт. Выберите версию ещё раз.')
     } finally { clearTimeout(attemptTimer); if (!lifetime.current.signal.aborted) setBusy(false) }
@@ -337,7 +348,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[13px]'
   const opening = resume?.label || documents.find(d => d.id === document)?.name || ''
   const openingError = timedOut ? 'Открытие заняло слишком много времени. Повторите попытку.' : error
-  if (auto) return <section aria-label="Открытие документа" className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
+  if (auto) return <section aria-label="Открытие документа" data-opening-phase={phase} data-opening-loading={loading} data-opening-ready={!!resourceUrl} data-opening-has-version={!!publication} data-opening-version-matches={publication === initialPublication} data-opening-resumed={!!resume} data-opening-attempted={autoTried.current} className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
       {openingError ? <p role="alert" className="m-0 text-kumo-danger">{openingError}</p>
         : <p role="status" className="m-0">{opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
       {preparing && !openingError && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
