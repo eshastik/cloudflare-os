@@ -440,6 +440,8 @@ export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
 }
 /** Настройки области общего применения шаблонов. */
 export interface GatekeeperTemplateScopeConfig {
+  /** Обязательные предметные решения; пропуск сохраняет прежние, [] очищает. */
+  review_requirements?: {domain_id:string;approvers:string[]}[];
   /** Место в иерархии. */
   level: 'organization' | 'department' | 'group';
   /** Непосредственный родитель; пусто у организации. */
