@@ -1,3 +1,4 @@
+import {listAgentTemplateScopes,listAgentTemplates,resolveAgentTemplate} from './agent-template-discovery.ts';
 import {readAgentNativeDocument,saveAgentNativeDocument} from './agent-native-document.ts';
 import type {NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document';
 import {createTemplateDocument,type TemplateDocumentInput} from './create-template-document.ts';
@@ -1087,6 +1088,24 @@ export class UserAccount extends DurableObject<Env> {
     try { return await executeAgentAction(this.#withSources(session), kind, resolved); }
     catch (error) { throw agentActionError(error); }
     finally { session.dispose(); }
+  }
+  /** Каталог областей читается правами агента, без списка согласующих. */
+  async listTemplateScopesForAgent(cursor:string){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await listAgentTemplateScopes(session,cursor);}finally{session.dispose();}
+  }
+  /** Возвращает рекомендации области с точными координатами, без личных данных автора. */
+  async listTemplatesForAgent(scope:string,cursor:string){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await listAgentTemplates(session,scope,cursor);}finally{session.dispose();}
+  }
+  /** Ближайшую версию выбирает сервер, а не модель. */
+  async resolveTemplateForAgent(scope:string,key:string){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await resolveAgentTemplate(session,scope,key);}finally{session.dispose();}
   }
   /** Содержимое выбранных материалов читает агент, а не сессия человека. */
   async readTemplateMaterialsForAgent(references:WorkTemplateReference[]){

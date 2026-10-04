@@ -38,3 +38,13 @@ describe("подсказка агенту беседы о Mnemos", () => {
     expect(text).toContain("Не проси у человека пароли");
   });
 });
+
+it('обычная задача ищет и разрешает шаблоны, затем заполняет форму',()=>{
+ const text=formatMnemosWorkPrompt('MNEMOS_2');
+ for(const method of ['listTemplateScopes','listTemplates','resolveTemplate','readTemplates','createTemplateDocument','readNativeDraft','saveNativeDraft'])expect(text).toContain(method);
+ expect(text).toContain('env.MNEMOS_2.listTemplateScopes');
+ expect(text).toContain('несколько групп подходят');
+ expect(text).toContain('Не заменяй недоступную версию');
+ expect(text).toContain('не делает материал обязательной политикой');
+ expect(text).toContain('точные reference');
+});

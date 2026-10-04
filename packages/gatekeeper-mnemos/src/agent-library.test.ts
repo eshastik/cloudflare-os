@@ -1019,3 +1019,19 @@ test('нативная форма читается и сохраняется т�
  await assert.rejects(denied.readNativeDraft('p1','node'));await assert.rejects(denied.saveNativeDraft('p1','node',read.head,read.snapshot));assert.equal(calls.length,2);
  session[Symbol.dispose]();denied[Symbol.dispose]();
 });
+
+
+test('поиск шаблонов проходит личную авторизацию агента и не обращается к сессии человека',async()=>{
+ const {library,state,account}=fixture();const calls:unknown[]=[];
+ (account as Record<string,unknown>).listTemplateScopesForAgent=async(...input:unknown[])=>{calls.push(['scopes',...input]);return {scopes:[],nextCursor:'team'};};
+ (account as Record<string,unknown>).listTemplatesForAgent=async(...input:unknown[])=>{calls.push(['templates',...input]);return {selectedScopeId:'team',templates:[],nextCursor:'50'};};
+ (account as Record<string,unknown>).resolveTemplateForAgent=async(...input:unknown[])=>{calls.push(['resolve',...input]);return {selectedScopeId:'team',template:{reference:{scope_id:'department',template_key:'spec',revision:5}}};};
+ const auth=authorizer(state);const session=await library.startSession(auth as any);
+ await session.listTemplateScopes();await session.listTemplates('team','50');await session.resolveTemplate('team','spec');
+ assert.deepEqual(calls,[['scopes',''],['templates','team','50'],['resolve','team','spec']]);
+ assert.ok(auth.seen.slice(-3).every(x=>(x as any).ownerOnly));
+ const denied=await library.startSession(authorizer(state,true) as any);
+ await assert.rejects(denied.listTemplateScopes());await assert.rejects(denied.listTemplates('team'));await assert.rejects(denied.resolveTemplate('team','spec'));assert.equal(calls.length,3);
+ await assert.rejects(session.listTemplates('team','x'.repeat(256)));assert.equal(calls.length,3);
+ session[Symbol.dispose]();denied[Symbol.dispose]();
+});

@@ -91,6 +91,9 @@ export interface LibraryAccount {
   /** Тот же метод аккаунта, без копии его RPC-контракта. */
   readTemplateMaterialsForAgent?:UserAccount['readTemplateMaterialsForAgent'];
   createTemplateDocumentForAgent?:UserAccount['createTemplateDocumentForAgent'];
+  listTemplateScopesForAgent?:UserAccount['listTemplateScopesForAgent'];
+  listTemplatesForAgent?:UserAccount['listTemplatesForAgent'];
+  resolveTemplateForAgent?:UserAccount['resolveTemplateForAgent'];
   readNativeDraftForAgent?:UserAccount['readNativeDraftForAgent'];
   saveNativeDraftForAgent?:UserAccount['saveNativeDraftForAgent'];
   /** Текст файла из беседы сессией человека: узел — его личная версия. */
@@ -229,6 +232,9 @@ function release(value: unknown, depth = 0): void {
 }
 
 interface SessionCalls {
+  listTemplateScopes(queue:RpcStub<ApprovalQueue>,cursor:string):ReturnType<UserAccount['listTemplateScopesForAgent']>;
+  listTemplates(queue:RpcStub<ApprovalQueue>,scope:string,cursor:string):ReturnType<UserAccount['listTemplatesForAgent']>;
+  resolveTemplate(queue:RpcStub<ApprovalQueue>,scope:string,key:string):ReturnType<UserAccount['resolveTemplateForAgent']>;
   readNativeDraft(queue:RpcStub<ApprovalQueue>,...input:Parameters<UserAccount['readNativeDraftForAgent']>):ReturnType<UserAccount['readNativeDraftForAgent']>;
   saveNativeDraft(queue:RpcStub<ApprovalQueue>,...input:Parameters<UserAccount['saveNativeDraftForAgent']>):ReturnType<UserAccount['saveNativeDraftForAgent']>;
   createTemplateDocument(queue:RpcStub<ApprovalQueue>,input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]):ReturnType<UserAccount['createTemplateDocumentForAgent']>;
@@ -259,6 +265,9 @@ export class MnemosLibrarySession extends RpcTarget {
   #queue: RpcStub<ApprovalQueue>;
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
   async createTemplateDocument(input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]){return this.#calls.createTemplateDocument(this.#queue,input);}
+  async listTemplateScopes(cursor=''){return this.#calls.listTemplateScopes(this.#queue,cursor);}
+  async listTemplates(scope:string,cursor=''){return this.#calls.listTemplates(this.#queue,scope,cursor);}
+  async resolveTemplate(scope:string,key:string){return this.#calls.resolveTemplate(this.#queue,scope,key);}
   async readNativeDraft(...input:Parameters<UserAccount['readNativeDraftForAgent']>){return this.#calls.readNativeDraft(this.#queue,...input);}
   async saveNativeDraft(...input:Parameters<UserAccount['saveNativeDraftForAgent']>){return this.#calls.saveNativeDraft(this.#queue,...input);}
   async readTemplates(references:WorkTemplateReference[]){return this.#calls.readTemplates(this.#queue,references);}
@@ -365,6 +374,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
       return new MnemosLibrarySession({
         createTemplateDocument:(q,input)=>this.#createTemplateDocument(q,input),
         readTemplates:(q,references)=>this.#readTemplates(q,references),
+        listTemplateScopes:(q,cursor)=>this.#listTemplateScopes(q,cursor),
+        listTemplates:(q,scope,cursor)=>this.#listTemplates(q,scope,cursor),
+        resolveTemplate:(q,scope,key)=>this.#resolveTemplate(q,scope,key),
         readNativeDraft:(q,...input)=>this.#readNativeDraft(q,...input),
         saveNativeDraft:(q,...input)=>this.#saveNativeDraft(q,...input),
         listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
@@ -685,6 +697,24 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const result=await this.#data(()=>account.createTemplateDocumentForAgent!(frozen));
     await queue.authorizeObservation({ownerOnly:true,title:'Документ создан',description:result.name,activity:{kind:'mnemos.template.created',scopeId:result.project,subject:result.name,items:[{name:result.name,documentId:result.document.node_id,projectId:result.project}]}});
     return result;
+  }
+  async #listTemplateScopes(queue:RpcStub<ApprovalQueue>,cursor:string){
+    if(typeof cursor!=='string'||cursor.length>255)throw new Error('Некорректный курсор.');
+    await this.#authorizePersonal(queue,{kind:'mnemos.templates.scopes'});
+    const account=this.#account();if(!account.listTemplateScopesForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.listTemplateScopesForAgent!(cursor));
+  }
+  async #listTemplates(queue:RpcStub<ApprovalQueue>,scope:string,cursor:string){
+    identifier(scope,'область');if(typeof cursor!=='string'||cursor.length>255)throw new Error('Некорректный курсор.');
+    await this.#authorizePersonal(queue,{kind:'mnemos.templates.list',scopeId:scope});
+    const account=this.#account();if(!account.listTemplatesForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.listTemplatesForAgent!(scope,cursor));
+  }
+  async #resolveTemplate(queue:RpcStub<ApprovalQueue>,scope:string,key:string){
+    identifier(scope,'область');identifier(key,'ключ шаблона');
+    await this.#authorizePersonal(queue,{kind:'mnemos.templates.resolve',scopeId:scope,subject:key});
+    const account=this.#account();if(!account.resolveTemplateForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.resolveTemplateForAgent!(scope,key));
   }
   async #readNativeDraft(queue:RpcStub<ApprovalQueue>,project:string,node:string){
     identifier(project,'проект');identifier(node,'документ');

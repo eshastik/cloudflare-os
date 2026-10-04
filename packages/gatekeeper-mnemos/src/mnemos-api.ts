@@ -420,11 +420,9 @@ export class MnemosAPI {
     segment(binding);if(cursor!=="")segment(cursor);
     const out=await this.#request<import("./work-templates.ts").TemplateAgentGrantPage>(`/v1/agent-connections/${segment(binding)}/template-grants?cursor=${encodeURIComponent(cursor)}`,"GET",signal);
     if(!out||!Array.isArray(out.grants)||out.grants.length>100)throw new MnemosAPIError(502);
-    const encoder=new TextEncoder();
-    const compare=(a:string,b:string)=>{const left=encoder.encode(a),right=encoder.encode(b);for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i])return left[i]-right[i];}return left.length-right.length;};
     let previous=cursor;
     for(const grant of out.grants){
-      if(!grant||grant.binding_id!==binding||typeof grant.scope_id!=="string"||!grant.scope_id||grant.scope_id.length>255||compare(grant.scope_id,previous)<=0||!Number.isSafeInteger(grant.revision)||grant.revision<1||typeof grant.enabled!=="boolean")throw new MnemosAPIError(502);
+      if(!grant||grant.binding_id!==binding||typeof grant.scope_id!=="string"||!grant.scope_id||grant.scope_id.length>255||compareUTF8(grant.scope_id,previous)<=0||!Number.isSafeInteger(grant.revision)||grant.revision<1||typeof grant.enabled!=="boolean")throw new MnemosAPIError(502);
       previous=grant.scope_id;
     }
     if(out.next_cursor!==undefined&&(typeof out.next_cursor!=="string"||!out.next_cursor||out.grants.length!==100||out.next_cursor!==previous))throw new MnemosAPIError(502);
@@ -463,7 +461,7 @@ export class MnemosAPI {
     if(cursor!==""&&(!/^(0|[1-9][0-9]*)$/.test(cursor)||!Number.isSafeInteger(Number(cursor))||Number(cursor)>2147483647))throw new MnemosAPIError(400);
     const out=await this.#request<ScopedWorkTemplatePage>(`/v1/template-scopes/${segment(scope)}/templates?cursor=${encodeURIComponent(cursor)}`,"GET",signal);
     if(!out||out.selected_scope_id!==scope||!Array.isArray(out.templates)||out.templates.length>50)throw new MnemosAPIError(502);
-    let previous="";for(const v of out.templates){if(!validScopedWorkTemplate(v)||v.template_key<=previous)throw new MnemosAPIError(502);previous=v.template_key;}
+    let previous="";for(const v of out.templates){if(!validScopedWorkTemplate(v)||compareUTF8(v.template_key,previous)<=0)throw new MnemosAPIError(502);previous=v.template_key;}
     if(out.next_cursor&&out.next_cursor!==String(Number(cursor||0)+50))throw new MnemosAPIError(502);return out;
   }
   async readScopedWorkTemplate(scope:string,key:string,revision:number,signal?:AbortSignal):Promise<ScopedWorkTemplateVersion>{
@@ -1771,4 +1769,11 @@ function archiveUTF8Base64(value: string): string {
   let binary = "";
   for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+// Каталог сервера отсортирован по байтам UTF-8 через COLLATE "C".
+function compareUTF8(a:string,b:string):number {
+  const encoder=new TextEncoder(),left=encoder.encode(a),right=encoder.encode(b);
+  for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i])return left[i]-right[i];}
+  return left.length-right.length;
 }
