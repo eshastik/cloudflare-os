@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {Button} from '@cloudflare/kumo'
+import {WorkshopButton} from './components/WorkshopControls'
 import type {RpcStub} from 'capnweb'
 import type {GatekeeperUiFrame, GatekeeperBlueprintTemplateCreator, GatekeeperTemplateVersion} from '@gadgets/workshop-shared/gatekeeper'
 import type {NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
@@ -19,6 +19,10 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const [scope,setScope] = useState(''), [proposed,setProposed] = useState(false), [locked,setLocked] = useState(false)
   const [title,setTitle] = useState(blueprint.title), [purpose,setPurpose] = useState(blueprint.description || blueprint.title)
   const [busy,setBusy] = useState(false), [error,setError] = useState(''), [version,setVersion] = useState<GatekeeperTemplateVersion|null>(null)
+  const [accountsLoading,setAccountsLoading]=useState(true)
+  const [libraryState,setLibraryState]=useState<'idle'|'loading'|'ready'|'error'>('idle')
+  const [libraryReload,setLibraryReload]=useState(0)
+  const [scopesLoading,setScopesLoading]=useState(false),[scopesError,setScopesError]=useState(''),[scopesReload,setScopesReload]=useState(0)
   const [previous,setPrevious]=useState<{template_id:string;revision:number}|undefined>()
   const frame = useRef<GatekeeperUiFrame|null>(null)
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
@@ -30,12 +34,12 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     void listAccounts(api).then(items => {
       if(cancelled)return
       const choices=items.filter(storesDocuments).map(item=>({id:item.id,name:item.description.displayName||item.description.uniqueName||item.vendorId}))
-      setAccounts(choices)
+      setAccounts(choices);setAccountsLoading(false)
       let saved: {account?:number}|null=null
       try {saved=JSON.parse(sessionStorage.getItem(pendingKey)||'null')} catch {}
       if(saved?.account!==undefined&&choices.some(item=>item.id===saved!.account))setAccount(saved.account)
       else if(choices.length===1)setAccount(choices[0].id)
-    }).catch(()=>{if(!cancelled)setError('Не удалось прочитать подключения.')})
+    }).catch(()=>{if(!cancelled){setError('Не удалось прочитать библиотеки.');setAccountsLoading(false)}})
     return()=>{cancelled=true;lifetime.current.abort();creator.current?.[Symbol.dispose]();disposeGatekeeperFrame(frame.current)}
   },[api,pendingKey])
   useEffect(()=>{
@@ -43,7 +47,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     setProjects([]);setProject('');setScopes([]);setScope('');setError('');setVersion(null);setLocked(false);setProposed(false);setPrevious(undefined)
     creator.current?.[Symbol.dispose]();creator.current=null
     disposeGatekeeperFrame(frame.current);frame.current=null
-    if(account===null)return
+    if(account===null){setLibraryState('idle');return}
+    setLibraryState('loading')
     void openBlueprintTemplatesFrame(api,account).then(async value=>{
       if(cancelled){disposeGatekeeperFrame(value);return}
       frame.current=value
@@ -54,15 +59,6 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(cancelled)return
       setProjects(result.projects)
       if(!latest&&result.projects.length===1)setProject(result.projects[0].id)
-      const groups: typeof scopes = []
-      let cursor = ''
-      do {
-        const page = await value.blueprintTemplates.selector.scopes(cursor)
-        if(cancelled)return
-        groups.push(...page.scopes.filter(item=>item.enabled && item.level === 'group'))
-        cursor = page.next_cursor || ''
-      } while(cursor)
-      setScopes(groups)
       let saved:{account:number;id:string}|null=null
       try{saved=JSON.parse(sessionStorage.getItem(pendingKey)||'null')}catch{}
       if(saved?.account===account){
@@ -73,11 +69,27 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         if(cancelled)return
         setProject(state.project);setTitle(state.title);setPurpose(state.purpose);setVersion(state.version);setLocked(true)
       }
-    }).catch(()=>{if(!cancelled)setError('Не удалось открыть библиотеку шаблонов.')})
+      setLibraryState('ready')
+    }).catch(()=>{if(!cancelled){setError('Не удалось открыть библиотеку шаблонов.');setLibraryState('error')}})
     return()=>{cancelled=true}
-  },[api,account])
+  },[api,account,libraryReload])
+  useEffect(()=>{
+    let cancelled=false;setScopes([]);setScope('');setScopesError('');
+    const selector=frame.current?.blueprintTemplates?.selector;
+    if(libraryState!=='ready'||!selector){setScopesLoading(false);return}
+    setScopesLoading(true)
+    void (async()=>{
+      const groups:typeof scopes=[];let cursor='';
+      do {
+        const page=await selector.scopes(cursor);if(cancelled)return;
+        groups.push(...page.scopes.filter(item=>item.enabled&&item.level==='group'));cursor=page.next_cursor||'';
+      } while(cursor)
+      if(!cancelled)setScopes(groups)
+    })().catch(()=>{if(!cancelled)setScopesError('Не удалось загрузить группы. Личный шаблон можно сохранить и использовать.')}).finally(()=>{if(!cancelled)setScopesLoading(false)})
+    return()=>{cancelled=true}
+  },[account,libraryState,scopesReload])
   async function save(){
-    if(busy||account===null||!frame.current?.blueprintTemplates)return
+    if(busy||libraryState!=='ready'||account===null||!frame.current?.blueprintTemplates)return
     setBusy(true);setError('')
     const signal=lifetime.current.signal
     try {
@@ -118,26 +130,35 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     catch{setError('Предложение не подтверждено. Повторите отправку; права и правила согласования проверяет сервер.')}
     finally{setBusy(false)}
   }
-  const field='mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-sm'
-  return <section aria-label="Версия рабочего шаблона" className="space-y-4 rounded-xl border border-kumo-line p-4">
-    <h3 className="m-0 text-base font-semibold">Рабочий шаблон «{blueprint.title}»</h3>
-    <p className="text-sm text-kumo-subtle">Сохраните код гаджета и содержимое документа как одну версию.</p>
-    {version?<div className="space-y-3"><p role="status">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p>
-      {proposed?<p role="status">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<>
-        <p className="text-xs text-kumo-subtle">Сначала предложите шаблон группе. После одобрения его можно предложить отделу, затем организации.</p>
-        {!scopes.length&&<p className="text-sm text-kumo-subtle">Доступных групп для согласования пока нет. Шаблон остаётся личным.</p>}
-        <label className="block text-sm">Группа для согласования<select className={field} disabled={busy} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Оставить личным</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{{group:'Группа',department:'Отдел',organization:'Организация'}[item.level]} · {item.name}</option>)}</select></label>
-        {scope&&<Button disabled={busy} onClick={()=>void propose()}>{busy?'Отправляем…':'Предложить для общего применения'}</Button>}
-      </>}
-      <Button variant="secondary" disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</Button>
-    </div>:<fieldset disabled={busy} className="space-y-3 border-0 p-0">
-      {accounts.length!==1&&<label className="block text-sm">Организация<select className={field} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите организацию</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-      <label className="block text-sm">Проект<select className={field} disabled={locked} value={project} onChange={e=>setProject(e.target.value)}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      <label className="block text-sm">Название<input className={field} disabled={locked} value={title} onChange={e=>setTitle(e.target.value)}/></label>
-      <label className="block text-sm">Для каких задач<input className={field} disabled={locked} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
-      <Button disabled={!project||!title.trim()||!purpose.trim()} onClick={()=>void save()}>{busy?'Сохраняем…':previous?'Сохранить изменения шаблона':'Сохранить личный шаблон'}</Button>
+  const field='mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-kumo-brand'
+  return <section aria-label="Версия рабочего шаблона" className="space-y-4 p-1">
+    <div><h3 className="m-0 text-[17px] font-medium">{version?'Шаблон сохранён':previous?'Новая версия шаблона':'Сохранить личный шаблон'}</h3><p className="mt-1 text-[13px] leading-5 text-kumo-subtle">{format?'Текущее содержимое станет исходной версией для новых документов.':'Сохраните гаджет и его содержимое для следующих задач.'}</p></div>
+    {accountsLoading&&<p role="status" className="text-[13px] text-kumo-subtle">Загрузка библиотек…</p>}
+    {!accountsLoading&&!accounts.length&&!error&&<p className="text-[13px] text-kumo-subtle">Нет доступной библиотеки для сохранения шаблона.</p>}
+    {libraryState==='loading'&&<p role="status" className="text-[13px] text-kumo-subtle">Подготовка сохранения…</p>}
+    {version?<div className="space-y-4">
+      <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p></div>
+      <div className="rounded-xl border border-kumo-line p-3"><h4 className="m-0 text-[14px] font-medium">Предложить команде</h4>
+       {proposed?<p role="status" className="mt-2 text-[13px]">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<div className="mt-2 space-y-3">
+        <p className="text-[13px] leading-5 text-kumo-subtle">Личная версия уже доступна вам. Для общего применения выберите группу и отправьте эту версию на согласование.</p>
+        {scopesLoading&&<p role="status" className="text-[13px] text-kumo-subtle">Загрузка групп…</p>}
+        {scopesError&&<p role="alert" className="text-[13px] text-kumo-subtle">{scopesError} <WorkshopButton disabled={busy||scopesLoading} onClick={()=>setScopesReload(v=>v+1)}>Повторить загрузку групп</WorkshopButton></p>}
+        {!scopesLoading&&!scopesError&&!scopes.length&&<p className="text-[13px] text-kumo-subtle">Доступных групп для согласования пока нет. Шаблон остаётся личным.</p>}
+        {scopes.length>0&&<><label className="block text-[13px]">Группа для согласования<select className={field} disabled={busy||scopesLoading} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Выберите группу</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{item.name}</option>)}</select></label><WorkshopButton tone="primary" disabled={busy||!scope||scopesLoading} onClick={()=>void propose()}>{busy?'Отправляем…':'Предложить для общего применения'}</WorkshopButton></>}
+       </div>}
+      </div>
+      <WorkshopButton disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</WorkshopButton>
+    </div>:<fieldset disabled={busy||accountsLoading||libraryState==='loading'} className="space-y-3 border-0 p-0">
+      {accounts.length!==1&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+      <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>setProject(e.target.value)}><option value="">Выберите проект</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label className="block text-[13px]">Название<input className={field} disabled={locked||libraryState!=='ready'} value={title} onChange={e=>setTitle(e.target.value)}/></label>
+      <label className="block text-[13px]">Для каких задач<textarea rows={2} className={field} disabled={locked||libraryState!=='ready'} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
+      {previous&&<p className="text-[12px] text-kumo-subtle">Будет создана новая версия. Ранее созданные документы сохранят использованную версию.</p>}
+      <WorkshopButton tone="primary" disabled={libraryState!=='ready'||!project||!title.trim()||!purpose.trim()} onClick={()=>void save()}>{busy?'Сохраняем…':previous?'Сохранить изменения шаблона':'Сохранить личный шаблон'}</WorkshopButton>
+      <p className="text-[12px] text-kumo-subtle">Сохранение не отправляет шаблон на согласование. Это отдельный шаг.</p>
     </fieldset>}
-    {error&&<p role="alert" className="text-sm text-kumo-danger">{error}</p>}
-    <Button variant="ghost" disabled={busy} onClick={onClose}>Назад к шаблонам</Button>
+    {error&&<p role="alert" className="text-[13px] text-kumo-danger">{error}</p>}
+    {libraryState==='error'&&<WorkshopButton onClick={()=>setLibraryReload(v=>v+1)}>Повторить загрузку библиотеки</WorkshopButton>}
+    <WorkshopButton disabled={busy} onClick={onClose}>Назад к шаблонам</WorkshopButton>
   </section>
 }

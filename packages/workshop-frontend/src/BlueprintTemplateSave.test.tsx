@@ -62,3 +62,20 @@ test('Новая версия сохраняет идентификатор ша
  expect(mocks.creator.propose).not.toHaveBeenCalled()
  expect(container.textContent).toContain('версия 2')
 })
+
+test('отказ групп не мешает личному сохранению, повтор не создаёт новый шаблон',async()=>{
+ mocks.selector.scopes.mockReset().mockRejectedValueOnce(new Error('groups unavailable')).mockResolvedValue({scopes:[{scope_id:'finance',revision:4,level:'group',name:'Финансовая группа',enabled:true}],next_cursor:''});
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Финансовый отчёт'}} onClose={()=>{}}/>));
+ expect(button('Сохранить личный шаблон').disabled).toBe(false);
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(container.textContent).toContain('Личный шаблон сохранён');
+ expect(container.querySelector('[role="alert"]')?.textContent).toContain('Не удалось загрузить группы');
+ expect(mocks.creator.propose).not.toHaveBeenCalled();
+ await React.act(async()=>button('Повторить загрузку групп').click());
+ expect(mocks.selector.prepare).toHaveBeenCalledOnce();expect(mocks.creator.save).toHaveBeenCalledOnce();
+ expect(container.querySelector('[role="alert"]')).toBeNull();
+ expect(button('Предложить для общего применения').disabled).toBe(true);
+ await React.act(async()=>{const scope=container.querySelector('select')!;scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}));});
+ await React.act(async()=>button('Предложить для общего применения').click());
+ expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4);
+});

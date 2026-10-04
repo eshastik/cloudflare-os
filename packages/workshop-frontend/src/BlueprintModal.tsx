@@ -284,7 +284,7 @@ export default function BlueprintModal({ open, onClose, overseer, gadget, metada
   const screenshotPreviewUrl = newScreenshotUrl ?? savedScreenshotUrl
 
   if (workTemplate) return <Dialog.Root open={open} onOpenChange={value => { if (!value) { setWorkTemplate(null); onClose() } }}>
-    <Dialog size="base"><BlueprintTemplateSave blueprint={workTemplate} format={nativeFormat} snapshotSource={snapshotSource} onClose={() => setWorkTemplate(null)} /></Dialog>
+    <Dialog size="base" className="!z-[1000] !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base"><Dialog.Title className="sr-only">Рабочий шаблон</Dialog.Title><Dialog.Description className="sr-only">Сохранение личной версии и предложение для общего применения.</Dialog.Description><BlueprintTemplateSave blueprint={workTemplate} format={nativeFormat} snapshotSource={snapshotSource} onClose={() => setWorkTemplate(null)} /></Dialog>
   </Dialog.Root>
 
   return (
@@ -672,7 +672,7 @@ function BlueprintRow({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <button type="button" onClick={onSaveWorkTemplate} className="rounded-md px-2.5 py-1 text-xs font-medium text-kumo-default hover:bg-kumo-tint">Версия для работы команды</button>
+        <button type="button" onClick={onSaveWorkTemplate} className="rounded-md px-2.5 py-1 text-xs font-medium text-kumo-default hover:bg-kumo-tint">Сохранить рабочий шаблон</button>
         <div className="-ml-[7px] flex flex-wrap items-center gap-1">
           <GhostButton onClick={onUpdateCode} icon={<ArrowsClockwise size={13} />}>
             Обновить из гаджета
