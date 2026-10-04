@@ -9,11 +9,11 @@ export function requestNativeSnapshot(target: Window, format: NativeDocumentForm
   return new Promise((resolve, reject) => {
     const { port1, port2 } = new MessageChannel()
     const lifetime = AbortSignal.any([signal, AbortSignal.timeout(20_000)])
-    const cleanup = () => { port1.close(); port2.close(); lifetime.removeEventListener('abort', cancel) }
+    const cleanup = () => { port1.removeEventListener('message', receive); port1.removeEventListener('messageerror', cancel); port1.close(); port2.close(); lifetime.removeEventListener('abort', cancel) }
     const cancel = () => { cleanup(); reject(new Error('Редактор не отдал документ.')) }
     if (lifetime.aborted) { cancel(); return }
     lifetime.addEventListener('abort', cancel, { once: true })
-    port1.onmessage = event => {
+    function receive(event: MessageEvent) {
       cleanup()
       const snapshot = event.data?.snapshot
       if (!snapshot || snapshot.format !== format || snapshot.formatVersion !== 1 ||
@@ -23,7 +23,9 @@ export function requestNativeSnapshot(target: Window, format: NativeDocumentForm
       }
       resolve(snapshot)
     }
-    port1.onmessageerror = cancel
+    port1.addEventListener('message', receive)
+    port1.addEventListener('messageerror', cancel)
+    port1.start()
     try { target.postMessage({ type: 'native-snapshot-request', format }, '*', [port2]) }
     catch { cancel() }
   })
