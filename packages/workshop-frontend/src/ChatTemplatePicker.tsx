@@ -75,11 +75,12 @@ function BlueprintTemplatePicker({ onSelect, onClose, onBack }: { onSelect(templ
 const templateSelectionKey=(item:ChatWorkTemplate)=>JSON.stringify([item.accountId,item.reference]);
 
 /** Рабочие материалы Mnemos и явный вход к старым ссылкам Blueprint. */
-export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject,onOtherTemplates}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string};onOtherTemplates?(selected:ChatWorkTemplate[]):void}){
+export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],preferredProject,onOtherTemplates,embedded=false,onSelectionChange}:{onSelect(template:ChatTemplate):void;onClose():void;initialSelected?:ChatWorkTemplate[];preferredProject?:{accountId:number;projectId:string};onOtherTemplates?(selected:ChatWorkTemplate[]):void;embedded?:boolean;onSelectionChange?(selected:ChatWorkTemplate[]):void}){
  const {authenticatedApi}=useAuthenticatedApi();
  const [legacy,setLegacy]=useState(false);
  const [preview,setPreview]=useState<ChatWorkTemplate|null>(null);
  const [selected,setSelected]=useState<ChatWorkTemplate[]>(()=>[...initialSelected]);
+ useEffect(()=>{onSelectionChange?.(selected)},[selected,onSelectionChange]);
  const [accounts,setAccounts]=useState<Array<{accountId:number;title:string}>>([]);
  const [accountId,setAccountId]=useState<number|null>(initialSelected[0]?.accountId??preferredProject?.accountId??null);
  const [scopes,setScopes]=useState<Array<{scopeId:string;title:string}>>([]);
@@ -144,14 +145,16 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const filters=[['all','Все'],['document','Формы'],['guidance','Методики'],['agent_instructions','Инструкции'],['skill','Навыки']] as const;
  const chosen=(item:ChatWorkTemplate)=>selected.some(s=>templateSelectionKey(s)===templateSelectionKey(item));
  const remove=(item:ChatWorkTemplate)=>setSelected(old=>old.filter(s=>templateSelectionKey(s)!==templateSelectionKey(item)));
- if(preview)return <WorkTemplatePreview item={preview} selected={chosen(preview)} atLimit={selected.length>=16} onBack={()=>setPreview(null)} onClose={onClose} onToggle={item=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)}/>;
+ if(preview)return <WorkTemplatePreview item={preview} selected={chosen(preview)} atLimit={selected.length>=16} onBack={()=>setPreview(null)} onClose={embedded?()=>setPreview(null):onClose} onToggle={item=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)}/>;
  const shown=items.filter(item=>(kind==='all'||item.kind===kind)&&(item.title+' '+item.purpose).toLocaleLowerCase('ru').includes(query.trim().toLocaleLowerCase('ru')));
  const selectClass='h-9 w-full min-w-0 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-brand';
- return <Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}>
-  <Dialog size="base" className="!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0">
+ const Container=embedded?'section':Dialog;
+ const Title=embedded?'h2':Dialog.Title;
+ const Description=embedded?'p':Dialog.Description;
+ const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"+(embedded?" mx-auto !max-h-[70dvh] !w-full !max-w-[720px] rounded-xl border border-kumo-line":"")}>
    <div className="flex shrink-0 justify-between gap-4 px-5 py-4">
-    <div><Dialog.Title className="text-[17px] font-medium">Шаблоны для задачи</Dialog.Title><Dialog.Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Dialog.Description></div>
-    <WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>
+    <div><Title className="text-[17px] font-medium">Шаблоны для задачи</Title><Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Description></div>
+    {!embedded&&<WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>}
    </div>
    <div className="flex shrink-0 flex-wrap gap-3 px-5 pb-4">
     {(accounts.length>1||accountId===null&&accounts.length>0)&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Библиотека<select className={selectClass+' mt-1'} aria-label="Подключение Mnemos" value={accountId??''} onChange={event=>setAccountId(Number(event.target.value))}><option value="" disabled>Выберите библиотеку</option>{accounts.map(a=><option key={a.accountId} value={a.accountId}>{a.title}</option>)}</select></label>}
@@ -179,6 +182,6 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
     {selected.length>=16&&<p role="status" className="mb-3 text-[12px] text-kumo-subtle">Можно выбрать до 16 материалов. Уберите один, чтобы добавить другой.</p>}
     <div className="flex flex-wrap items-center justify-between gap-2"><WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton><WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
    </div>
-  </Dialog>
- </Dialog.Root>;
+  </Container>;
+ return embedded?content:<Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}>{content}</Dialog.Root>;
 }

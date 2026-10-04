@@ -1,10 +1,10 @@
-import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 // @vitest-environment jsdom
+import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 /* eslint-disable react/react-in-jsx-scope */
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const testState = vi.hoisted(() => {
   const listModels = vi.fn<() => Promise<never[]>>(async () => []);
@@ -57,6 +57,10 @@ import { HomePageContent } from "./routes/index";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("Home prompt route flow", () => {
+  beforeEach(()=>{
+    const values=new Map<string,string>();
+    vi.stubGlobal("localStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),clear:()=>values.clear()});
+  });
   let container: HTMLDivElement | undefined;
   let root: Root | undefined;
 
@@ -64,6 +68,7 @@ describe("Home prompt route flow", () => {
     await act(async () => root?.unmount());
     container?.remove();
     localStorage.clear();
+    vi.unstubAllGlobals();
     testState.seeds.length = 0;
     vi.clearAllMocks();
   });

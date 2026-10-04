@@ -1,3 +1,4 @@
+import type {ChatTemplateSeed} from '../chatTemplateSeed'
 import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { classifyRpcError, logRpcFailure } from "../rpcErrors";
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -44,8 +45,8 @@ function HomePage() {
   return <HomePageContent {...Route.useSearch()} />;
 }
 
-export function HomePageContent({ prompt, projectContext: project }: HomeSearch) {
-  useDocumentTitle("Новая беседа");
+export function HomePageContent({ prompt, projectContext: project, templateSeed, compact=false }: HomeSearch & {templateSeed?:ChatTemplateSeed;compact?:boolean}) {
+  useDocumentTitle(compact?"Шаблоны":"Новая беседа");
 
   const { authenticatedApi } = useAuthenticatedApi();
   const navigate = useNavigate();
@@ -198,21 +199,22 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
   );
 
   return (
-    <div className="flex min-h-full w-full flex-col items-center justify-center px-4 pb-20 pt-12 sm:px-8">
+    <div className={compact?"flex w-full flex-col items-center px-3 py-4":"flex min-h-full w-full flex-col items-center justify-center px-4 pb-20 pt-12 sm:px-8"}>
       <div className="flex w-full max-w-[720px] flex-col items-stretch">
         {/* Крупное приветствие по центру (макет Main). */}
-        <header className="mb-9 text-center">
+        {!compact&&<header className="mb-9 text-center">
           <h1 className="m-0 text-[34px] leading-tight font-semibold tracking-[-1px] text-kumo-default sm:text-[44px] sm:tracking-[-1.4px]">
             Над чем работаем?
           </h1>
           <p className="mx-auto mt-3 mb-0 max-w-[520px] text-[17px] leading-normal text-kumo-subtle">
             Спросите или поручите что угодно. Агент найдёт нужное в ваших проектах и сделает в пределах ваших прав.
           </p>
-        </header>
+        </header>}
 
         {/* Одно поле ввода: проекты беседы и работа с кодом — в его нижней строке, рядом с «+». */}
         <div>
           <ChatInput
+            templateSeed={templateSeed}
             settings={
               <ProjectChips
                 projects={projects}
@@ -239,7 +241,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
         </div>
 
         {/* Три-четыре подсказки по проектам человека. Щелчок кладёт текст в поле ввода. */}
-        <div className="mt-7">
+        {!compact&&<div className="mt-7">
           <HomeTaskSuggestions
             choices={projectChoices}
             onPick={(example) => {
@@ -250,8 +252,9 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
           />
         </div>
 
+        }
         {/* Недавние документы, которыми с вами поделились: щелчок открывает документ в редакторе. */}
-        <SharedWithYou />
+        {!compact&&<SharedWithYou />}
       </div>
     </div>
   );
