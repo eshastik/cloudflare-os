@@ -254,6 +254,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       const flush = await wait(waitForNativeSnapshotSource(snapshotSource, signal))
       setPhase('editor-snapshot')
       const current = await wait(flush(format, signal)), revision = current.document.revision
+      setPhase('editor-revision')
       if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || (resume && resume.revision !== revision)) throw new Error()
       const intent: Pending = resume ?? { accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }
       signal.throwIfAborted()
