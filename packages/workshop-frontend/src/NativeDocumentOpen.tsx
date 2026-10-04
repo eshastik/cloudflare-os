@@ -59,22 +59,25 @@ export function readPendingNativeOpen(storageKey: string, format: NativeDocument
 }
 
 export default function NativeDocumentOpen({ open = true, onClose, ...props }: Props) {
-  const [closed, setClosed] = useState(false), [key, setKey] = useState(''), [pending, setPending] = useState<Pending | null>(null), [attempt, setAttempt] = useState(0), [loadError, setLoadError] = useState(false)
+  const [closed, setClosed] = useState(false), [attempt, setAttempt] = useState(0)
+  const [loaded, setLoaded] = useState<{gadget: Props['gadget']; key: string; pending: Pending | null; failed?: boolean} | null>(null)
   useEffect(() => {
     let cancelled = false
-    setClosed(false); setKey(''); setPending(null); setLoadError(false)
+    setClosed(false); setLoaded(null)
     void boundedOpening(props.gadget.getId(), props.openingTimeoutMs ?? 20000).then(id => {
       if (cancelled) return
-      const storageKey = nativeOpenKey(id)
-      setKey(storageKey)
-      setPending(readPendingNativeOpen(storageKey, props.format))
-    }).catch(() => { if (!cancelled) setLoadError(true) })
+      const key = nativeOpenKey(id)
+      setLoaded({gadget: props.gadget, key, pending: readPendingNativeOpen(key, props.format)})
+    }).catch(() => { if (!cancelled) setLoaded({gadget: props.gadget, key: '', pending: null, failed: true}) })
     return () => { cancelled = true }
   }, [props.gadget, props.format, attempt])
-  function close() { sessionStorage.removeItem(key); setPending(null); setClosed(true); onClose?.() }
-  if (loadError && open) return <section aria-label="Открытие документа"><p role="alert">Не удалось открыть рабочее место. Повторите попытку.</p><WorkshopButton onClick={() => setAttempt(value => value + 1)}>Повторить открытие</WorkshopButton></section>
-  if (!key || closed || (!open && !pending)) return null
-  return <OpenSection key={attempt} {...props} storageKey={key} resume={pending} close={close} retry={() => { setPending(readPendingNativeOpen(key, props.format)); setAttempt(value => value + 1) }} />
+  function close() { if (loaded?.key) sessionStorage.removeItem(loaded.key); setClosed(true); onClose?.() }
+  // При смене RPC старую попытку снимаем сразу. React может объединить очистку и
+  // повторное чтение того же ID; совпадение ID не означает, что старая сессия жива.
+  if (!loaded || loaded.gadget !== props.gadget) return null
+  if (loaded.failed && open) return <section aria-label="Открытие документа"><p role="alert">Не удалось открыть рабочее место. Повторите попытку.</p><WorkshopButton onClick={() => setAttempt(value => value + 1)}>Повторить открытие</WorkshopButton></section>
+  if (!loaded.key || closed || (!open && !loaded.pending)) return null
+  return <OpenSection key={attempt} {...props} storageKey={loaded.key} resume={loaded.pending} close={close} retry={() => setAttempt(value => value + 1)} />
 }
 
 function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply, openingTimeoutMs = 20000, retry }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void; retry(): void }) {

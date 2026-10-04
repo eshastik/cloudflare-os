@@ -176,7 +176,7 @@ it.each(['prepare', 'binding'] as const)('зависшее открытие до
     expect(calls.filter(call => call === 'restore')).toHaveLength(mode === 'binding' ? 2 : 1)
     expect(onOpened).toHaveBeenCalledWith({accountId: 3, scope: 'project', resource: 'document', publication: 'publication', revision: mode === 'binding' ? 6 : 5})
     expect(reconnect).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBeNull()
-  } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
+  } finally {;(globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true; await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
 })
 
 it.each(['request', 'transition'] as const)('ожидание версий ограничено до чтения содержимого: %s', async mode => {
@@ -189,5 +189,35 @@ it.each(['request', 'transition'] as const)('ожидание версий ог�
   await act(async () => {await new Promise(resolve => setTimeout(resolve, 40))})
   expect(host.textContent).toContain('Открытие заняло слишком много времени')
   expect(host.textContent).toContain('Повторить открытие'); expect(prepared).not.toHaveBeenCalled()
+ } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
+})
+
+it('новая RPC-сессия с тем же ID продолжает сохранённое открытие, не сохраняя busy старой попытки', async () => {
+ sessionStorage.clear()
+ let late!: (value: {sourceId: number; restartRequired: boolean}) => void
+ const firstAnswer = new Promise<{sourceId: number; restartRequired: boolean}>(resolve => {late = resolve})
+ const firstPrepare = vi.fn(async () => firstAnswer), firstRead = vi.fn()
+ const restored = vi.fn(), reopened = vi.fn(), reconnect = vi.fn()
+ class Download extends RpcTarget {async issue() {return {}}; async validate() {}}
+ class Editor extends RpcTarget {async restoreDocumentSnapshot(_snapshot: unknown, revision: number) {restored(revision); return {revision: 5}}}
+ const first = {getId: async () => 7, prepareNativeDocumentRead: firstPrepare, readNativeDocument: firstRead, onRpcBroken() {}} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']
+ const nextPrepare = vi.fn(async (...args: unknown[]) => {expect(args).toEqual([3, 'https://example.test/document', 'publication']); return {sourceId: 9, restartRequired: false}})
+ const next = {getId: async () => 7, prepareNativeDocumentRead: nextPrepare, readNativeDocument: async () => ({storageOrigin: 'https://example.test', download: new RpcStub(new Download()), [Symbol.dispose]() {}}), connectToGadget: async () => new RpcStub(new Editor()), onRpcBroken() {}} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']
+ const key = 'mnemos-native-open:' + location.pathname + ':7'
+ sessionStorage.setItem(key, JSON.stringify({accountId: 3, resourceUrl: 'https://example.test/document', publication: 'publication', revision: 4, label: 'Fixture', scope: 'project', resource: 'document', format: 'cloudflareos.spreadsheet', at: Date.now()}))
+ const source = {current: async () => ({format: 'cloudflareos.spreadsheet' as const, formatVersion: 1 as const, document: {revision: 4}})}
+ const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+ const render = (gadget: typeof first) => <NativeDocumentOpen gadget={gadget} format="cloudflareos.spreadsheet" snapshotSource={source} reconnect={reconnect} onOpened={reopened} />
+ try {
+  await act(async () => root.render(render(first)))
+  await act(async () => {await vi.waitFor(() => expect(firstPrepare).toHaveBeenCalledOnce(), {timeout: 500, interval: 5})})
+  // Обычная конкурентная отрисовка: act принудительно разделяет очистку и microtask с тем же ID.
+  ;(globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = false
+  root.render(render(next))
+  await vi.waitFor(() => expect(reopened).toHaveBeenCalledOnce(), {timeout: 500, interval: 5})
+  ;(globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true
+  expect(nextPrepare).toHaveBeenCalledOnce(); expect(restored).toHaveBeenCalledExactlyOnceWith(4); expect(reconnect).toHaveBeenCalledOnce()
+  await act(async () => late({sourceId: 10, restartRequired: false}))
+  expect(firstRead).not.toHaveBeenCalled(); expect(reopened).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBeNull()
  } finally {await act(async () => root.unmount()); host.remove(); sessionStorage.clear()}
 })
