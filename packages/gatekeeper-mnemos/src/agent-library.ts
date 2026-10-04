@@ -13,7 +13,7 @@ import { changeTrackerTask, decodeTrackerPreview, type Task } from "./tracker-ar
 import { documentResourceUrl } from "./document-resource.ts";
 import { MNEMOS_LIBRARY_TYPES } from "./agent-library-types.ts";
 import { checkedAdminOperation, type AdminOperationRequest, type AdminOperation } from "./admin-operations.ts";
-import type { MnemosVerifierApi } from "./mnemos.ts";
+import type { MnemosVerifierApi,UserAccount } from "./mnemos.ts";
 import type { ActionDescription, ActionOutcome, ChatDocumentText } from "@gadgets/workshop-shared/gatekeeper";
 import { APP_CODE_CLOSED, GADGET_APP_MIME } from "@gadgets/workshop-shared/gadget-app";
 import { ACTION_LABELS, AUTO_APPROVABLE_KINDS, READ_TITLES, checkedAgentAction, checkedAgentRead, type AgentActionKind, type AgentActionRequest, type AgentReadRequest, type PreparedAgentAction, type ShareMode, type ConnectionType } from "./agent-actions.ts";
@@ -21,6 +21,7 @@ import type { ProjectVisibility } from "./project-sharing.ts";
 import type { ScreenTarget, SourceType } from "./agent-actions-extra.ts";
 import type { InvitationRole, SpendingPeriod } from "./mnemos-api.ts";
 
+import {checkedTemplateReferences,type WorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 interface Env { MNEMOS_API_ORIGIN: string }
 export interface MnemosLibraryProps { userObjectId: string }
 
@@ -87,6 +88,9 @@ export interface LibraryAccount {
   prepareAgentAction?(request: AgentActionRequest): Promise<PreparedAgentAction>;
   executeAgentAction?(kind: AgentActionKind, resolved: PreparedAgentAction["resolved"]): Promise<ActionOutcome>;
   readForAgent?(request: AgentReadRequest): Promise<unknown>;
+  /** Тот же метод аккаунта, без копии его RPC-контракта. */
+  readTemplateMaterialsForAgent?:UserAccount['readTemplateMaterialsForAgent'];
+  createTemplateDocumentForAgent?:UserAccount['createTemplateDocumentForAgent'];
   /** Текст файла из беседы сессией человека: узел — его личная версия. */
   readChatDocumentText?(project: string, node: string, offset?: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
 }
@@ -223,6 +227,8 @@ function release(value: unknown, depth = 0): void {
 }
 
 interface SessionCalls {
+  createTemplateDocument(queue:RpcStub<ApprovalQueue>,input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]):ReturnType<UserAccount['createTemplateDocumentForAgent']>;
+  readTemplates(queue:RpcStub<ApprovalQueue>,references:WorkTemplateReference[]):ReturnType<UserAccount['readTemplateMaterialsForAgent']>;
   listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage>;
   readPersonalDocument(queue: RpcStub<ApprovalQueue>, project: string, node: string): Promise<MnemosDocument>;
   readChatFile(queue: RpcStub<ApprovalQueue>, project: string, node: string, offset: number, archivePath?: (string | {nameBase64: string})[]): Promise<ChatDocumentText>;
@@ -248,6 +254,8 @@ export class MnemosLibrarySession extends RpcTarget {
   #calls: SessionCalls;
   #queue: RpcStub<ApprovalQueue>;
   constructor(calls: SessionCalls, queue: RpcStub<ApprovalQueue>) { super(); this.#calls = calls; this.#queue = queue; }
+  async createTemplateDocument(input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]){return this.#calls.createTemplateDocument(this.#queue,input);}
+  async readTemplates(references:WorkTemplateReference[]){return this.#calls.readTemplates(this.#queue,references);}
   async listPersonalDocuments(project: string, cursor = "") { return this.#calls.listPersonalDocuments(this.#queue, project, cursor); }
   async readPersonalDocument(project: string, node: string) { return this.#calls.readPersonalDocument(this.#queue, project, node); }
   async readChatFile(project: string, node: string, offset = 0, archivePath?: (string | {nameBase64: string})[]) { return this.#calls.readChatFile(this.#queue, project, node, offset, archivePath); }
@@ -349,6 +357,8 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const queue = approvalQueue.dup();
     try {
       return new MnemosLibrarySession({
+        createTemplateDocument:(q,input)=>this.#createTemplateDocument(q,input),
+        readTemplates:(q,references)=>this.#readTemplates(q,references),
         listPersonalDocuments: (q, project, cursor) => this.#listPersonalDocuments(q, project, cursor),
         readPersonalDocument: (q, project, node) => this.#readPersonalDocument(q, project, node),
         readChatFile: (q, project, node, offset, archivePath) => this.#readChatFile(q, project, node, offset, archivePath),
@@ -658,6 +668,21 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
 
   async #authorizePersonal(queue: RpcStub<ApprovalQueue>, activity: ObservationActivity): Promise<void> {
     await queue.authorizeObservation({ownerOnly: true, title: "Личные материалы Mnemos", description: "Чтение личных материалов владельца в пределах прав агента.", activity});
+  }
+  async #createTemplateDocument(queue:RpcStub<ApprovalQueue>,input:Parameters<UserAccount['createTemplateDocumentForAgent']>[0]){
+    const frozen=structuredClone(input);checkedTemplateReferences(frozen.references);
+    identifier(frozen.project,'проект');identifier(frozen.name,'имя документа');
+    await queue.authorizeObservation({ownerOnly:true,title:'Создание документа по шаблонам',description:'Личная копия формы с сохранением точных входов работы. Публикация выполняется отдельно.',activity:{kind:'mnemos.template.create',scopeId:frozen.project,subject:clip(frozen.name,200)}});
+    const account=this.#account();if(!account.createTemplateDocumentForAgent)throw new Error(UNSUPPORTED);
+    const result=await this.#data(()=>account.createTemplateDocumentForAgent!(frozen));
+    await queue.authorizeObservation({ownerOnly:true,title:'Документ создан',description:result.name,activity:{kind:'mnemos.template.created',scopeId:result.project,subject:result.name,items:[{name:result.name,documentId:result.document.node_id,projectId:result.project}]}});
+    return result;
+  }
+  async #readTemplates(queue:RpcStub<ApprovalQueue>,references:WorkTemplateReference[]){
+    const refs=checkedTemplateReferences(references);
+    await queue.authorizeObservation({ownerOnly:true,title:'Выбранные шаблоны Mnemos',description:'Чтение точных версий формы и методики в пределах прав агента.',activity:{kind:'mnemos.template.read'}});
+    const account=this.#account();if(!account.readTemplateMaterialsForAgent)throw new Error(UNSUPPORTED);
+    return this.#data(()=>account.readTemplateMaterialsForAgent!(refs));
   }
   async #listPersonalDocuments(queue: RpcStub<ApprovalQueue>, project: string, cursor: string): Promise<PrivateDocumentPage> {
     identifier(project, "проект");

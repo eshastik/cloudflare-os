@@ -1,3 +1,4 @@
+import {checkedTemplateReferences,validTemplateSelection,type WorkTemplateReference,type WorkTemplateSelection} from "./work-template-selection.ts";
 import { HISTORY_PREPARING, historyPreparingMessage, historyProgress, type HistoryProgress } from "./history-preparing.ts";
 import { REPOSITORY_FAILURES, REPOSITORY_FAILURE_CODES, checkedCodeFromFiles, type CodeFromFilesResult, checkedRecord, checkedRepositoryOverview, type CapabilityChange, type GitOwnership, type GitOwnershipTransfer, type RepositoryFailureCode, type RepositoryInput, type RepositoryOverview, type RepositoryRecord, type RepositoryResult } from "./git-repositories.ts";
 import { checkedIntakeSubmit, type IntakeReceipt, type IntakeStatus, type IntakeAlerts, type IntakeAlert, type IntakeDecision } from "./intake.ts";
@@ -389,6 +390,25 @@ export class MnemosAPI {
     const out=await this.#request<TemplatePromotionReview>(`/v1/template-promotions/${segment(id)}`,"GET",signal);
     if(!validTemplatePromotionReview(out)||out.proposal.proposal_id!==id)throw new MnemosAPIError(502);return out;
   }
+  /** Выдаёт содержимое точной версии через существующий объектный путь. */
+  async beginWorkTemplateDownload(reference:WorkTemplateReference,signal?:AbortSignal){
+    const ref=checkedTemplateReferences([reference])[0];
+    const material=(await this.readWorkTemplateSelection([ref],signal)).materials[0];
+    const source=material.personal??material.scoped!.source;
+    const path='template_id' in ref
+      ? '/v1/projects/'+segment(source.project_id)+'/nodes/'+segment(source.node_id)+'/private-versions/'+source.source_head+'/download'
+      : '/v1/template-scopes/'+segment(ref.scope_id)+'/templates/'+segment(ref.template_key)+'/download';
+    const body='template_id' in ref?{}:{revision:ref.revision};
+    const ticket=await this.#request<DraftDownloadTicket&{content_type:string}>(path,'POST',signal,body);
+    if(!ticket||ticket.head!==source.source_head||ticket.node_id!==source.node_id||ticket.term_index!==0||ticket.content_type!==source.content_type||ticket.method!=='GET'||!Number.isSafeInteger(ticket.size_bytes)||ticket.size_bytes<0||!/^[0-9a-f]{64}$/.test(ticket.sha256_hex)||typeof ticket.url!=='string'||!Number.isFinite(Date.parse(ticket.expires_at)))throw new MnemosAPIError(502);
+    return {reference:ref,source,ticket};
+  }
+  async readWorkTemplateSelection(references:WorkTemplateReference[],signal?:AbortSignal):Promise<WorkTemplateSelection>{
+    const refs=checkedTemplateReferences(references);
+    const out=await this.#request<WorkTemplateSelection>('/v1/work-template-selections/read','POST',signal,{references:refs});
+    if(!validTemplateSelection(out,refs))throw new MnemosAPIError(502);
+    return out;
+  }
   async resolveWorkTemplate(scope:string,key:string,personal?:PersonalWorkTemplateSelection,signal?:AbortSignal):Promise<WorkTemplateResolution>{
     segment(scope);segment(key);if(personal){segment(personal.template_id);if(!Number.isSafeInteger(personal.revision)||personal.revision<1)throw new MnemosAPIError(400);}
     const body=personal?{personal:{template_id:personal.template_id,revision:personal.revision}}:{};
@@ -454,8 +474,10 @@ export class MnemosAPI {
   async createFromScopedWorkTemplate(scope:string,key:string,input:WorkTemplateApplication,signal?:AbortSignal):Promise<ScopedWorkTemplateApplied>{
     segment(input.project_id);segment(input.request_id);head(input.expected_head);
     if(!Number.isSafeInteger(input.revision)||input.revision<1)throw new MnemosAPIError(400);
+    const references=input.references===undefined?undefined:checkedTemplateReferences(input.references);
+    if(references&&!references.some(r=>r.scope_id===scope&&r.template_key===key&&r.revision===input.revision))throw new MnemosAPIError(400);
     const source=await this.readScopedWorkTemplate(scope,key,input.revision,signal);
-    const body={request_id:input.request_id,revision:input.revision,project_id:input.project_id,parent_id:input.parent_id,name:input.name,expected_head:input.expected_head,message:input.message};
+    const body={...(references?{references}:{}),request_id:input.request_id,revision:input.revision,project_id:input.project_id,parent_id:input.parent_id,name:input.name,expected_head:input.expected_head,message:input.message};
     const out=await this.#request<ScopedWorkTemplateApplied>(`/v1/template-scopes/${segment(scope)}/templates/${segment(key)}/documents`,"POST",signal,body);
     if(!out||typeof out.node_id!=="string"||!out.node_id||!/^[0-9a-f]{64}$/.test(out.head)||out.scope_id!==scope||out.template_key!==key||out.template_revision!==input.revision||out.source_head!==source.source.source_head)throw new MnemosAPIError(502);return out;
   }
@@ -481,8 +503,10 @@ export class MnemosAPI {
   async createFromWorkTemplate(id:string,input:WorkTemplateApplication,signal?:AbortSignal):Promise<WorkTemplateApplied>{
     segment(input.project_id);segment(input.request_id);head(input.expected_head);
     if(!Number.isSafeInteger(input.revision)||input.revision<1)throw new MnemosAPIError(400);
+    const references=input.references===undefined?undefined:checkedTemplateReferences(input.references);
+    if(references&&!references.some(r=>r.template_id===id&&r.revision===input.revision))throw new MnemosAPIError(400);
     const source=await this.readWorkTemplate(id,input.revision,signal);
-    const body={request_id:input.request_id,revision:input.revision,project_id:input.project_id,parent_id:input.parent_id,name:input.name,expected_head:input.expected_head,message:input.message};
+    const body={...(references?{references}:{}),request_id:input.request_id,revision:input.revision,project_id:input.project_id,parent_id:input.parent_id,name:input.name,expected_head:input.expected_head,message:input.message};
     const out=await this.#request<WorkTemplateApplied>(`/v1/work-templates/${segment(id)}/documents`,"POST",signal,body);
     if(!out||typeof out.node_id!=="string"||!out.node_id||!/^[0-9a-f]{64}$/.test(out.head)||out.template_id!==id||out.template_revision!==input.revision||out.source_head!==source.source_head)throw new MnemosAPIError(502);return out;
   }

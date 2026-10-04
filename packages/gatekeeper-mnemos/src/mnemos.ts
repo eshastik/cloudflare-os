@@ -1,3 +1,7 @@
+import {createTemplateDocument,type TemplateDocumentInput} from './create-template-document.ts';
+import {readWorkTemplateMaterials} from './read-work-template-materials.ts';
+import {templateSelectionChoices} from './work-template-selection.ts';
+import type {WorkTemplateReference,ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template';
 import { BlueprintTemplates } from "./blueprint-templates.ts";
 import { uploadFailure } from "./upload-batches.ts";
 import { managementSections } from "./management-sections.ts";
@@ -163,7 +167,10 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, { userObjectId: st
   }
 
   /** Работа с кодом беседы: хост вызывает от имени этого человека; фрейм управления их не видит. */
-  async listChatProjects(){return this.#account().listChatProjects();}
+  async listChatTemplateScopes(cursor=''){return this.#account().listChatTemplateScopes(cursor);}
+ async listChatTemplates(scopeId:string|null,cursor='',projectId?:string){return this.#account().listChatTemplates(scopeId,cursor,projectId);}
+ async readChatTemplates(references:WorkTemplateReference[]):Promise<ChatWorkTemplateChoice[]>{return this.#account().readChatTemplates(references);}
+ async listChatProjects(){return this.#account().listChatProjects();}
   /** Право «Агент кода» этого человека: без него беседа не показывает «Код» и не зовёт агента кода. */
   async codeWorkAllowed(){return this.#account().codeWorkAllowed();}
   async codeWorkStart(project:string,target:{connectionId:string;repositoryId:string;repositoryName:string},prompt:string){return this.#account().codeWorkStart(project,target,prompt);}
@@ -271,6 +278,22 @@ export class UserAccount extends DurableObject<Env> {
  }
  /** Проекты человека для набора проектов беседы; у первых проектов проверяется подключённый код.
   * Без права «Агент кода» код проектов не называется: беседе некуда звать агента кода. */
+ /** Каталог беседы читает те же версии и права, что приложение Mnemos. */
+ async listChatTemplateScopes(cursor=''){
+  const session=this.#account().session();
+  try{const page=await session.listTemplateScopes(cursor);return {scopes:page.scopes.map(s=>({scopeId:s.scope_id,title:s.name})),nextCursor:page.next_cursor??''};}finally{session.dispose();}
+ }
+ async listChatTemplates(scopeId:string|null,cursor='',projectId?:string){
+  const session=this.#account().session();
+  try{
+   if(scopeId===null){const page=await session.listWorkTemplates(projectId??'',cursor);return {templates:page.templates.map(v=>({reference:{template_id:v.template_id,revision:v.revision},title:v.title,purpose:v.purpose,kind:v.kind})),nextCursor:page.next_cursor??''};}
+   const page=await session.listScopedWorkTemplates(scopeId,cursor);return {templates:page.templates.map(v=>({reference:{scope_id:v.scope_id,template_key:v.template_key,revision:v.revision},title:v.source.title,purpose:v.source.purpose,kind:v.source.kind})),nextCursor:page.next_cursor??''};
+  }finally{session.dispose();}
+ }
+ async readChatTemplates(references:WorkTemplateReference[]):Promise<ChatWorkTemplateChoice[]>{
+  const session=this.#account().session();
+  try{return templateSelectionChoices(await session.readWorkTemplateSelection(references));}finally{session.dispose();}
+ }
  async listChatProjects(){
   const session=this.#account().session();
   try{
@@ -1063,6 +1086,19 @@ export class UserAccount extends DurableObject<Env> {
     catch (error) { throw agentActionError(error); }
     finally { session.dispose(); }
   }
+  /** Содержимое выбранных материалов читает агент, а не сессия человека. */
+  async readTemplateMaterialsForAgent(references:WorkTemplateReference[]){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await readWorkTemplateMaterials(session,this.#origins().storageOrigin??'',references);}
+    finally{session.dispose();}
+  }
+  /** Самостоятельный документ создаётся под агентом; повтор проверяет текущие права. */
+  async createTemplateDocumentForAgent(input:TemplateDocumentInput){
+    await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
+    const session=this.#account().agentSession();
+    try{return await createTemplateDocument(session,input);}finally{session.dispose();}
+  }
   async readForAgent(input: AgentReadRequest) {
     const session = this.#account().session();
     try { return await readForAgent(this.#withSources(session), checkedAgentRead(input)); }
@@ -1636,6 +1672,7 @@ class MnemosManagementSession extends RpcTarget implements TeamDocumentManagemen
   async readSavedTemplateDecision(id:string){return this.#session.readSavedTemplateDecision(id);}
   async saveTemplateDecision(id:string,input:Parameters<MnemosAccountSession["saveTemplateDecision"]>[1]){return this.#session.saveTemplateDecision(id,input);}
   executeSavedTemplateDecision(id:string){return this.#session.executeSavedTemplateDecision(id);}
+  async readWorkTemplateSelection(refs:Parameters<MnemosAccountSession["readWorkTemplateSelection"]>[0]){return this.#session.readWorkTemplateSelection(refs);}
   async resolveWorkTemplate(scope:string,key:string,personal?:Parameters<MnemosAccountSession["resolveWorkTemplate"]>[2]){return this.#session.resolveWorkTemplate(scope,key,personal);}
   async listManagedTemplateScopes(cursor=""){return this.#session.listManagedTemplateScopes(cursor);}
   /** Только человеку-владельцу: список сохранённых разрешений своего агента. */

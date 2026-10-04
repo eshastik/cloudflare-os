@@ -973,3 +973,35 @@ test("чтение проекта по названию использует е�
   await assert.rejects(session.browseProject("Продажи"), /неоднозначно/);
   assert.equal((await session.browseProject("p1")).project, "p1");
 });
+
+
+test("выбранные шаблоны проходят агентскую авторизацию до чтения всего набора", async () => {
+ const {library,state,account}=fixture();
+ const references=[{template_id:"method",revision:3},{scope_id:"team",template_key:"form",revision:5}];
+ const reads:unknown[]=[];
+ (account as Record<string,unknown>).readTemplateMaterialsForAgent=async(refs:unknown)=>{reads.push(refs);state.calls.push("agent:templates");return {materials:[]};};
+ const auth=authorizer(state);const session=await library.startSession(auth as any);
+ await session.readTemplates(references);
+ assert.deepEqual(reads,[references]);
+ assert.ok(state.calls.indexOf("authorize")<state.calls.indexOf("agent:templates"));
+ assert.equal((auth.seen.at(-1) as any).ownerOnly,true);
+ await assert.rejects(session.readTemplates([...references,references[0]]));
+ assert.equal(reads.length,1);
+ const denied=await library.startSession(authorizer(state,true) as any);
+ await assert.rejects(denied.readTemplates(references));
+ assert.equal(reads.length,1);
+ session[Symbol.dispose]();denied[Symbol.dispose]();
+});
+
+
+test('создание по шаблонам проходит авторизацию и возвращает точный документ',async()=>{
+ const {library,state,account}=fixture();const inputs:unknown[]=[];
+ (account as Record<string,unknown>).createTemplateDocumentForAgent=async(input:any)=>{inputs.push(input);state.calls.push('agent:template-create');return {project:input.project,name:input.name,operationId:input.requestId,document:{node_id:'copy',head:'c'.repeat(64)},references:input.references,contentType:'application/vnd.cloudflareos.document+json'};};
+ const input={project:'p1',form:{template_id:'form',revision:5},references:[{template_id:'form',revision:5},{template_id:'method',revision:3}],requestId:'once',name:'ТЗ.cfdoc'};
+ const auth=authorizer(state);const session=await library.startSession(auth as any);
+ const result=await session.createTemplateDocument(input);assert.equal(result.document.node_id,'copy');assert.deepEqual(inputs,[input]);
+ assert.ok(state.calls.indexOf('authorize')<state.calls.indexOf('agent:template-create'));
+ const observed=auth.seen.at(-1) as any;assert.equal(observed.ownerOnly,true);assert.deepEqual(observed.activity.items,[{name:'ТЗ.cfdoc',projectId:'p1',documentId:'copy'}]);
+ const denied=await library.startSession(authorizer(state,true) as any);await assert.rejects(denied.createTemplateDocument(input));assert.equal(inputs.length,1);
+ session[Symbol.dispose]();denied[Symbol.dispose]();
+});

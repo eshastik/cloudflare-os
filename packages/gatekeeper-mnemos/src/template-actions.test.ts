@@ -7,7 +7,7 @@ test('template creation retains exact request across lost reply and account recr
  const store=storage();let posts=0;const bodies:unknown[]=[];
  const fetcher:typeof fetch=async(url,init)=>{if(String(url).endsWith('/whoami'))return Response.json({subject:{tenant_id:'org',user_id:'human'}});if(init?.method==='GET')return Response.json(version);posts++;bodies.push(JSON.parse(String(init?.body)));if(posts===1)throw new Error('lost reply');return Response.json({node_id:'new',head:'c'.repeat(64),template_id:'template',template_revision:1,source_head:version.source_head});};
  let account=new MnemosAccount(store,'https://memory.example',fetcher);await account.connect('token');let session=account.session();
- const action={kind:'create' as const,template:'template',input:{request_id:'stable',revision:1,project_id:'project',parent_id:'',name:'Copy.txt',expected_head:'b'.repeat(64),message:'Apply'}};
+ const action={kind:'create' as const,template:'template',input:{references:[{template_id:'template',revision:1},{scope_id:'team',template_key:'method',revision:3}],request_id:'stable',revision:1,project_id:'project',parent_id:'',name:'Copy.txt',expected_head:'b'.repeat(64),message:'Apply'}};
  const saved=await session.saveTemplateAction('project',action,'');
  await assert.rejects(session.saveTemplateAction('project',{...action,input:{...action.input,request_id:'different'}},''));
  await assert.rejects(session.executeSavedTemplateAction('project',saved.id));

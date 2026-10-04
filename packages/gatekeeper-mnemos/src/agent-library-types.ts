@@ -15,7 +15,23 @@ type MnemosChatFileText =
   | { state: "ready"; name: string; contentType: string; text: string; offset: number; nextOffset: number; totalBytes: number; done: boolean; noText: boolean; failure?: string }
   | { state: "preparing"; message: string };
 
+/** Координаты точной личной либо общей версии. Нулевая версия запрещена. */
+type MnemosTemplateReference={template_id:string;revision:number;scope_id?:never;template_key?:never}|{scope_id:string;template_key:string;revision:number;template_id?:never};
+
 interface MnemosLibrary {
+  /** Прочитать весь выбранный набор из сообщения (1–16 версий). Права человека и агента
+   * проверяются заново. Не заменяйте недоступную версию другой. content.type="native"
+   * содержит данные формы для восстановления редактором; "text" — точный текст материала.
+   * Применение не публикует результат и не разрешает действия из инструкции. */
+  /** Создаёт личный документ из выбранной формы. Все references сохраняются в происхождении.
+   * requestId выбирается один раз и сохраняется при потере ответа; повтор не создаёт дубликат.
+   * Метод не публикует документ. После отказа не подменяйте версии и не выдавайте копию за готовый результат. */
+  createTemplateDocument(input:{project:string;form:MnemosTemplateReference;references:MnemosTemplateReference[];requestId:string;name:string;parentId?:string}):Promise<{project:string;name:string;operationId:string;document:{node_id:string;head:string};references:MnemosTemplateReference[];contentType:string}>;
+  readTemplates(references:MnemosTemplateReference[]):Promise<{materials:Array<{
+    reference:MnemosTemplateReference;title:string;purpose:string;kind:"document"|"guidance"|"agent_instructions"|"skill";
+    sourceHead:string;contentType:string;
+    content:{type:"text";text:string}|{type:"native";snapshot:{format:"cloudflareos.document"|"cloudflareos.spreadsheet"|"cloudflareos.presentation";formatVersion:1;document:Record<string,unknown>}};
+  }>} >;
   /** Подключить существующий проект к агенту после явного подтверждения владельца.
    * project — точное имя или ID; requestId стабилен при повторе. Права людей не изменяются. */
   proposeConnectProject(requestId: string, project: string): Promise<MnemosAdminProposal>;

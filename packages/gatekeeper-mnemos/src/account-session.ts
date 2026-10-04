@@ -137,7 +137,7 @@ export class MnemosAccount {
       this.#storage.put(AGENT_CREDENTIAL_KEY, { bindingId: record.bindingId, token: credential.access_token, expiresAt: this.#clock() + credential.expires_in * 1000 } satisfies WorkshopAgentCredential);
       return credential.access_token;
     }, this.#fetch);
-    return new MnemosAccountSession(client, valid, this.#storage);
+    return new MnemosAccountSession(client, valid, this.#storage, record.bindingId);
   }
   /** Отзыв связи на сервере и очистка кэша; локальная очистка идёт первой, чтобы потеря ответа не оставила credential. */
   async revokeWorkshopAgent(): Promise<void> {
@@ -233,7 +233,7 @@ export class MnemosAccountSession {
   #consent?: { selection: string; request: string; preview: AgentConsentPreview };
   #consentRevision = 0;
   private requestStorage?: AccountStorage;
-  constructor(client: MnemosAPI, valid: () => boolean, requestStorage?: AccountStorage) { this.#client = client; this.#valid = valid; this.requestStorage = requestStorage; }
+  constructor(client: MnemosAPI, valid: () => boolean, requestStorage?: AccountStorage, private templateActor = "") { this.#client = client; this.#valid = valid; this.requestStorage = requestStorage; }
   #check(): void {
     if (this.#lifetime.signal.aborted || !this.#valid()) throw new MnemosAPIError(401);
   }
@@ -1306,6 +1306,8 @@ export class MnemosAccountSession {
   async readSavedTemplateDecision(id:string){return this.templateReviewActions().read(id);}
   async saveTemplateDecision(id:string,input:TemplateDecisionInput){return this.templateReviewActions().save(id,input);}
   executeSavedTemplateDecision(id:string){return this.templateReviewActions().execute(id);}
+  async beginWorkTemplateDownload(reference:Parameters<MnemosAPI['beginWorkTemplateDownload']>[0]){this.#check();const out=await this.#client.beginWorkTemplateDownload(reference,this.#lifetime.signal);this.#check();return out;}
+  async readWorkTemplateSelection(refs:Parameters<MnemosAPI["readWorkTemplateSelection"]>[0]){this.#check();const out=await this.#client.readWorkTemplateSelection(refs,this.#lifetime.signal);this.#check();return out;}
   async resolveWorkTemplate(scope:string,key:string,personal?:Parameters<MnemosAPI["resolveWorkTemplate"]>[2]){this.#check();const out=await this.#client.resolveWorkTemplate(scope,key,personal,this.#lifetime.signal);this.#check();return out;}
   /** Список собственных разрешений позволяет отозвать доступ и без членства в области. */
   async listTemplateAgentGrants(binding:string,cursor=""){this.#check();const out=await this.#client.listTemplateAgentGrants(binding,cursor,this.#lifetime.signal);this.#check();return out;}
@@ -1324,12 +1326,16 @@ export class MnemosAccountSession {
   async listWorkTemplates(project:string,cursor="") {this.#check();const out=await this.#client.listWorkTemplates(project,cursor,this.#lifetime.signal);this.#check();return out;}
   async saveWorkTemplateSnapshot(id:string,input:Parameters<MnemosAPI["saveWorkTemplate"]>[1]) {this.#check();const out=await this.#client.saveWorkTemplate(id,input,this.#lifetime.signal);this.#check();return out;}
   async readWorkTemplate(id:string,revision:number) {this.#check();const out=await this.#client.readWorkTemplate(id,revision,this.#lifetime.signal);this.#check();return out;}
-  private templateActions(){return new TemplateActions(this.requestStorage,this.#client,()=>this.#check(),this.#lifetime.signal);}
+  private templateActions(){
+    const source=this.requestStorage;const prefix=this.templateActor?'agent-template:'+encodeURIComponent(this.templateActor)+':':'';
+    const storage=source&&prefix?{get:<T>(key:string)=>source.get<T>(prefix+key),put:<T>(key:string,value:T)=>source.put(prefix+key,value),delete:(key:string)=>source.delete(prefix+key)}:source;
+    return new TemplateActions(storage,this.#client,()=>this.#check(),this.#lifetime.signal);
+  }
   async readSavedTemplateAction(project:string){return this.templateActions().read(project);}
   async saveTemplateAction(project:string,action:TemplateAction,expected:string){return this.templateActions().save(project,action,expected);}
   async deferTemplateAction(project:string,id:string){return this.templateActions().defer(project,id);}
   async restoreTemplateAction(project:string,id:string,expected:string){return this.templateActions().restore(project,id,expected);}
-  executeSavedTemplateAction(project:string,id:string){return this.templateActions().execute(project,id);}
+  executeSavedTemplateAction(project:string,id:string,revalidate=false){return this.templateActions().execute(project,id,revalidate);}
   async readPersonalMemoryVersion() {
     this.#check(); const result=await this.#client.readPersonalMemoryVersion(this.#lifetime.signal); this.#check(); return result;
   }

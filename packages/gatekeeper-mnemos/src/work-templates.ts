@@ -7,7 +7,7 @@ export interface WorkTemplateVersion extends WorkTemplateDraft {
  template_id:string; revision:number; content_type:string; user_id:string; agent_id:string; created_at:string;
 }
 export interface WorkTemplateSave extends WorkTemplateDraft {expected_revision:number}
-export interface WorkTemplateApplication {request_id:string;revision:number;project_id:string;parent_id:string;name:string;expected_head:string;message:string}
+export interface WorkTemplateApplication {references?:import("@gadgets/workshop-shared/work-template").WorkTemplateReference[];request_id:string;revision:number;project_id:string;parent_id:string;name:string;expected_head:string;message:string}
 export interface WorkTemplateApplied {node_id:string;head:string;template_id:string;template_revision:number;source_head:string}
 export interface WorkTemplatePage {templates:WorkTemplateVersion[];next_cursor:string}
 export function validWorkTemplate(v:WorkTemplateVersion):boolean {

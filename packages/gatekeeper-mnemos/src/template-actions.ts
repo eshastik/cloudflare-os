@@ -1,3 +1,4 @@
+import {checkedTemplateReferences} from "@gadgets/workshop-shared/work-template";
 import {MnemosAPIError,type MnemosAPI} from "./mnemos-api.ts";
 import type {AccountStorage} from "./account-session.ts";
 import type {WorkTemplateSave,WorkTemplateApplication,WorkTemplateVersion,WorkTemplateApplied,ScopedWorkTemplateApplied,TemplatePromotionInput,TemplatePromotion} from "./work-templates.ts";
@@ -16,7 +17,9 @@ export class TemplateActions {
    const i=action.input;if(!Number.isSafeInteger(i.expected_revision)||i.expected_revision<0||typeof i.title!=="string"||!i.title.trim()||new TextEncoder().encode(i.title).length>255||typeof i.purpose!=="string"||!i.purpose.trim()||new TextEncoder().encode(i.purpose).length>4096||!["document","guidance","agent_instructions","skill"].includes(i.kind)||typeof i.node_id!=="string"||!i.node_id||!/^[0-9a-f]{64}$/.test(i.source_head))throw new MnemosAPIError(400);
   }else if(action.kind==="create"){
    if(action.scope!==undefined&&(typeof action.scope!=="string"||!action.scope||action.scope.length>255))throw new MnemosAPIError(400);
-   const i=action.input;if(!Number.isSafeInteger(i.revision)||i.revision<1||typeof i.request_id!=="string"||!i.request_id||i.request_id.length>255||typeof i.name!=="string"||!i.name.trim()||new TextEncoder().encode(i.name).length>255||!/^[0-9a-f]{64}$/.test(i.expected_head))throw new MnemosAPIError(400);
+   const i=action.input;
+   if(i.references!==undefined){try{const refs=checkedTemplateReferences(i.references);const primary=action.scope?{scope_id:action.scope,template_key:action.template,revision:i.revision}:{template_id:action.template,revision:i.revision};if(!refs.some(r=>JSON.stringify(r)===JSON.stringify(primary)))throw new Error();action={...action,input:{...i,references:refs}};}catch{throw new MnemosAPIError(400);}}
+   if(!Number.isSafeInteger(i.revision)||i.revision<1||typeof i.request_id!=="string"||!i.request_id||i.request_id.length>255||typeof i.name!=="string"||!i.name.trim()||new TextEncoder().encode(i.name).length>255||!/^[0-9a-f]{64}$/.test(i.expected_head))throw new MnemosAPIError(400);
   }else if(action.kind==="propose"){
    const i=action.input;if(!Number.isSafeInteger(i.revision)||i.revision<1||typeof i.request_id!=="string"||!i.request_id||i.request_id.length>255||typeof i.target_scope_id!=="string"||!i.target_scope_id||i.target_scope_id.length>255||!Number.isSafeInteger(i.target_scope_revision)||i.target_scope_revision<1||!Number.isSafeInteger(i.expected_catalogue_revision)||i.expected_catalogue_revision<0||typeof i.template_key!=="string"||!i.template_key.trim()||new TextEncoder().encode(i.template_key).length>255||typeof i.message!=="string"||!i.message.trim()||new TextEncoder().encode(i.message).length>4096||(i.source_scope_id!==undefined&&(typeof i.source_scope_id!=="string"||!i.source_scope_id||i.source_scope_id.length>255||action.template!==i.template_key)))throw new MnemosAPIError(400);
   }else throw new MnemosAPIError(400);
@@ -36,11 +39,11 @@ export class TemplateActions {
   const [entry]=history.splice(index,1);if(!saved.receipt){const {history:_,...current}=saved;history.push(current);}
   const result={...entry,deferred:false,history};this.storage!.put(this.key(project),result);return structuredClone(result);
  }
- async execute(project:string,id:string):Promise<SavedTemplateAction>{
-  const saved=this.read(project);if(!saved||saved.id!==id)throw new MnemosAPIError(409);if(saved.receipt)return saved;
+ async execute(project:string,id:string,revalidate=false):Promise<SavedTemplateAction>{
+  const saved=this.read(project);if(!saved||saved.id!==id)throw new MnemosAPIError(409);if(saved.receipt&&!revalidate)return saved;
   const a=saved.action;
   const receipt:NonNullable<SavedTemplateAction["receipt"]>=a.kind==="propose"?{kind:"propose",proposal:await this.api.proposeWorkTemplate(a.template,a.input,this.signal)}:a.kind==="save"?{kind:"save",version:await this.api.saveWorkTemplate(a.template,a.input,this.signal)}:{kind:"create",document:a.scope?await this.api.createFromScopedWorkTemplate(a.scope,a.template,a.input,this.signal):await this.api.createFromWorkTemplate(a.template,a.input,this.signal)};
-  this.check();const current=this.read(project);if(!current||current.id!==id)throw new MnemosAPIError(409);if(current.receipt)return current;
+  this.check();const current=this.read(project);if(!current||current.id!==id)throw new MnemosAPIError(409);if(current.receipt){if(revalidate&&JSON.stringify(current.receipt)!==JSON.stringify(receipt))throw new MnemosAPIError(502);return current;}
   const result={...current,receipt};this.storage!.put(this.key(project),result);return structuredClone(result);
  }
 }
