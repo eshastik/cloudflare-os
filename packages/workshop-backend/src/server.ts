@@ -1143,6 +1143,10 @@ timeRpcMethods(AuthenticatedApiImpl, "api", logSlowRpc);
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
     let url = new URL(req.url);
+    if (url.pathname === "/api/runtime-version") {
+      return Response.json({ worker_release: (env as Env & { MNEMOS_WORKER_RELEASE?: string }).MNEMOS_WORKER_RELEASE ?? "" },
+          { headers: { "Cache-Control": "no-store" } });
+    }
 
     if (url.pathname === SITE_LOGO_PATH) {
       return serveSiteLogo(req, env.BLUEPRINT_CONTENT);
