@@ -96,6 +96,9 @@ export const MNEMOS_OBSERVATION_DISPLAY = {
   "mnemos.chatfile.read": spec("Прочитал файл из беседы", "Читаю файл из беседы", "прочитать файл из беседы", ["файл из беседы прочитан", "файла из беседы прочитано", "файлов из беседы прочитано"], "document"),
   "mnemos.tracker.read": spec("Открыл трекер задач", "Открываю трекер задач", "открыть трекер задач", ["трекер открыт", "трекера открыто", "трекеров открыто"], "document"),
   "mnemos.tracker.change": spec("Изменил задачу в трекере", "Меняю задачу в трекере", "изменить задачу в трекере", ["задача изменена", "задачи изменено", "задач изменено"], "edit"),
+  "mnemos.template.read": spec("Прочитал выбранные шаблоны", "Читаю выбранные шаблоны", "прочитать шаблоны", ["чтение шаблонов", "чтения шаблонов", "чтений шаблонов"], "document"),
+  "mnemos.template.create": spec("Подготовил создание по шаблонам", "Создаю документ по шаблонам", "создать документ по шаблонам", ["создание по шаблонам", "создания по шаблонам", "созданий по шаблонам"], "create"),
+  "mnemos.template.created": spec("Создал документ по шаблонам", "Открываю созданный документ", "открыть созданный документ", ["документ создан", "документа создано", "документов создано"], "create"),
   "mnemos.create": spec("Создал документ", "Создаю документ", "создать документ", ["документ создан", "документа создано", "документов создано"], "create"),
   "mnemos.edit": spec("Изменил документ", "Меняю документ", "изменить документ", ["документ изменён", "документа изменено", "документов изменено"], "edit"),
   "mnemos.native.open": spec("Открыл документ в редакторе", "Открываю документ в редакторе", "открыть документ в редакторе", ["документ в редакторе", "документа в редакторе", "документов в редакторе"], "document"),
@@ -131,6 +134,7 @@ export const MNEMOS_LIBRARY_METHODS: Record<string, string> = {
   listProjects: "mnemos.projects", searchProject: "mnemos.search", search: "mnemos.search",
   readDocument: "mnemos.open", browseProject: "mnemos.browse", publishDraft: "mnemos.publish",
   readTracker: "mnemos.tracker.read", changeTrackerTask: "mnemos.tracker.change",
+  readTemplates:"mnemos.template.read", createTemplateDocument:"mnemos.template.create",
   createDraft: "mnemos.create", saveDraft: "mnemos.edit", actionStatus: "mnemos.status",
   proposeConnectProject: "mnemos.prepare", proposeCreateProject: "mnemos.prepare", proposeProjectAccess: "mnemos.prepare",
   shareDocument: "mnemos.prepare", requestReview: "mnemos.prepare", decideReview: "mnemos.prepare",
@@ -463,6 +467,7 @@ function observationDraft(record: ObservationRecord, names: ReadonlyMap<string, 
   const awaitsResult = kind === "mnemos.search" || kind === "mnemos.open" || kind === "mnemos.browse";
   let detail: StepDetail = { type: "none" };
   if (awaitsResult) detail = { type: "found", items: [], ...(kind === "mnemos.search" && subject ? { query: activity?.subject ?? legacy.subject } : {}), ...(where ? { where } : {}) };
+  else if(kind==='mnemos.template.created') detail={type:'found',items:itemsFrom(activity?.items,record.resourceTitle),...(where?{where}:{})};
   else if (kind.startsWith("external.")) detail = { type: "text", text: record.description };
   const draft: Draft = {
     key, kind, label, scope: where, detail, awaitsResult,

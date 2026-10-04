@@ -1,3 +1,4 @@
+import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { classifyRpcError, logRpcFailure } from "../rpcErrors";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -142,6 +143,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
       capsules?: CapsuleSpecifier[],
       attachments?: ChatAttachmentHandle[],
       formats?: MessageFormatRef[],
+      templates?: ChatWorkTemplateReference[],
     ) => {
       try {
         ensureProvisionalGadget();
@@ -149,7 +151,7 @@ export function HomePageContent({ prompt, projectContext: project }: HomeSearch)
         // Pipeline both independent calls in one batch, but settle both before releasing the stub.
         const projectContext = projectContextFromProjects(projects);
         const [chat, {id}] = await Promise.all([
-          projectContext ? overseer.newChat(message, modelId, capsules, attachments, formats, projectContext) : overseer.newChat(message, modelId, capsules, attachments, formats),
+          overseer.newChat(message, modelId, capsules, attachments, formats, projectContext, templates),
           overseer.getMetadata(),
         ]);
         if (codeMode !== chatCodeMode(undefined)) {

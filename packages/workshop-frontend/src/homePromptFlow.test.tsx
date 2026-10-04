@@ -1,3 +1,4 @@
+import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 // @vitest-environment jsdom
 /* eslint-disable react/react-in-jsx-scope */
 
@@ -14,7 +15,7 @@ const testState = vi.hoisted(() => {
     listModels,
     navigate: vi.fn<(options: unknown) => void>(),
     newGadget,
-    send: undefined as undefined | ((message:string,model:string|null)=>Promise<void>),
+    send: undefined as undefined | ((message:string,model:string|null,capsules?:undefined,attachments?:undefined,formats?:undefined,templates?:ChatWorkTemplateReference[])=>Promise<void>),
     seeds: [] as Array<{ text?: string; nonce?: number }>,
   };
 });
@@ -35,7 +36,7 @@ vi.mock("./AuthContext", () => ({
 }));
 
 vi.mock("./ChatInterface", () => ({
-  ChatInput: ({ seedText, seedNonce, onSend, settings }: { seedText?: string; seedNonce?: number;onSend:(message:string,model:string|null)=>Promise<void>; settings?: React.ReactNode }) => {
+  ChatInput: ({ seedText, seedNonce, onSend, settings }: { seedText?: string; seedNonce?: number;onSend:(message:string,model:string|null,capsules?:undefined,attachments?:undefined,formats?:undefined,templates?:ChatWorkTemplateReference[])=>Promise<void>; settings?: React.ReactNode }) => {
     testState.send=onSend;
     testState.seeds.push({ text: seedText, nonce: seedNonce });
     // Проекты и «Код» живут в нижней строке поля ввода (проп settings).
@@ -90,8 +91,20 @@ describe("Home prompt route flow", () => {
     // Проект показан чипом над полем ввода и уходит в беседу набором из одного проекта.
     expect(container.querySelector('[aria-label="Убрать проект «Проект А»"]')).not.toBeNull();
     await act(async()=>testState.send!('Подготовь документ',null));
-    expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,{...context,projects:[{...context,pinnedBy:'user'}]});
+    expect(newChat).toHaveBeenCalledWith('Подготовь документ',null,undefined,undefined,undefined,{...context,projects:[{...context,pinnedBy:'user'}]},undefined);
     expect(testState.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});
+  });
+
+  it.each([false,true])('главная сохраняет набор формы и методики; проект выбран: %s',async(hasProject)=>{
+    const newChat=vi.fn<(...args:unknown[])=>Promise<number>>(async()=>7);
+    testState.newGadget.mockReturnValue({newChat,getMetadata:async()=>({id:'workspace'}),[Symbol.dispose]:()=>{}} as never);
+    container=document.createElement('div');document.body.append(container);root=createRoot(container);
+    const project={accountId:3,projectId:'project-a',title:'Проект А'};
+    await act(async()=>root!.render(<HomePageContent projectContext={hasProject?project:undefined}/>));
+    const templates=[{accountId:3,reference:{template_id:'method',revision:3}},{accountId:3,reference:{scope_id:'department',template_key:'form',revision:5}}];
+    await act(async()=>testState.send!('Подготовь ТЗ',null,undefined,undefined,undefined,templates));
+    expect(newChat.mock.calls[0][6]).toEqual(templates);
+    expect(newChat.mock.calls[0][5]).toEqual(hasProject?{...project,projects:[{...project,pinnedBy:'user'}]}:undefined);
   });
 
   it("пример задачи кладёт текст в поле и подключает проект чипом", async () => {

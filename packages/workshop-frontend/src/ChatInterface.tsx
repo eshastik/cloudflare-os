@@ -1,3 +1,4 @@
+import type {ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { AttachmentFileIcon, attachmentAppearance } from "./components/chat/attachmentAppearance";
 import { displayChatTitle } from './chatTitle'
 import SmartLink from './components/SmartLink';
@@ -2027,6 +2028,7 @@ export const ChatInput = ({
     capsules?: CapsuleSpecifier[],
     attachments?: ChatAttachmentHandle[],
     formats?: MessageFormatRef[],
+    templates?: ChatWorkTemplateReference[],
   ) => Promise<void> | void;
   isAgentActive: boolean;
   models: AiChatAuthorInfo[];
@@ -2737,7 +2739,7 @@ export const ChatInput = ({
       await onSend(message, selectedModel,
           capsuleSpecifiers?.length ? capsuleSpecifiers : undefined,
           readyAttachments.length ? readyAttachments : undefined,
-          formatRefs);
+          formatRefs, selectedTemplate?.mnemos?.map(({accountId,reference})=>({accountId,reference})));
       for (const attachment of attachmentsSnapshot) {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       }
@@ -5717,6 +5719,7 @@ function ChatInterface({
     capsules?: CapsuleSpecifier[],
     attachments?: ChatAttachmentHandle[],
     formats?: MessageFormatRef[],
+    templates?: ChatWorkTemplateReference[],
   ) => {
     const message = typeof messageText === "string" ? messageText.trim() : messageText ?? "";
     if (!message && (!attachments || attachments.length === 0)) return;
@@ -5728,7 +5731,7 @@ function ChatInterface({
       if (selectedChatId === null) {
         // Create a new chat (with optional capsules).
         const newChatId = await overseer.newChat(
-            message, model, capsules, attachments, formats);
+            message, model, capsules, attachments, formats, undefined, templates);
         onNavigateToChatRef.current(newChatId);
       } else {
         // Отправить сообщение to existing chat.
@@ -5739,6 +5742,7 @@ function ChatInterface({
           capsules || undefined,
           attachments || undefined,
           formats,
+          templates,
         );
       }
     } catch (err) {
@@ -5756,13 +5760,14 @@ function ChatInterface({
     capsules?: CapsuleSpecifier[],
     attachments?: ChatAttachmentHandle[],
     formats?: MessageFormatRef[],
+    templates?: ChatWorkTemplateReference[],
   ) => {
     const message = typeof messageText === "string" ? messageText.trim() : messageText ?? "";
     if (!message && (!attachments || attachments.length === 0)) return;
     const model = modelId !== undefined ? modelId : selectedModel;
     try {
       const newChatId = await overseer.newChat(
-          message, model, capsules, attachments, formats);
+          message, model, capsules, attachments, formats, undefined, templates);
       onNavigateToChatRef.current(newChatId);
     } catch (err) {
       if (!logRpcFailure("Failed to create new chat:", err, { reportSite: "chat.new" })) {
@@ -7497,6 +7502,7 @@ function ChatInterface({
                                   </div>
                                 )}
                               </div>}
+                              {!!msg.templates?.length&&<div className="mt-2 flex flex-wrap justify-end gap-2" aria-label="Выбранные шаблоны">{msg.templates.map(template=><span key={JSON.stringify([template.accountId,template.reference])} className="rounded-lg bg-kumo-tint px-2 py-1 text-[12px] text-kumo-subtle">{template.title} · версия {template.reference.revision}</span>)}</div>}
                               <div className="mt-0.5 flex items-center justify-end gap-2 pr-1 text-[11px] leading-4 text-kumo-inactive opacity-0 touch:opacity-100 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100">
                                 <button type="button" aria-label="Копировать моё сообщение"
                                   onClick={e => { void handleCopyMessage(msg.message, e.currentTarget); }}

@@ -305,3 +305,10 @@ describe("шаги кода с гаджетом беседы", () => {
     expect(describeLiveStep("executeCode", undefined, "await env.ATBANK_PROPOSAL.setDocument({})")).toBe("Меняю документ");
   });
 });
+
+
+it('созданный по шаблонам документ содержит точную ссылку для открытия',()=>{
+ const {steps}=buildWorkSteps([{calls:[],observations:[observation('Документ создан','ТЗ.cfdoc',{activity:{kind:'mnemos.template.created',scopeId:'target',subject:'ТЗ.cfdoc',items:[{name:'ТЗ.cfdoc',projectId:'target',documentId:'copy'}]}})]}]);
+ expect(steps).toHaveLength(1);expect(steps[0].kind).toBe('mnemos.template.created');
+ expect(steps[0].detail).toEqual({type:'found',where:'target',items:[{name:'ТЗ.cfdoc',link:{project:'target',document:'copy',resourceTitle:'Mnemos'}}]});
+});
