@@ -108,6 +108,10 @@
     "./shell-browser": {
       "types": "./src/shell-browser.ts",
       "import": "./src/shell-browser.ts"
+    },
+    "./work-template": {
+      "types": "./src/work-template.ts",
+      "import": "./src/work-template.ts"
     }
   },
   "scripts": {

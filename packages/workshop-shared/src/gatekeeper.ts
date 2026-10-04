@@ -1206,6 +1206,12 @@ export interface GatekeeperUser extends WorkerEntrypoint {
     query: string;
   }>;
 
+  /** Области каталога; каждая группа выбирается явно, курсор продолжает страницу. */
+  listChatTemplateScopes?(cursor?: string): Promise<{scopes: Array<{scopeId:string;title:string}>;nextCursor:string}>;
+  /** Личные шаблоны projectId при scopeId=null либо каталог выбранной области. */
+  listChatTemplates?(scopeId: string | null, cursor?: string, projectId?:string): Promise<{templates: import('./work-template.js').ChatWorkTemplateChoice[];nextCursor:string}>;
+  /** Проверить весь набор точных версий правами человека перед записью сообщения. */
+  readChatTemplates?(references: import('./work-template.js').WorkTemplateReference[]): Promise<import('./work-template.js').ChatWorkTemplateChoice[]>;
   /** Проекты человека для набора проектов беседы; code — подключённый код проекта. */
   listChatProjects?(): Promise<{projects: Array<{projectId: string; title: string; code?: CodeWorkTarget}>}>;
   /** Право человека «Агент кода»: без него беседа не показывает «Код» и не зовёт агента кода. */

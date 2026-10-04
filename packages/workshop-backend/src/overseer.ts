@@ -1,3 +1,5 @@
+import {prepareChatWorkTemplates} from './chat-work-templates.js';
+import type {ChatWorkTemplate,ChatWorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import { blueprintStorage } from "./blueprint-storage.js";
 import { visibleChatMessages } from "@gadgets/workshop-shared/api";
 import type {ChatCodeAcceptResult, ChatCodeChanges, ChatProjectContext, UsedGadget} from "@gadgets/workshop-shared/api";
@@ -4070,7 +4072,7 @@ class OverseerImpl implements AgentHooks {
       chatId: number, timestamp: Date, author: AiChatAuthorInfo,
       prepared: PreparedChatMessage, capsules: CapsuleSpecifier[] | undefined,
       attachments: ChatAttachmentRef[] | undefined,
-      formats: MessageFormatRef[] | undefined): number | undefined {
+      formats: MessageFormatRef[] | undefined, templates?: ChatWorkTemplate[]): number | undefined {
     this.#validateCapsules(chatId, capsules);
     // Format references describe the text the user wrote, which for a slash command is its
     // arguments, what the transcript shows, not the message the provider expanded them into.
@@ -4101,6 +4103,7 @@ class OverseerImpl implements AgentHooks {
         capsules,
         attachments,
         formats,
+        templates,
       });
       return messageSequence;
     }
@@ -4119,6 +4122,7 @@ class OverseerImpl implements AgentHooks {
       capsules,
       attachments,
       formats,
+      templates,
     });
     return messageSequence;
   }
@@ -4133,6 +4137,7 @@ class OverseerImpl implements AgentHooks {
     externalChatKey?: string,
     formats?: MessageFormatRef[],
     projectContext?: ChatProjectContext,
+    templates?: ChatWorkTemplateReference[],
   ): Promise<number> {
     if (responseTargetRegistration) {
       let decision = this.#prepareExternalMessageResponseTargetRegistration(responseTargetRegistration);
@@ -4146,6 +4151,7 @@ class OverseerImpl implements AgentHooks {
     let prepared = await this.#prepareChatMessage(
         initialMessage, (canonicalAttachments?.length ?? 0) > 0);
 
+    const selectedTemplates=(await prepareChatWorkTemplates(templates,(id,refs)=>clientUser.readChatTemplates(id,refs)))?.map(template=>({...template,ownerId:clientUser.id.toString()}));
     let chatId!: number;
     let timestamp = this.getChatTimestamp();
     this.ctx.storage.transactionSync(() => {
@@ -4163,7 +4169,7 @@ class OverseerImpl implements AgentHooks {
       this.storage.chatMeta.put(meta);
 
       let promptSequence = this.#commitPreparedChatMessage(
-          chatId, timestamp, userMeta.profile, prepared, capsules, canonicalAttachments, formats);
+          chatId, timestamp, userMeta.profile, prepared, capsules, canonicalAttachments, formats, selectedTemplates);
       if (responseTargetRegistration) {
         if (promptSequence === undefined) {
           throw new Error("External messages require a prompt.");
@@ -4218,6 +4224,7 @@ class OverseerImpl implements AgentHooks {
     attachments?: ChatAttachmentHandle[],
     responseTargetRegistration?: ExternalMessageResponseTargetRegistration,
     formats?: MessageFormatRef[],
+    templates?: ChatWorkTemplateReference[],
   ): Promise<void> {
     if (responseTargetRegistration) {
       let decision = this.#prepareExternalMessageResponseTargetRegistration(responseTargetRegistration);
@@ -4233,6 +4240,7 @@ class OverseerImpl implements AgentHooks {
     let prepared = await this.#prepareChatMessage(
         message, (canonicalAttachments?.length ?? 0) > 0);
 
+    const selectedTemplates=(await prepareChatWorkTemplates(templates,(id,refs)=>clientUser.readChatTemplates(id,refs)))?.map(template=>({...template,ownerId:clientUser.id.toString()}));
     let meta = this.assertChatNotActive(chatId, true);
     let result = this.materializeChatDraft(chatId, meta);
     if (result) meta = result.meta;
@@ -4247,7 +4255,7 @@ class OverseerImpl implements AgentHooks {
       this.storage.chatMeta.put(meta);
       let promptSequence = this.#commitPreparedChatMessage(
           chatId, meta.lastActive, userMeta.profile, prepared, capsules, canonicalAttachments,
-          formats);
+          formats, selectedTemplates);
       if (responseTargetRegistration) {
         if (promptSequence === undefined) {
           throw new Error("External messages require a prompt.");
@@ -5823,6 +5831,9 @@ class OverseerImpl implements AgentHooks {
       let info: SeedBindingInfo =
           {name, target, title: gk.resourceTitle || "(untitled resource)", isGadget: false};
       if (ambientSet.has(target)) info.catalog = catalogs.get(target) ?? null;
+      if(gk.creationSpec?.type==='ambient'&&gk.creationSpec.vendorId==='mnemos'&&this.ownerId){
+        info.mnemosAccount={ownerId:this.ownerId,accountId:gk.creationSpec.accountId};
+      }
       result.push(info);
     }
     return result;
@@ -9707,7 +9718,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async newChat(initialMessage: string | SlashCommandRequest, chosenModelId: string | null,
                 capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-                formats?: MessageFormatRef[], projectContext?: ChatProjectContext): Promise<number> {
+                formats?: MessageFormatRef[], projectContext?: ChatProjectContext,
+                templates?:ChatWorkTemplateReference[]): Promise<number> {
     if(projectContext){
       if(!Number.isSafeInteger(projectContext.accountId)||projectContext.accountId<0||
           typeof projectContext.projectId!=="string"||!projectContext.projectId.trim()||projectContext.projectId.length>256||
@@ -9721,16 +9733,16 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }
     let userMeta = await this.clientUser.getAgentChatContext(chosenModelId);
     return this.impl.newChat(this.clientUser, userMeta, initialMessage, capsules, attachments,
-                             undefined, undefined, formats, projectContext);
+                             undefined, undefined, formats, projectContext, templates);
   }
 
   async sendChatMessage(
       chatId: number, message: string | SlashCommandRequest, chosenModelId: string | null,
       capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-      formats?: MessageFormatRef[]): Promise<void> {
+      formats?: MessageFormatRef[], templates?:ChatWorkTemplateReference[]): Promise<void> {
     let userMeta = await this.clientUser.getAgentChatContext(chosenModelId);
     await this.impl.sendChatMessage(
-        this.clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats);
+        this.clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats, templates);
     // Сообщение человека с сайта в беседе, связанной с тредом, уходит в тред с пометкой «с сайта».
     if (typeof message === "string" && message.trim() && this.impl.storage.telegramLinks.get(chatId)) {
       let [latest] = this.impl.storage.chats.list({ prefix: `${keyString(chatId)}.`, reverse: true, limit: 1 });

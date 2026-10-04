@@ -2379,6 +2379,25 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   }
 
   /** Есть ли подключение, из которого беседа может брать проекты; без обращения к самим подключениям. */
+  /** Подключения перечисляются без чтения личных материалов. */
+  async listChatTemplateAccounts(){
+    return [...this.storage.connectedAccounts.list()].filter(record=>record.vendorId===MNEMOS_VENDOR_ID&&areCredentialsValid(record)&&record.description?.providesUi).map(record=>({accountId:record.id,title:'Mnemos'}));
+  }
+  async listChatTemplateScopes(accountId:number,cursor=''){
+    const {account}=this.#chatDocumentAccount(accountId);
+    if(!account.listChatTemplateScopes)throw new Error('Обновите подключение Mnemos для выбора шаблонов.');
+    return account.listChatTemplateScopes(cursor);
+  }
+  async listChatTemplates(accountId:number,scopeId:string|null,cursor='',projectId?:string){
+    const {account}=this.#chatDocumentAccount(accountId);
+    if(!account.listChatTemplates)throw new Error('Обновите подключение Mnemos для выбора шаблонов.');
+    return account.listChatTemplates(scopeId,cursor,projectId);
+  }
+  async readChatTemplates(accountId:number,references:import('@gadgets/workshop-shared/work-template').WorkTemplateReference[]){
+    const {account}=this.#chatDocumentAccount(accountId);
+    if(!account.readChatTemplates)throw new Error('Обновите подключение Mnemos для выбора шаблонов.');
+    return account.readChatTemplates(references);
+  }
   async hasChatProjectSource(): Promise<boolean> {
     for (const record of this.storage.connectedAccounts.list()) {
       if (record.vendorId === MNEMOS_VENDOR_ID && areCredentialsValid(record) && record.description?.providesUi) return true;

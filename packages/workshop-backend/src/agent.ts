@@ -1,3 +1,4 @@
+import {selectedWorkTemplatesPrompt} from './agent-work-templates.js';
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AgentSpawnerConfig, AiChatStreamEvent, BlueprintOutput, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName, AGENT_STEP_LIMIT_CODE, type UsedGadget, type ChatDocumentRef } from '@gadgets/workshop-shared/api';
 import { PDF_MIME_TYPE, modelApiSupportsPdfAttachments } from './chat-attachment-pdf';
 import { chatDocumentNote, legacyProjectNote } from './chat-documents';
@@ -80,6 +81,8 @@ export type AiChatAgentContext = {
 // One entry of the chat's seed binding layer, as returned by AgentHooks.prepareChatBindings():
 // a name in the chat's env, its target workpiece, and display info for the system prompt.
 export type SeedBindingInfo = {
+  /** Собственное подключение Mnemos, уже разрешённое настройками ресурсов. */
+  mnemosAccount?:{ownerId:string;accountId:number};
   name: string;
   target: WorkpieceId;
 
@@ -1590,6 +1593,8 @@ export async function runAgent(
           parts.push(content.slice(pos));
           content = parts.join("");
         }
+
+        if(msg.author.type==='user')content+=selectedWorkTemplatesPrompt(msg.templates,seedBindings);
 
         // The step's persisted model-facing snapshot, if it has one (agent steps persisted since
         // snapshots existed). Fetched before the empty-message check below: a step whose only

@@ -859,6 +859,9 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     return this.user.registerCalendarSelection(targetAccountId,project,request,selection);
   }
   async listChatProjects() { return this.user.listChatProjects(); }
+  async listChatTemplateAccounts(){return this.user.listChatTemplateAccounts();}
+  async listChatTemplateScopes(accountId:number,cursor?:string){return this.user.listChatTemplateScopes(accountId,cursor);}
+  async listChatTemplates(accountId:number,scopeId:string|null,cursor?:string,projectId?:string){return this.user.listChatTemplates(accountId,scopeId,cursor,projectId);}
   async codeWorkAllowed() { return this.user.codeWorkAllowed(); }
   async registerMailSelection(targetAccountId: number, project: string, request: string, selection: string) {
     return this.user.registerMailSelection(targetAccountId,project,request,selection);

@@ -651,6 +651,12 @@ export interface AuthenticatedApi extends RpcTarget {
 
   /** Проекты из подключённой памяти человека для набора проектов беседы. */
   listChatProjects(): Promise<ChatProjectChoice[]>;
+  /** Действующие подключения Mnemos для ручного выбора шаблона. */
+  listChatTemplateAccounts(): Promise<Array<{accountId:number;title:string}>>;
+  /** Доступные области одного собственного подключения. */
+  listChatTemplateScopes(accountId:number,cursor?:string): ReturnType<NonNullable<GatekeeperUser['listChatTemplateScopes']>>;
+  /** Страница личного либо явно выбранного общего каталога. */
+  listChatTemplates(accountId:number,scopeId:string|null,cursor?:string,projectId?:string): ReturnType<NonNullable<GatekeeperUser['listChatTemplates']>>;
   /** Право «Агент кода» человека: без него переключатель «Код» не показывается. */
   codeWorkAllowed(): Promise<boolean>;
 
@@ -1698,7 +1704,8 @@ export interface Overseer extends RpcTarget {
   // is already in the text.
   newChat(initialMessage: string | SlashCommandRequest, modelId: string | null,
           capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-          formats?: MessageFormatRef[], projectContext?: ChatProjectContext): Promise<number>;
+          formats?: MessageFormatRef[], projectContext?: ChatProjectContext,
+          templates?: import("./work-template.js").ChatWorkTemplateReference[]): Promise<number>;
 
   // Send a message to the chat from this client. Sending a message causes the LLM to start
   // running if it isn't already.
@@ -1710,7 +1717,8 @@ export interface Overseer extends RpcTarget {
   //
   sendChatMessage(chatId: number, message: string | SlashCommandRequest, modelId: string | null,
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-                  formats?: MessageFormatRef[]): Promise<void>;
+                  formats?: MessageFormatRef[],
+                  templates?: import("./work-template.js").ChatWorkTemplateReference[]): Promise<void>;
 
   // Правка последнего своего сообщения заменяет ответ в той же беседе. Правка из середины
   // создаёт беседу со всей историей до сообщения. Возвращает ID беседы для нового ответа.
@@ -2092,6 +2100,9 @@ export type AiChatMessageBody = {
   // Standard output formats the message names, e.g. "create a Doc for homework and Slides for the
   // presentation". See `MessageFormatRef`.
   formats?: MessageFormatRef[];
+
+  /** Версии, явно выбранные человеком и проверенные Mnemos перед записью. */
+  templates?: import('./work-template.js').ChatWorkTemplate[];
 
   // If the AI produces any thinking/reasoning text, this is it. This should be hidden by default
   // but the user should have the option to expand it.
