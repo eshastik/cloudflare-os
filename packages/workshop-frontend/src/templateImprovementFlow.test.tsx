@@ -18,6 +18,6 @@ test('Каталог группы открывает личную правку �
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Методика"]')!.click());
  const button=()=>[...document.body.querySelectorAll('button')].find(item=>item.textContent==='Предложить улучшение')!;expect(button()).toBeDefined();await act(async()=>button().click());expect(document.body.textContent).toContain('Откроется личная копия');expect(document.body.textContent).toContain('Общий шаблон изменится только после согласования');
  expect(mocks.read).toHaveBeenCalledWith(mocks.api,7,reference,expect.any(AbortSignal));
- await act(async()=>[...document.body.querySelectorAll('button')].find(item=>item.textContent==='Открыть редактор')!.click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'source',reference}}});
+ await act(async()=>[...document.body.querySelectorAll('button')].find(item=>item.textContent==='Открыть редактор')!.click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'source',reference,autoOpen:true}}});
  }finally{await act(async()=>root.unmount());host.remove()}
 });

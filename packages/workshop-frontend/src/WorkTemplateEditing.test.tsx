@@ -72,3 +72,16 @@ test('Зависшее скачивание освобождает редакт�
  mocks.validate.mockRejectedValue(Error('denied'));await render();await act(async()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Продолжить с текущим текстом')!.click());
  expect(mocks.ready).not.toHaveBeenCalled();expect(mocks.restore).not.toHaveBeenCalled();expect(host.querySelector('[role="alert"]')).not.toBeNull();
 })
+
+ test('Новый пустой редактор автоматически открывает выбранную версию; изменённый черновик сохраняется',async()=>{
+  const gadget={connectToGadget:mocks.connect} as never
+  const source={current:async()=>({format:'cloudflareos.document',formatVersion:1,document:{revision:4,title:'Новый документ',blocks:[{html:'<p><br></p>'}]}}) as never}
+  await act(async()=>root.render(<WorkTemplateEditing context={{...context,autoOpen:true}} gadget={gadget} snapshotSource={source} onReady={mocks.ready}/>))
+  expect(mocks.restore).toHaveBeenCalledWith(snapshot,4);expect(mocks.ready).toHaveBeenCalledWith(material)
+  mocks.restore.mockClear();mocks.ready.mockClear()
+  const edited={current:async()=>({...snapshot,document:{...snapshot.document,revision:4}}) as never}
+  await act(async()=>root.render(<WorkTemplateEditing context={{...context,autoOpen:true,reference:{...context.reference,revision:4}}} gadget={gadget} snapshotSource={edited} onReady={mocks.ready}/>))
+  expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).not.toHaveBeenCalled();expect(host.textContent).toContain('В редакторе уже есть правки')
+  expect(templateEditingContext({...context,autoOpen:true})).toEqual({...context,autoOpen:true})
+  expect(templateEditingContext({...context,autoOpen:'true'})).toBeUndefined()
+ })

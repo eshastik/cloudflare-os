@@ -48,7 +48,7 @@ export default function CreateWorkTemplate({editing}:{editing?:TemplateEditingCo
     if(!active.current)return
     workspace.current=metadata.id
    }
-   await navigate({to:'/workspace/$id',params:{id:workspace.current},search:{templateKind:kind,...(editing?{templateEdit:{accountId:editing.accountId,projectId:editing.projectId,reference:editing.reference}}:{})}})
+   await navigate({to:'/workspace/$id',params:{id:workspace.current},search:{templateKind:kind,...(editing?{templateEdit:{accountId:editing.accountId,projectId:editing.projectId,reference:editing.reference,autoOpen:true}}:{})}})
   }catch{if(active.current){setError('Не удалось открыть редактор. Повторите открытие.');starting.current=false;setBusy(false)}}
  }
  const editorControls=<>

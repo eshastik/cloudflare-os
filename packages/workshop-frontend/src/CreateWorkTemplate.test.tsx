@@ -45,6 +45,6 @@ test('Редактирование из просмотра не открывае
  try{
   await act(async()=>root.render(<CreateWorkTemplate editing={{accountId:7,projectId:'project',reference,item:{reference,title:'Методика',purpose:'Проверка',kind:'guidance',accountId:7}}}/>))
   await act(async()=>button('Редактировать').click());expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0);expect(host.querySelector('[aria-label="Открыть шаблон в редакторе"]')).not.toBeNull()
-  await act(async()=>button('Открыть редактор').click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'project',reference}}})
+  await act(async()=>button('Открыть редактор').click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'project',reference,autoOpen:true}}})
  }finally{await act(async()=>root.unmount());host.remove()}
 })
