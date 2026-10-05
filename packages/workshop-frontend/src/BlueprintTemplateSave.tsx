@@ -75,7 +75,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       const ref=initialTemplate?.context.reference
       const latest=ref?.template_id?{template_id:ref.template_id,revision:ref.revision,project_id:initialTemplate!.context.projectId,title:initialTemplate!.material.title,purpose:initialTemplate!.material.purpose}:improvement?null:await value.blueprintTemplates.selector.latest(sourceKey)
       if(cancelled)return
-      if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);setTitle(latest.title);setPurpose(latest.purpose)}
+      if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);if(!initialTemplate)setTitle(latest.title);setPurpose(latest.purpose)}
       const result=await value.blueprintTemplates.selector.projects()
       if(cancelled)return
       setProjects(result.projects)
@@ -209,7 +209,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     </div>:<fieldset disabled={busy||accountsLoading||libraryState==='loading'} className="space-y-3 border-0 p-0">
       {(accounts.length!==1||account===null)&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked||pendingUnavailable} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>{setProject(e.target.value);setContextNotice('')}}><option value="">Выберите проект</option>{locked&&project&&!projects.some(item=>item.id===project)&&<option value={project}>Проект начатого сохранения</option>}{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      {nativeOnly&&<label className="block text-[13px]">Вид шаблона<select aria-label="Вид шаблона" className={field} disabled={locked||libraryState!=='ready'||!!initialTemplate} value={kind} onChange={e=>setKind(e.target.value as WorkTemplateKind)}>{Object.entries(kinds).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
+      {nativeOnly&&!initialTemplate&&<label className="block text-[13px]">Вид шаблона<select aria-label="Вид шаблона" className={field} disabled={locked||libraryState!=='ready'||!!initialTemplate} value={kind} onChange={e=>setKind(e.target.value as WorkTemplateKind)}>{Object.entries(kinds).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
       <label className="block text-[13px]">Название<input className={field} disabled={locked||libraryState!=='ready'} value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label className="block text-[13px]">Для каких задач<textarea rows={2} className={field} disabled={locked||libraryState!=='ready'} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
       {previous&&<p className="text-[12px] text-kumo-subtle">Будет создана новая версия. Ранее созданные документы сохранят использованную версию.</p>}
