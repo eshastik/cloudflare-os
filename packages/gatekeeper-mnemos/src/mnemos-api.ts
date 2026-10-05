@@ -1489,7 +1489,7 @@ export interface PrivateDocumentPage {
 export type PrivateParticipantMode = "" | "read" | "write";
 
 /** document_only_read/_write — приглашение с этим правом откроет человеку только этот документ (у него нет такого права на папку). Старый сервер полей не присылает. */
-export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; document_only_read?: boolean; document_only_write?: boolean; org_units?: { org_unit_id: string; name: string }[] }[] }
+export interface PrivateParticipantPage { head: string; next_cursor: string; participants: { principal_id: string; display_name: string; mode: PrivateParticipantMode; can_read: boolean; can_write: boolean; can_read_document?: boolean; document_only_read?: boolean; document_only_write?: boolean; org_units?: { org_unit_id: string; name: string }[] }[] }
 
 /** projects — проекты человека, которые можно отдать агенту; старый сервер их не присылает. */
 export interface AgentConsentPreview { access_mode?: "owner"; client_id: string; resource: string; scopes: string[]; expires_at: string; projects?: { project_id: string; name: string }[] }

@@ -37,7 +37,7 @@ export async function templateReviewAccess(session:MnemosAccountSession,version:
  const people=[...reviewers].sort().map(id=>{
   const person=participants.find(p=>p.principal_id===id);
   if(!person)throw Error('Назначенный согласующий недоступен');
-  return {id,name:person.display_name||id,canRead:person.can_read&&(person.mode==='read'||person.mode==='write'),mode:person.mode};
+  return {id,name:person.display_name||id,canRead:person.can_read_document??(person.can_read&&(person.mode==='read'||person.mode==='write')),mode:person.mode};
  });
  const key=JSON.stringify([version.template_id,version.revision,version.node_id,version.source_head,source.sha256_hex,path.map(s=>[s.scope_id,s.revision]),people.map(p=>p.id)]);
  return {path:path.map(s=>[s.scope_id,s.revision]),key,reviewers:people.map(({id,name,canRead})=>({id,name,canRead})),people,head};
