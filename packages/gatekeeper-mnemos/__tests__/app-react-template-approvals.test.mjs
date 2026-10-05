@@ -97,3 +97,14 @@ test('отклонение по направлению доступно без �
  try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.text().includes('Не удалось открыть предложенную версию')&&app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'отказ чтения');app.type(app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'Нет доступа к содержимому');await app.until(()=>!app.button('Отклонить по направлению').disabled,'можно отклонить');assert.equal(app.button('Согласовать по направлению').disabled,true);assert.equal(app.button('Опубликовать шаблон').disabled,true);app.button('Отклонить по направлению').click();await app.until(()=>backend.contentWrites.length===1,'отказ сохранён');assert.equal(backend.contentWrites[0].approved,false);assert.equal(backend.writes.length,0);
  }finally{app.dispose();}
 });
+
+test('нативные версии показаны человеку без JSON перед согласованием',async()=>{
+ const backend=api();const mime='application/vnd.cloudflareos.document+json';
+ backend.readTemplateProposalSource=async()=>({proposal_id:'q',source:{template_id:'template',revision:2,source_head:'a'.repeat(64),project_id:'project',node_id:'doc',content_type:mime}});
+ backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:mime});
+ const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{title:'Методика',blocks:[{html:version.startsWith('template-baseline:')?'<p>Старая цель</p>':'Вводный текст<p>Новая цель</p><script>execute()</script>'}]}})});
+ try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
+ assert.match(app.document.querySelector('[aria-label="До изменений"]').textContent,/Методика\s+Старая цель/);
+ const proposed=app.document.querySelector('[aria-label="Предложенная версия"]').textContent;assert.match(proposed,/Методика\s+Вводный текст\s+Новая цель/);assert(!proposed.includes('formatVersion'));assert(!proposed.includes('execute()'));assert.equal(backend.writes.length,0);
+ }finally{app.dispose()}
+});

@@ -23,18 +23,27 @@ async function readTemplateText(read:()=>ReturnType<API["readTemplateProposalSou
   const content=snapshot.nativeDocument;
   const heading=`${snapshot.blueprint.title}\nВерсия шаблона: ${snapshot.blueprint.version}`;
   if(!content)return `${heading}\n\nШаблон приложения без исходных данных документа.`;
-  if(content.format==='cloudflareos.document'&&Array.isArray(content.document.blocks)){
-   const paragraphs=content.document.blocks.map((block:unknown)=>{
-    if(!block||typeof block!=='object'||!('html' in block)||typeof block.html!=='string')throw new Error('Неподдерживаемая структура документа');
-    const fragment=document.createElement('template');fragment.innerHTML=block.html;
-    fragment.content.querySelectorAll('script,style').forEach(element=>element.remove());
-    fragment.content.querySelectorAll('br').forEach(element=>element.replaceWith('\n'));
-    fragment.content.querySelectorAll('p,div,li,tr,h1,h2,h3,h4').forEach(element=>element.append('\n'));
-    return fragment.content.textContent?.trim()||'';
-   });
-   return `${heading}\n\n${paragraphs.join('\n\n')}`;
-  }
+  if(content.format==='cloudflareos.document')return `${heading}\n\n${documentTemplateText(content.document)}`;
   return `${heading}\n\n${JSON.stringify(content.document,null,2)}`;
  }
+ if(mime==='application/vnd.cloudflareos.document+json'){
+  const snapshot=JSON.parse(text);
+  if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot)||snapshot.format!=='cloudflareos.document'||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw Error('Неподдерживаемый снимок документа');
+  return documentTemplateText(snapshot.document);
+ }
+ if(/^application\/vnd\.cloudflareos\./.test(mime))throw Error('Просмотр этого нативного формата пока не поддерживается');
  return text;
+}
+
+function documentTemplateText(value:unknown):string{
+ if(!value||typeof value!=='object'||Array.isArray(value)||!('blocks' in value)||!Array.isArray(value.blocks))throw Error('Неподдерживаемая структура документа');
+ const paragraphs=value.blocks.map((block:unknown)=>{
+  if(!block||typeof block!=='object'||!('html' in block)||typeof block.html!=='string')throw Error('Неподдерживаемая структура документа');
+  const fragment=document.createElement('template');fragment.innerHTML=block.html;
+  fragment.content.querySelectorAll('script,style,iframe,object,embed,noscript').forEach(element=>element.remove());
+  fragment.content.querySelectorAll('p,div,li,tr,td,th,h1,h2,h3,h4,h5,h6,br,hr,pre,blockquote').forEach(element=>{element.before(document.createTextNode('\n'));element.after(document.createTextNode('\n'))});
+  return (fragment.content.textContent??'').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n');
+ });
+ const title='title' in value&&typeof value.title==='string'?value.title.trim():'';
+ return [title,...paragraphs].filter(Boolean).join('\n\n');
 }

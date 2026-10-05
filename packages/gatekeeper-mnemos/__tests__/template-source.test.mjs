@@ -42,3 +42,20 @@ test('недоступная или изменившаяся исходная в
   let reads=0;await assert.rejects(readTemplateBaselineText({readTemplateProposalBaseline:async()=>{reads++;if(reads===3&&mode==='revoked')throw Error('denied');return reads===3?{...source.source,source_head:'b'.repeat(64)}:source.source}},'proposal',async()=>'old'));
  }
 });
+
+test('нативный документ показывает заголовок, отдельный текст и абзацы в обеих версиях',async()=>{
+ const dom=new JSDOM('<main></main>');globalThis.document=dom.window.document;
+ try{
+  const metadata={...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}};
+  const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Методика',blocks:[{html:'Вводный текст<h2>Проверка</h2><p>Цель<br>Результат</p><script>execute()</script><style>hidden</style><iframe>unsafe</iframe>'}]}};
+  const download=async()=>JSON.stringify(snapshot);
+  const proposal=await readTemplateProposalText({readTemplateProposalSource:async()=>metadata},'proposal',download);
+  const baseline=await readTemplateBaselineText({readTemplateProposalBaseline:async()=>metadata.source},'proposal',download);
+  assert.equal(proposal,'Методика\n\nВводный текст\nПроверка\nЦель\nРезультат');assert.equal(baseline,proposal);
+ }finally{dom.window.close();delete globalThis.document}
+});
+test('неподдерживаемый снимок не выдаётся как проверенный текст',async()=>{
+ const metadata={...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}};
+ for(const snapshot of [null,[],{format:'cloudflareos.document',formatVersion:2,document:{blocks:[]}},{format:'cloudflareos.document',formatVersion:1,document:{blocks:[]},unexpected:true},{format:'cloudflareos.document',formatVersion:1,document:{blocks:[{html:42}]}}])await assert.rejects(readTemplateProposalText({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(snapshot)));
+ await assert.rejects(readTemplateProposalText({readTemplateProposalSource:async()=>({...metadata,source:{...metadata.source,content_type:'application/vnd.cloudflareos.spreadsheet+json'}})},'proposal',async()=>'{}'));
+});
