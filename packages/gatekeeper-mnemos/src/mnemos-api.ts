@@ -1263,6 +1263,7 @@ function base64(bytes: Uint8Array): string {
 export const MEMORY_UNAVAILABLE_ERROR = "Mnemos selected memory unavailable";
 export const QUERY_CAPACITY_ERROR = "Mnemos query capacity exceeded";
 /** Согласование в проекте не требуется (409): политики нет либо она не задевает изменённые документы; публикуют напрямую. */
+export const NODE_PATH_TAKEN = "node.path_taken";
 export const REVIEW_NOT_REQUIRED = "publication.review_not_required";
 /** Папку документа черновика удалили (409): публикация отказала целиком, черновик не изменён. */
 export const FOLDER_REMOVED = "publication.folder_removed";
@@ -1314,7 +1315,7 @@ function folderDrafts(value:unknown):FolderDrafts{
 /** Отказы служебного пути кода гаджета (app-code) и закрытых выдач тела гаджета (ADR 0028 п. 4). */
 // authz.access_denied сюда не входит: прочие 403 по-прежнему без кода, отказ app-code в праве — просто 403.
 const APP_CODE_FAILURE_CODES=['shell_key_rejected','gadget_code_closed','not_a_gadget'] as const;
-type FailureCode=typeof APP_CODE_FAILURE_CODES[number]|'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof REVIEW_NOT_REQUIRED|typeof FOLDER_REMOVED|typeof FOLDER_HAS_DRAFTS|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
+type FailureCode=typeof APP_CODE_FAILURE_CODES[number]|'agent.memory_unavailable'|'external_db.query_busy'|'request.rate_limit'|typeof NODE_PATH_TAKEN|typeof REVIEW_NOT_REQUIRED|typeof FOLDER_REMOVED|typeof FOLDER_HAS_DRAFTS|GitFailureCode|typeof INGEST_REFUSED|typeof UPLOAD_IN_PROGRESS|typeof HISTORY_PREPARING|RepositoryFailureCode;
 /** Публичная причина отказа приёмной политики: reason из закрытого перечня сервера, detail — готовый текст для человека. */
 export interface IngestRefusal {reason:string;detail:string}
 /** Текст с сервера показывается человеку: без управляющих символов и не длиннее абзаца. */
@@ -1339,6 +1340,7 @@ async function safeFailureCode(response:Response):Promise<{code:FailureCode;refu
    return {code:INGEST_REFUSED,refusal:{reason,detail:publicText(fields.detail)||publicText(fields.message)}};
   }
   if(response.status===409&&fields.code==='agent.memory_unavailable')return {code:'agent.memory_unavailable'};
+  if(response.status===409&&fields.code===NODE_PATH_TAKEN)return {code:NODE_PATH_TAKEN};
   if(response.status===409&&fields.code===REVIEW_NOT_REQUIRED)return {code:REVIEW_NOT_REQUIRED};
   if(response.status===409&&fields.code===FOLDER_REMOVED){const extra=(body as {removed_folder_more?:unknown}).removed_folder_more;return {code:FOLDER_REMOVED,removedFolder:removedFolderDocuments((body as {removed_folder_documents?:unknown}).removed_folder_documents),removedFolderMore:typeof extra==='number'&&Number.isSafeInteger(extra)&&extra>0?extra:0};}
   if(response.status===429&&fields.code==='request.rate_limit')return {code:'request.rate_limit'};

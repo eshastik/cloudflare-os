@@ -94,7 +94,7 @@ it('«только вы» показывается лишь без пригла�
 type Faults = {
   /** История проекта готовится на сервере: черновик и состояние отвечают 429 history_preparing с этим ходом. */
   preparing?: () => { done: number; total: number } | null
-  select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published'; published?: string[]
+  select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published' | 'path_taken'; published?: string[]
   /** История документа вместо стандартной; функция — перечитывается при каждом запросе. */
   history?: () => { id: string; recordedAt: string; actor: string; format: 'cloudflareos.document' }[] }
 const head = 'a'.repeat(64)
@@ -117,7 +117,7 @@ function frame(faults: Faults) {
   class PublishingSelector extends Selector {
     async publishOrRequestReview(scope: string, personal: string, shared: string) {
       faults.published?.push(`${scope}:${personal}:${shared}`)
-      return faults.publish === 'denied' ? { status: 'denied' } : { status: 'published', personal_head: personal, shared_head: 'c'.repeat(64) }
+      return faults.publish === 'path_taken' ? { status: 'path_taken' } : faults.publish === 'denied' ? { status: 'denied' } : { status: 'published', personal_head: personal, shared_head: 'c'.repeat(64) }
     }
     async scopes() { return { scopes: [{ id: 'project', name: 'Mnemos' }] } }
     async documentLocation() { return { head, name: 'Последние коммиты', parent: 'folder-1' } }
@@ -503,4 +503,15 @@ it('шапка в узкой панели: «Версии» и второе де
   expect(more.className).toContain('@max-[1100px]:inline-flex')
   expect(buttons.indexOf(more as HTMLButtonElement)).toBeGreaterThan(buttons.indexOf(byText('Опубликовать')))
   act(() => root.unmount())
+})
+
+it('дубликаты имён при публикации: причина и действие вместо общей ошибки', async () => {
+  const view = await mountStatus({ faults: { publish: 'path_taken' }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('Переименуйте')) })
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('все сохранённые изменения проекта')
+    expect(view.container.querySelector('[role="alert"]')?.textContent).not.toContain('не подтверждён')
+  } finally { await view.unmount() }
 })

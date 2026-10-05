@@ -289,3 +289,8 @@ test("app-code: ключ оболочки в заголовке, версия в
   reply = () => Response.json({ code: "authz.access_denied", message: "нет" }, { status: 403 });
   await assert.rejects(api.appCode("p", "n", "", "shell-key"), (e: unknown) => e instanceof MnemosAPIError && e.status === 403 && e.code === undefined);
 });
+
+test("публикация с одинаковыми путями сохраняет безопасный код отказа", async () => {
+  const api = new MnemosAPI("https://memory.example", async () => "human", async () => Response.json({code:"node.path_taken",message:"secret"},{status:409}));
+  await assert.rejects(api.publishDraft("project","a".repeat(64),"b".repeat(64),"m"), (e:unknown) => e instanceof MnemosAPIError && e.code === "node.path_taken" && !e.message.includes("secret"));
+});

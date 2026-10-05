@@ -798,6 +798,7 @@ export interface GatekeeperNativeDocumentWriteSelector extends RpcTarget {
     | { status: 'review'; candidate_id: string }
     | { status: 'published' | 'conflict' | 'unchanged'; personal_head: string; shared_head: string }
     | { status: 'denied' }
+    | { status: 'path_taken' }
     | { status: 'folder_removed'; message: string }>;
 }
 
