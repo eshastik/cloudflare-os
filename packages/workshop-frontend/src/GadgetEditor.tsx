@@ -1,3 +1,4 @@
+import TemplateEditorStatus from './TemplateEditorStatus'
 import WorkTemplateEditing from './WorkTemplateEditing'
 import type {TemplateEditingContext} from './templateEditing'
 import type {ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
@@ -1409,6 +1410,8 @@ export default function GadgetEditor() {
 
   // ── always render the full two-pane edit layout; preview overlays on top ──────
   const selectedNativeFormat = nativeFormatOf(selectedGadgetSummary?.output?.id)
+  const templateMode = !!(templateKind||templateEdit)&&selectedNativeFormat==='cloudflareos.document'
+  const templateTitle = {document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}[templateKind??editingMaterial?.material.kind??'document']
   const editingReady=templateEdit&&editingMaterial&&editingMaterial.workspaceId===id&&editingMaterial.gadgetId===selectedGadgetId&&editingMaterial.gadget===selectedGadgetStub&&JSON.stringify(templateEdit)===JSON.stringify(editingMaterial.context)?editingMaterial.material:null
   const workLabel = showingActivity ? 'Активность' : formatOf(selectedGadgetSummary?.output ?? allGadgets[0]?.output).noun
   // Переключатель «Беседа | Документ» в шапке беседы на телефоне.
@@ -1558,7 +1561,7 @@ export default function GadgetEditor() {
                   <TelegramContinueItem overseer={overseer.stub} chatId={effectiveSelectedChatId} />
                 )}
                 <DropdownMenu.Item disabled={!selectedGadgetStub} onClick={() => setBlueprintModalOpen(true)} className={MENU_ITEM}>Шаблоны приложения</DropdownMenu.Item>
-                {selectedNativeFormat && (
+                {selectedNativeFormat && !templateMode && (
                   <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_BIND_EVENT))} className={MENU_ITEM}>Другой документ Mnemos…</DropdownMenu.Item>
                 )}
                 <DropdownMenu.Item onClick={() => openActivity('history')} className={MENU_ITEM}>Журнал действий</DropdownMenu.Item>
@@ -1681,8 +1684,7 @@ export default function GadgetEditor() {
               ? 'relative flex min-w-0 flex-1 flex-col overflow-hidden bg-kumo-overlay'
               : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
-          {templateEdit&&!paneShowsActivity&&selectedGadgetStub&&selectedNativeFormat==='cloudflareos.document'&&<WorkTemplateEditing key={JSON.stringify([id,selectedGadgetId,templateEdit])} context={templateEdit} gadget={selectedGadgetStub} snapshotSource={nativeSnapshotSource} onReady={material=>setEditingMaterial({context:templateEdit,material,workspaceId:id,gadgetId:selectedGadgetId,gadget:selectedGadgetStub})}/>}
-          {templateKind&&!paneShowsActivity&&selectedNativeFormat==='cloudflareos.document'&&<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-kumo-line px-4 py-3"><p className="m-0 min-w-0 flex-1 text-[13px] text-kumo-subtle">Материал для шаблона. Сохранение создаёт личную версию в библиотеке.</p><WorkshopButton disabled={activeTab!=='app'||previewMode||!selectedGadgetStub||!!templateEdit&&!editingReady} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить шаблон</WorkshopButton></div>}
+          {templateEdit&&!paneShowsActivity&&selectedGadgetStub&&selectedNativeFormat==='cloudflareos.document'&&<WorkTemplateEditing key={JSON.stringify([id,selectedGadgetId,templateEdit])} hideReadyNotice context={templateEdit} gadget={selectedGadgetStub} snapshotSource={nativeSnapshotSource} onReady={material=>setEditingMaterial({context:templateEdit,material,workspaceId:id,gadgetId:selectedGadgetId,gadget:selectedGadgetStub})}/>}
           <header
             className={`@container flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
               ? `gap-3.5 border-b border-kumo-fill bg-kumo-overlay ${narrow ? 'px-3' : 'px-6'}`
@@ -1713,7 +1715,7 @@ export default function GadgetEditor() {
               ) : selectedGadgetSummary && (
                 <PaneLabel
                   output={selectedGadgetSummary.output}
-                  title={headerTitle}
+                  title={templateMode?templateTitle:headerTitle}
                 />
               )}
             </div>
@@ -1721,7 +1723,9 @@ export default function GadgetEditor() {
             {/* В панели рядом с беседой места нет: соавторы видны в «Поделиться», шапке нужны действия. */}
             {!paneShowsActivity && !narrow && <div className="flex shrink-0 empty:hidden @max-[860px]:hidden">{presence}</div>}
 
-            {!paneShowsActivity && selectedGadgetStub && selectedNativeFormat && (
+            {!paneShowsActivity && templateMode && <TemplateEditorStatus context={templateEdit} ready={!!editingReady} disabled={activeTab!=='app'||previewMode||!selectedGadgetStub} onSave={()=>setDocumentTemplateOpen(true)}/>}
+
+            {!paneShowsActivity && !templateMode && selectedGadgetStub && selectedNativeFormat && (
               <DocumentStatus
                 compact={narrow}
                 onShare={narrow ? () => window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT)) : undefined}
@@ -1769,7 +1773,7 @@ export default function GadgetEditor() {
               </div>
             )}
 
-            {!paneShowsActivity && !narrow && selectedNativeFormat==='cloudflareos.document' && selectedGadgetStub && <DropdownMenu>
+            {!paneShowsActivity && !templateMode && !narrow && selectedNativeFormat==='cloudflareos.document' && selectedGadgetStub && <DropdownMenu>
               <DropdownMenu.Trigger render={<WorkshopIconButton aria-label="Действия с шаблоном" title="Действия с шаблоном" disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady}><DotsThree size={18}/></WorkshopIconButton>}/>
               <DropdownMenu.Content className={MENU_CONTENT}><DropdownMenu.Item className={MENU_ITEM} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item></DropdownMenu.Content>
             </DropdownMenu>}
@@ -1785,7 +1789,7 @@ export default function GadgetEditor() {
               />
             )}
 
-            {!paneShowsActivity && !(narrow && (selectedNativeFormat || appBound)) && (
+            {!paneShowsActivity && !templateMode && !(narrow && (selectedNativeFormat || appBound)) && (
               <button type="button" className={`${PILL_PRIMARY} ${narrow ? '!h-10 !px-4' : ''}`} onClick={() => {
                 // Документ, таблица, презентация и приложение проекта: «Поделиться» открывает доступ к самому файлу Mnemos.
                 if (selectedNativeFormat || appBound) window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))
@@ -1805,7 +1809,7 @@ export default function GadgetEditor() {
                   }
                 />
                 <DropdownMenu.Content className={MENU_CONTENT} style={MENU_POSITIONER_STYLE}>
-                  {selectedNativeFormat || appBound ? (
+                  {!templateMode && (selectedNativeFormat || appBound ? (
                     <>
                       {!documentShareShown && (
                         <DropdownMenu.Item onClick={() => window.dispatchEvent(new CustomEvent(DOCUMENT_SHARE_EVENT))} className={MENU_ITEM}>Поделиться</DropdownMenu.Item>
@@ -1816,8 +1820,8 @@ export default function GadgetEditor() {
                     <DropdownMenu.Item key={tab.value} onClick={() => handleTabSelect(tab.value)} className={MENU_ITEM}>
                       {tab.label}{activeTab === tab.value ? ' ✓' : ''}
                     </DropdownMenu.Item>
-                  ))}
-                  {selectedNativeFormat==='cloudflareos.document' && <DropdownMenu.Item className={MENU_ITEM} disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item>}
+                  )))}
+                  {!templateMode && selectedNativeFormat==='cloudflareos.document' && <DropdownMenu.Item className={MENU_ITEM} disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item>}
                   {exportActions.actions.map(action => (
                     <DropdownMenu.Item key={action.key} disabled={!selectedGadgetStub || !!exportActions.exporting || activeTab !== 'app' || previewMode} onClick={action.run} className={MENU_ITEM}>
                       {exportActions.exporting ? 'Готовлю файл…' : action.label}

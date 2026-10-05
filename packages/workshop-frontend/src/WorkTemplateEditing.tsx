@@ -12,7 +12,7 @@ import {waitForNativeSnapshotSource,type NativeSnapshotSourceRef} from './native
 import type {TemplateEditingContext} from './templateEditing'
 import {WorkshopButton} from './components/WorkshopControls'
 
-export default function WorkTemplateEditing({context,gadget,snapshotSource,onReady}:{context:TemplateEditingContext;gadget:Pick<RpcStub<GadgetClient>,'connectToGadget'>;snapshotSource:NativeSnapshotSourceRef;onReady(material:ChatWorkTemplateChoice):void}){
+export default function WorkTemplateEditing({context,gadget,snapshotSource,onReady,hideReadyNotice=false}:{hideReadyNotice?:boolean;context:TemplateEditingContext;gadget:Pick<RpcStub<GadgetClient>,'connectToGadget'>;snapshotSource:NativeSnapshotSourceRef;onReady(material:ChatWorkTemplateChoice):void}){
  const {authenticatedApi}=useAuthenticatedApi()
  const [busy,setBusy]=useState(!!context.autoOpen),[error,setError]=useState(''),[material,setMaterial]=useState<ChatWorkTemplateChoice|null>(null)
  const [existingDraft,setExistingDraft]=useState(false)
@@ -58,6 +58,7 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
   }catch{if(!owner.signal.aborted&&opening.current===attempt)setError('Открытие не подтверждено. Проверьте текст и доступ. Если вы изменили текст во время открытия, сохраните его перед повтором.')}
   finally{editor?.[Symbol.dispose]();disposeGatekeeperFrame(frame);if(opening.current===attempt){opening.current=null;if(!owner.signal.aborted)setBusy(false)}}
  }
+ if(material&&hideReadyNotice)return null
  return <section aria-label="Редактирование версии шаблона" className="shrink-0 border-b border-kumo-line px-4 py-3">
   {material?<p className="m-0 text-[13px] text-kumo-subtle">Основа — версия {context.reference.revision}: {material.title}. {'scope_id' in context.reference?'Сохранение создаст личную правку для согласования.':'Сохранение создаст новую версию.'}</p>:<><p className="m-0 mb-2 text-[13px] leading-5 text-kumo-subtle">{existingDraft?'В редакторе уже есть правки. Они не изменены. ':''}Можно открыть версию {context.reference.revision} заново или продолжить с текущим текстом черновика. Открытие версии заменит текст; продолжение сохранит ваши правки.</p><WorkshopButton tone="primary" disabled={busy} onClick={()=>void open()}>{busy?'Открываем версию…':'Открыть выбранную версию'}</WorkshopButton><WorkshopButton disabled={busy} onClick={()=>void open(true)}>Продолжить с текущим текстом</WorkshopButton></>}
   {error&&<p role="alert" className="mt-2 text-[13px] text-kumo-danger">{error}</p>}
