@@ -44,7 +44,8 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
     if(current.document.revision!==revision||nativeTitleSource(current.format,current.document).title||!blank){setExistingDraft(true);return}
    }
    frame=await wait(openBlueprintTemplatesFrame(authenticatedApi,context.accountId),disposeGatekeeperFrame);signal.throwIfAborted()
-   const selector=frame.blueprintTemplates.selector,preview=await wait(selector.preview(context.reference));signal.throwIfAborted()
+   const selector=frame.blueprintTemplates.selector,preview=await wait<Awaited<ReturnType<typeof selector.preview>>>(selector.preview(context.reference));signal.throwIfAborted()
+   if(preview.unavailable)throw Error('Нужен поддерживаемый снимок документа')
    if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||preview.ticket.content_type!=='application/vnd.cloudflareos.document+json'||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
    const validate=()=>selector.validatePreview(context.reference,preview.sourceHead)
    if(keepCurrent){

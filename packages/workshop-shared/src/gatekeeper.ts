@@ -462,8 +462,8 @@ export type GatekeeperTemplateAgentAccessPlan={bindingId:string;ready:boolean;sc
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
   agentAccess(references:import('./work-template.js').WorkTemplateReference[]):Promise<GatekeeperTemplateAgentAccessPlan>;
   allowAgentAccess(references:import('./work-template.js').WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<GatekeeperTemplateAgentAccessPlan>;
-  /** Выдаёт метаданные и билет прямого чтения точной версии; содержимое через RPC не передаётся. */
-  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;sourceProjectId?:string;improvement?:{scope_id:string;revision:number;name:string};promotion?:{scope_id:string;revision:number;name:string;level:'department'|'organization'};sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
+  /** Проверяет доступ к точной версии. Возвращает билет прямого чтения либо ограничение просмотра без билета; содержимое через RPC не передаётся. */
+  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;sourceProjectId?:string;improvement?:{scope_id:string;revision:number;name:string};promotion?:{scope_id:string;revision:number;name:string;level:'department'|'organization'};sourceHead:string} & ({ticket:GatekeeperDownloadTicket & {content_type:string};unavailable?:never}|{unavailable:'format'|'size';ticket?:never})>;
   /** Повторно проверяет текущие права и исходный снимок перед показом загруженного содержимого. */
   validatePreview(reference: import('./work-template.js').WorkTemplateReference, sourceHead:string): Promise<void>;
   /** Читает доступные для управления уровни и разрешённые администратору справочники. */

@@ -45,7 +45,7 @@ test('просмотр общей версии выдаёт только мет�
  const templates=new BlueprintTemplates(session as any,{} as any),preview=await templates.preview(ref);
  assert.deepEqual(preview.material.reference,ref);assert.equal(preview.sourceHead,head);assert.equal(JSON.stringify(preview).includes('private-project'),false);assert.equal(JSON.stringify(preview).includes('private-node'),false);
  await templates.validatePreview(ref,head);denied=true;await assert.rejects(templates.validatePreview(ref,head),/denied/);denied=false;
- await assert.rejects(templates.validatePreview(ref,'c'.repeat(64)));source.content_type='application/octet-stream';await assert.rejects(templates.preview(ref));
+ await assert.rejects(templates.validatePreview(ref,'c'.repeat(64)));source.content_type='application/octet-stream';const unavailable=await templates.preview(ref);assert.equal(unavailable.unavailable,'format');assert.equal(unavailable.ticket,undefined);
 });
 
 for(const scopeLevel of ['group','department','organization'])test('личная правка обновляет исходный общий ключ: '+scopeLevel,async()=>{
@@ -110,3 +110,11 @@ test('просмотр личной формы возвращает автори
  const session={async beginWorkTemplateDownload(reference:unknown){assert.deepEqual(reference,ref);return {source,ticket:{size_bytes:100,expires_at:new Date(Date.now()+60000).toISOString()}}}};
  const preview=await new BlueprintTemplates(session as any,{} as any).preview(ref);assert.equal(preview.sourceProjectId,'source-project');assert.deepEqual(preview.material.reference,ref);
 });
+
+ test('ограничение просмотра не выдаёт билет и не подменяет отказ доступа или просроченный ответ',async()=>{
+ const ref={template_id:'large',revision:1};let denied=false,expired=false;
+ const session={async beginWorkTemplateDownload(){if(denied)throw Error('denied');return {source:{title:'Большая форма',purpose:'ТЗ',kind:'document',source_head:'a'.repeat(64),content_type:'text/plain'},ticket:{url:'https://objects.example/private',size_bytes:1024*1024+1,expires_at:new Date(Date.now()+(expired?-1000:60000)).toISOString()}}}};
+ const templates=new BlueprintTemplates(session as any,{} as any);
+ const preview=await templates.preview(ref);assert.equal(preview.unavailable,'size');assert.equal(preview.ticket,undefined);assert.equal(JSON.stringify(preview).includes('objects.example'),false);assert.deepEqual(preview.material.reference,ref);
+ denied=true;await assert.rejects(templates.preview(ref),/denied/);denied=false;expired=true;await assert.rejects(templates.preview(ref),/Билет просмотра не подтверждён/);
+ });

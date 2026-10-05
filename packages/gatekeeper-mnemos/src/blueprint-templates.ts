@@ -17,8 +17,10 @@ export class BlueprintTemplates extends RpcTarget {
   async preview(reference:WorkTemplateReference){
     const ref=checkedTemplateReferences([reference])[0]
     const issued=await this.session.beginWorkTemplateDownload(ref),source=issued.source,ticket=issued.ticket
-    if(ticket.size_bytes>1024*1024||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Просмотр доступен для снимков до одного МиБ')
-    if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))throw new Error('Просмотр этого формата пока не поддерживается')
+    if(!Number.isSafeInteger(ticket.size_bytes)||ticket.size_bytes<0||!Number.isFinite(Date.parse(ticket.expires_at))||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Билет просмотра не подтверждён')
+    const material={reference:ref,title:source.title,purpose:source.purpose,kind:source.kind}
+    if(ticket.size_bytes>1024*1024)return {material,sourceHead:source.source_head,unavailable:'size' as const}
+    if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))return {material,sourceHead:source.source_head,unavailable:'format' as const}
     let improvement: {scope_id:string;revision:number;name:string}|undefined
     let promotion:{scope_id:string;revision:number;name:string;level:'department'|'organization'}|undefined
     if('scope_id' in ref){
@@ -29,7 +31,7 @@ export class BlueprintTemplates extends RpcTarget {
       const parent=scopes.find(item=>item.scope_id===scope?.parent_id&&item.enabled)
       if(parent&&(parent.level==='department'||parent.level==='organization'))promotion={scope_id:parent.scope_id,revision:parent.revision,name:parent.name,level:parent.level}
     }
-    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,promotion,sourceProjectId:'template_id' in ref?source.project_id:undefined,sourceHead:source.source_head,
+    return {material,improvement,promotion,sourceProjectId:'template_id' in ref?source.project_id:undefined,sourceHead:source.source_head,
       ticket:{url:ticket.url,method:ticket.method,size_bytes:ticket.size_bytes,sha256_hex:ticket.sha256_hex,content_type:source.content_type}}
   }
   async validatePreview(reference:WorkTemplateReference,sourceHead:string){

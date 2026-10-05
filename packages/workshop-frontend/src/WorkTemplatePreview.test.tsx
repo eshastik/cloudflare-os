@@ -96,3 +96,25 @@ test('личный шаблон без подтверждённого исход
  const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Форма',blocks:[]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');const preview=await mocks.preview();mocks.preview.mockResolvedValue({...preview as object,sourceProjectId:undefined});
  await React.act(async()=>root.render(<WorkTemplatePreview readOnly item={item} editingProject={{accountId:7,projectId:'result-project'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();expect(button('Редактировать')).toBeUndefined();expect(document.body.textContent).toContain('Форма');
 });
+
+ test('неподдерживаемый формат назван явно, не скачивается и не предлагается текстовая подмена',async()=>{
+ const fetcher=await ticket('Не должно скачаться','application/vnd.cloudflareos.spreadsheet+json');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Просмотр этого формата пока не поддерживается');
+ expect(document.body.textContent).toContain('Таблицы и презентации не заменяются текстовым предпросмотром');
+ expect(fetcher).not.toHaveBeenCalled();expect(mocks.validate).toHaveBeenCalledWith(item.reference,'a'.repeat(64));
+ expect([...document.body.querySelectorAll('button')].some(b=>b.textContent==='Повторить просмотр')).toBe(false);expect(button('Выбрать для задачи').disabled).toBe(true);
+ });
+ test('большой снимок не скачивается; размер отличается от ошибки доступа',async()=>{
+ const fetcher=await ticket('Большая форма','text/plain');const preview=await mocks.preview();
+ mocks.preview.mockResolvedValue({material:(preview as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'size'});
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Шаблон превышает предел просмотра — 1 МиБ');
+ expect(fetcher).not.toHaveBeenCalled();expect(mocks.validate).toHaveBeenCalledWith(item.reference,'a'.repeat(64));expect(button('Выбрать для задачи').disabled).toBe(true);
+ });
+ test('отказ доступа к неподдерживаемому формату не подменяется сообщением об ограничении просмотра',async()=>{
+ const fetcher=await ticket('Не должно скачаться','application/vnd.cloudflareos.spreadsheet+json');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});mocks.validate.mockRejectedValue(new Error('revoked'));
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Проверьте доступ и подключение');
+ expect(document.body.textContent).not.toContain('Просмотр этого формата пока не поддерживается');expect(fetcher).not.toHaveBeenCalled();expect(button('Повторить просмотр').disabled).toBe(false);
+ });
