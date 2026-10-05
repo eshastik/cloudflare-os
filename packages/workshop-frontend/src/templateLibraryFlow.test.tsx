@@ -8,6 +8,7 @@ const state=vi.hoisted(()=>({
  api:{listModels:async()=>[],listChatProjects:async()=>[{accountId:3,projectId:'source',title:'Проект'}],codeWorkAllowed:async()=>false,listChatTemplateAccounts:async()=>[{accountId:3,title:'Mnemos'}],listChatTemplateScopes:async()=>({scopes:[],nextCursor:''}),listChatTemplates:async()=>({templates:[{reference:{template_id:'form',revision:5},title:'Форма ТЗ',purpose:'Создать ТЗ',kind:'document'},{reference:{template_id:'method',revision:3},title:'Методика ТЗ',purpose:'Порядок работы',kind:'guidance'}],nextCursor:''})}
 }))
 const sessionApi={...state.api,newGadget:state.newGadget}
+vi.mock('./accountCapabilities',()=>({openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{selector:{agentAccess:async()=>({ready:true,scopes:[],bindingId:'agent'})}},[Symbol.dispose]:()=>{}})}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:sessionApi})}))
 vi.mock('@tanstack/react-router',async original=>({...await original<object>(),useNavigate:()=>state.navigate}))
 vi.mock('@cloudflare/kumo',async original=>({...await original<object>(),useKumoToastManager:()=>({add:()=>{}})}))
@@ -30,7 +31,7 @@ test('Библиотека передаёт форму и методику в н
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());expect(document.querySelector('[role="dialog"]')).not.toBeNull();await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));expect(document.querySelector('[role="dialog"]')).toBeNull();
  await click('Мои приложения');await click('Рабочие шаблоны');expect(host.querySelector('[aria-label="Рабочие шаблоны Mnemos"]')?.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2);
  await click('Использовать выбранные (2)');expect(state.newChat).not.toHaveBeenCalled();
- const input=host.querySelector('textarea')!;await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,'Подготовь ТЗ для клиента');input.dispatchEvent(new Event('input',{bubbles:true}))});
+ const input=host.querySelector('textarea')!;expect(input).not.toBeNull();await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(input,'Подготовь ТЗ для клиента');input.dispatchEvent(new Event('input',{bubbles:true}))});
  expect(host.textContent).toContain('Форма документа · версия 5');expect(host.textContent).toContain('Методика · версия 3');
  await click('Назад к библиотеке');await click('Вернуться к черновику задачи');expect(host.querySelector('textarea')).toBe(input);expect(input.value).toBe('Подготовь ТЗ для клиента');expect(state.newChat).not.toHaveBeenCalled();
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(state.newChat).toHaveBeenCalledOnce();expect(state.newChat.mock.calls[0][0]).toBe('Подготовь ТЗ для клиента');expect(state.newChat.mock.calls[0][6]).toEqual([{accountId:3,reference:{template_id:'form',revision:5}},{accountId:3,reference:{template_id:'method',revision:3}}]);expect(state.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});

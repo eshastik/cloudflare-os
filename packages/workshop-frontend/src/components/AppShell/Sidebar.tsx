@@ -116,7 +116,7 @@ export default function Sidebar({
             <nav aria-label="Разделы" className="flex flex-col gap-1 px-3.5">
               <SidebarItem to="/" label="Новая беседа" icon={<Plus size={18} />} />
               {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={false} />)}
-              <SidebarItem to="/explore" label="Шаблоны" icon={<Blueprint size={18} />} matchPrefix />
+              <SidebarItem to="/blueprints" label="Шаблоны" icon={<Blueprint size={18} />} matchPrefix />
               {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={false} />)}
             </nav>
             <div className="mt-5">
@@ -137,7 +137,7 @@ export default function Sidebar({
             collapsed={collapsed}
           />
           {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
-          <SidebarItem to="/explore" label="Шаблоны" icon={<Blueprint size={18} />} collapsed={collapsed} matchPrefix />
+          <SidebarItem to="/blueprints" label="Шаблоны" icon={<Blueprint size={18} />} collapsed={collapsed} matchPrefix />
           {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
         </nav>
 

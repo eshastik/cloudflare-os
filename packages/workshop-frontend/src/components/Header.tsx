@@ -70,7 +70,7 @@ export default function Header() {
               Подключения
             </Link>
             <Link
-              to="/explore"
+              to="/blueprints"
               className={navLinkClass}
               activeProps={{ className: navLinkActiveClass }}
             >
@@ -136,7 +136,7 @@ export default function Header() {
               Подключения
             </Link>
             <Link
-              to="/explore"
+              to="/blueprints"
               onClick={closeMobileMenu}
               className={navLinkClass}
               activeProps={{ className: navLinkActiveClass }}

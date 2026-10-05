@@ -293,7 +293,7 @@ export default function CommandPalette({
         id: 'nav-blueprints',
         label: 'Шаблоны',
         icon: <Blueprint size={18} />,
-        run: () => navigate({ to: '/explore' }),
+        run: () => navigate({ to: '/blueprints' }),
       },
     ]
 
