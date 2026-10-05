@@ -16,10 +16,16 @@ export class BlueprintTemplates extends RpcTarget {
     if(ticket.size_bytes>1024*1024||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Просмотр доступен для снимков до одного МиБ')
     if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))throw new Error('Просмотр этого формата пока не поддерживается')
     let improvement: {scope_id:string;revision:number;name:string}|undefined
+    let promotion:{scope_id:string;revision:number;name:string;level:'department'|'organization'}|undefined
     if('scope_id' in ref){
-      let cursor='';do{const page=await this.session.listTemplateScopes(cursor);const scope=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled&&item.level==='group');if(scope)improvement={scope_id:scope.scope_id,revision:scope.revision,name:scope.name};cursor=page.next_cursor||''}while(cursor)
+      const scopes:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes']=[];let cursor=''
+      do{const page=await this.session.listTemplateScopes(cursor);scopes.push(...page.scopes);cursor=page.next_cursor||''}while(cursor)
+      const scope=scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled)
+      if(scope?.level==='group')improvement={scope_id:scope.scope_id,revision:scope.revision,name:scope.name}
+      const parent=scopes.find(item=>item.scope_id===scope?.parent_id&&item.enabled)
+      if(parent&&(parent.level==='department'||parent.level==='organization'))promotion={scope_id:parent.scope_id,revision:parent.revision,name:parent.name,level:parent.level}
     }
-    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,sourceHead:source.source_head,
+    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,promotion,sourceHead:source.source_head,
       ticket:{url:ticket.url,method:ticket.method,size_bytes:ticket.size_bytes,sha256_hex:ticket.sha256_hex,content_type:source.content_type}}
   }
   async validatePreview(reference:WorkTemplateReference,sourceHead:string){
@@ -42,9 +48,9 @@ export class BlueprintTemplates extends RpcTarget {
   async projects() { return this.session.listProjects() }
   async scopes(cursor = '') { return this.session.listTemplateScopes(cursor) }
   async templates(scope: string, cursor = '') { return this.session.listScopedWorkTemplates(scope, cursor) }
-  async promote(scope: string, template: string, revision: number, message: string, operation: string) {
+  async promote(scope: string, template: string, revision: number, message: string, operation: string, expectedTarget?:{scope_id:string;revision:number}) {
     if (!/^[a-f0-9-]{36}$/.test(operation)) throw new Error('Некорректная операция')
-    const input = {scope, template, revision, message}
+    const input = {scope, template, revision, message,expectedTarget}
     const key = `blueprint-promotion:${operation}`
     let saved = this.storage.get<{input: typeof input; project: string; action: string}>(key)
     if (saved && JSON.stringify(saved.input) !== JSON.stringify(input)) throw new Error('Операция уже относится к другому предложению')
@@ -55,6 +61,7 @@ export class BlueprintTemplates extends RpcTarget {
       const current = scopes.find(item=>item.scope_id === scope && item.enabled)
       const target = scopes.find(item=>item.scope_id === current?.parent_id && item.enabled)
       if (!target) throw new Error('Нет следующего уровня для согласования')
+      if(expectedTarget&&(target.scope_id!==expectedTarget.scope_id||target.revision!==expectedTarget.revision))throw Error('Следующий уровень или его правила изменились')
       let expected = 0
       try { expected = (await this.session.readScopedWorkTemplate(target.scope_id, template, 0)).revision }
       catch(error) { if (!(error instanceof MnemosAPIError) || error.status !== 404) throw error }

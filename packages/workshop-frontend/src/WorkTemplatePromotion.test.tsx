@@ -1,0 +1,21 @@
+// @vitest-environment jsdom
+import {act} from 'react'
+import {createRoot} from 'react-dom/client'
+import {afterEach,beforeEach,expect,test,vi} from 'vitest'
+const mocks=vi.hoisted(()=>({api:{},open:vi.fn(),promote:vi.fn(),dispose:vi.fn()}))
+vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
+vi.mock('./accountCapabilities',()=>({openBlueprintTemplatesFrame:(...args:unknown[])=>mocks.open(...args)}))
+vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:mocks.dispose}))
+import WorkTemplatePromotion from './WorkTemplatePromotion'
+const item={accountId:7,reference:{scope_id:'team',template_key:'method',revision:5},title:'Методика',purpose:'ТЗ',kind:'guidance' as const},target={scope_id:'dept',revision:3,name:'Разработка',level:'department' as const}
+let host:HTMLDivElement,root:ReturnType<typeof createRoot>
+beforeEach(()=>{vi.resetAllMocks();sessionStorage.clear();(globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;mocks.open.mockResolvedValue({blueprintTemplates:{selector:{promote:mocks.promote}}});mocks.promote.mockResolvedValue({proposal:{target_scope_id:'dept'}});host=document.createElement('div');document.body.append(host);root=createRoot(host)})
+afterEach(async()=>{await act(async()=>root.unmount());host.remove()})
+async function render(){await act(async()=>root.render(<WorkTemplatePromotion item={item} target={target}/>))}
+async function reason(){await act(async()=>{const field=host.querySelector('textarea')!;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(field,'Подходит для проектов отдела');field.dispatchEvent(new Event('input',{bubbles:true}))})}
+async function send(){await act(async()=>host.querySelector('button')!.click())}
+test('явное повышение отправляет точную версию следующему уровню',async()=>{await render();expect(mocks.promote).not.toHaveBeenCalled();expect(host.querySelector('summary')!.textContent).toBe('Предложить отделу');expect(host.querySelector('button')!.disabled).toBe(true);await reason();await send();expect(mocks.promote).toHaveBeenCalledWith('team','method',5,'Подходит для проектов отдела',expect.any(String),{scope_id:'dept',revision:3});expect(host.querySelector('[role="status"]')!.textContent).toContain('Исходная версия сохранена');expect(mocks.dispose).toHaveBeenCalledTimes(1)})
+test('потерянный ответ повторяет ту же операцию и замораживает объяснение',async()=>{mocks.promote.mockRejectedValueOnce(Error('lost'));await render();await reason();await send();const first=mocks.promote.mock.calls[0];expect(host.querySelector('[role="alert"]')).not.toBeNull();expect(host.querySelector('textarea')!.disabled).toBe(true);await send();expect(mocks.promote.mock.calls[1]).toEqual(first);expect(sessionStorage.length).toBe(0)})
+test('сохранённое намерение восстанавливается после закрытия формы',async()=>{mocks.promote.mockRejectedValueOnce(Error('lost'));await render();await reason();await send();const first=mocks.promote.mock.calls[0];await act(async()=>root.unmount());root=createRoot(host);await render();expect(host.querySelector('textarea')!.value).toBe('Подходит для проектов отдела');await send();expect(mocks.promote.mock.calls[1]).toEqual(first)})
+test('иной уровень в ответе не показывается как успешная отправка',async()=>{mocks.promote.mockResolvedValue({proposal:{target_scope_id:'other'}});await render();await reason();await send();expect(host.querySelector('[role="status"]')).toBeNull();expect(host.querySelector('[role="alert"]')).not.toBeNull();expect(sessionStorage.length).toBe(1)})
+test('срок ожидания освобождает поздний frame и разрешает повтор',async()=>{const controller=new AbortController(),timer=vi.spyOn(AbortSignal,'timeout').mockReturnValue(controller.signal);let complete!:(value:unknown)=>void;mocks.open.mockReturnValue(new Promise(resolve=>{complete=resolve}));try{await render();await reason();await send();await act(async()=>controller.abort());expect(host.querySelector('[role="alert"]')).not.toBeNull();const frame={blueprintTemplates:{selector:{promote:mocks.promote}}};await act(async()=>complete(frame));expect(mocks.dispose).toHaveBeenCalledWith(frame);expect(mocks.promote).not.toHaveBeenCalled()}finally{timer.mockRestore()}})

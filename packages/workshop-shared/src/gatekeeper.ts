@@ -457,7 +457,7 @@ export interface GatekeeperTemplateScopeConfig {
 }
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
   /** Выдаёт метаданные и билет прямого чтения точной версии; содержимое через RPC не передаётся. */
-  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;improvement?:{scope_id:string;revision:number;name:string};sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
+  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;improvement?:{scope_id:string;revision:number;name:string};promotion?:{scope_id:string;revision:number;name:string;level:'department'|'organization'};sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
   /** Повторно проверяет текущие права и исходный снимок перед показом загруженного содержимого. */
   validatePreview(reference: import('./work-template.js').WorkTemplateReference, sourceHead:string): Promise<void>;
   /** Читает доступные для управления уровни и разрешённые администратору справочники. */
@@ -466,7 +466,7 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
   configure(id: string, expected: number, config: GatekeeperTemplateScopeConfig): Promise<GatekeeperTemplateScopeConfig & {scope_id:string;revision:number}>;
 
   /** Предлагает выбранную общую версию непосредственному родительскому уровню с отдельным согласованием. */
-  promote(scope: string, template: string, revision: number, message: string, operation: string): Promise<{proposal: {proposal_id: string; target_scope_id: string}}>;
+  promote(scope: string, template: string, revision: number, message: string, operation: string, expectedTarget?:{scope_id:string;revision:number}): Promise<{proposal: {proposal_id: string; target_scope_id: string}}>;
 
   /** Утверждённые версии выбранного уровня; возвращается курсор следующей страницы. */
   templates(scope: string, cursor?: string): Promise<{templates: {scope_id: string; template_key: string; revision: number; source: {title: string; purpose: string; content_type: string}}[]; next_cursor?: string}>;

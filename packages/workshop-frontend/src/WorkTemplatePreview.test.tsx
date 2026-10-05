@@ -70,3 +70,10 @@ test('Сравнение не пропускает текст рядом с вл
  await vi.waitFor(async()=>{await React.act(async()=>{});expect(document.body.querySelector('del')?.textContent).toBe('100');expect(document.body.querySelector('ins')?.textContent).toBe('500')},{interval:5,timeout:1000})
  expect(document.body.textContent).not.toContain('Текст содержимого не изменился.')
 })
+
+test('Просмотр общей версии показывает отдельный вход к следующему уровню без проекта личной копии',async()=>{
+ const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Методика',blocks:[{html:'<p>Проверять требования</p>'}]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');
+ const preview=await mocks.preview();const reference={scope_id:'team',template_key:'method',revision:5};mocks.preview.mockResolvedValue({...preview as object,material:{reference,title:'Методика',purpose:'ТЗ',kind:'guidance'},promotion:{scope_id:'dept',revision:3,name:'Разработка',level:'department'}});
+ await React.act(async()=>root.render(<WorkTemplatePreview item={{...item,reference,kind:'guidance'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect([...document.body.querySelectorAll('summary')].map(item=>item.textContent)).toContain('Предложить отделу');expect(document.body.textContent).toContain('Версия 5 станет доступна там после отдельного согласования');
+});

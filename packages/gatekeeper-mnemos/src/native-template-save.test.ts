@@ -73,3 +73,20 @@ test('личная правка обновляет исходный общий �
  await assert.rejects(prepared.creator.propose('team',3,'Другая причина'));assert.equal(writes.length,1);
  await (await templates.resume(prepared.id)).propose('team',3,'Уточнить критерий');assert.deepEqual(writes[1].input,writes[0].input);
 });
+
+test('повышение нативной версии закрепляет показанный следующий уровень и не пропускает изменённые правила',async()=>{
+ const ref={scope_id:'team',template_key:'method',revision:5};const entries=new Map<string,unknown>();let parentRevision=3,writes:any[]=[],denied=false;
+ const scopes=[{scope_id:'team',revision:2,name:'Группа',enabled:true,level:'group',parent_id:'dept'},{scope_id:'dept',revision:3,name:'Отдел',enabled:true,level:'department',parent_id:'org'},{scope_id:'org',revision:1,name:'Организация',enabled:true,level:'organization',parent_id:''}];
+ const session={
+  async beginWorkTemplateDownload(){return {source:{title:'Методика',purpose:'ТЗ',kind:'guidance',source_head:'a'.repeat(64),content_type:'application/vnd.cloudflareos.document+json'},ticket:{size_bytes:100,expires_at:new Date(Date.now()+60000).toISOString()}}},
+  async listTemplateScopes(cursor:string){return cursor?{scopes:scopes.slice(1).map(s=>s.scope_id==='dept'?{...s,revision:parentRevision}:s),next_cursor:''}:{scopes:scopes.slice(0,1),next_cursor:'parent'}},
+  async readScopedWorkTemplate(scope:string,key:string,revision:number){if(denied)throw Error('denied');assert.equal(key,'method');if(scope==='team'){assert.equal(revision,5);return {source:{project_id:'project'}}}return {revision:7}},
+  async readSavedTemplateAction(){return null},async saveTemplateAction(_project:string,input:any){writes.push(input);return {id:'action'}},
+  async executeSavedTemplateAction(){return {receipt:{kind:'propose',proposal:{proposal_id:'proposal'}}}},async readTemplateProposal(){if(denied)throw Error('denied');return {proposal:{proposal_id:'proposal',target_scope_id:'dept'}}},
+ };
+ const templates=new BlueprintTemplates(session as any,{get:(key:string)=>entries.get(key),put:(key:string,value:unknown)=>entries.set(key,structuredClone(value))} as any);
+ assert.deepEqual((await templates.preview(ref)).promotion,{scope_id:'dept',revision:3,name:'Отдел',level:'department'});
+ const target={scope_id:'dept',revision:3},id=crypto.randomUUID();parentRevision=4;await assert.rejects(templates.promote('team','method',5,'Для отдела',id,target));assert.equal(writes.length,0);parentRevision=3;
+ await templates.promote('team','method',5,'Для отдела',id,target);assert.equal(writes[0].input.source_scope_id,'team');assert.equal(writes[0].input.target_scope_id,'dept');assert.equal(writes[0].input.target_scope_revision,3);assert.equal(writes[0].input.expected_catalogue_revision,7);
+ await templates.promote('team','method',5,'Для отдела',id,target);assert.equal(writes.length,1);denied=true;await assert.rejects(templates.promote('team','method',5,'Для отдела',id,target));
+});
