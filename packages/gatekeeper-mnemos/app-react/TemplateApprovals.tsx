@@ -1,3 +1,4 @@
+import {templateTextChanges} from "../app/template-text-diff.ts";
 import {BLUEPRINT_TEMPLATE_MIME} from '@gadgets/workshop-shared/blueprint-template';
 import {useEffect,useState} from "react";
 import {useHost,useUi} from "./host.ts";
@@ -18,6 +19,7 @@ export async function loadTemplateReviews(ui:ReturnType<typeof useUi>):Promise<{
 export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
  const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
  const [baseline,setBaseline]=useState<string|null>(null);
+ const changes=baseline!==null&&text!==null?templateTextChanges(baseline,text):null;
  const [gadget,setGadget]=useState<{project:string;node:string}|null>(null);
  const [review,setReview]=useState(item);
  const proposal=review.proposal,id=proposal.proposal_id;
@@ -42,10 +44,14 @@ export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:
    {error&&<Notice tone="danger">{error}</Notice>}
    {busy&&<p role="status" className="m-0 text-kumo-subtle">Проверяем…</p>}
    {gadget&&ready&&<div><Pill disabled={busy} onClick={()=>void openGadget()}>Открыть копию рядом</Pill><p className="mt-1 mb-0 text-[12px] text-kumo-subtle">Откроется отдельная рабочая копия. Для решения вернитесь сюда; общий шаблон останется прежним.</p></div>}
-   {text!==null&&<div className={baseline===null?"":"grid gap-3 lg:grid-cols-2"}>
+   {text!==null&&baseline!==null&&<section aria-label="Изменения текста" className="grid gap-2">
+    <h3 className="m-0 text-[14px] font-medium">Что изменилось</h3>
+    {changes===null?<p className="m-0 text-kumo-subtle">Текст слишком длинный для краткого сравнения. Проверьте полные версии ниже.</p>:changes.length===0?<p className="m-0 text-kumo-subtle">Текст совпадает. Оформление и структуру нужно проверить отдельно.</p>:<ul className="m-0 grid list-none gap-2 p-0">{changes.map((change,index)=><li key={index} className="rounded-lg border border-kumo-fill px-3 py-2"><span className="mb-1 block text-[12px] font-medium text-kumo-subtle">{change.kind==='removed'?'Удалено':'Добавлено'}</span><p className="m-0 whitespace-pre-wrap break-words leading-6">{change.text||'Пустая строка'}</p></li>)}</ul>}
+   </section>}
+   {text!==null&&<details open={baseline===null}><summary className="cursor-pointer text-[13px] text-kumo-subtle">{baseline===null?'Текст предложенной версии':'Полные тексты версий'}</summary><div className={baseline===null?"":"grid gap-3 lg:grid-cols-2"}>
     {baseline!==null&&<section aria-label="До изменений"><h3 className="m-0 mb-2 text-[14px] font-medium">До изменений · общая версия {proposal.expected_catalogue_revision}</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-kumo-fill pt-3 font-sans text-[14px] leading-6">{baseline}</pre></section>}
     <section aria-label="Предложенная версия"><h3 className="m-0 mb-2 text-[14px] font-medium">Предложенная версия</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-kumo-fill pt-3 font-sans text-[14px] leading-6">{text}</pre></section>
-   </div>}
+   </div></details>}
    {!busy&&(!ready||text===null)&&<div><Pill onClick={()=>void inspect()}>Повторить проверку</Pill></div>}
    {requirements.map(({scope:s,requirement:r})=><TemplateContentReview key={JSON.stringify([s.scope_id,r.domain_id])} review={review} scope={s} requirement={r} userId={userId} ready={ready&&!busy} verified={text!==null} onDone={()=>void inspect()}/>)}
    {mayPublish&&<p className="m-0 text-kumo-subtle">Публикация откроет участникам области эту версию шаблона. Исходный личный документ останется доступен по своим правам. Необходимы все согласования по направлениям.</p>}

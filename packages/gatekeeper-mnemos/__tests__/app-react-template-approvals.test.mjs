@@ -80,6 +80,7 @@ test('общая и предложенная версии видны рядом 
   assert.match(app.document.querySelector('[aria-label="До изменений"]').textContent,/общая версия 7.*Утверждённый текст/);
   assert.match(app.document.querySelector('[aria-label="Предложенная версия"]').textContent,/Предлагаемый текст/);
   assert.deepEqual(app.calls.find(([method,_p,_n,version])=>method==='downloadText'&&version.startsWith('template-baseline:')),['downloadText','old-project','old-doc','template-baseline:q',0]);
+  const changes=app.document.querySelector('[aria-label="Изменения текста"]');assert.match(changes.textContent,/Удалено.*Утверждённый текст.*Добавлено.*Предлагаемый текст/);assert.equal(app.document.querySelector('details').open,false);
   assert.equal(backend.writes.length,0);
  }finally{app.dispose()}
 });
