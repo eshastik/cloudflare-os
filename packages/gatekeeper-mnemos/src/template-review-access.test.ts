@@ -44,3 +44,15 @@ for(const [scope,revision,expected] of [['dept',3,['expert','unneeded-parent-pub
  const plan=await templateReviewAccess(f.session,f.version,scope,revision);assert.deepEqual(plan.reviewers.map(p=>p.id),expected);assert.equal(plan.path[0][0],scope);assert.equal(plan.path.length,scope==='dept'?2:1);assert.equal(f.writes.length,0);
  f.scopes[2].revision++;await assert.rejects(shareTemplateForReview(f.session,f.version,scope,revision,plan.key));assert.equal(f.writes.length,0);
 });
+
+test('право чтения папки не заменяет приглашение в личный документ',async()=>{
+ const f=fixture();f.people[0].can_read=true;
+ const plan=await templateReviewAccess(f.session,f.version,'group',1);
+ assert.equal(plan.reviewers.find(p=>p.id==='publisher')!.canRead,false);
+ const result=await shareTemplateForReview(f.session,f.version,'group',1,plan.key);
+ assert.deepEqual(f.writes,[['project','snapshot','current-head','publisher','','read']]);
+ assert.ok(result.reviewers.every(p=>p.canRead));
+ await shareTemplateForReview(f.session,f.version,'group',1,plan.key);assert.equal(f.writes.length,1);
+ f.people[0].mode='';
+ assert.equal((await templateReviewAccess(f.session,f.version,'group',1)).reviewers.find(p=>p.id==='publisher')!.canRead,false);
+});
