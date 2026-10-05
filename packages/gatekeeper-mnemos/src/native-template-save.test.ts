@@ -118,3 +118,14 @@ test('просмотр личной формы возвращает автори
  const preview=await templates.preview(ref);assert.equal(preview.unavailable,'size');assert.equal(preview.ticket,undefined);assert.equal(JSON.stringify(preview).includes('objects.example'),false);assert.deepEqual(preview.material.reference,ref);
  denied=true;await assert.rejects(templates.preview(ref),/denied/);denied=false;expired=true;await assert.rejects(templates.preview(ref),/Билет просмотра не подтверждён/);
  });
+
+ for(const mime of ['text/plain','text/markdown'])test('текстовая методика '+mime+' сохраняет личность шаблона и отдельную общую правку при переходе в документ',async()=>{
+ let contentType=mime;const entries=new Map<string,unknown>(),ref={scope_id:'group',template_key:'rules',revision:2};
+ const session={async readWorkTemplate(){return {template_id:'personal',revision:2,project_id:'project',kind:'guidance',content_type:contentType}},async readWorkTemplateSelection(){return {materials:[{scoped:{source:{kind:'guidance',content_type:contentType}}}]}},async listTemplateScopes(){return {scopes:[{scope_id:'group',revision:1,name:'Группа',enabled:true,level:'group'}],next_cursor:''}},async openDraft(){return {head:'a'.repeat(64)}}};
+ const templates=new BlueprintTemplates(session as any,{get:(k:string)=>entries.get(k),put:(k:string,v:unknown)=>entries.set(k,structuredClone(v))} as any);
+ const personal=await templates.prepare('project','Методика','ТЗ',{template_id:'personal',revision:2},'editor','cloudflareos.document','guidance');
+ const personalState=entries.get('blueprint-template:'+personal.id) as any;assert.equal(personalState.template,'personal');assert.equal(personalState.expectedRevision,2);assert.equal(personalState.kind,'guidance');
+ const common=await templates.prepare('project','Методика','ТЗ',undefined,'editor-common','cloudflareos.document','guidance',ref);
+ const commonState=entries.get('blueprint-template:'+common.id) as any;assert.notEqual(common.id,'rules');assert.deepEqual(commonState.improvement,{...ref,scopeRevision:1});assert.equal(commonState.template,undefined);assert.equal(commonState.kind,'guidance');
+ contentType='application/vnd.cloudflareos.spreadsheet+json';await assert.rejects(templates.prepare('project','Методика','ТЗ',{template_id:'personal',revision:2},'editor','cloudflareos.document','guidance'));await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'editor','cloudflareos.document','guidance',ref));
+ });

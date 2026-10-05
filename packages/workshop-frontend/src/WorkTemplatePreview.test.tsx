@@ -118,3 +118,10 @@ test('личный шаблон без подтверждённого исход
  expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Проверьте доступ и подключение');
  expect(document.body.textContent).not.toContain('Просмотр этого формата пока не поддерживается');expect(fetcher).not.toHaveBeenCalled();expect(button('Повторить просмотр').disabled).toBe(false);
  });
+
+ test('Текстовая методика предлагает редактор с явным объяснением нового формата',async()=>{
+ await ticket('# Правила\nПроверить требования','text/markdown');mocks.api.listOutputFormats.mockResolvedValue([]);
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} editingProject={{accountId:7,projectId:'source-project'}} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect(button('Редактировать')).toBeDefined();await React.act(async()=>button('Редактировать').click());
+ expect(document.body.textContent).toContain('Текст и Markdown откроются как текст');expect(document.body.textContent).toContain('исходная версия останется прежней');expect(mocks.api.newGadgetFromBlueprint).not.toHaveBeenCalled();
+ });

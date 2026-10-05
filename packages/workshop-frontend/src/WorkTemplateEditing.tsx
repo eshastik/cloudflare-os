@@ -2,12 +2,12 @@ import {useEffect,useRef,useState} from 'react'
 import type {RpcStub} from 'capnweb'
 import type {GadgetClient} from '@gadgets/workshop-shared/api'
 import {nativeTitleSource} from '@gadgets/workshop-shared/native-document'
-import type {NativeDocumentEditor} from '@gadgets/workshop-shared/native-document'
+import type {NativeDocumentEditor,NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document'
 import {checkedTemplateReferences,type ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
 import {useAuthenticatedApi} from './AuthContext'
 import {openBlueprintTemplatesFrame} from './accountCapabilities'
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
-import {downloadGatekeeperNativeDocument} from './gatekeeperAppDownload'
+import {downloadGatekeeperNativeDocument,downloadGatekeeperWorkTemplateText} from './gatekeeperAppDownload'
 import {waitForNativeSnapshotSource,type NativeSnapshotSourceRef} from './nativeSnapshotSource'
 import type {TemplateEditingContext} from './templateEditing'
 import {WorkshopButton} from './components/WorkshopControls'
@@ -46,12 +46,19 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
    frame=await wait(openBlueprintTemplatesFrame(authenticatedApi,context.accountId),disposeGatekeeperFrame);signal.throwIfAborted()
    const selector=frame.blueprintTemplates.selector,preview=await wait<Awaited<ReturnType<typeof selector.preview>>>(selector.preview(context.reference));signal.throwIfAborted()
    if(preview.unavailable)throw Error('Нужен поддерживаемый снимок документа')
-   if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||preview.ticket.content_type!=='application/vnd.cloudflareos.document+json'||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
+   if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||!['application/vnd.cloudflareos.document+json','text/plain','text/markdown'].includes(preview.ticket.content_type)||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
    const validate=()=>selector.validatePreview(context.reference,preview.sourceHead)
    if(keepCurrent){
     await wait(validate());signal.throwIfAborted()
    }else{
-    const snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,()=>wait(validate())));signal.throwIfAborted()
+    let snapshot:NativeDocumentSnapshot
+    if(preview.ticket.content_type==='application/vnd.cloudflareos.document+json')snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,()=>wait(validate())))
+    else {
+     const text=await wait(downloadGatekeeperWorkTemplateText(frame.blueprintTemplates.storageOrigin,preview.ticket,signal,()=>wait(validate())))
+     const escaped=text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+     snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:preview.material.title,blocks:[{id:'template-text',html:'<pre><span>'+escaped+'</span></pre>'}]}}
+    }
+    signal.throwIfAborted()
     await wait(validate());signal.throwIfAborted()
     await wait(editor.restoreDocumentSnapshot(snapshot,revision));signal.throwIfAborted()
    }

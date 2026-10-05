@@ -2,11 +2,11 @@
 import {act} from 'react'
 import {createRoot} from 'react-dom/client'
 import {afterEach,beforeEach,expect,test,vi} from 'vitest'
-const mocks=vi.hoisted(()=>({api:{},frame:vi.fn(),preview:vi.fn(),validate:vi.fn(),download:vi.fn(),connect:vi.fn(),revision:vi.fn(),restore:vi.fn(),dispose:vi.fn(),ready:vi.fn()}))
+const mocks=vi.hoisted(()=>({api:{},frame:vi.fn(),preview:vi.fn(),validate:vi.fn(),download:vi.fn(),text:vi.fn(),connect:vi.fn(),revision:vi.fn(),restore:vi.fn(),dispose:vi.fn(),ready:vi.fn()}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
 vi.mock('./accountCapabilities',()=>({openBlueprintTemplatesFrame:(...args:unknown[])=>mocks.frame(...args)}))
 vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:vi.fn()}))
-vi.mock('./gatekeeperAppDownload',()=>({downloadGatekeeperNativeDocument:(...args:unknown[])=>mocks.download(...args)}))
+vi.mock('./gatekeeperAppDownload',()=>({downloadGatekeeperNativeDocument:(...args:unknown[])=>mocks.download(...args),downloadGatekeeperWorkTemplateText:(...args:unknown[])=>mocks.text(...args)}))
 import WorkTemplateEditing from './WorkTemplateEditing'
 import {templateEditingContext} from './templateEditing'
 const context={accountId:7,projectId:'project',reference:{template_id:'template',revision:3}}
@@ -85,3 +85,15 @@ test('Зависшее скачивание освобождает редакт�
   expect(templateEditingContext({...context,autoOpen:true})).toEqual({...context,autoOpen:true})
   expect(templateEditingContext({...context,autoOpen:'true'})).toBeUndefined()
  })
+
+ test.each(['text/plain','text/markdown'])('Открывает %s как буквальный текст, сохраняя разметку и проверяя доступ перед CAS',async mime=>{
+ mocks.preview.mockResolvedValue({material,sourceHead:'a'.repeat(64),ticket:{content_type:mime,size_bytes:200}});mocks.text.mockResolvedValue('\n# Правила\n\n<img src="https://example.test"> & проверка\n');
+ await render();await open();
+ expect(mocks.download).not.toHaveBeenCalled();expect(mocks.text).toHaveBeenCalledOnce();expect(mocks.validate).toHaveBeenCalledWith(context.reference,'a'.repeat(64));
+ const [restored,revision]=mocks.restore.mock.calls[0];expect(revision).toBe(4);expect(restored).toMatchObject({format:'cloudflareos.document',formatVersion:1,document:{title:'Методика'}});
+ const wrapper=document.createElement('div');wrapper.innerHTML=restored.document.blocks[0].html;expect(wrapper.querySelector('img')).toBeNull();expect(wrapper.textContent).toBe('\n# Правила\n\n<img src="https://example.test"> & проверка\n');expect(mocks.ready).toHaveBeenCalledWith(material);
+ });
+ test('Отзыв доступа после чтения текста не восстанавливает его в редакторе',async()=>{
+ mocks.preview.mockResolvedValue({material,sourceHead:'a'.repeat(64),ticket:{content_type:'text/plain',size_bytes:200}});mocks.text.mockResolvedValue('Частная инструкция');mocks.validate.mockRejectedValue(Error('revoked'));
+ await render();await open();expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).not.toHaveBeenCalled();expect(host.querySelector('[role="alert"]')).not.toBeNull();
+ });

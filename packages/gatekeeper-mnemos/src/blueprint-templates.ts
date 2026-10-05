@@ -125,14 +125,14 @@ export class BlueprintTemplates extends RpcTarget {
     if(previous){
       if(!previous.template_id||!Number.isSafeInteger(previous.revision)||previous.revision<1)throw new Error('Некорректная предыдущая версия')
       const version=await this.session.readWorkTemplate(previous.template_id,previous.revision)
-      if(version.project_id!==project||version.content_type!==contentType||version.kind!==kind)throw new Error('Версия относится к другому проекту или формату')
+      if(version.project_id!==project||!(version.content_type===contentType||nativeFormat&&['text/plain','text/markdown'].includes(version.content_type))||version.kind!==kind)throw new Error('Версия относится к другому проекту или формату')
     }
     let improvement:Improvement|undefined
     if(improvementReference){
       const ref=checkedTemplateReferences([improvementReference])[0]
       if(typeof ref.scope_id!=='string'||typeof ref.template_key!=='string'||previous||!nativeFormat)throw Error('Выберите общую версию документа')
       const material=(await this.session.readWorkTemplateSelection([ref])).materials[0]
-      if(!material.scoped||material.scoped.source.kind!==kind||material.scoped.source.content_type!==contentType)throw Error('Вид или формат исходного шаблона не совпадает')
+      if(!material.scoped||material.scoped.source.kind!==kind||!(material.scoped.source.content_type===contentType||['text/plain','text/markdown'].includes(material.scoped.source.content_type)))throw Error('Вид или формат исходного шаблона не совпадает')
       let scope:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes'][number]|undefined,cursor=''
       do{const page=await this.session.listTemplateScopes(cursor);scope??=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled);cursor=page.next_cursor||''}while(cursor)
       if(!scope)throw Error('Исходная область согласования недоступна')
