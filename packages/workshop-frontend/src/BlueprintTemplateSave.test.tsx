@@ -34,6 +34,9 @@ test('Шаблон сохраняется личным, а уровень гру
   expect(mocks.creator.checkpoint).toHaveBeenCalledWith('upload')
   expect(mocks.creator.save).toHaveBeenCalledOnce()
   expect(mocks.creator.propose).not.toHaveBeenCalled()
+  expect(container.querySelector('details')!.open).toBe(false)
+  await React.act(async()=>container.querySelector('summary')!.click())
+  expect(container.querySelector('details')!.open).toBe(true)
   const scope=container.querySelector('select')!
   expect([...scope.options].map(item=>item.value)).toEqual(['','finance'])
   expect(mocks.selector.scopes).toHaveBeenCalledWith('groups')
