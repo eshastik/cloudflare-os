@@ -28,8 +28,15 @@ export default function DocumentTemplateOrigin({source,project,node,head}:{sourc
     <span>{kinds[material.kind]}: «{material.title}», версия {material.reference.revision}</span>
     <span className="block text-[13px] text-kumo-subtle">{'template_id' in material.reference?'Личный шаблон':'Общий шаблон'}</span>
    </li>)}</ul>
-   <p className="m-0 text-[13px] text-kumo-subtle [overflow-wrap:anywhere]">Создал: {state.origin.initiated_by}{state.origin.executed_by?' · Исполнил агент: '+state.origin.executed_by:''}</p>
-   <p className="m-0 text-[13px] text-kumo-subtle">{new Date(state.origin.created_at_ms).toLocaleString('ru-RU')}</p>
+   <p className="m-0 text-[13px] text-kumo-subtle">{state.origin.executed_by?'Создан агентом':'Создан человеком'} · {new Date(state.origin.created_at_ms).toLocaleString('ru-RU')}</p>
+   <details className="text-[13px] text-kumo-subtle">
+    <summary className="cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring">Сведения об операции</summary>
+    <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
+     <dt>Инициатор</dt><dd className="m-0">{state.origin.initiated_by}</dd>
+     {state.origin.executed_by&&<><dt>Агент</dt><dd className="m-0">{state.origin.executed_by}</dd></>}
+     <dt>Операция</dt><dd className="m-0">{state.origin.operation_id}</dd>
+    </dl>
+   </details>
   </>}
  </section>
 }

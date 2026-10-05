@@ -23,6 +23,9 @@ it('показывает форму и методику с закреплённ�
  const calls:unknown[]=[];const {container}=await mount(async(...args)=>{calls.push(args);return origin})
  expect(container.textContent).toContain('Форма: «Форма ТЗ», версия 5');expect(container.textContent).toContain('Методика: «Методика разработки», версия 3')
  expect(calls).toEqual([['project','document',head]])
+ expect(container.textContent).toContain('Создан агентом')
+ const details=container.querySelector('details')!
+ expect(details.open).toBe(false);expect(details.textContent).toContain('Инициаторhuman');expect(details.textContent).toContain('Агентagent');expect(details.textContent).toContain('Операцияoperation')
 })
 it('отказ доступа не выдаётся за отсутствие шаблонов',async()=>{
  const {container}=await mount(async()=>{throw Error('denied')})
