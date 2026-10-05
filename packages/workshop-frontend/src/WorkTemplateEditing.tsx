@@ -16,7 +16,7 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[material,setMaterial]=useState<ChatWorkTemplateChoice|null>(null)
  const lifetime=useRef(new AbortController()),opening=useRef<symbol|null>(null)
  useEffect(()=>{const owner=new AbortController();lifetime.current=owner;opening.current=null;setMaterial(null);setError('');setBusy(false);return()=>owner.abort()},[gadget])
- async function open(){
+ async function open(keepCurrent=false){
   if(opening.current||material)return
   const attempt=Symbol();opening.current=attempt;setBusy(true);setError('')
   const owner=lifetime.current
@@ -37,15 +37,19 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
    const selector=frame.blueprintTemplates.selector,preview=await wait(selector.preview(context.reference));signal.throwIfAborted()
    if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||preview.ticket.content_type!=='application/vnd.cloudflareos.document+json'||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
    const validate=()=>selector.validatePreview(context.reference,preview.sourceHead)
-   const snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,()=>wait(validate())));signal.throwIfAborted()
-   await wait(validate());signal.throwIfAborted()
-   await wait(editor.restoreDocumentSnapshot(snapshot,revision));signal.throwIfAborted()
+   if(keepCurrent){
+    await wait(validate());signal.throwIfAborted()
+   }else{
+    const snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,()=>wait(validate())));signal.throwIfAborted()
+    await wait(validate());signal.throwIfAborted()
+    await wait(editor.restoreDocumentSnapshot(snapshot,revision));signal.throwIfAborted()
+   }
    setMaterial(preview.material);onReady(preview.material)
   }catch{if(!owner.signal.aborted&&opening.current===attempt)setError('Открытие не подтверждено. Проверьте текст и доступ. Если вы изменили текст во время открытия, сохраните его перед повтором.')}
   finally{editor?.[Symbol.dispose]();disposeGatekeeperFrame(frame);if(opening.current===attempt){opening.current=null;if(!owner.signal.aborted)setBusy(false)}}
  }
  return <section aria-label="Редактирование версии шаблона" className="shrink-0 border-b border-kumo-line px-4 py-3">
-  {material?<p className="m-0 text-[13px] text-kumo-subtle">Открыта версия {context.reference.revision}: {material.title}. {'scope_id' in context.reference?'Сохранение создаст личную правку для согласования.':'Сохранение создаст новую версию.'}</p>:<><p className="m-0 mb-2 text-[13px] leading-5 text-kumo-subtle">Откройте версию {context.reference.revision} для редактирования. Она заменит текущий текст этого черновика. Сохранённый шаблон и прежние задачи сохранят свои версии.</p><WorkshopButton tone="primary" disabled={busy} onClick={()=>void open()}>{busy?'Открываем версию…':'Открыть выбранную версию'}</WorkshopButton></>}
+  {material?<p className="m-0 text-[13px] text-kumo-subtle">Основа — версия {context.reference.revision}: {material.title}. {'scope_id' in context.reference?'Сохранение создаст личную правку для согласования.':'Сохранение создаст новую версию.'}</p>:<><p className="m-0 mb-2 text-[13px] leading-5 text-kumo-subtle">Можно открыть версию {context.reference.revision} заново или продолжить с текущим текстом черновика. Открытие версии заменит текст; продолжение сохранит ваши правки.</p><WorkshopButton tone="primary" disabled={busy} onClick={()=>void open()}>{busy?'Открываем версию…':'Открыть выбранную версию'}</WorkshopButton><WorkshopButton disabled={busy} onClick={()=>void open(true)}>Продолжить с текущим текстом</WorkshopButton></>}
   {error&&<p role="alert" className="mt-2 text-[13px] text-kumo-danger">{error}</p>}
  </section>
 }

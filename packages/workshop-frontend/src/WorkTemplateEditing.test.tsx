@@ -63,3 +63,12 @@ test('Зависшее скачивание освобождает редакт�
   expect(host.querySelector('button')!.disabled).toBe(false);expect(host.querySelector('[role="alert"]')).not.toBeNull()
  }finally{timer.mockRestore()}
 })
+
+ test('Продолжение после перезагрузки проверяет исходную версию и сохраняет текущую правку без восстановления',async()=>{
+ await render();await act(async()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Продолжить с текущим текстом')!.click());
+ expect(mocks.preview).toHaveBeenCalledWith(context.reference);expect(mocks.validate).toHaveBeenCalledWith(context.reference,'a'.repeat(64));expect(mocks.download).not.toHaveBeenCalled();expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).toHaveBeenCalledWith(material);
+})
+ test('Продолжение с текущим текстом не обходит отзыв доступа',async()=>{
+ mocks.validate.mockRejectedValue(Error('denied'));await render();await act(async()=>Array.from(host.querySelectorAll('button')).find(button=>button.textContent==='Продолжить с текущим текстом')!.click());
+ expect(mocks.ready).not.toHaveBeenCalled();expect(mocks.restore).not.toHaveBeenCalled();expect(host.querySelector('[role="alert"]')).not.toBeNull();
+})
