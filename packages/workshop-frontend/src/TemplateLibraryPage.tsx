@@ -1,3 +1,4 @@
+import CreateWorkTemplate from './CreateWorkTemplate'
 import {useState} from 'react'
 import SharedTemplateLibrary from './SharedTemplateLibrary'
 import ChatTemplatePicker from './ChatTemplatePicker'
@@ -21,7 +22,7 @@ export default function TemplateLibraryPage(){
   <div hidden={composing} className="min-h-0 flex-1 overflow-y-auto pb-6">
    {task&&<div className="mb-3 px-3"><WorkshopButton onClick={()=>setComposing(true)}>Вернуться к черновику задачи</WorkshopButton></div>}
    <div className="mb-5 flex flex-wrap items-center justify-between gap-2" role="group" aria-label="Разделы библиотеки шаблонов">
-    {tab!=='work'?<WorkshopButton onClick={()=>setTab('work')}>Рабочие шаблоны</WorkshopButton>:<span className="text-[13px] text-kumo-subtle">Формы и правила работы</span>}
+    {tab!=='work'?<WorkshopButton onClick={()=>setTab('work')}>Рабочие шаблоны</WorkshopButton>:<CreateWorkTemplate/>}
     <details className="text-[13px] text-kumo-subtle"><summary className="cursor-pointer rounded-lg px-2 py-2 focus-visible:outline-2 focus-visible:outline-kumo-brand">Приложения</summary><div className="flex flex-wrap gap-2 pt-2">{tabs.filter(([value])=>value!=='work').map(([value,label])=><WorkshopButton key={value} onClick={()=>setTab(value)}>{label}</WorkshopButton>)}</div></details>
    </div>
    {tab==='work'?<ChatTemplatePicker embedded initialSelected={draft} onSelectionChange={setDraft} onClose={()=>{}} onOtherTemplates={selected=>{setDraft(selected);setTab('shared')}} onSelect={choice=>{if(choice.mnemos?.length){setDraft(choice.mnemos);setTask({id:crypto.randomUUID(),chatId:null,templates:choice.mnemos});setComposing(true)}}}/>:tab==='shared'?<SharedTemplateLibrary/>:<BlueprintList/>}

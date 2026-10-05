@@ -1,3 +1,4 @@
+import type {WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import type {ChatTemplateSeed} from './chatTemplateSeed'
 import ChatTemplateLibrary from './ChatTemplateLibrary'
 import {Dialog, DropdownMenu} from '@cloudflare/kumo'
@@ -433,8 +434,8 @@ export default function GadgetEditor() {
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
 
-  const { chat: chatParam, w: workpieceParam } = useSearch({ strict: false }) as
-    { chat?: number; w?: number }
+  const { chat: chatParam, w: workpieceParam, templateKind } = useSearch({ strict: false }) as
+    { chat?: number; w?: number; templateKind?:WorkTemplateKind }
   const urlChatId = chatParam !== undefined ? chatParam : null
   const urlWorkpieceId = workpieceParam !== undefined ? workpieceParam : null
 
@@ -1675,6 +1676,7 @@ export default function GadgetEditor() {
               ? 'relative flex min-w-0 flex-1 flex-col overflow-hidden bg-kumo-overlay'
               : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
+          {templateKind&&!paneShowsActivity&&selectedNativeFormat==='cloudflareos.document'&&<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-kumo-line px-4 py-3"><p className="m-0 min-w-0 flex-1 text-[13px] text-kumo-subtle">Черновик шаблона. Напишите содержимое и сохраните личную версию.</p><WorkshopButton disabled={activeTab!=='app'||previewMode||!selectedGadgetStub} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить шаблон</WorkshopButton></div>}
           <header
             className={`@container flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
               ? `gap-3.5 border-b border-kumo-fill bg-kumo-overlay ${narrow ? 'px-3' : 'px-6'}`
@@ -1991,11 +1993,11 @@ export default function GadgetEditor() {
             await navigate({to:'/workspace/$id',params:{id:id!},search:(prev:Record<string,unknown>)=>({...prev,chat:effectiveSelectedChatId,w:result.gadgetId})})
           }}}/>}
 
-      {documentTemplateOpen && selectedGadgetStub && selectedGadgetId && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
+      {documentTemplateOpen && selectedGadgetStub && selectedGadgetId !== null && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
           <Dialog.Title className="sr-only">Личный рабочий шаблон</Dialog.Title>
           <Dialog.Description className="sr-only">Выберите, как использовать материал: форма, методика, инструкция или навык. Предложение команде выполняется отдельно.</Dialog.Description>
-          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
+          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} initialKind={templateKind} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 

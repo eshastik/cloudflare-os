@@ -1,7 +1,9 @@
+import type {WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import { createFileRoute } from '@tanstack/react-router'
 import GadgetEditor from '../GadgetEditor'
 
 type GadgetSearch = {
+  templateKind?: WorkTemplateKind
   chat?: number
   // Selected workpiece (gadget) ID. Workpiece IDs start at 0, so parsing must not treat 0 as
   // absent.
@@ -24,5 +26,6 @@ export const Route = createFileRoute('/workspace/$id')({
       : typeof search.chat === 'string' ? Number(search.chat) || undefined
       : undefined,
     w: parseIntParam(search.w),
+    templateKind: ['document','guidance','agent_instructions','skill'].includes(String(search.templateKind))?search.templateKind as WorkTemplateKind:undefined,
   }),
 })

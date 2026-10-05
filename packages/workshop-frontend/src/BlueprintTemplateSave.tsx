@@ -10,7 +10,7 @@ import {listAccounts, storesDocuments, openBlueprintTemplatesFrame} from './acco
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
 import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from './gatekeeperAppUpload'
 
-export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse}: {onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
+export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse, initialKind='document'}: {initialKind?:WorkTemplateKind;onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
@@ -31,7 +31,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const frame = useRef<GatekeeperUiFrame|null>(null)
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
-  const [kind,setKind] = useState<WorkTemplateKind>('document')
+  const [kind,setKind] = useState<WorkTemplateKind>(initialKind)
   const sourceKey = nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
   const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
   const descriptions={document:'Текущее содержимое станет исходной формой для новых документов.',guidance:'Описывает порядок работы и требования к результату. Можно использовать вместе с формой документа.',agent_instructions:'Задаёт поведение агента в выбранной задаче. Инструкция не расширяет его права.',skill:'Описывает выполнение конкретной операции. Выбирается для задач, где эта операция нужна.'}
