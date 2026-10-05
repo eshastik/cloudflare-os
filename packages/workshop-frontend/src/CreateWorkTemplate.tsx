@@ -25,13 +25,13 @@ export default function CreateWorkTemplate({editing}:{editing?:TemplateEditingCo
  useEffect(()=>{active.current=true;return()=>{active.current=false;const current=editor.current;editor.current=null;current?.stub[Symbol.dispose]()}},[])
  useEffect(()=>{
   if(!open)return
-  let active=true;setFormats(null);setError('')
+  let loadingActive=true;setFormats(null);setError('')
   void authenticatedApi.listOutputFormats().then(list=>{
-   if(!active)return
+   if(!loadingActive)return
    const documents=list.filter(item=>item.output.id==='document'&&!item.requiresSetup)
    setFormats(documents);setFormatId(old=>documents.some(item=>item.blueprintId===old)?old:documents.length===1?documents[0].blueprintId:'')
-  },()=>{if(active)setError('Не удалось загрузить редактор документа. Повторите загрузку.')})
-  return()=>{active=false}
+  },()=>{if(loadingActive)setError('Не удалось загрузить редактор документа. Повторите загрузку.')})
+  return()=>{loadingActive=false}
  },[authenticatedApi,open,reload])
  async function create(){
   if(starting.current||!formatId)return
@@ -50,17 +50,25 @@ export default function CreateWorkTemplate({editing}:{editing?:TemplateEditingCo
    await navigate({to:'/workspace/$id',params:{id:workspace.current},search:{templateKind:kind,...(editing?{templateEdit:{accountId:editing.accountId,projectId:editing.projectId,reference:editing.reference}}:{})}})
   }catch{if(active.current){setError('Не удалось открыть редактор. Повторите открытие.');starting.current=false;setBusy(false)}}
  }
- return <><WorkshopButton onClick={()=>setOpen(true)}>{editing?'Редактировать':'Создать шаблон'}</WorkshopButton>
-  <Dialog.Root open={open} onOpenChange={value=>{if(!busy)setOpen(value)}}><Dialog size="base" className="!w-[min(480px,calc(100vw-24px))] bg-kumo-base !p-5">
-   <Dialog.Title className="text-[18px] font-medium">{editing?'Редактировать шаблон':'Создать шаблон'}</Dialog.Title>
-   <Dialog.Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">{editing?'Откройте выбранную версию в отдельном редакторе. Сохранение создаст следующую версию того же личного шаблона.':'Напишите материал в редакторе документа, затем сохраните личную версию. Отправить её команде можно отдельно.'}</Dialog.Description>
-   {!editing&&<fieldset disabled={busy} className="my-5 space-y-2 border-0 p-0"><legend className="sr-only">Вид нового шаблона</legend>{Object.entries(kinds).map(([value,item])=><label key={value} className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-kumo-tint"><input type="radio" name="template-kind" value={value} checked={kind===value} onChange={()=>setKind(value as WorkTemplateKind)} className="mt-1 accent-kumo-brand"/><span><span className="block text-sm font-medium">{item.title}</span><span className="mt-1 block text-[13px] text-kumo-subtle">{item.description}</span></span></label>)}</fieldset>}
+ const editorControls=<>
    {formats===null&&!error&&<p role="status" className="mb-3 text-[13px] text-kumo-subtle">Загрузка редактора…</p>}
    {formats?.length===0&&<p role="status" className="mb-3 text-[13px] text-kumo-subtle">Редактор документа недоступен. Для создания шаблона нужен настроенный нативный редактор.</p>}
    {formats&&formats.length>1&&<label className="mb-3 block text-[13px]">Редактор<select aria-label="Редактор нового шаблона" value={formatId} disabled={busy||!!editor.current} onChange={event=>setFormatId(event.target.value)} className="mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2"><option value="">Выберите редактор</option>{formats.map(item=><option key={item.blueprintId} value={item.blueprintId}>{item.description||item.blueprintId}</option>)}</select></label>}
    {error&&<p role="alert" className="mb-3 text-[13px] text-kumo-danger">{error}</p>}
    {formats===null&&error&&<WorkshopButton onClick={()=>setReload(value=>value+1)}>Повторить загрузку</WorkshopButton>}
+
+ </>
+ const editorActions=<>
    <div className="mt-4 flex justify-end gap-2"><WorkshopButton disabled={busy} onClick={()=>setOpen(false)}>Отмена</WorkshopButton><WorkshopButton tone="primary" disabled={busy||!formatId||formats===null} onClick={()=>void create()}>{busy?'Открываем…':'Открыть редактор'}</WorkshopButton></div>
+ </>
+ if(editing)return <div className="contents">{!open?<WorkshopButton onClick={()=>setOpen(true)}>Редактировать</WorkshopButton>:<section aria-label="Открыть шаблон в редакторе" className="order-last basis-full pt-2"><p className="mb-3 text-[13px] leading-5 text-kumo-subtle">Изменения будут сохранены следующей версией этого личного шаблона.</p>{editorControls}{editorActions}</section>}</div>
+ return <><WorkshopButton onClick={()=>setOpen(true)}>{editing?'Редактировать':'Создать шаблон'}</WorkshopButton>
+  <Dialog.Root open={open} onOpenChange={value=>{if(!busy)setOpen(value)}}><Dialog size="base" className="!w-[min(480px,calc(100vw-24px))] bg-kumo-base !p-5">
+   <Dialog.Title className="text-[18px] font-medium">{editing?'Редактировать шаблон':'Создать шаблон'}</Dialog.Title>
+   <Dialog.Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">{editing?'Откройте выбранную версию в отдельном редакторе. Сохранение создаст следующую версию того же личного шаблона.':'Напишите материал в редакторе документа, затем сохраните личную версию. Отправить её команде можно отдельно.'}</Dialog.Description>
+   {!editing&&<fieldset disabled={busy} className="my-5 space-y-2 border-0 p-0"><legend className="sr-only">Вид нового шаблона</legend>{Object.entries(kinds).map(([value,item])=><label key={value} className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-kumo-tint"><input type="radio" name="template-kind" value={value} checked={kind===value} onChange={()=>setKind(value as WorkTemplateKind)} className="mt-1 accent-kumo-brand"/><span><span className="block text-sm font-medium">{item.title}</span><span className="mt-1 block text-[13px] text-kumo-subtle">{item.description}</span></span></label>)}</fieldset>}
+   {editorControls}
+   {editorActions}
   </Dialog></Dialog.Root>
  </>
 }

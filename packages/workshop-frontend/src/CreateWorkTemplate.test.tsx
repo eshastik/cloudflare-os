@@ -36,3 +36,15 @@ test('Выход из библиотеки отменяет переход и о
   expect(mocks.navigate).not.toHaveBeenCalled();expect(mocks.dispose).toHaveBeenCalledTimes(1)
  }
 })
+
+test('Редактирование из просмотра не открывает вложенный диалог и передаёт точную версию',async()=>{
+ vi.clearAllMocks();mocks.metadata.mockReset();mocks.api.newGadgetFromBlueprint.mockReset()
+ mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'native-doc',output:{id:'document'}}]);mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:mocks.metadata,[Symbol.dispose]:mocks.dispose});mocks.metadata.mockResolvedValue({id:'edit-draft'});mocks.navigate.mockResolvedValue(undefined)
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);const reference={template_id:'template',revision:3}
+ const button=(title:string)=>[...host.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent===title)!
+ try{
+  await act(async()=>root.render(<CreateWorkTemplate editing={{accountId:7,projectId:'project',reference,item:{reference,title:'Методика',purpose:'Проверка',kind:'guidance',accountId:7}}}/>))
+  await act(async()=>button('Редактировать').click());expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0);expect(host.querySelector('[aria-label="Открыть шаблон в редакторе"]')).not.toBeNull()
+  await act(async()=>button('Открыть редактор').click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'project',reference}}})
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
