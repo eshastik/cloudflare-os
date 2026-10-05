@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import {
+  Blueprint,
   Hexagon,
   MagnifyingGlass,
   Plus,
@@ -23,7 +24,7 @@ import SidebarUtilityStrip from './SidebarUtilityStrip'
 // Левая панель по макету Sidebar (редизайн 24.09.2026). Сверху вниз:
 //   • логотип и название, кнопка сворачивания        закреплено
 //   • строка «Поиск ⌘K» — открывает палитру поиска    закреплено
-//   • Новая беседа, Входящие, Проекты, Мой отдел       закреплено
+//   • Новая беседа, Входящие, Проекты, Шаблоны, Мой отдел       закреплено
 //   • недавние беседы                                  ПРОКРУЧИВАЕТСЯ
 //   • разделы администратора плоским списком            закреплено
 //   • «Настройки» с аватаром                            закреплено
@@ -115,6 +116,7 @@ export default function Sidebar({
             <nav aria-label="Разделы" className="flex flex-col gap-1 px-3.5">
               <SidebarItem to="/" label="Новая беседа" icon={<Plus size={18} />} />
               {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={false} />)}
+              <SidebarItem to="/explore" label="Шаблоны" icon={<Blueprint size={18} />} matchPrefix />
               {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={false} />)}
             </nav>
             <div className="mt-5">
@@ -135,6 +137,7 @@ export default function Sidebar({
             collapsed={collapsed}
           />
           {navigation.primary.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
+          <SidebarItem to="/explore" label="Шаблоны" icon={<Blueprint size={18} />} collapsed={collapsed} matchPrefix />
           {navigation.manager.map(link => <NavLinkItem key={link.key} link={link} collapsed={collapsed} />)}
         </nav>
 

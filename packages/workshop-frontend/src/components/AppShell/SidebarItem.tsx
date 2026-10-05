@@ -60,6 +60,7 @@ export default function SidebarItem({
   return (
     <Link
       {...linkProps}
+      aria-label={label}
       aria-current={isActive ? 'page' : undefined}
       title={collapsed ? label : undefined}
       className={[
