@@ -149,3 +149,12 @@ test.each(['guidance','agent_instructions','skill'] as const)('Документ 
  expect(mocks.nativeUpload.mock.calls[0][0]).toEqual(snapshot);expect(mocks.api.captureBlueprintTemplate).not.toHaveBeenCalled();expect(mocks.creator.propose).not.toHaveBeenCalled();
  await React.act(async()=>button('Использовать в задаче').click());expect(onUse).toHaveBeenCalledWith(expect.objectContaining({kind,reference:{template_id:'method',revision:1}}));
 });
+
+test('Редактирование каталога сохраняет ту же личную ссылку с выбранной исходной ревизией',async()=>{
+ const context={accountId:8,projectId:'project',reference:{template_id:'existing',revision:3}}
+ const material={reference:context.reference,title:'Методика ТЗ',purpose:'Проверка требований',kind:'guidance' as const}
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly initialKind="guidance" initialTemplate={{context,material}} preferredProject={context} blueprint={{id:'new-editor',title:material.title,description:material.purpose}} format="cloudflareos.document" snapshotSource={{current:async()=>({format:'cloudflareos.document',formatVersion:1,document:{title:material.title,blocks:[]}})}} onClose={()=>{}}/>))
+ expect(mocks.selector.latest).not.toHaveBeenCalled();expect(container.querySelector<HTMLSelectElement>('[aria-label="Вид шаблона"]')?.disabled).toBe(true)
+ await React.act(async()=>button('Сохранить изменения шаблона').click())
+ expect(mocks.selector.prepare).toHaveBeenCalledWith('project',material.title,material.purpose,{template_id:'existing',revision:3},'native-template:existing','cloudflareos.document','guidance')
+})

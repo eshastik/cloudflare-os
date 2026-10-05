@@ -1,3 +1,6 @@
+import WorkTemplateEditing from './WorkTemplateEditing'
+import type {TemplateEditingContext} from './templateEditing'
+import type {ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
 import type {WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import type {ChatTemplateSeed} from './chatTemplateSeed'
 import ChatTemplateLibrary from './ChatTemplateLibrary'
@@ -434,8 +437,8 @@ export default function GadgetEditor() {
   const navigate = useNavigate()
   const { authenticatedApi } = useAuthenticatedApi()
 
-  const { chat: chatParam, w: workpieceParam, templateKind } = useSearch({ strict: false }) as
-    { chat?: number; w?: number; templateKind?:WorkTemplateKind }
+  const { chat: chatParam, w: workpieceParam, templateKind, templateEdit } = useSearch({ strict: false }) as
+    { chat?: number; w?: number; templateKind?:WorkTemplateKind;templateEdit?:TemplateEditingContext }
   const urlChatId = chatParam !== undefined ? chatParam : null
   const urlWorkpieceId = workpieceParam !== undefined ? workpieceParam : null
 
@@ -511,6 +514,7 @@ export default function GadgetEditor() {
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [blueprintModalOpen, setBlueprintModalOpen] = useState(false)
   const [documentTemplateOpen,setDocumentTemplateOpen]=useState(false)
+  const [editingMaterial,setEditingMaterial]=useState<{context:TemplateEditingContext;material:ChatWorkTemplateChoice;workspaceId:string|undefined;gadgetId:number|null;gadget:object}|null>(null)
   const [templateSeed,setTemplateSeed]=useState<ChatTemplateSeed|undefined>()
   const [sharedTemplatesOpen,setSharedTemplatesOpen]=useState(false)
   const [previewMode, _setPreviewMode] = useState(false)
@@ -1405,6 +1409,7 @@ export default function GadgetEditor() {
 
   // ── always render the full two-pane edit layout; preview overlays on top ──────
   const selectedNativeFormat = nativeFormatOf(selectedGadgetSummary?.output?.id)
+  const editingReady=templateEdit&&editingMaterial&&editingMaterial.workspaceId===id&&editingMaterial.gadgetId===selectedGadgetId&&editingMaterial.gadget===selectedGadgetStub&&JSON.stringify(templateEdit)===JSON.stringify(editingMaterial.context)?editingMaterial.material:null
   const workLabel = showingActivity ? 'Активность' : formatOf(selectedGadgetSummary?.output ?? allGadgets[0]?.output).noun
   // Переключатель «Беседа | Документ» в шапке беседы на телефоне.
   const narrowSwitch = narrow && (hasAnyApps || showingActivity) && (
@@ -1676,7 +1681,8 @@ export default function GadgetEditor() {
               ? 'relative flex min-w-0 flex-1 flex-col overflow-hidden bg-kumo-overlay'
               : `relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-kumo-overlay ${GADGET_CARD_SHADOW}`}
         >
-          {templateKind&&!paneShowsActivity&&selectedNativeFormat==='cloudflareos.document'&&<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-kumo-line px-4 py-3"><p className="m-0 min-w-0 flex-1 text-[13px] text-kumo-subtle">Черновик шаблона. Напишите содержимое и сохраните личную версию.</p><WorkshopButton disabled={activeTab!=='app'||previewMode||!selectedGadgetStub} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить шаблон</WorkshopButton></div>}
+          {templateEdit&&!paneShowsActivity&&selectedGadgetStub&&selectedNativeFormat==='cloudflareos.document'&&<WorkTemplateEditing key={JSON.stringify([id,selectedGadgetId,templateEdit])} context={templateEdit} gadget={selectedGadgetStub} snapshotSource={nativeSnapshotSource} onReady={material=>setEditingMaterial({context:templateEdit,material,workspaceId:id,gadgetId:selectedGadgetId,gadget:selectedGadgetStub})}/>}
+          {templateKind&&!paneShowsActivity&&selectedNativeFormat==='cloudflareos.document'&&<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-kumo-line px-4 py-3"><p className="m-0 min-w-0 flex-1 text-[13px] text-kumo-subtle">Материал для шаблона. Сохранение создаёт личную версию в библиотеке.</p><WorkshopButton disabled={activeTab!=='app'||previewMode||!selectedGadgetStub||!!templateEdit&&!editingReady} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить шаблон</WorkshopButton></div>}
           <header
             className={`@container flex flex-shrink-0 items-center gap-2.5 ${isGadgetFullscreen
               ? `gap-3.5 border-b border-kumo-fill bg-kumo-overlay ${narrow ? 'px-3' : 'px-6'}`
@@ -1764,7 +1770,7 @@ export default function GadgetEditor() {
             )}
 
             {!paneShowsActivity && !narrow && selectedNativeFormat==='cloudflareos.document' && selectedGadgetStub && <DropdownMenu>
-              <DropdownMenu.Trigger render={<WorkshopIconButton aria-label="Действия с шаблоном" title="Действия с шаблоном" disabled={activeTab!=='app'||previewMode}><DotsThree size={18}/></WorkshopIconButton>}/>
+              <DropdownMenu.Trigger render={<WorkshopIconButton aria-label="Действия с шаблоном" title="Действия с шаблоном" disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady}><DotsThree size={18}/></WorkshopIconButton>}/>
               <DropdownMenu.Content className={MENU_CONTENT}><DropdownMenu.Item className={MENU_ITEM} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item></DropdownMenu.Content>
             </DropdownMenu>}
 
@@ -1811,7 +1817,7 @@ export default function GadgetEditor() {
                       {tab.label}{activeTab === tab.value ? ' ✓' : ''}
                     </DropdownMenu.Item>
                   ))}
-                  {selectedNativeFormat==='cloudflareos.document' && <DropdownMenu.Item className={MENU_ITEM} disabled={activeTab!=='app'||previewMode} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item>}
+                  {selectedNativeFormat==='cloudflareos.document' && <DropdownMenu.Item className={MENU_ITEM} disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item>}
                   {exportActions.actions.map(action => (
                     <DropdownMenu.Item key={action.key} disabled={!selectedGadgetStub || !!exportActions.exporting || activeTab !== 'app' || previewMode} onClick={action.run} className={MENU_ITEM}>
                       {exportActions.exporting ? 'Готовлю файл…' : action.label}
@@ -1993,11 +1999,11 @@ export default function GadgetEditor() {
             await navigate({to:'/workspace/$id',params:{id:id!},search:(prev:Record<string,unknown>)=>({...prev,chat:effectiveSelectedChatId,w:result.gadgetId})})
           }}}/>}
 
-      {documentTemplateOpen && selectedGadgetStub && selectedGadgetId !== null && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
+      {documentTemplateOpen && (!templateEdit||editingReady) && selectedGadgetStub && selectedGadgetId !== null && selectedNativeFormat==='cloudflareos.document' && <Dialog.Root open onOpenChange={setDocumentTemplateOpen}>
         <Dialog size="base" className="!max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] overflow-y-auto bg-kumo-base">
           <Dialog.Title className="sr-only">Личный рабочий шаблон</Dialog.Title>
           <Dialog.Description className="sr-only">Выберите, как использовать материал: форма, методика, инструкция или навык. Предложение команде выполняется отдельно.</Dialog.Description>
-          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} initialKind={templateKind} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
+          <DocumentTemplateSave key={`${selectedGadgetId}:${previewChatId??'workspace'}`} gadget={selectedGadgetStub} sourceId={`${id}:${selectedGadgetId}:${previewChatId??'workspace'}`} title={selectedGadgetSummary?.title??'Шаблон документа'} editing={templateEdit&&editingReady?{context:templateEdit,material:editingReady}:undefined} initialKind={templateKind} projectChatId={effectiveSelectedChatId??undefined} snapshotSource={nativeSnapshotSource} onUse={template=>{setTemplateSeed({id:crypto.randomUUID(),chatId:effectiveSelectedChatId,templates:[template]});setDocumentTemplateOpen(false);exitGadgetFullscreen();setNarrowPane('chat');setChatWidth(width=>Math.max(width,DEFAULT_CHAT_WIDTH));}} onClose={()=>setDocumentTemplateOpen(false)}/>
         </Dialog>
       </Dialog.Root>}
 

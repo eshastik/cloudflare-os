@@ -1,3 +1,5 @@
+import type {TemplateEditingContext} from './templateEditing'
+import type {ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
 import type {ChatWorkTemplate,WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import {useEffect, useRef, useState} from 'react'
 import {WorkshopButton} from './components/WorkshopControls'
@@ -10,7 +12,7 @@ import {listAccounts, storesDocuments, openBlueprintTemplatesFrame} from './acco
 import {disposeGatekeeperFrame} from './disposeGatekeeperFrame'
 import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from './gatekeeperAppUpload'
 
-export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse, initialKind='document'}: {initialKind?:WorkTemplateKind;onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
+export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse, initialKind='document',initialTemplate}: {initialTemplate?:{context:TemplateEditingContext;material:ChatWorkTemplateChoice};initialKind?:WorkTemplateKind;onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
@@ -32,7 +34,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
   const [kind,setKind] = useState<WorkTemplateKind>(initialKind)
-  const sourceKey = nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
+  const sourceKey = initialTemplate&&'template_id' in initialTemplate.context.reference?`native-template:${initialTemplate.context.reference.template_id}`:nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
   const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
   const descriptions={document:'Текущее содержимое станет исходной формой для новых документов.',guidance:'Описывает порядок работы и требования к результату. Можно использовать вместе с формой документа.',agent_instructions:'Задаёт поведение агента в выбранной задаче. Инструкция не расширяет его права.',skill:'Описывает выполнение конкретной операции. Выбирается для задач, где эта операция нужна.'}
   const pendingKey = `mnemos-blueprint-save:${sourceKey}`
@@ -67,7 +69,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     void openBlueprintTemplatesFrame(api,account).then(async value=>{
       if(cancelled){disposeGatekeeperFrame(value);return}
       frame.current=value
-      const latest=await value.blueprintTemplates.selector.latest(sourceKey)
+      const ref=initialTemplate?.context.reference
+      const latest=ref?.template_id?{template_id:ref.template_id,revision:ref.revision,project_id:initialTemplate!.context.projectId,title:initialTemplate!.material.title,purpose:initialTemplate!.material.purpose}:await value.blueprintTemplates.selector.latest(sourceKey)
       if(cancelled)return
       if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);setTitle(latest.title);setPurpose(latest.purpose)}
       const result=await value.blueprintTemplates.selector.projects()
@@ -181,7 +184,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     </div>:<fieldset disabled={busy||accountsLoading||libraryState==='loading'} className="space-y-3 border-0 p-0">
       {(accounts.length!==1||account===null)&&<label className="block text-[13px]">Библиотека<select className={field} disabled={locked||pendingUnavailable} value={account??''} onChange={e=>setAccount(e.target.value===''?null:Number(e.target.value))}><option value="">Выберите библиотеку</option>{accounts.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
       <label className="block text-[13px]">Проект<select className={field} disabled={locked||libraryState!=='ready'} value={project} onChange={e=>{setProject(e.target.value);setContextNotice('')}}><option value="">Выберите проект</option>{locked&&project&&!projects.some(item=>item.id===project)&&<option value={project}>Проект начатого сохранения</option>}{projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      {nativeOnly&&<label className="block text-[13px]">Вид шаблона<select aria-label="Вид шаблона" className={field} disabled={locked||libraryState!=='ready'} value={kind} onChange={e=>setKind(e.target.value as WorkTemplateKind)}>{Object.entries(kinds).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
+      {nativeOnly&&<label className="block text-[13px]">Вид шаблона<select aria-label="Вид шаблона" className={field} disabled={locked||libraryState!=='ready'||!!initialTemplate} value={kind} onChange={e=>setKind(e.target.value as WorkTemplateKind)}>{Object.entries(kinds).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>}
       <label className="block text-[13px]">Название<input className={field} disabled={locked||libraryState!=='ready'} value={title} onChange={e=>setTitle(e.target.value)}/></label>
       <label className="block text-[13px]">Для каких задач<textarea rows={2} className={field} disabled={locked||libraryState!=='ready'} value={purpose} onChange={e=>setPurpose(e.target.value)}/></label>
       {previous&&<p className="text-[12px] text-kumo-subtle">Будет создана новая версия. Ранее созданные документы сохранят использованную версию.</p>}
