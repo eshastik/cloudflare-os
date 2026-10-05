@@ -1,7 +1,7 @@
 import WorkTemplatePreview from './WorkTemplatePreview'
 import { useEffect, useState, useRef } from 'react'
 import { Dialog } from '@cloudflare/kumo'
-import { Blueprint, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { Blueprint, Check, MagnifyingGlass, X, Eye, FileText, BookOpen, Robot, Lightning } from '@phosphor-icons/react'
 import type {ChatWorkTemplate} from '@gadgets/workshop-shared/work-template'
 import type { AuthenticatedApi, OutputFormatOffer } from '@gadgets/workshop-shared/api'
 import { useAuthenticatedApi } from './AuthContext'
@@ -151,36 +151,44 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const Container=embedded?'section':Dialog;
  const Title=embedded?'h2':Dialog.Title;
  const Description=embedded?'p':Dialog.Description;
- const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"+(embedded?" mx-auto !max-h-[70dvh] !w-full !max-w-[720px] rounded-xl border border-kumo-line":"")}>
-   <div className="flex shrink-0 justify-between gap-4 px-5 py-4">
+ const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"+(embedded?" !max-h-none !w-full":"")}>
+   <div className={embedded?"sr-only":"flex shrink-0 justify-between gap-4 px-5 py-4"}>
     <div><Title className="text-[17px] font-medium">Шаблоны для задачи</Title><Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Description></div>
     {!embedded&&<WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>}
    </div>
-   <div className="flex shrink-0 flex-wrap gap-3 px-5 pb-4">
+   <div className={embedded?"pb-5":"px-5 pb-4"}>
+    <label className="flex h-11 items-center gap-3 rounded-lg border border-kumo-line bg-kumo-base px-3 focus-within:border-kumo-brand"><MagnifyingGlass size={18} className="shrink-0 text-kumo-subtle"/><input autoFocus={!embedded} aria-label="Поиск шаблона" placeholder="Найти шаблон для задачи…" value={query} onChange={event=>setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none"/></label>
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+     <div className="flex flex-wrap gap-1" role="group" aria-label="Виды шаблонов">{filters.map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={'rounded-lg px-3 py-2 text-[13px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(kind===value?'bg-kumo-tint font-medium text-kumo-default':'text-kumo-subtle hover:bg-kumo-tint')}>{label}</button>)}</div>
+     <details className="min-w-0 max-w-full text-[13px] text-kumo-subtle"><summary className="cursor-pointer rounded-lg px-2 py-2 focus-visible:outline-2 focus-visible:outline-kumo-brand">{scopeId?scopes.find(scope=>scope.scopeId===scopeId)?.title??'Выбранная область':'Личные шаблоны'}{scopeId===null&&projectId?' · '+(projects.find(project=>project.accountId===accountId&&project.projectId===projectId)?.title??'Проект'):''}</summary>
+   <div className="flex flex-wrap gap-3 pt-3">
     {(accounts.length>1||accountId===null&&accounts.length>0)&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Библиотека<select className={selectClass+' mt-1'} aria-label="Подключение Mnemos" value={accountId??''} onChange={event=>setAccountId(Number(event.target.value))}><option value="" disabled>Выберите библиотеку</option>{accounts.map(a=><option key={a.accountId} value={a.accountId}>{a.title}</option>)}</select></label>}
     {accountId!==null&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Где искать<select className={selectClass+' mt-1'} aria-label="Область шаблонов" value={scopeId??''} onChange={event=>setScopeId(event.target.value||null)}><option value="">Личные шаблоны</option>{scopeId&&!scopes.some(scope=>scope.scopeId===scopeId)&&<option value={scopeId}>Область выбранного шаблона</option>}{scopes.map(scope=><option key={scope.scopeId} value={scope.scopeId}>{scope.title}</option>)}</select></label>}
     {accountId!==null&&scopeId===null&&<label className="min-w-0 flex-1 text-[12px] text-kumo-subtle">Проект<select className={selectClass+' mt-1'} aria-label="Проект личных шаблонов" value={projectId} onChange={event=>setProjectId(event.target.value)}><option value="" disabled>Выберите проект</option>{projects.filter(p=>p.accountId===accountId).map(p=><option key={p.projectId} value={p.projectId}>{p.title}</option>)}</select></label>}
     {scopeCursor&&<WorkshopButton className="self-end" disabled={scopeBusy} onClick={()=>void moreScopes()}>Ещё области</WorkshopButton>}
    </div>
-   <label className="mx-5 mb-3 flex h-10 shrink-0 items-center gap-2 rounded-lg border border-kumo-line px-3 focus-within:border-kumo-brand"><MagnifyingGlass size={16} className="text-kumo-subtle"/><input autoFocus aria-label="Поиск шаблона" placeholder="Название или назначение…" value={query} onChange={event=>setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"/></label>
-   <div className="flex shrink-0 flex-wrap gap-1 px-5 pb-3" role="group" aria-label="Виды шаблонов">
-    {filters.map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={'rounded-lg px-3 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(kind===value?'bg-kumo-tint font-medium text-kumo-default':'text-kumo-subtle hover:bg-kumo-tint')}>{label}</button>)}
+
+     </details>
+    </div>
    </div>
-   <div className="min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-3 py-3" aria-label="Рабочие шаблоны Mnemos">
+   <div className={embedded?"min-h-0 flex-1":"min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-5"} aria-label="Рабочие шаблоны Mnemos">
     {scopeError&&<p role="alert" className="px-2 py-2 text-[13px]">{scopeError} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить загрузку областей</WorkshopButton></p>}
     {error&&<p role="alert" className="px-2 py-2 text-[13px]">{error} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton></p>}
     {loading&&<p role="status" className="px-2 py-4 text-[13px] text-kumo-subtle">Загрузка шаблонов…</p>}
     {!loading&&!error&&!shown.length&&<div className="px-2 py-6 text-[13px] text-kumo-subtle">{accountId===null?(accounts.length?'Выберите библиотеку для поиска шаблонов.':'Библиотека Mnemos пока недоступна.'):scopeId===null&&!projectId?(accountId===preferredProjectAccount?'Проект беседы недоступен в этой библиотеке. Выберите другой проект.':'Выберите проект для личных шаблонов.'):query||kind!=='all'?'Совпадений нет. Измените запрос или вид шаблона.':'В этой области шаблонов пока нет.'}</div>}
-    {shown.map(item=><div key={templateSelectionKey(item)} className="mb-2"><button type="button" aria-pressed={chosen(item)} disabled={!chosen(item)&&selected.length>=16} onClick={()=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)} className={'mb-1 flex w-full items-start gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-kumo-brand disabled:opacity-50 '+(chosen(item)?'border-kumo-brand bg-kumo-tint':'border-transparent hover:bg-kumo-tint')}>
-     <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-kumo-default">{item.title}</span><span className="mt-1 block text-[12px] text-kumo-subtle">{kinds[item.kind]} · версия {item.reference.revision}</span>{item.purpose&&<span className="mt-1 block text-[13px] leading-5 text-kumo-subtle">{item.purpose}</span>}</span>
-     <span aria-hidden="true" className={'mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border '+(chosen(item)?'border-kumo-brand bg-kumo-brand text-white':'border-kumo-line')}>{chosen(item)&&<Check size={14} weight="bold"/>}</span>
-    </button><button type="button" aria-label={'Посмотреть: '+item.title} onClick={()=>setPreview(item)} className="ml-3 rounded-lg px-2 py-1 text-[12px] text-kumo-subtle underline underline-offset-2 hover:text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-brand">Посмотреть содержимое</button></div>)}
+    {shown.map(item=>{const Glyph={document:FileText,guidance:BookOpen,agent_instructions:Robot,skill:Lightning}[item.kind];return <div key={templateSelectionKey(item)} className="flex items-center gap-2 border-b border-kumo-line py-2">
+     <button type="button" aria-pressed={chosen(item)} disabled={!chosen(item)&&selected.length>=16} onClick={()=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)} className="flex min-w-0 flex-1 items-start gap-3 rounded-lg px-2 py-3 text-left hover:bg-kumo-tint focus-visible:outline-2 focus-visible:outline-kumo-brand disabled:opacity-50">
+      <span className={'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg '+(chosen(item)?'bg-kumo-tint text-kumo-brand':'bg-kumo-tint text-kumo-subtle')} aria-hidden="true">{chosen(item)?<Check size={20}/>:<Glyph size={20}/>}</span>
+      <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-kumo-default">{item.title}</span>{item.purpose&&<span className="mt-1 block line-clamp-2 text-[13px] leading-5 text-kumo-subtle">{item.purpose}</span>}<span className="mt-1 block text-[12px] text-kumo-subtle">{kinds[item.kind]} · версия {item.reference.revision}</span></span>
+     </button>
+     <WorkshopIconButton aria-label={'Посмотреть: '+item.title} title="Посмотреть содержимое" onClick={()=>setPreview(item)}><Eye size={18}/></WorkshopIconButton>
+    </div>})}
     {cursor&&<WorkshopButton className="mt-2" disabled={loading} onClick={()=>void more()}>Загрузить ещё шаблоны</WorkshopButton>}
    </div>
-   <div className="shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4">
-    {selected.length>0&&<div className="mb-3" aria-label="Выбранные шаблоны"><p className="mb-2 text-[12px] text-kumo-subtle">Выбрано: {selected.length}. Версии закрепятся после отправки задачи.</p><ul className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{selected.map(item=><li key={templateSelectionKey(item)} className="flex max-w-full items-center gap-1 rounded-lg border border-kumo-line py-1 pl-2 text-[12px]"><span className="min-w-0 truncate" title={item.title}>{item.title} · версия {item.reference.revision}</span><WorkshopIconButton aria-label={'Убрать: '+item.title} className="!h-6 !w-6" onClick={()=>remove(item)}><X size={12}/></WorkshopIconButton></li>)}</ul></div>}
+   <div className={embedded?"sticky bottom-0 shrink-0 border-t border-kumo-line bg-kumo-base py-4":"shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4"}>
+    {selected.length>0&&<div className="mb-3" aria-label="Выбранные шаблоны"><p className="mb-2 text-[12px] text-kumo-subtle">Материалы для задачи · {selected.length}</p><ul className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{selected.map(item=><li key={templateSelectionKey(item)} className="flex max-w-full items-center gap-1 rounded-lg border border-kumo-line py-1 pl-2 text-[12px]"><span className="min-w-0 truncate" title={item.title}>{item.title} · версия {item.reference.revision}</span><WorkshopIconButton aria-label={'Убрать: '+item.title} className="!h-6 !w-6" onClick={()=>remove(item)}><X size={12}/></WorkshopIconButton></li>)}</ul></div>}
     {selected.length>=16&&<p role="status" className="mb-3 text-[12px] text-kumo-subtle">Можно выбрать до 16 материалов. Уберите один, чтобы добавить другой.</p>}
-    <div className="flex flex-wrap items-center justify-between gap-2"><WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton><WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
+    <div className="flex flex-wrap items-center justify-end gap-2">{!embedded&&<WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton>}<WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
    </div>
   </Container>;
  return embedded?content:<Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}>{content}</Dialog.Root>;
