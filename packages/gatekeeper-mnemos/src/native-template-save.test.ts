@@ -90,3 +90,17 @@ test('повышение нативной версии закрепляет по
  await templates.promote('team','method',5,'Для отдела',id,target);assert.equal(writes[0].input.source_scope_id,'team');assert.equal(writes[0].input.target_scope_id,'dept');assert.equal(writes[0].input.target_scope_revision,3);assert.equal(writes[0].input.expected_catalogue_revision,7);
  await templates.promote('team','method',5,'Для отдела',id,target);assert.equal(writes.length,1);denied=true;await assert.rejects(templates.promote('team','method',5,'Для отдела',id,target));
 });
+
+
+test('план доступа закреплён в предложении: старый ответ и смена правил не объявляются успехом',async()=>{
+ const entries=new Map<string,unknown>(),id='capture';const version={template_id:id,revision:1,user_id:'author',project_id:'project',node_id:'snapshot',source_head:'head',content_type:'application/vnd.cloudflareos.document+json'};
+ const scopes=[{scope_id:'group',revision:1,level:'group',enabled:true,parent_id:'dept',approvers:['reviewer']},{scope_id:'dept',revision:1,level:'department',enabled:true,parent_id:'org',approvers:['other']},{scope_id:'org',revision:1,level:'organization',enabled:true,parent_id:'',approvers:['other']}];let receiptPath=structuredClone(scopes),writes=0;
+ const session={async whoAmI(){return {subject:{user_id:'author'}}},async readWorkTemplate(){return version},async listTemplateScopes(){return {scopes,next_cursor:''}},async openDraft(){return {head:'head'}},async downloadPrivateVersion(){return {sha256_hex:'hash',size_bytes:100,content_type:version.content_type}},async listPrivateDraftParticipants(){return {participants:[{principal_id:'reviewer',display_name:'Мария',mode:'read',can_read:true}],next_cursor:''}},async readSavedTemplateAction(){return null},async saveTemplateAction(){writes++;return {id:'action'}},async executeSavedTemplateAction(){return {receipt:{kind:'propose',proposal:{proposal_id:'proposal',target_scope_id:'group',scope_path:receiptPath}}}}};
+ entries.set('blueprint-template:'+id,{id,project:'project',purpose:'ТЗ',version});
+ const creator=await new BlueprintTemplates(session as any,{get:(k:string)=>entries.get(k),put:(k:string,v:unknown)=>entries.set(k,structuredClone(v))} as any).resume(id);
+ const plan=await creator.reviewAccess('group',1);receiptPath[2].revision=2;
+ await assert.rejects(creator.propose('group',1,undefined,plan.key),/другим правилам/);assert.equal(writes,1);
+ receiptPath=structuredClone(scopes);await creator.propose('group',1,undefined,plan.key);assert.equal(writes,2);
+ scopes[2].revision=2;const changed=await creator.reviewAccess('group',1);
+ await assert.rejects(creator.propose('group',1,undefined,changed.key),/прежним составом/);assert.equal(writes,2);
+});

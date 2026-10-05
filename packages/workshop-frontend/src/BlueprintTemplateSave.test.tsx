@@ -3,7 +3,7 @@ import React from 'react'
 import {createRoot} from 'react-dom/client'
 import {beforeEach, afterEach, expect, test, vi} from 'vitest'
 import BlueprintTemplateSave from './BlueprintTemplateSave'
-const mocks=vi.hoisted(()=>({accounts:vi.fn<(...args:unknown[])=>Promise<unknown>>(),api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, nativeUpload:vi.fn<(...args: unknown[]) => Promise<unknown>>(),upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
+const mocks=vi.hoisted(()=>({accounts:vi.fn<(...args:unknown[])=>Promise<unknown>>(),api:{captureBlueprintTemplate:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, creator:{reviewAccess:vi.fn<(...args:unknown[])=>Promise<unknown>>(),shareForReview:vi.fn<(...args:unknown[])=>Promise<unknown>>(),state:vi.fn<(...args: unknown[]) => Promise<unknown>>(),issue:vi.fn<(...args: unknown[]) => Promise<unknown>>(),checkpoint:vi.fn<(...args: unknown[]) => Promise<unknown>>(),save:vi.fn<(...args: unknown[]) => Promise<unknown>>(),propose:vi.fn<(...args: unknown[]) => Promise<unknown>>(),[Symbol.dispose]:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, selector:{latest:vi.fn<(...args: unknown[]) => Promise<unknown>>(),projects:vi.fn<(...args: unknown[]) => Promise<unknown>>(),scopes:vi.fn<(...args: unknown[]) => Promise<unknown>>(),prepare:vi.fn<(...args: unknown[]) => Promise<unknown>>(),resume:vi.fn<(...args: unknown[]) => Promise<unknown>>()}, nativeUpload:vi.fn<(...args: unknown[]) => Promise<unknown>>(),upload:vi.fn<(...args: unknown[]) => Promise<unknown>>()}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
 vi.mock('./accountCapabilities',()=>({listAccounts:()=>mocks.accounts(),storesDocuments:()=>true,openBlueprintTemplatesFrame:async()=>({blueprintTemplates:{storageOrigin:'https://objects.example',selector:mocks.selector}})}))
 vi.mock('./gatekeeperAppUpload',()=>({uploadGatekeeperNativeDocument:(...args:unknown[])=>mocks.nativeUpload(...args),uploadGatekeeperBlueprintTemplate:(...args:unknown[])=>mocks.upload(...args)}))
@@ -18,6 +18,8 @@ beforeEach(()=>{
   mocks.selector.prepare.mockResolvedValue({id:'capture',creator:mocks.creator})
   mocks.creator.state.mockResolvedValue({upload:'',version:null})
   mocks.creator.save.mockResolvedValue({template_id:'template',revision:1,title:'Отчёт',purpose:'Финансовый отчёт',project_id:'project'})
+  mocks.creator.reviewAccess.mockResolvedValue({key:'access-plan',reviewers:[{id:'reviewer',name:'Согласующий',canRead:true}]})
+  mocks.creator.shareForReview.mockResolvedValue({key:'access-plan',reviewers:[{id:'reviewer',name:'Согласующий',canRead:true}]})
   mocks.creator.propose.mockResolvedValue({proposal_id:'proposal',target_scope_id:'finance'})
   mocks.api.captureBlueprintTemplate.mockImplementation(async()=>new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{}'));controller.close()}}))
   mocks.upload.mockResolvedValue('upload');mocks.nativeUpload.mockResolvedValue('native-upload')
@@ -37,7 +39,7 @@ test('Шаблон сохраняется личным, а уровень гру
   expect(mocks.selector.scopes).toHaveBeenCalledWith('groups')
   await React.act(async()=>{scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}))})
   await React.act(async()=>button('Предложить для общего применения').click())
-  expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4)
+  expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,undefined,'access-plan')
   expect(container.textContent).toContain('Общий шаблон появится после одобрения')
 })
 test('Повтор после потери ответа сохраняет ту же операцию и не загружает снимок заново',async()=>{
@@ -78,7 +80,7 @@ test('отказ групп не мешает личному сохранени�
  expect(button('Предложить для общего применения').disabled).toBe(true);
  await React.act(async()=>{const scope=container.querySelector('select')!;scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}));});
  await React.act(async()=>button('Предложить для общего применения').click());
- expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4);
+ expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,undefined,'access-plan');
 });
 
 test('Документ сохраняется в каталог нативным снимком без создания Blueprint',async()=>{
@@ -168,5 +170,24 @@ test('Улучшение общей версии сохраняет личную
  expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Методика','Проверять ТЗ',undefined,'native-improvement:editor:finance:method:5','cloudflareos.document','guidance',reference);
  const send=button('Отправить улучшение на согласование');expect(send.disabled).toBe(true);const scope=container.querySelector<HTMLSelectElement>('select')!;expect(scope.value).toBe('finance');expect(scope.disabled).toBe(true);
  await React.act(async()=>{const textarea=container.querySelector<HTMLTextAreaElement>('[aria-label="Объяснение улучшения"]')!;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(textarea,'Добавить проверяемые критерии');textarea.dispatchEvent(new Event('input',{bubbles:true}))});
- expect(send.disabled).toBe(false);await React.act(async()=>send.click());expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,'Добавить проверяемые критерии');expect(container.textContent).toContain('прежняя сохранится');
+ expect(send.disabled).toBe(false);await React.act(async()=>send.click());expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,'Добавить проверяемые критерии','access-plan');expect(container.textContent).toContain('прежняя сохранится');
+});
+
+
+test('Отправка недоступна до явного доступа согласующих, проверка сама не выдаёт приглашения',async()=>{
+ mocks.creator.reviewAccess.mockResolvedValue({key:'access-plan',reviewers:[{id:'reviewer',name:'Мария',canRead:false}]});
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} onClose={()=>{}}/>));
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ await React.act(async()=>{const scope=container.querySelector('select')!;scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}));});
+ expect(container.textContent).toContain('Мария');expect(button('Предложить для общего применения').disabled).toBe(true);expect(mocks.creator.shareForReview).not.toHaveBeenCalled();expect(mocks.creator.propose).not.toHaveBeenCalled();
+ await React.act(async()=>button('Дать согласующим доступ к шаблону').click());expect(mocks.creator.shareForReview).toHaveBeenCalledWith('finance',4,'access-plan');expect(mocks.creator.propose).not.toHaveBeenCalled();expect(button('Предложить для общего применения').disabled).toBe(false);
+ await React.act(async()=>button('Предложить для общего применения').click());expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,undefined,'access-plan');
+});
+test('Отказ приглашения требует перечитать доступ, не сообщает успех и не запускает предложение',async()=>{
+ mocks.creator.reviewAccess.mockResolvedValue({key:'access-plan',reviewers:[{id:'reviewer',name:'Мария',canRead:false}]});mocks.creator.shareForReview.mockRejectedValueOnce(Error('lost reply'));
+ await React.act(async()=>root.render(<BlueprintTemplateSave blueprint={{id:'bp',title:'Отчёт',description:'Форма'}} onClose={()=>{}}/>));
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ await React.act(async()=>{const scope=container.querySelector('select')!;scope.value='finance';scope.dispatchEvent(new Event('change',{bubbles:true}));});
+ await React.act(async()=>button('Дать согласующим доступ к шаблону').click());expect(container.textContent).toContain('Доступ не подтверждён');expect(button('Предложить для общего применения').disabled).toBe(true);expect(mocks.creator.propose).not.toHaveBeenCalled();
+ await React.act(async()=>button('Проверить доступ согласующих').click());expect(button('Дать согласующим доступ к шаблону').disabled).toBe(false);
 });

@@ -431,9 +431,12 @@ export interface GatekeeperTextUploadIssuer extends RpcTarget {
 export interface GatekeeperTemplateVersion {
   template_id: string; revision: number; title: string; purpose: string; project_id: string; kind?: import('./work-template.js').WorkTemplateKind;
 }
+export interface GatekeeperTemplateReviewAccess {key:string;reviewers:{id:string;name:string;canRead:boolean}[]}
 export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
   state(): Promise<{upload: string; project: string; title: string; purpose: string; kind?: import('./work-template.js').WorkTemplateKind; version: GatekeeperTemplateVersion | null}>;
-  propose(scope: string, scopeRevision: number, explanation?:string): Promise<{proposal_id: string; target_scope_id: string}>;
+  reviewAccess(scope:string,scopeRevision:number):Promise<GatekeeperTemplateReviewAccess>;
+  shareForReview(scope:string,scopeRevision:number,key:string):Promise<GatekeeperTemplateReviewAccess>;
+  propose(scope: string, scopeRevision: number, explanation?:string, accessKey?:string): Promise<{proposal_id: string; target_scope_id: string}>;
   issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
   checkpoint(upload: string): Promise<void>;
   save(): Promise<GatekeeperTemplateVersion>;

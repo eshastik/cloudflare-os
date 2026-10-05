@@ -1,3 +1,4 @@
+import {templateReviewAccess,shareTemplateForReview} from './template-review-access.ts';
 import {checkedTemplateReferences,type WorkTemplateReference,type WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import { RpcStub, RpcTarget } from 'cloudflare:workers'
 import type { AccountStorage, MnemosAccountSession } from './account-session'
@@ -6,7 +7,7 @@ import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
 type Improvement=Extract<WorkTemplateReference,{scope_id:string}> & {scopeRevision:number}
-type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string} }
+type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string; accessKey?:string} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
@@ -167,7 +168,18 @@ class BlueprintTemplateCreator extends RpcTarget {
     if (!capture.upload && !this.issued.has(upload)) throw new Error('Загрузка не принадлежит операции')
     this.storage.put(`blueprint-template:${this.id}`, { ...capture, upload })
   }
-  async propose(scope: string, scopeRevision: number, explanation?:string) {
+  async reviewAccess(scope:string,scopeRevision:number){
+    const capture=this.read();if(!capture.version)throw Error('Сначала сохраните шаблон');
+    const version=await this.session.readWorkTemplate(capture.template??capture.id,capture.version.revision);
+    const plan=await templateReviewAccess(this.session,version,scope,scopeRevision);
+    return {key:plan.key,reviewers:plan.reviewers};
+  }
+  async shareForReview(scope:string,scopeRevision:number,key:string){
+    const capture=this.read();if(!capture.version)throw Error('Сначала сохраните шаблон');
+    const version=await this.session.readWorkTemplate(capture.template??capture.id,capture.version.revision);
+    return shareTemplateForReview(this.session,version,scope,scopeRevision,key);
+  }
+  async propose(scope: string, scopeRevision: number, explanation?:string, accessKey?:string) {
     const capture = this.read()
     if (!capture.version) throw new Error('Сначала сохраните версию шаблона')
     const message=explanation?.trim()??capture.purpose
@@ -178,6 +190,9 @@ class BlueprintTemplateCreator extends RpcTarget {
     }
     if (capture.promotion && (capture.promotion.scope !== scope || capture.promotion.revision !== scopeRevision || (capture.promotion.message??capture.purpose)!==message)) throw new Error('Предложение уже связано с другой областью')
     const version = await this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
+    if(capture.promotion?.accessKey!==undefined&&capture.promotion.accessKey!==accessKey)throw Error('Предложение уже связано с прежним составом согласующих');
+    const reviewPlan=accessKey===undefined?null:await templateReviewAccess(this.session,version,scope,scopeRevision);
+    if(reviewPlan&&(reviewPlan.key!==accessKey||reviewPlan.reviewers.some(p=>!p.canRead)))throw Error('Проверьте доступ согласующих перед отправкой');
     let catalogueRevision=capture.promotion?.catalogueRevision??capture.improvement?.revision??0
     if(!capture.promotion&&!capture.improvement&&capture.expectedRevision){
       try{catalogueRevision=(await this.session.readScopedWorkTemplate(scope,capture.template??capture.id,0)).revision}
@@ -188,9 +203,13 @@ class BlueprintTemplateCreator extends RpcTarget {
       expected_catalogue_revision: catalogueRevision, message}
     const previous = await this.session.readSavedTemplateAction(capture.project)
     const action = await this.session.saveTemplateAction(capture.project, {kind: 'propose', template: capture.template??capture.id, input}, previous?.id ?? '')
-    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision, catalogueRevision,message}})
+    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision, catalogueRevision,message,...(accessKey===undefined?{}:{accessKey})}})
     const result = await this.session.executeSavedTemplateAction(capture.project, action.id)
     if (result.receipt?.kind !== 'propose') throw new Error('Предложение не подтверждено')
+    if(reviewPlan){
+      if(JSON.stringify(result.receipt.proposal.scope_path.map(s=>[s.scope_id,s.revision]))!==JSON.stringify(reviewPlan.path))throw Error('Предложение относится к другим правилам согласования');
+      const current=await templateReviewAccess(this.session,version,scope,scopeRevision);if(current.key!==accessKey||current.reviewers.some(p=>!p.canRead))throw Error('Правила или доступ изменились после отправки. Проверьте предложение');
+    }
     return result.receipt.proposal
   }
   async save(): Promise<WorkTemplateVersion> {

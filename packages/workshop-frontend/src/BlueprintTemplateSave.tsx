@@ -4,7 +4,7 @@ import type {ChatWorkTemplate,WorkTemplateKind} from '@gadgets/workshop-shared/w
 import {useEffect, useRef, useState} from 'react'
 import {WorkshopButton} from './components/WorkshopControls'
 import type {RpcStub} from 'capnweb'
-import type {GatekeeperUiFrame, GatekeeperBlueprintTemplateCreator, GatekeeperTemplateVersion} from '@gadgets/workshop-shared/gatekeeper'
+import type {GatekeeperUiFrame, GatekeeperBlueprintTemplateCreator, GatekeeperTemplateVersion, GatekeeperTemplateReviewAccess} from '@gadgets/workshop-shared/gatekeeper'
 import type {NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
 import type {NativeSnapshotSourceRef} from './nativeSnapshotSource'
 import {useAuthenticatedApi} from './AuthContext'
@@ -16,6 +16,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const {authenticatedApi:api} = useAuthenticatedApi()
   const improvement=initialTemplate&&'scope_id' in initialTemplate.context.reference?initialTemplate.context.reference:undefined
   const [explanation,setExplanation]=useState('')
+  const [accessPlan,setAccessPlan]=useState<GatekeeperTemplateReviewAccess|null>(null),[accessLoading,setAccessLoading]=useState(false),[accessError,setAccessError]=useState(''),[accessReload,setAccessReload]=useState(0)
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
   const [contextNotice,setContextNotice]=useState('')
@@ -113,6 +114,22 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     })().catch(()=>{if(!cancelled)setScopesError('Не удалось загрузить группы. Личный шаблон можно сохранить и использовать.')}).finally(()=>{if(!cancelled)setScopesLoading(false)})
     return()=>{cancelled=true}
   },[account,libraryState,scopesReload])
+  useEffect(()=>{
+    let cancelled=false;setAccessPlan(null);setAccessError('');setAccessLoading(false)
+    const selected=scopes.find(item=>item.scope_id===scope),operation=creator.current
+    if(!version||!selected||!operation)return
+    setAccessLoading(true)
+    void operation.reviewAccess(selected.scope_id,selected.revision).then(plan=>{if(!cancelled)setAccessPlan(plan)}).catch(()=>{if(!cancelled)setAccessError('Не удалось проверить согласующих и их доступ. Повторите проверку; отправка пока недоступна.')}).finally(()=>{if(!cancelled)setAccessLoading(false)})
+    return()=>{cancelled=true}
+  },[scope,scopes,version,accessReload])
+  async function shareForReview(){
+    const selected=scopes.find(item=>item.scope_id===scope),operation=creator.current
+    if(busy||!selected||!operation||!accessPlan)return
+    setBusy(true);setAccessError('')
+    try{const plan=await operation.shareForReview(selected.scope_id,selected.revision,accessPlan.key);if(!lifetime.current.signal.aborted)setAccessPlan(plan)}
+    catch{if(!lifetime.current.signal.aborted){setAccessPlan(null);setAccessError('Доступ не подтверждён. Проверьте состояние перед повтором; приглашения, которые успели сохраниться, сохраняются.')}}
+    finally{if(!lifetime.current.signal.aborted)setBusy(false)}
+  }
   async function save(){
     if(busy||pendingUnavailable||libraryState!=='ready'||account===null||!frame.current?.blueprintTemplates)return
     setBusy(true);setError('')
@@ -158,10 +175,10 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   }
   async function propose(){
     const selected=scopes.find(item=>item.scope_id===scope)
-    if(busy||!selected||!creator.current)return
+    if(busy||!selected||!creator.current||!accessPlan||accessPlan.reviewers.some(p=>!p.canRead))return
     setBusy(true);setError('')
-    try{improvement?await creator.current.propose(selected.scope_id,selected.revision,explanation):await creator.current.propose(selected.scope_id,selected.revision);setProposed(true);sessionStorage.removeItem(pendingKey)}
-    catch{setError('Предложение не подтверждено. Повторите отправку; права и правила согласования проверяет сервер.')}
+    try{await creator.current.propose(selected.scope_id,selected.revision,improvement?explanation:undefined,accessPlan.key);setProposed(true);sessionStorage.removeItem(pendingKey)}
+    catch{setAccessPlan(null);setAccessError('Предложение не подтверждено. Сначала повторите проверку доступа и правил.');setError('Повтор отправки продолжит прежнее предложение.')}
     finally{setBusy(false)}
   }
   const field='mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-[13px] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-kumo-brand'
@@ -180,7 +197,12 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         {scopesError&&<p role="alert" className="text-[13px] text-kumo-subtle">{scopesError} <WorkshopButton disabled={busy||scopesLoading} onClick={()=>setScopesReload(v=>v+1)}>Повторить загрузку групп</WorkshopButton></p>}
         {!scopesLoading&&!scopesError&&!scopes.length&&<p className="text-[13px] text-kumo-subtle">Доступных групп для согласования пока нет. Шаблон остаётся личным.</p>}
         {improvement&&<label className="block text-[13px]">Что изменено и почему<textarea aria-label="Объяснение улучшения" rows={3} className={field} disabled={busy} value={explanation} onChange={e=>setExplanation(e.target.value)}/></label>}
-        {scopes.length>0&&<><label className="block text-[13px]">Группа для согласования<select className={field} disabled={busy||scopesLoading||!!improvement} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Выберите группу</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{item.name}</option>)}</select></label><WorkshopButton tone="primary" disabled={busy||!scope||scopesLoading||!!improvement&&!explanation.trim()} onClick={()=>void propose()}>{busy?'Отправляем…':improvement?'Отправить улучшение на согласование':'Предложить для общего применения'}</WorkshopButton></>}
+        {scopes.length>0&&<><label className="block text-[13px]">Группа для согласования<select className={field} disabled={busy||scopesLoading||!!improvement} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Выберите группу</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{item.name}</option>)}</select></label>{scope&&<div className="space-y-2 text-[13px]">
+          {accessLoading&&<p role="status">Проверяем согласующих…</p>}
+          {accessPlan&&<><p className="m-0">Согласующие: {accessPlan.reviewers.map(person=>person.name).join(', ')}.</p>
+            {accessPlan.reviewers.some(person=>!person.canRead)?<><p className="m-0 text-kumo-subtle">Перед отправкой им нужно открыть сохранённый документ шаблона. Приглашение даёт только чтение этого документа. Папка и другие документы остаются по своим правам.</p><WorkshopButton disabled={busy||accessLoading} onClick={()=>void shareForReview()}>Дать согласующим доступ к шаблону</WorkshopButton></>:<p role="status" className="m-0 text-kumo-subtle">Согласующие могут прочитать документ шаблона.</p>}</>}
+          {accessError&&<><p role="alert" className="m-0 text-kumo-danger">{accessError}</p><WorkshopButton disabled={busy||accessLoading} onClick={()=>setAccessReload(v=>v+1)}>Проверить доступ согласующих</WorkshopButton></>}
+        </div>}<WorkshopButton tone="primary" disabled={busy||!scope||scopesLoading||accessLoading||!accessPlan||accessPlan.reviewers.some(person=>!person.canRead)||!!improvement&&!explanation.trim()} onClick={()=>void propose()}>{busy?'Отправляем…':improvement?'Отправить улучшение на согласование':'Предложить для общего применения'}</WorkshopButton></>}
        </div>}
       </div>
       <WorkshopButton disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</WorkshopButton>
