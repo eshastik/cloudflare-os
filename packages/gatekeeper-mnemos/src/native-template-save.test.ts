@@ -41,9 +41,35 @@ test('нативная форма сохраняется без Blueprint, по�
 test('просмотр общей версии выдаёт только метаданные и билет, а показ требует текущего доступа',async()=>{
  const ref={scope_id:'team',template_key:'form',revision:5},head='a'.repeat(64);let denied=false;
  const source={title:'Форма',purpose:'ТЗ',kind:'document',source_head:head,content_type:'application/vnd.cloudflareos.document+json',project_id:'private-project',node_id:'private-node'};
- const session={async beginWorkTemplateDownload(reference:unknown){assert.deepEqual(reference,ref);return {source,ticket:{url:'https://objects.example/form',method:'GET',size_bytes:100,sha256_hex:'b'.repeat(64),expires_at:new Date(Date.now()+60_000).toISOString()}}},async readWorkTemplateSelection(references:unknown){if(denied)throw Error('denied');assert.deepEqual(references,[ref]);return {materials:[{scoped:{source}}]}}};
+ const session={async listTemplateScopes(){return {scopes:[{scope_id:'team',revision:3,name:'Группа',enabled:true,level:'group'}],next_cursor:''}},async beginWorkTemplateDownload(reference:unknown){assert.deepEqual(reference,ref);return {source,ticket:{url:'https://objects.example/form',method:'GET',size_bytes:100,sha256_hex:'b'.repeat(64),expires_at:new Date(Date.now()+60_000).toISOString()}}},async readWorkTemplateSelection(references:unknown){if(denied)throw Error('denied');assert.deepEqual(references,[ref]);return {materials:[{scoped:{source}}]}}};
  const templates=new BlueprintTemplates(session as any,{} as any),preview=await templates.preview(ref);
  assert.deepEqual(preview.material.reference,ref);assert.equal(preview.sourceHead,head);assert.equal(JSON.stringify(preview).includes('private-project'),false);assert.equal(JSON.stringify(preview).includes('private-node'),false);
  await templates.validatePreview(ref,head);denied=true;await assert.rejects(templates.validatePreview(ref,head),/denied/);denied=false;
  await assert.rejects(templates.validatePreview(ref,'c'.repeat(64)));source.content_type='application/octet-stream';await assert.rejects(templates.preview(ref));
+});
+
+test('личная правка обновляет исходный общий ключ и закреплённую версию через согласование',async()=>{
+ const entries=new Map<string,unknown>();let denied=false,level='group',kind='guidance';let version:any,action:any;const writes:any[]=[];
+ const ref={scope_id:'team',template_key:'method',revision:5};
+ const session={
+  async readWorkTemplateSelection(references:any){if(denied)throw Error('denied');assert.deepEqual(references,[ref]);return {materials:[{scoped:{source:{kind,content_type:'application/vnd.cloudflareos.document+json'}}}]};},
+  async listTemplateScopes(){return {scopes:[{scope_id:'team',revision:3,name:'Группа',enabled:true,level}],next_cursor:''};},
+  async openDraft(){return {head:'a'.repeat(64)}},async beginNativeUpload(){return {upload_id:'upload'}},
+  async createPrivateDocument(){return {node_id:'copy',head:'b'.repeat(64)}},
+  async saveWorkTemplateSnapshot(id:string,input:any){version={...input,template_id:id,revision:1};return version},
+  async readWorkTemplate(){return version},async readSavedTemplateAction(){return action??null},
+  async saveTemplateAction(_project:string,input:any){writes.push(input);action={id:'action',...input};return action},
+  async executeSavedTemplateAction(){return {receipt:{kind:'propose',proposal:{proposal_id:'proposal',target_scope_id:'team'}}}},
+ };
+ const storage={get:(key:string)=>entries.get(key),put:(key:string,value:unknown)=>entries.set(key,structuredClone(value))};
+ const templates=new BlueprintTemplates(session as any,storage as any);
+ level='department';await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref));level='group';
+ kind='document';await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref));kind='guidance';
+ const prepared=await templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref);
+ await prepared.creator.issue(100,'checksum');await prepared.creator.checkpoint('upload');const saved=await prepared.creator.save();assert.notEqual(saved.template_id,ref.template_key);assert.equal(saved.revision,1);
+ await assert.rejects(prepared.creator.propose('other',3,'Уточнить критерий'));await assert.rejects(prepared.creator.propose('team',3,''));assert.equal(writes.length,0);
+ denied=true;await assert.rejects(prepared.creator.propose('team',3,'Уточнить критерий'));assert.equal(writes.length,0);denied=false;
+ await prepared.creator.propose('team',3,'Уточнить критерий');assert.equal(writes[0].template,saved.template_id);assert.equal(writes[0].input.template_key,'method');assert.equal(writes[0].input.expected_catalogue_revision,5);assert.equal(writes[0].input.message,'Уточнить критерий');
+ await assert.rejects(prepared.creator.propose('team',3,'Другая причина'));assert.equal(writes.length,1);
+ await (await templates.resume(prepared.id)).propose('team',3,'Уточнить критерий');assert.deepEqual(writes[1].input,writes[0].input);
 });

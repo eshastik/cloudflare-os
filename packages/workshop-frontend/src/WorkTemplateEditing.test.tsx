@@ -28,7 +28,7 @@ test('Открывает точную версию через проверенн
  await render();expect(mocks.restore).not.toHaveBeenCalled();await open()
  expect(mocks.frame).toHaveBeenCalledWith(mocks.api,7);expect(mocks.preview).toHaveBeenCalledWith(context.reference)
  expect(mocks.validate).toHaveBeenCalledWith(context.reference,'a'.repeat(64));expect(mocks.restore).toHaveBeenCalledWith(snapshot,4);expect(mocks.ready).toHaveBeenCalledWith(material);expect(mocks.dispose).toHaveBeenCalledTimes(1)
- expect(templateEditingContext({...context,reference:{scope_id:'team',template_key:'template',revision:3}})).toBeUndefined()
+ expect(templateEditingContext({...context,reference:{scope_id:'team',template_key:'template',revision:3}})?.reference).toEqual({scope_id:'team',template_key:'template',revision:3})
 })
 test('Отказ доступа и подмена версии не меняют текст редактора',async()=>{
  await render();mocks.preview.mockRejectedValueOnce(Error('denied'));await open();expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).not.toHaveBeenCalled();expect(host.querySelector('[role="alert"]')).not.toBeNull()

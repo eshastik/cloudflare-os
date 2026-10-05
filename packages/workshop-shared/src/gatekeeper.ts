@@ -433,7 +433,7 @@ export interface GatekeeperTemplateVersion {
 }
 export interface GatekeeperBlueprintTemplateCreator extends RpcTarget {
   state(): Promise<{upload: string; project: string; title: string; purpose: string; kind?: import('./work-template.js').WorkTemplateKind; version: GatekeeperTemplateVersion | null}>;
-  propose(scope: string, scopeRevision: number): Promise<{proposal_id: string; target_scope_id: string}>;
+  propose(scope: string, scopeRevision: number, explanation?:string): Promise<{proposal_id: string; target_scope_id: string}>;
   issue(size: number, checksum: string): Promise<GatekeeperUploadTicket>;
   checkpoint(upload: string): Promise<void>;
   save(): Promise<GatekeeperTemplateVersion>;
@@ -457,7 +457,7 @@ export interface GatekeeperTemplateScopeConfig {
 }
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
   /** Выдаёт метаданные и билет прямого чтения точной версии; содержимое через RPC не передаётся. */
-  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
+  preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;improvement?:{scope_id:string;revision:number;name:string};sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
   /** Повторно проверяет текущие права и исходный снимок перед показом загруженного содержимого. */
   validatePreview(reference: import('./work-template.js').WorkTemplateReference, sourceHead:string): Promise<void>;
   /** Читает доступные для управления уровни и разрешённые администратору справочники. */
@@ -479,7 +479,7 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
   projects(): Promise<{projects: {id: string; name: string}[]}>;
   latest(blueprint:string): Promise<GatekeeperTemplateVersion|null>;
   /** Готовит личный снимок: без nativeFormat — совместимый Blueprint; с ним — данные документа без кода. */
-  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind?: import('./work-template.js').WorkTemplateKind): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
+  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind?: import('./work-template.js').WorkTemplateKind, improvementReference?: import('./work-template.js').WorkTemplateReference): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
   resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
 }
 

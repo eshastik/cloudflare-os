@@ -14,6 +14,8 @@ import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from 
 
 export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse, initialKind='document',initialTemplate}: {initialTemplate?:{context:TemplateEditingContext;material:ChatWorkTemplateChoice};initialKind?:WorkTemplateKind;onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
+  const improvement=initialTemplate&&'scope_id' in initialTemplate.context.reference?initialTemplate.context.reference:undefined
+  const [explanation,setExplanation]=useState('')
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
   const [account,setAccount] = useState<number|null>(null)
   const [contextNotice,setContextNotice]=useState('')
@@ -34,7 +36,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const creator = useRef<RpcStub<GatekeeperBlueprintTemplateCreator>|null>(null)
   const lifetime = useRef(new AbortController())
   const [kind,setKind] = useState<WorkTemplateKind>(initialKind)
-  const sourceKey = initialTemplate&&'template_id' in initialTemplate.context.reference?`native-template:${initialTemplate.context.reference.template_id}`:nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
+  const sourceKey = initialTemplate&&'template_id' in initialTemplate.context.reference?`native-template:${initialTemplate.context.reference.template_id}`:improvement?`native-improvement:${blueprint.id}:${improvement.scope_id}:${improvement.template_key}:${improvement.revision}`:nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
   const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
   const descriptions={document:'Текущее содержимое станет исходной формой для новых документов.',guidance:'Описывает порядок работы и требования к результату. Можно использовать вместе с формой документа.',agent_instructions:'Задаёт поведение агента в выбранной задаче. Инструкция не расширяет его права.',skill:'Описывает выполнение конкретной операции. Выбирается для задач, где эта операция нужна.'}
   const pendingKey = `mnemos-blueprint-save:${sourceKey}`
@@ -70,7 +72,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       if(cancelled){disposeGatekeeperFrame(value);return}
       frame.current=value
       const ref=initialTemplate?.context.reference
-      const latest=ref?.template_id?{template_id:ref.template_id,revision:ref.revision,project_id:initialTemplate!.context.projectId,title:initialTemplate!.material.title,purpose:initialTemplate!.material.purpose}:await value.blueprintTemplates.selector.latest(sourceKey)
+      const latest=ref?.template_id?{template_id:ref.template_id,revision:ref.revision,project_id:initialTemplate!.context.projectId,title:initialTemplate!.material.title,purpose:initialTemplate!.material.purpose}:improvement?null:await value.blueprintTemplates.selector.latest(sourceKey)
       if(cancelled)return
       if(latest){setPrevious({template_id:latest.template_id,revision:latest.revision});setProject(latest.project_id);setTitle(latest.title);setPurpose(latest.purpose)}
       const result=await value.blueprintTemplates.selector.projects()
@@ -105,9 +107,9 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
       const groups:typeof scopes=[];let cursor='';
       do {
         const page=await selector.scopes(cursor);if(cancelled)return;
-        groups.push(...page.scopes.filter(item=>item.enabled&&item.level==='group'));cursor=page.next_cursor||'';
+        groups.push(...page.scopes.filter(item=>item.enabled&&item.level==='group'&&(!improvement||item.scope_id===improvement.scope_id)));cursor=page.next_cursor||'';
       } while(cursor)
-      if(!cancelled)setScopes(groups)
+      if(!cancelled){setScopes(groups);if(improvement&&groups.length===1)setScope(groups[0].scope_id)}
     })().catch(()=>{if(!cancelled)setScopesError('Не удалось загрузить группы. Личный шаблон можно сохранить и использовать.')}).finally(()=>{if(!cancelled)setScopesLoading(false)})
     return()=>{cancelled=true}
   },[account,libraryState,scopesReload])
@@ -123,7 +125,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         if(saved?.account===account)creator.current=await store.selector.resume(saved.id) as RpcStub<GatekeeperBlueprintTemplateCreator>
         else {
           const prepared=nativeOnly
-            ? await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind)
+            ? improvement?await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind,improvement):await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind)
             : await store.selector.prepare(project,title,purpose,previous,sourceKey)
           creator.current=prepared.creator as RpcStub<GatekeeperBlueprintTemplateCreator>
           sessionStorage.setItem(pendingKey,JSON.stringify({account,id:prepared.id}));setLocked(true)
@@ -158,7 +160,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     const selected=scopes.find(item=>item.scope_id===scope)
     if(busy||!selected||!creator.current)return
     setBusy(true);setError('')
-    try{await creator.current.propose(selected.scope_id,selected.revision);setProposed(true);sessionStorage.removeItem(pendingKey)}
+    try{improvement?await creator.current.propose(selected.scope_id,selected.revision,explanation):await creator.current.propose(selected.scope_id,selected.revision);setProposed(true);sessionStorage.removeItem(pendingKey)}
     catch{setError('Предложение не подтверждено. Повторите отправку; права и правила согласования проверяет сервер.')}
     finally{setBusy(false)}
   }
@@ -171,13 +173,14 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
     {libraryState==='loading'&&<p role="status" className="text-[13px] text-kumo-subtle">Подготовка сохранения…</p>}
     {version?<div className="space-y-4">
       <div className="rounded-xl border border-kumo-line bg-kumo-tint p-3"><p role="status" className="m-0 text-[14px] font-medium">Личный шаблон сохранён: {version.title}, версия {version.revision}.</p><p className="mt-1 text-[13px] text-kumo-subtle">Выберите его в чате через «Выбрать шаблон» для следующей задачи.</p>{onUse&&account!==null&&<WorkshopButton className="mt-3" tone="primary" onClick={()=>onUse({accountId:account,reference:{template_id:version.template_id,revision:version.revision},title:version.title,purpose:version.purpose,kind:version.kind??kind})}>Использовать в задаче</WorkshopButton>}</div>
-      <div className="rounded-xl border border-kumo-line p-3"><h4 className="m-0 text-[14px] font-medium">Предложить команде</h4>
-       {proposed?<p role="status" className="mt-2 text-[13px]">Версия отправлена на согласование. Общий шаблон появится после одобрения.</p>:<div className="mt-2 space-y-3">
-        <p className="text-[13px] leading-5 text-kumo-subtle">Личная версия уже доступна вам. Для общего применения выберите группу и отправьте эту версию на согласование.</p>
+      <div className="rounded-xl border border-kumo-line p-3"><h4 className="m-0 text-[14px] font-medium">{improvement?'Предложить улучшение':'Предложить команде'}</h4>
+       {proposed?<p role="status" className="mt-2 text-[13px]">{improvement?'Правка отправлена на согласование. После одобрения появится новая общая версия; прежняя сохранится.':'Версия отправлена на согласование. Общий шаблон появится после одобрения.'}</p>:<div className="mt-2 space-y-3">
+        <p className="text-[13px] leading-5 text-kumo-subtle">{improvement?`Правка общей версии ${improvement.revision}. Она обновит исходный шаблон группы после согласования.`:'Личная версия уже доступна вам. Для общего применения выберите группу и отправьте эту версию на согласование.'}</p>
         {scopesLoading&&<p role="status" className="text-[13px] text-kumo-subtle">Загрузка групп…</p>}
         {scopesError&&<p role="alert" className="text-[13px] text-kumo-subtle">{scopesError} <WorkshopButton disabled={busy||scopesLoading} onClick={()=>setScopesReload(v=>v+1)}>Повторить загрузку групп</WorkshopButton></p>}
         {!scopesLoading&&!scopesError&&!scopes.length&&<p className="text-[13px] text-kumo-subtle">Доступных групп для согласования пока нет. Шаблон остаётся личным.</p>}
-        {scopes.length>0&&<><label className="block text-[13px]">Группа для согласования<select className={field} disabled={busy||scopesLoading} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Выберите группу</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{item.name}</option>)}</select></label><WorkshopButton tone="primary" disabled={busy||!scope||scopesLoading} onClick={()=>void propose()}>{busy?'Отправляем…':'Предложить для общего применения'}</WorkshopButton></>}
+        {improvement&&<label className="block text-[13px]">Что изменено и почему<textarea aria-label="Объяснение улучшения" rows={3} className={field} disabled={busy} value={explanation} onChange={e=>setExplanation(e.target.value)}/></label>}
+        {scopes.length>0&&<><label className="block text-[13px]">Группа для согласования<select className={field} disabled={busy||scopesLoading||!!improvement} value={scope} onChange={e=>setScope(e.target.value)}><option value="">Выберите группу</option>{scopes.map(item=><option key={item.scope_id} value={item.scope_id}>{item.name}</option>)}</select></label><WorkshopButton tone="primary" disabled={busy||!scope||scopesLoading||!!improvement&&!explanation.trim()} onClick={()=>void propose()}>{busy?'Отправляем…':improvement?'Отправить улучшение на согласование':'Предложить для общего применения'}</WorkshopButton></>}
        </div>}
       </div>
       <WorkshopButton disabled={busy} onClick={()=>{setPrevious({template_id:version.template_id,revision:version.revision});sessionStorage.removeItem(pendingKey);creator.current?.[Symbol.dispose]();creator.current=null;setVersion(null);setLocked(false);setProposed(false);setScope('');}}>Сохранить новую версию</WorkshopButton>

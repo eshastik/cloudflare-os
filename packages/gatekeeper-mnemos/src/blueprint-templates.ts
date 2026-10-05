@@ -5,7 +5,8 @@ import { BLUEPRINT_TEMPLATE_MIME, MAX_BLUEPRINT_TEMPLATE_BYTES } from '@gadgets/
 import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
-type Capture = { kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number} }
+type Improvement=Extract<WorkTemplateReference,{scope_id:string}> & {scopeRevision:number}
+type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
@@ -14,7 +15,11 @@ export class BlueprintTemplates extends RpcTarget {
     const issued=await this.session.beginWorkTemplateDownload(ref),source=issued.source,ticket=issued.ticket
     if(ticket.size_bytes>1024*1024||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Просмотр доступен для снимков до одного МиБ')
     if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))throw new Error('Просмотр этого формата пока не поддерживается')
-    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},sourceHead:source.source_head,
+    let improvement: {scope_id:string;revision:number;name:string}|undefined
+    if('scope_id' in ref){
+      let cursor='';do{const page=await this.session.listTemplateScopes(cursor);const scope=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled&&item.level==='group');if(scope)improvement={scope_id:scope.scope_id,revision:scope.revision,name:scope.name};cursor=page.next_cursor||''}while(cursor)
+    }
+    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,sourceHead:source.source_head,
       ticket:{url:ticket.url,method:ticket.method,size_bytes:ticket.size_bytes,sha256_hex:ticket.sha256_hex,content_type:source.content_type}}
   }
   async validatePreview(reference:WorkTemplateReference,sourceHead:string){
@@ -98,7 +103,7 @@ export class BlueprintTemplates extends RpcTarget {
     if(!saved)return null
     return this.session.readWorkTemplate(saved.template_id,0)
   }
-  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind: WorkTemplateKind = "document") {
+  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind: WorkTemplateKind = "document", improvementReference?: WorkTemplateReference) {
     if(nativeFormat!==undefined&&nativeFormat!=="cloudflareos.document")throw new Error("Поддерживается шаблон документа");
     if(!['document','guidance','agent_instructions','skill'].includes(kind)||(!nativeFormat&&kind!=='document'))throw new Error('Выберите поддерживаемый вид шаблона');
     const contentType=nativeFormat ? "application/vnd.cloudflareos.document+json" : BLUEPRINT_TEMPLATE_MIME;
@@ -109,8 +114,19 @@ export class BlueprintTemplates extends RpcTarget {
       const version=await this.session.readWorkTemplate(previous.template_id,previous.revision)
       if(version.project_id!==project||version.content_type!==contentType||version.kind!==kind)throw new Error('Версия относится к другому проекту или формату')
     }
+    let improvement:Improvement|undefined
+    if(improvementReference){
+      const ref=checkedTemplateReferences([improvementReference])[0]
+      if(typeof ref.scope_id!=='string'||typeof ref.template_key!=='string'||previous||!nativeFormat)throw Error('Выберите общую версию документа')
+      const material=(await this.session.readWorkTemplateSelection([ref])).materials[0]
+      if(!material.scoped||material.scoped.source.kind!==kind||material.scoped.source.content_type!==contentType)throw Error('Вид или формат исходного шаблона не совпадает')
+      let scope:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes'][number]|undefined,cursor=''
+      do{const page=await this.session.listTemplateScopes(cursor);scope??=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled&&item.level==='group');cursor=page.next_cursor||''}while(cursor)
+      if(!scope)throw Error('Личную правку сначала согласуют в группе')
+      improvement={scope_id:ref.scope_id,template_key:ref.template_key,revision:ref.revision,scopeRevision:scope.revision}
+    }
     const { head } = await this.session.openDraft(project)
-    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '', blueprint, nativeFormat, kind, ...(previous?{template:previous.template_id,expectedRevision:previous.revision}:{}) }
+    const capture: Capture = { id: crypto.randomUUID(), project, title, purpose, head, upload: '', blueprint, nativeFormat, kind, improvement, ...(previous?{template:previous.template_id,expectedRevision:previous.revision}:{}) }
     this.storage.put(`blueprint-template:${capture.id}`, capture)
     return { id: capture.id, creator: new RpcStub(new BlueprintTemplateCreator(this.session, this.storage, capture.id)) }
   }
@@ -144,22 +160,28 @@ class BlueprintTemplateCreator extends RpcTarget {
     if (!capture.upload && !this.issued.has(upload)) throw new Error('Загрузка не принадлежит операции')
     this.storage.put(`blueprint-template:${this.id}`, { ...capture, upload })
   }
-  async propose(scope: string, scopeRevision: number) {
+  async propose(scope: string, scopeRevision: number, explanation?:string) {
     const capture = this.read()
     if (!capture.version) throw new Error('Сначала сохраните версию шаблона')
-    if (capture.promotion && (capture.promotion.scope !== scope || capture.promotion.revision !== scopeRevision)) throw new Error('Предложение уже связано с другой областью')
+    const message=explanation?.trim()??capture.purpose
+    if(!message||message.length>4096||capture.improvement&&!explanation?.trim())throw Error('Объясните изменения шаблона')
+    if(capture.improvement){
+      if(scope!==capture.improvement.scope_id||scopeRevision!==capture.improvement.scopeRevision)throw Error('Предложение относится к исходной группе')
+      await this.session.readWorkTemplateSelection([{scope_id:capture.improvement.scope_id,template_key:capture.improvement.template_key,revision:capture.improvement.revision}])
+    }
+    if (capture.promotion && (capture.promotion.scope !== scope || capture.promotion.revision !== scopeRevision || (capture.promotion.message??capture.purpose)!==message)) throw new Error('Предложение уже связано с другой областью')
     const version = await this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
-    let catalogueRevision=capture.promotion?.catalogueRevision??0
-    if(!capture.promotion&&capture.expectedRevision){
+    let catalogueRevision=capture.promotion?.catalogueRevision??capture.improvement?.revision??0
+    if(!capture.promotion&&!capture.improvement&&capture.expectedRevision){
       try{catalogueRevision=(await this.session.readScopedWorkTemplate(scope,capture.template??capture.id,0)).revision}
       catch(error){if(!(error instanceof MnemosAPIError)||error.status!==404)throw error}
     }
     const input = {project_id: capture.project, request_id: capture.id, revision: version.revision,
-      target_scope_id: scope, target_scope_revision: scopeRevision, template_key: capture.template??capture.id,
-      expected_catalogue_revision: catalogueRevision, message: capture.purpose}
+      target_scope_id: scope, target_scope_revision: scopeRevision, template_key: capture.improvement?.template_key??capture.template??capture.id,
+      expected_catalogue_revision: catalogueRevision, message}
     const previous = await this.session.readSavedTemplateAction(capture.project)
     const action = await this.session.saveTemplateAction(capture.project, {kind: 'propose', template: capture.template??capture.id, input}, previous?.id ?? '')
-    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision, catalogueRevision}})
+    this.storage.put(`blueprint-template:${this.id}`, {...capture, promotion: {scope, revision: scopeRevision, catalogueRevision,message}})
     const result = await this.session.executeSavedTemplateAction(capture.project, action.id)
     if (result.receipt?.kind !== 'propose') throw new Error('Предложение не подтверждено')
     return result.receipt.proposal

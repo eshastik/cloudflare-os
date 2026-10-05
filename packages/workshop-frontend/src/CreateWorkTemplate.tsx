@@ -16,6 +16,7 @@ const kinds:Record<WorkTemplateKind,{title:string;description:string}>={
 }
 export default function CreateWorkTemplate({editing}:{editing?:TemplateEditingContext & {item:ChatWorkTemplate}}){
  const {authenticatedApi}=useAuthenticatedApi(),navigate=useNavigate()
+ const improving=editing&&'scope_id' in editing.reference
  const [open,setOpen]=useState(false),[kind,setKind]=useState<WorkTemplateKind>(editing?.item.kind??'document')
  const [formats,setFormats]=useState<OutputFormatOffer[]|null>(null),[formatId,setFormatId]=useState('')
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[reload,setReload]=useState(0)
@@ -61,7 +62,7 @@ export default function CreateWorkTemplate({editing}:{editing?:TemplateEditingCo
  const editorActions=<>
    <div className="mt-4 flex justify-end gap-2"><WorkshopButton disabled={busy} onClick={()=>setOpen(false)}>Отмена</WorkshopButton><WorkshopButton tone="primary" disabled={busy||!formatId||formats===null} onClick={()=>void create()}>{busy?'Открываем…':'Открыть редактор'}</WorkshopButton></div>
  </>
- if(editing)return <div className="contents">{!open?<WorkshopButton onClick={()=>setOpen(true)}>Редактировать</WorkshopButton>:<section aria-label="Открыть шаблон в редакторе" className="order-last basis-full pt-2"><p className="mb-3 text-[13px] leading-5 text-kumo-subtle">Изменения будут сохранены следующей версией этого личного шаблона.</p>{editorControls}{editorActions}</section>}</div>
+ if(editing)return <div className="contents">{!open?<WorkshopButton onClick={()=>setOpen(true)}>{improving?'Предложить улучшение':'Редактировать'}</WorkshopButton>:<section aria-label="Открыть шаблон в редакторе" className="order-last basis-full pt-2"><p className="mb-3 text-[13px] leading-5 text-kumo-subtle">{improving?'Откроется личная копия. Сохраните изменения и объясните их перед отправкой группе. Общий шаблон изменится только после согласования.':'Изменения будут сохранены следующей версией этого личного шаблона.'}</p>{editorControls}{editorActions}</section>}</div>
  return <><WorkshopButton onClick={()=>setOpen(true)}>{editing?'Редактировать':'Создать шаблон'}</WorkshopButton>
   <Dialog.Root open={open} onOpenChange={value=>{if(!busy)setOpen(value)}}><Dialog size="base" className="!w-[min(480px,calc(100vw-24px))] bg-kumo-base !p-5">
    <Dialog.Title className="text-[18px] font-medium">{editing?'Редактировать шаблон':'Создать шаблон'}</Dialog.Title>

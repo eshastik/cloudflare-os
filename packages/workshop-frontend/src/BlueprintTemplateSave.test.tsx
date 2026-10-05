@@ -158,3 +158,15 @@ test('Редактирование каталога сохраняет ту же
  await React.act(async()=>button('Сохранить изменения шаблона').click())
  expect(mocks.selector.prepare).toHaveBeenCalledWith('project',material.title,material.purpose,{template_id:'existing',revision:3},'native-template:existing','cloudflareos.document','guidance')
 })
+
+test('Улучшение общей версии сохраняет личную копию и требует объяснения для исходной группы',async()=>{
+ const reference={scope_id:'finance',template_key:'method',revision:5};const material={reference,title:'Методика',purpose:'Проверять ТЗ',kind:'guidance' as const};
+ const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Методика',blocks:[{html:'<p>Проверка</p>'}]}};
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly initialTemplate={{context:{accountId:8,projectId:'project',reference},material}} initialKind="guidance" preferredProject={{accountId:8,projectId:'project'}} blueprint={{id:'editor',title:material.title,description:material.purpose}} format="cloudflareos.document" snapshotSource={{current:async()=>snapshot as never}} onClose={()=>{}}/>));
+ expect(mocks.selector.latest).not.toHaveBeenCalled();
+ await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(mocks.selector.prepare).toHaveBeenCalledWith('project','Методика','Проверять ТЗ',undefined,'native-improvement:editor:finance:method:5','cloudflareos.document','guidance',reference);
+ const send=button('Отправить улучшение на согласование');expect(send.disabled).toBe(true);const scope=container.querySelector<HTMLSelectElement>('select')!;expect(scope.value).toBe('finance');expect(scope.disabled).toBe(true);
+ await React.act(async()=>{const textarea=container.querySelector<HTMLTextAreaElement>('[aria-label="Объяснение улучшения"]')!;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(textarea,'Добавить проверяемые критерии');textarea.dispatchEvent(new Event('input',{bubbles:true}))});
+ expect(send.disabled).toBe(false);await React.act(async()=>send.click());expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,'Добавить проверяемые критерии');expect(container.textContent).toContain('прежняя сохранится');
+});

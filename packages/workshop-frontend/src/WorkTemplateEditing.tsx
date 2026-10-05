@@ -45,7 +45,7 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
   finally{editor?.[Symbol.dispose]();disposeGatekeeperFrame(frame);if(opening.current===attempt){opening.current=null;if(!owner.signal.aborted)setBusy(false)}}
  }
  return <section aria-label="Редактирование версии шаблона" className="shrink-0 border-b border-kumo-line px-4 py-3">
-  {material?<p className="m-0 text-[13px] text-kumo-subtle">Открыта версия {context.reference.revision}: {material.title}. Сохранение создаст новую версию.</p>:<><p className="m-0 mb-2 text-[13px] leading-5 text-kumo-subtle">Откройте версию {context.reference.revision} для редактирования. Она заменит текущий текст этого черновика. Сохранённый шаблон и прежние задачи сохранят свои версии.</p><WorkshopButton tone="primary" disabled={busy} onClick={()=>void open()}>{busy?'Открываем версию…':'Открыть выбранную версию'}</WorkshopButton></>}
+  {material?<p className="m-0 text-[13px] text-kumo-subtle">Открыта версия {context.reference.revision}: {material.title}. {'scope_id' in context.reference?'Сохранение создаст личную правку для согласования.':'Сохранение создаст новую версию.'}</p>:<><p className="m-0 mb-2 text-[13px] leading-5 text-kumo-subtle">Откройте версию {context.reference.revision} для редактирования. Она заменит текущий текст этого черновика. Сохранённый шаблон и прежние задачи сохранят свои версии.</p><WorkshopButton tone="primary" disabled={busy} onClick={()=>void open()}>{busy?'Открываем версию…':'Открыть выбранную версию'}</WorkshopButton></>}
   {error&&<p role="alert" className="mt-2 text-[13px] text-kumo-danger">{error}</p>}
  </section>
 }
