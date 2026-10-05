@@ -26,7 +26,7 @@ export default function CreateWorkTemplate(){
   let active=true;setFormats(null);setError('')
   void authenticatedApi.listOutputFormats().then(list=>{
    if(!active)return
-   const documents=list.filter(item=>item.output.id==='cloudflareos.document'&&!item.requiresSetup)
+   const documents=list.filter(item=>item.output.id==='document'&&!item.requiresSetup)
    setFormats(documents);setFormatId(old=>documents.some(item=>item.blueprintId===old)?old:documents.length===1?documents[0].blueprintId:'')
   },()=>{if(active)setError('Не удалось загрузить редактор документа. Повторите загрузку.')})
   return()=>{active=false}

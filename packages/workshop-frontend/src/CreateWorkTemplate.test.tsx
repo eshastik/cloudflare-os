@@ -9,7 +9,7 @@ import CreateWorkTemplate from './CreateWorkTemplate'
 (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true
 
 test('Автор выбирает вид, открывает только нативный редактор; повтор перехода использует тот же черновик',async()=>{
- mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'sheet',output:{id:'cloudflareos.spreadsheet'}},{blueprintId:'setup',output:{id:'cloudflareos.document'},requiresSetup:true},{blueprintId:'native-doc',output:{id:'cloudflareos.document'}}])
+ mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'sheet',output:{id:'spreadsheet'}},{blueprintId:'setup',output:{id:'document'},requiresSetup:true},{blueprintId:'native-doc',output:{id:'document'}}])
  mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:mocks.metadata,[Symbol.dispose]:mocks.dispose});mocks.metadata.mockRejectedValueOnce(Error('потерян ответ')).mockResolvedValue({id:'draft'});mocks.navigate.mockResolvedValue(undefined)
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
  const button=(title:string)=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent===title)!
@@ -27,7 +27,7 @@ test('Выход из библиотеки отменяет переход и о
   vi.clearAllMocks();mocks.metadata.mockReset();mocks.api.newGadgetFromBlueprint.mockReset()
   let complete!:(value:unknown)=>void;const pending=new Promise(resolve=>{complete=resolve})
   const editor={getMetadata:mocks.metadata,[Symbol.dispose]:mocks.dispose}
-  mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'native-doc',output:{id:'cloudflareos.document'}}])
+  mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'native-doc',output:{id:'document'}}])
   mocks.api.newGadgetFromBlueprint.mockReturnValue(phase==='creation'?pending:Promise.resolve(editor));mocks.metadata.mockReturnValue(phase==='metadata'?pending:Promise.resolve({id:'draft'}))
   const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
   const button=(title:string)=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent===title)!
