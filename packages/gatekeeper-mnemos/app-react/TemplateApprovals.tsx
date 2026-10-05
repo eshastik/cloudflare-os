@@ -5,7 +5,7 @@ import {useHost,useUi} from "./host.ts";
 import {Notice} from "./ui.tsx";
 import {Field,FieldInput,Pill,RowTitle} from "./admin-ui.tsx";
 import {personName} from "./data.ts";
-import {readTemplateProposalText,readTemplateBaselineText} from "../app/template-source.ts";
+import {readTemplateProposalPreview,readTemplateBaselinePreview} from "../app/template-source.ts";
 import type {TemplatePromotionReview,TemplateScope,TemplateReviewRequirement} from "../src/work-templates.ts";
 import type {SavedTemplateDecision,SavedTemplateContentDecision} from "../src/template-review-actions.ts";
 
@@ -19,6 +19,7 @@ export async function loadTemplateReviews(ui:ReturnType<typeof useUi>):Promise<{
 export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
  const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
  const [baseline,setBaseline]=useState<string|null>(null);
+ const [documentHtml,setDocumentHtml]=useState<string|undefined>(),[baselineHtml,setBaselineHtml]=useState<string|undefined>();
  const changes=baseline!==null&&text!==null?templateTextChanges(baseline,text):null;
  const [gadget,setGadget]=useState<{project:string;node:string}|null>(null);
  const [review,setReview]=useState(item);
@@ -26,8 +27,8 @@ export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:
  const requirements=proposal.scope_path.flatMap(s=>(s.review_requirements??[]).map(r=>({scope:s,requirement:r})));
  const mayPublish=scope.approvers.includes(userId)&&userId!==proposal.user_id&&userId!==proposal.source_owner_id;
  const contentApproved=requirements.every(({scope:s,requirement:r})=>r.approvers.every(u=>review.content_decisions?.some(d=>d.scope_id===s.scope_id&&d.domain_id===r.domain_id&&d.reviewer_id===u&&d.approved)));
- async function inspect(){setOpen(true);setBusy(true);setError("");setReady(false);setText(null);setBaseline(null);setGadget(null);
-  try{const current=await ui.readTemplateProposal(id);setReview(current);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}setReady(true);const source=await ui.readTemplateProposalSource(id);if(source.source.content_type===BLUEPRINT_TEMPLATE_MIME)setGadget({project:source.source.project_id,node:source.source.node_id});setReady(true);const preview=await readTemplateProposalText(ui,id,(...args)=>host.downloadText(...args));const before=await readTemplateBaselineText(ui,id,(...args)=>host.downloadText(...args));setBaseline(before);setText(preview);}
+ async function inspect(){setOpen(true);setBusy(true);setError("");setReady(false);setText(null);setBaseline(null);setDocumentHtml(undefined);setBaselineHtml(undefined);setGadget(null);
+  try{const current=await ui.readTemplateProposal(id);setReview(current);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}setReady(true);const source=await ui.readTemplateProposalSource(id);if(source.source.content_type===BLUEPRINT_TEMPLATE_MIME)setGadget({project:source.source.project_id,node:source.source.node_id});setReady(true);const preview=await readTemplateProposalPreview(ui,id,(...args)=>host.downloadText(...args));const before=await readTemplateBaselinePreview(ui,id,(...args)=>host.downloadText(...args));setBaseline(before?.text??null);setBaselineHtml(before?.documentHtml);setText(preview.text);setDocumentHtml(preview.documentHtml);}
   catch{setError("Не удалось открыть предложенную версию. Проверьте доступ и повторите.");}finally{setBusy(false);}
  }
  async function openGadget(){if(!gadget||busy)return;setBusy(true);setError("");try{await host.openTemplateProposal(gadget.project,gadget.node,id);}catch{setError("Копия шаблона не открылась. Повторите проверку предложенной версии.");}finally{setBusy(false);}}
@@ -48,6 +49,10 @@ export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:
     <h3 className="m-0 text-[14px] font-medium">Что изменилось</h3>
     {changes===null?<p className="m-0 text-kumo-subtle">Текст слишком длинный для краткого сравнения. Проверьте полные версии ниже.</p>:changes.length===0?<p className="m-0 text-kumo-subtle">Текст совпадает. Оформление и структуру нужно проверить отдельно.</p>:<ul className="m-0 grid list-none gap-2 p-0">{changes.map((change,index)=><li key={index} className="rounded-lg border border-kumo-fill px-3 py-2"><span className="mb-1 block text-[12px] font-medium text-kumo-subtle">{change.kind==='removed'?'Удалено':'Добавлено'}</span><p className="m-0 whitespace-pre-wrap break-words leading-6">{change.text||'Пустая строка'}</p></li>)}</ul>}
    </section>}
+   {documentHtml&&<details><summary className="cursor-pointer text-[13px] text-kumo-subtle">Просмотр документа</summary><p className="my-2 text-[12px] text-kumo-subtle">Заголовки, списки, таблицы и текстовое оформление. Изображения и внешние ресурсы не загружаются.</p><div className={baselineHtml?"grid gap-3 lg:grid-cols-2":""}>
+    {baselineHtml&&<section><h3 className="m-0 mb-2 text-[14px] font-medium">До изменений · общая версия {proposal.expected_catalogue_revision}</h3><iframe title="Документ до изменений" sandbox="" className="h-80 w-full rounded-lg border border-kumo-fill bg-white" srcDoc={baselineHtml}/></section>}
+    <section><h3 className="m-0 mb-2 text-[14px] font-medium">Предложенная версия</h3><iframe title="Предложенный документ" sandbox="" className="h-80 w-full rounded-lg border border-kumo-fill bg-white" srcDoc={documentHtml}/></section>
+   </div></details>}
    {text!==null&&<details open={baseline===null}><summary className="cursor-pointer text-[13px] text-kumo-subtle">{baseline===null?'Текст предложенной версии':'Полные тексты версий'}</summary><div className={baseline===null?"":"grid gap-3 lg:grid-cols-2"}>
     {baseline!==null&&<section aria-label="До изменений"><h3 className="m-0 mb-2 text-[14px] font-medium">До изменений · общая версия {proposal.expected_catalogue_revision}</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-kumo-fill pt-3 font-sans text-[14px] leading-6">{baseline}</pre></section>}
     <section aria-label="Предложенная версия"><h3 className="m-0 mb-2 text-[14px] font-medium">Предложенная версия</h3><pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-kumo-fill pt-3 font-sans text-[14px] leading-6">{text}</pre></section>

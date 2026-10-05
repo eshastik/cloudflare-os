@@ -1,18 +1,26 @@
+import {documentPreviewSource} from '@gadgets/workshop-shared/document-preview-html'
 import {BLUEPRINT_TEMPLATE_MIME, decodeBlueprintTemplate} from '@gadgets/workshop-shared/blueprint-template'
 import type {MnemosAccountSession} from "../src/account-session.ts";
 type API=Pick<MnemosAccountSession,"readTemplateProposalSource">;
 type BaselineAPI=Pick<MnemosAccountSession,"readTemplateProposalBaseline">;
 export type TemplateTextDownload=(project:string,node:string,version:string,side:number)=>Promise<string>;
-/** The opaque iframe delegates storage transfer and integrity checks to the human host. */
+/** Загрузка и проверка целостности остаются у оболочки. */
+export type TemplatePreview = {text:string;documentHtml?:string};
 export async function readTemplateProposalText(api:API,id:string,download:TemplateTextDownload):Promise<string>{
- return readTemplateText(()=>api.readTemplateProposalSource(id),id,download,"template-proposal:");
+ return (await readTemplateProposalPreview(api,id,download)).text;
+}
+export async function readTemplateProposalPreview(api:API,id:string,download:TemplateTextDownload):Promise<TemplatePreview>{
+ return readTemplatePreview(()=>api.readTemplateProposalSource(id),id,download,"template-proposal:");
 }
 export async function readTemplateBaselineText(api:BaselineAPI,id:string,download:TemplateTextDownload):Promise<string|null>{
+ return (await readTemplateBaselinePreview(api,id,download))?.text??null;
+}
+export async function readTemplateBaselinePreview(api:BaselineAPI,id:string,download:TemplateTextDownload):Promise<TemplatePreview|null>{
  const baseline=await api.readTemplateProposalBaseline(id);
  if(!baseline)return null;
- return readTemplateText(async()=>{const source=await api.readTemplateProposalBaseline(id);if(!source)throw Error("Исходная версия недоступна");return {proposal_id:id,source};},id,download,"template-baseline:");
+ return readTemplatePreview(async()=>{const source=await api.readTemplateProposalBaseline(id);if(!source)throw Error("Исходная версия недоступна");return {proposal_id:id,source};},id,download,"template-baseline:");
 }
-async function readTemplateText(read:()=>ReturnType<API["readTemplateProposalSource"]>,id:string,download:TemplateTextDownload,prefix:string):Promise<string>{
+async function readTemplatePreview(read:()=>ReturnType<API["readTemplateProposalSource"]>,id:string,download:TemplateTextDownload,prefix:string):Promise<TemplatePreview>{
  const source=await read();
  const mime=source.source.content_type;if(!mime.startsWith("text/")&&mime!=="application/json"&&!mime.endsWith("+json"))throw new Error("Source is not a text artifact");
  const text=await download(source.source.project_id,source.source.node_id,prefix+id,0);
@@ -22,17 +30,17 @@ async function readTemplateText(read:()=>ReturnType<API["readTemplateProposalSou
   const snapshot=await decodeBlueprintTemplate(new TextEncoder().encode(text));
   const content=snapshot.nativeDocument;
   const heading=`${snapshot.blueprint.title}\nВерсия шаблона: ${snapshot.blueprint.version}`;
-  if(!content)return `${heading}\n\nШаблон приложения без исходных данных документа.`;
-  if(content.format==='cloudflareos.document')return `${heading}\n\n${documentTemplateText(content.document)}`;
-  return `${heading}\n\n${JSON.stringify(content.document,null,2)}`;
+  if(!content)return {text:`${heading}\n\nШаблон приложения без исходных данных документа.`};
+  if(content.format==='cloudflareos.document'){const preview=documentTemplatePreview(content.document);return {...preview,text:`${heading}\n\n${preview.text}`};}
+  return {text:`${heading}\n\n${JSON.stringify(content.document,null,2)}`};
  }
  if(mime==='application/vnd.cloudflareos.document+json'){
   const snapshot=JSON.parse(text);
   if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot)||snapshot.format!=='cloudflareos.document'||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw Error('Неподдерживаемый снимок документа');
-  return documentTemplateText(snapshot.document);
+  return documentTemplatePreview(snapshot.document);
  }
  if(/^application\/vnd\.cloudflareos\./.test(mime))throw Error('Просмотр этого нативного формата пока не поддерживается');
- return text;
+ return {text};
 }
 
 function documentTemplateText(value:unknown):string{
@@ -46,4 +54,11 @@ function documentTemplateText(value:unknown):string{
  });
  const title='title' in value&&typeof value.title==='string'?value.title.trim():'';
  return [title,...paragraphs].filter(Boolean).join('\n\n');
+}
+
+function documentTemplatePreview(value:unknown):TemplatePreview{
+ const text=documentTemplateText(value);
+ const doc=value as {title?:string;blocks:{html:string}[]};
+ const heading=document.createElement("h1");heading.textContent=typeof doc.title==="string"?doc.title:"";
+ return {text,documentHtml:documentPreviewSource((heading.textContent?heading.outerHTML:"")+doc.blocks.map(block=>block.html).join("\n"))};
 }

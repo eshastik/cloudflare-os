@@ -112,6 +112,10 @@
     "./work-template": {
       "types": "./src/work-template.ts",
       "import": "./src/work-template.ts"
+    },
+    "./document-preview-html": {
+      "types": "./src/document-preview-html.ts",
+      "import": "./src/document-preview-html.ts"
     }
   },
   "scripts": {

@@ -72,8 +72,8 @@ test('при недоступной общей версии нельзя одо�
 });
 
 test('общая и предложенная версии видны рядом до принятия решения',async()=>{
- const backend=api();backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:'text/plain'});
- const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>version.startsWith('template-baseline:')?'Утверждённый текст':'Предлагаемый текст'});
+ const backend=api(),readSource=backend.readTemplateProposalSource;backend.readTemplateProposalSource=async()=>{const source=await readSource();return {...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}}};backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:'application/vnd.cloudflareos.document+json'});
+ const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{blocks:[{html:version.startsWith('template-baseline:')?'<h2>Утверждённый текст</h2>':'<h2>Предлагаемый текст</h2>'}]}})});
  try{
   await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
   await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
@@ -81,6 +81,7 @@ test('общая и предложенная версии видны рядом 
   assert.match(app.document.querySelector('[aria-label="Предложенная версия"]').textContent,/Предлагаемый текст/);
   assert.deepEqual(app.calls.find(([method,_p,_n,version])=>method==='downloadText'&&version.startsWith('template-baseline:')),['downloadText','old-project','old-doc','template-baseline:q',0]);
   const changes=app.document.querySelector('[aria-label="Изменения текста"]');assert.match(changes.textContent,/Удалено.*Утверждённый текст.*Добавлено.*Предлагаемый текст/);assert.equal(app.document.querySelector('details').open,false);
+   const beforeFrame=app.document.querySelector('iframe[title="Документ до изменений"]'),afterFrame=app.document.querySelector('iframe[title="Предложенный документ"]');assert.match(beforeFrame.srcdoc,/<h2>Утверждённый текст/);assert.match(afterFrame.srcdoc,/<h2>Предлагаемый текст/);assert.equal(beforeFrame.getAttribute('sandbox'),'');assert.equal(afterFrame.getAttribute('sandbox'),'');
   assert.equal(backend.writes.length,0);
  }finally{app.dispose()}
 });

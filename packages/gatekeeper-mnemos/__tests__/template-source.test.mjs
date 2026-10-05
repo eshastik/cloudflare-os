@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../app/template-source.ts',import.meta.url))],bundle:true,format:'esm',platform:'node',write:false});
-const {readTemplateProposalText,readTemplateBaselineText}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {readTemplateProposalText,readTemplateBaselineText,readTemplateProposalPreview}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const source={proposal_id:'proposal',source:{template_id:'template',revision:2,source_head:'a'.repeat(64),project_id:'project',node_id:'node',content_type:'text/plain'}};
 test('template preview uses host capability and rechecks source after transfer',async()=>{
  let reads=0;const text='<script>Exact source</script>';
@@ -58,4 +58,14 @@ test('неподдерживаемый снимок не выдаётся как
  const metadata={...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}};
  for(const snapshot of [null,[],{format:'cloudflareos.document',formatVersion:2,document:{blocks:[]}},{format:'cloudflareos.document',formatVersion:1,document:{blocks:[]},unexpected:true},{format:'cloudflareos.document',formatVersion:1,document:{blocks:[{html:42}]}}])await assert.rejects(readTemplateProposalText({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(snapshot)));
  await assert.rejects(readTemplateProposalText({readTemplateProposalSource:async()=>({...metadata,source:{...metadata.source,content_type:'application/vnd.cloudflareos.spreadsheet+json'}})},'proposal',async()=>'{}'));
+});
+
+test('оформление нативного шаблона доступно без активной разметки и внешних ресурсов',async()=>{
+ const dom=new JSDOM('<main></main>');globalThis.document=dom.window.document;
+ try{
+  const metadata={...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}};
+  const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'<img src=x>',blocks:[{html:'<h2 style="color:red" onclick="run()">Требования</h2><table><tr><td colspan="2">Срок</td></tr></table><script>execute()</script><img src="https://external.invalid/track"><a href="https://external.invalid">Ссылка</a><span style="background-image:url(https://external.invalid)">Текст</span>'}]}};
+  const preview=await readTemplateProposalPreview({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(snapshot));
+  assert.match(preview.text,/Требования/);assert.match(preview.documentHtml,/<h2 style="color: red;">Требования/);assert.match(preview.documentHtml,/<td colspan="2">Срок/);assert.match(preview.documentHtml,/&lt;img src=x&gt;/);assert.match(preview.documentHtml,/default-src 'none'/);assert(!/onclick|<script|<img|href=|external.invalid|background-image|execute/.test(preview.documentHtml));
+ }finally{dom.window.close();delete globalThis.document}
 });
