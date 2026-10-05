@@ -48,8 +48,8 @@ test('просмотр общей версии выдаёт только мет�
  await assert.rejects(templates.validatePreview(ref,'c'.repeat(64)));source.content_type='application/octet-stream';await assert.rejects(templates.preview(ref));
 });
 
-test('личная правка обновляет исходный общий ключ и закреплённую версию через согласование',async()=>{
- const entries=new Map<string,unknown>();let denied=false,level='group',kind='guidance';let version:any,action:any;const writes:any[]=[];
+for(const scopeLevel of ['group','department','organization'])test('личная правка обновляет исходный общий ключ: '+scopeLevel,async()=>{
+ const entries=new Map<string,unknown>();let denied=false,level=scopeLevel,kind='guidance';let version:any,action:any;const writes:any[]=[];
  const ref={scope_id:'team',template_key:'method',revision:5};
  const session={
   async readWorkTemplateSelection(references:any){if(denied)throw Error('denied');assert.deepEqual(references,[ref]);return {materials:[{scoped:{source:{kind,content_type:'application/vnd.cloudflareos.document+json'}}}]};},
@@ -63,7 +63,7 @@ test('личная правка обновляет исходный общий �
  };
  const storage={get:(key:string)=>entries.get(key),put:(key:string,value:unknown)=>entries.set(key,structuredClone(value))};
  const templates=new BlueprintTemplates(session as any,storage as any);
- level='department';await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref));level='group';
+ denied=true;await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref));denied=false;
  kind='document';await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref));kind='guidance';
  const prepared=await templates.prepare('project','Методика','ТЗ',undefined,'copy','cloudflareos.document','guidance',ref);
  await prepared.creator.issue(100,'checksum');await prepared.creator.checkpoint('upload');const saved=await prepared.creator.save();assert.notEqual(saved.template_id,ref.template_key);assert.equal(saved.revision,1);

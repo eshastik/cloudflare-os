@@ -38,3 +38,9 @@ test('частичный отказ повторяет только недост
  const g=fixture();g.people[1].can_read=false;const deniedPlan=await templateReviewAccess(g.session,g.version,'group',1);
  await assert.rejects(shareTemplateForReview(g.session,g.version,'group',1,deniedPlan.key),/записи/);assert.equal(g.writes.length,0);assert.equal(g.people[1].mode,'write');
 });
+
+for(const [scope,revision,expected] of [['dept',3,['expert','unneeded-parent-publisher']],['org',4,['expert','org-publisher']]] as const)test('согласование правки в исходной области '+scope,async()=>{
+ const f=fixture();f.people.push({principal_id:'unneeded-parent-publisher',display_name:'Отдел',mode:'read',can_read:true},{principal_id:'org-publisher',display_name:'Организация',mode:'read',can_read:true});
+ const plan=await templateReviewAccess(f.session,f.version,scope,revision);assert.deepEqual(plan.reviewers.map(p=>p.id),expected);assert.equal(plan.path[0][0],scope);assert.equal(plan.path.length,scope==='dept'?2:1);assert.equal(f.writes.length,0);
+ f.scopes[2].revision++;await assert.rejects(shareTemplateForReview(f.session,f.version,scope,revision,plan.key));assert.equal(f.writes.length,0);
+});

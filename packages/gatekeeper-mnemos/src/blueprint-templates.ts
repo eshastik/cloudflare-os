@@ -25,7 +25,7 @@ export class BlueprintTemplates extends RpcTarget {
       const scopes:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes']=[];let cursor=''
       do{const page=await this.session.listTemplateScopes(cursor);scopes.push(...page.scopes);cursor=page.next_cursor||''}while(cursor)
       const scope=scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled)
-      if(scope?.level==='group')improvement={scope_id:scope.scope_id,revision:scope.revision,name:scope.name}
+      if(scope)improvement={scope_id:scope.scope_id,revision:scope.revision,name:scope.name}
       const parent=scopes.find(item=>item.scope_id===scope?.parent_id&&item.enabled)
       if(parent&&(parent.level==='department'||parent.level==='organization'))promotion={scope_id:parent.scope_id,revision:parent.revision,name:parent.name,level:parent.level}
     }
@@ -132,8 +132,8 @@ export class BlueprintTemplates extends RpcTarget {
       const material=(await this.session.readWorkTemplateSelection([ref])).materials[0]
       if(!material.scoped||material.scoped.source.kind!==kind||material.scoped.source.content_type!==contentType)throw Error('Вид или формат исходного шаблона не совпадает')
       let scope:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes'][number]|undefined,cursor=''
-      do{const page=await this.session.listTemplateScopes(cursor);scope??=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled&&item.level==='group');cursor=page.next_cursor||''}while(cursor)
-      if(!scope)throw Error('Личную правку сначала согласуют в группе')
+      do{const page=await this.session.listTemplateScopes(cursor);scope??=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled);cursor=page.next_cursor||''}while(cursor)
+      if(!scope)throw Error('Исходная область согласования недоступна')
       improvement={scope_id:ref.scope_id,template_key:ref.template_key,revision:ref.revision,scopeRevision:scope.revision}
     }
     const { head } = await this.session.openDraft(project)
@@ -188,7 +188,7 @@ class BlueprintTemplateCreator extends RpcTarget {
     const message=explanation?.trim()??capture.purpose
     if(!message||message.length>4096||capture.improvement&&!explanation?.trim())throw Error('Объясните изменения шаблона')
     if(capture.improvement){
-      if(scope!==capture.improvement.scope_id||scopeRevision!==capture.improvement.scopeRevision)throw Error('Предложение относится к исходной группе')
+      if(scope!==capture.improvement.scope_id||scopeRevision!==capture.improvement.scopeRevision)throw Error('Предложение относится к исходной области')
       await this.session.readWorkTemplateSelection([{scope_id:capture.improvement.scope_id,template_key:capture.improvement.template_key,revision:capture.improvement.revision}])
     }
     if (capture.promotion && (capture.promotion.scope !== scope || capture.promotion.revision !== scopeRevision || (capture.promotion.message??capture.purpose)!==message)) throw new Error('Предложение уже связано с другой областью')

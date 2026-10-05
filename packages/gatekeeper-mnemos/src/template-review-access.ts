@@ -12,7 +12,10 @@ export async function templateReviewAccess(session:MnemosAccountSession,version:
  const scopes:TemplateScope[]=[];let cursor='';
  do{const page=await session.listTemplateScopes(cursor);scopes.push(...page.scopes);cursor=page.next_cursor||'';}while(cursor);
  const path:TemplateScope[]=[];let id=scopeId;
- for(const level of ['group','department','organization']){
+ const levels=['group','department','organization'];
+ const first=scopes.find(s=>s.scope_id===scopeId&&s.enabled),start=levels.indexOf(first?.level??'');
+ if(start<0)throw Error('Область согласования недоступна');
+ for(const level of levels.slice(start)){
   const scope=scopes.find(s=>s.scope_id===id&&s.enabled&&s.level===level);
   if(!scope||path.some(s=>s.scope_id===id))throw Error('Область согласования недоступна');
   path.push(scope);id=scope.parent_id;
