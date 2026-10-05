@@ -156,12 +156,12 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const Container=embedded?'section':Dialog;
  const Title=embedded?'h2':Dialog.Title;
  const Description=embedded?'p':Dialog.Description;
- const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={embedded?"flex w-full min-w-0 flex-col overflow-hidden bg-kumo-base p-0":"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"}>
+ const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={embedded?"flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-kumo-base p-0":"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"}>
    <div className={embedded?"sr-only":"flex shrink-0 justify-between gap-4 px-5 py-4"}>
     <div><Title className="text-[17px] font-medium">Шаблоны для задачи</Title><Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Description></div>
     {!embedded&&<WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>}
    </div>
-   <div className={embedded?"pb-5":"px-5 pb-4"}>
+   <div className={embedded?"shrink-0 pb-5":"shrink-0 px-5 pb-4"}>
     <label className="flex h-11 items-center gap-3 rounded-lg border border-kumo-line bg-kumo-base px-3 focus-within:border-kumo-brand"><MagnifyingGlass size={18} className="shrink-0 text-kumo-subtle"/><input autoFocus={!embedded} aria-label="Поиск шаблона" placeholder="Найти шаблон для задачи…" value={query} onChange={event=>setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none"/></label>
     <div className="mt-3 flex flex-wrap items-center gap-3">
      <div className="flex shrink-0 gap-1 rounded-lg bg-kumo-tint p-1" role="group" aria-label="Библиотеки шаблонов">{([['personal','Личные'],['shared','Общие']] as const).map(([value,label])=><button key={value} type="button" aria-pressed={library===value} onClick={()=>{setLibrary(value);if(value==='personal')setScopeId(null)}} className={'rounded-md px-3 py-1.5 text-[13px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(library===value?'bg-kumo-base font-medium text-kumo-default shadow-sm':'text-kumo-subtle hover:text-kumo-default')}>{label}</button>)}</div>
@@ -172,7 +172,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
     </div>
     <div className="mt-3 flex flex-wrap gap-1" role="group" aria-label="Виды шаблонов">{filters.map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={'rounded-lg px-3 py-2 text-[13px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(kind===value?'bg-kumo-tint font-medium text-kumo-default':'text-kumo-subtle hover:bg-kumo-tint')}>{label}</button>)}</div>
    </div>
-   <div className={embedded?"min-h-0 flex-1":"min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-5"} aria-label="Рабочие шаблоны Mnemos">
+   <div className={embedded?"min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1":"min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-5"} aria-label="Рабочие шаблоны Mnemos">
     {scopeError&&<p role="alert" className="px-2 py-2 text-[13px]">{scopeError} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить загрузку областей</WorkshopButton></p>}
     {error&&<p role="alert" className="px-2 py-2 text-[13px]">{error} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton></p>}
     {loading&&<p role="status" className="px-2 py-4 text-[13px] text-kumo-subtle">Загрузка шаблонов…</p>}
@@ -186,7 +186,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
     </div>})}
     {cursor&&<WorkshopButton className="mt-2" disabled={loading} onClick={()=>void more()}>Загрузить ещё шаблоны</WorkshopButton>}
    </div>
-   <div className={embedded?"sticky bottom-0 shrink-0 border-t border-kumo-line bg-kumo-base py-4":"shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4"}>
+   <div className={embedded?"max-h-[45dvh] shrink-0 overflow-y-auto border-t border-kumo-line bg-kumo-base py-4":"shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4"}>
     {selected.length>0&&<div className="mb-3" aria-label="Выбранные шаблоны"><p className="mb-2 text-[12px] text-kumo-subtle">Материалы для задачи · {selected.length}</p><ul className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{selected.map(item=><li key={templateSelectionKey(item)} className="flex max-w-full items-center gap-1 rounded-lg border border-kumo-line py-1 pl-2 text-[12px]"><span className="min-w-0 truncate" title={item.title}>{item.title} · версия {item.reference.revision}</span><WorkshopIconButton aria-label={'Убрать: '+item.title} className="!h-6 !w-6" onClick={()=>remove(item)}><X size={12}/></WorkshopIconButton></li>)}</ul></div>}
     {selected.length>0&&<SelectedTemplateAgentAccess key={selectedKey} items={selected} onReady={setAgentReadyKey}/>}
     {selected.length>=16&&<p role="status" className="mb-3 text-[12px] text-kumo-subtle">Можно выбрать до 16 материалов. Уберите один, чтобы добавить другой.</p>}
