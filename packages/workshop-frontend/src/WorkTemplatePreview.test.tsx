@@ -39,3 +39,34 @@ test('отзыв перед показом скрывает загруженны
  await React.act(async()=>button('Повторить просмотр').click());await settle();
  expect(document.body.textContent).toContain('Секретная методика');expect(mocks.preview.mock.calls.map(args=>args[0])).toEqual([item.reference,item.reference]);
 });
+
+async function versions(mixed=false){
+ const tickets=new Map<number,unknown>(),bytes=new Map<string,Uint8Array>()
+ for(const revision of [4,5]){
+  const content=JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{title:'Форма ТЗ',blocks:[{html:mixed?'<div>Сумма '+(revision===4?'100':'500')+'<p>Условия оплаты</p></div>':revision===4?'<p>Уточните цель.</p>':'<p>Уточните цель.</p><p>Добавьте критерии приёмки.</p>'}]}})
+  const body=new TextEncoder().encode(content),digest=new Uint8Array(await webcrypto.subtle.digest('SHA-256',body));const url='https://objects.example/version-'+revision;bytes.set(url,body)
+  tickets.set(revision,{material:{reference:{...item.reference,revision},title:item.title,purpose:item.purpose,kind:item.kind},sourceHead:String(revision).repeat(64),ticket:{url,method:'GET',size_bytes:body.length,sha256_hex:[...digest].map(b=>b.toString(16).padStart(2,'0')).join(''),content_type:'application/vnd.cloudflareos.document+json'}})
+ }
+ mocks.preview.mockImplementation(async(ref:unknown)=>tickets.get((ref as {revision:number}).revision));vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(new Uint8Array(bytes.get(String(url))!))))
+}
+test('Прежняя версия выбирается точно; сравнение заново читает обе версии с правами',async()=>{
+ await versions();const toggle=vi.fn();await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} isSelected={viewed=>viewed.reference.revision===4} atLimit={true} onToggle={toggle} onBack={()=>{}} onClose={()=>{}}/>));await settle()
+ await React.act(async()=>button('Версии').click());await React.act(async()=>button('Предыдущая').click());await settle()
+ expect(document.body.textContent).toContain('версия 4');expect(document.body.textContent).not.toContain('Добавьте критерии приёмки.')
+ expect(button('Убрать из задачи').disabled).toBe(false);await React.act(async()=>button('Убрать из задачи').click());expect(toggle).toHaveBeenCalledWith(expect.objectContaining({reference:{template_id:'form',revision:4}}))
+ await React.act(async()=>button('Следующая').click());await settle();await React.act(async()=>button('Что изменилось').click())
+ await vi.waitFor(async()=>{await React.act(async()=>{});expect(document.body.querySelector('ins')?.textContent).toContain('Добавьте критерии приёмки.')},{interval:5,timeout:1000})
+ expect(mocks.preview.mock.calls.slice(-2).map(args=>args[0])).toEqual([{template_id:'form',revision:4},{template_id:'form',revision:5}]);expect(mocks.validate).toHaveBeenCalledWith({template_id:'form',revision:4},'4'.repeat(64));expect(mocks.validate).toHaveBeenCalledWith(item.reference,'5'.repeat(64))
+})
+test('Отказ доступа к одной версии не показывает частичное сравнение',async()=>{
+ await versions();await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle()
+ mocks.validate.mockRejectedValueOnce(Error('revoked'));await React.act(async()=>button('Версии').click());await React.act(async()=>button('Что изменилось').click())
+ await vi.waitFor(async()=>{await React.act(async()=>{});expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Сравнение недоступно')},{interval:5,timeout:1000})
+ expect(document.body.querySelector('ins,del')).toBeNull();expect(document.body.textContent).not.toContain('Добавьте критерии приёмки.')
+})
+
+test('Сравнение не пропускает текст рядом с вложенным абзацем',async()=>{
+ await versions(true);await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();await React.act(async()=>button('Версии').click());await React.act(async()=>button('Что изменилось').click())
+ await vi.waitFor(async()=>{await React.act(async()=>{});expect(document.body.querySelector('del')?.textContent).toBe('100');expect(document.body.querySelector('ins')?.textContent).toBe('500')},{interval:5,timeout:1000})
+ expect(document.body.textContent).not.toContain('Текст содержимого не изменился.')
+})
