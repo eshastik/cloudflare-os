@@ -4,7 +4,7 @@ import { readNativeDocumentLaunch, clearNativeDocumentLaunch, type NativeDocumen
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ClockCounterClockwise, DotsThree } from '@phosphor-icons/react'
-import { DropdownMenu } from '@cloudflare/kumo'
+import { Dialog, DropdownMenu } from '@cloudflare/kumo'
 import { MENU_CONTENT, MENU_ITEM, MENU_POSITIONER_STYLE } from './components/menuStyles'
 import type { RpcStub } from 'capnweb'
 import type { GadgetClient } from '@gadgets/workshop-shared/api'
@@ -835,7 +835,26 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   /** Как часто спрашивать сервер, пока история проекта готовится, мс. */
   historyPollMs?: number
 }) {
-  const status = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs, autosaveMs, flashMs, historyPollMs })
+  const rawStatus = useDocumentStatus({ gadget, format, snapshotSource, chatId, projectChatId, changesPollMs, autosaveMs, flashMs, historyPollMs })
+  const publicationKey = JSON.stringify([rawStatus.binding, rawStatus.data?.state, rawStatus.data?.review?.candidate_id, rawStatus.data?.review?.decision_version, rawStatus.data?.review?.ready, rawStatus.data?.review?.stale, rawStatus.changes, rawStatus.changedByOther])
+  const latestPublication = useRef({ key: publicationKey, blocked: false })
+  latestPublication.current = { key: publicationKey, blocked: !!disabled || rawStatus.busy || rawStatus.changes !== 0 || rawStatus.changedByOther }
+  const [publication, setPublication] = useState<{ key: string; run(): Promise<void>; approved: boolean; project: string | null } | null>(null)
+  const publicationRef = useRef(publication)
+  publicationRef.current = publication
+  const cancelPublication = () => { publicationRef.current = null; setPublication(null) }
+  const requestPublication = async (approved: boolean) => {
+    if (latestPublication.current.blocked || !rawStatus.binding || !rawStatus.data?.state) return
+    setPublication({ key: publicationKey, run: approved ? rawStatus.publish : rawStatus.submit, approved, project: rawStatus.projectLink?.name ?? null })
+  }
+  const confirmPublication = () => {
+    const request = publicationRef.current
+    if (!request || latestPublication.current.blocked || request.key !== latestPublication.current.key) return
+    cancelPublication()
+    void request.run()
+  }
+  const publicationChanged = !!publication && publication.key !== publicationKey
+  const status = { ...rawStatus, submit: () => requestPublication(false), publish: () => requestPublication(true) }
   const [panel, setPanel] = useState<{ open: boolean; section: PanelSection | null }>({ open: false, section: null })
   const [launch, setLaunch] = useState<NativeDocumentLaunch | null>(null)
 
@@ -881,5 +900,12 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
       onPrimary={onPrimary} onSecondary={status.withdraw} onOpenVersion={() => setPanel(old => ({ open: !old.open, section: null }))}
       onSaveToProject={() => setPanel({ open: true, section: 'save' })} />
     {panelHost ? createPortal(panelNode, panelHost) : panelNode}
+    {publication && <Dialog.Root open onOpenChange={open => { if (!open) cancelPublication() }}><Dialog size="base" className="!z-[1200] !w-[min(480px,calc(100vw-24px))] bg-kumo-base !p-5">
+      <Dialog.Title className="text-[18px] font-medium">Публикация изменений проекта</Dialog.Title>
+      <Dialog.Description className="mt-3 text-[14px] leading-6">{publication.approved ? 'Будет опубликована согласованная версия проекта.' : 'Будут отправлены все сохранённые изменения вашей личной версии проекта.'} {publication.project && <span>Проект: «{publication.project}».</span>}</Dialog.Description>
+      <p className="mt-3 text-[14px] leading-6 text-kumo-subtle">В публикацию могут попасть другие документы и личные заготовки шаблонов. {publication.approved ? 'Согласование относится ко всей этой версии.' : 'Если требуется согласование, изменения сначала получат согласующие. Иначе они сразу станут общими.'}</p>
+      {publicationChanged && <p role="alert" className="mt-3 text-[13px] text-kumo-danger">Версия изменилась. Закройте окно и начните публикацию заново.</p>}
+      <div className="mt-5 flex flex-wrap justify-end gap-2"><WorkshopButton onClick={cancelPublication}>Отмена</WorkshopButton><WorkshopButton tone="primary" disabled={publicationChanged || latestPublication.current.blocked} onClick={confirmPublication}>{publication.approved ? 'Опубликовать версию проекта' : 'Продолжить'}</WorkshopButton></div>
+    </Dialog></Dialog.Root>}
   </>
 }

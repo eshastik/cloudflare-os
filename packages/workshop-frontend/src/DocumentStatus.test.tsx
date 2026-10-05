@@ -96,6 +96,7 @@ type Faults = {
   preparing?: () => { done: number; total: number } | null
   select?: boolean; participants?: boolean; publications?: boolean; snapshot?: boolean; publish?: 'denied' | 'published' | 'path_taken'; published?: string[]
   /** История документа вместо стандартной; функция — перечитывается при каждом запросе. */
+  review?: PublicationReview
   history?: () => { id: string; recordedAt: string; actor: string; format: 'cloudflareos.document' }[] }
 const head = 'a'.repeat(64)
 
@@ -119,6 +120,8 @@ function frame(faults: Faults) {
       faults.published?.push(`${scope}:${personal}:${shared}`)
       return faults.publish === 'path_taken' ? { status: 'path_taken' } : faults.publish === 'denied' ? { status: 'denied' } : { status: 'published', personal_head: personal, shared_head: 'c'.repeat(64) }
     }
+    async review() { return faults.review }
+    async publishReview(scope: string, candidate: string) { faults.published?.push(scope + ':' + candidate); return { published: true } }
     async scopes() { return { scopes: [{ id: 'project', name: 'Mnemos' }] } }
     async documentLocation() { return { head, name: 'Последние коммиты', parent: 'folder-1' } }
     async folders() { return { folders: [{ id: 'folder-1', name: 'Презентации', parent: '' }], nextCursor: '' } }
@@ -198,6 +201,7 @@ it('отказ «Опубликовать» в праве: строка рядо
     await view.settled()
     expect(view.primary()?.textContent).toBe('Опубликовать')
     await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { ([...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Продолжить') as HTMLButtonElement).click() })
     await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[role="alert"]')).not.toBeNull()) })
     expect(published).toEqual([`project:${head}:${'b'.repeat(64)}`])
     expect(view.container.querySelector('[role="alert"]')!.textContent).toBe('Публикация не прошла: нет права записи в папку «Презентации» проекта «Mnemos». Попросите владельца проекта или администратора открыть вам правку.')
@@ -210,6 +214,7 @@ it('«Опубликовать» в проекте без согласовани
   try {
     await view.settled()
     await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { ([...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Продолжить') as HTMLButtonElement).click() })
     await act(async () => { await vi.waitFor(() => expect(published).toHaveLength(1)) })
     await view.settled()
     expect(view.container.querySelector('[role="alert"]')).toBeNull()
@@ -235,6 +240,7 @@ it('после «Опубликовать» шапка подтверждает 
     expect(view.status().textContent).toContain('Личная версия')
     expect((view.primary() as HTMLButtonElement).disabled).toBe(false)
     await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { ([...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Продолжить') as HTMLButtonElement).click() })
     await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[data-document-status] [role="status"]')?.textContent).toBe('Опубликовано в проект «Mnemos»')) })
     await vi.waitFor(async () => { await act(async () => {}); expect(view.status().textContent).toContain('Опубликовано · совпадает с опубликованной версией') }, { timeout: 2_000 })
     expect(view.status().textContent).not.toContain('Личная версия')
@@ -510,6 +516,7 @@ it('дубликаты имён при публикации: причина и �
   try {
     await view.settled()
     await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    await act(async () => { ([...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Продолжить') as HTMLButtonElement).click() })
     await act(async () => { await vi.waitFor(() => expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('Переименуйте')) })
     expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('все сохранённые изменения проекта')
     expect(view.container.querySelector('[role="alert"]')?.textContent).not.toContain('не подтверждён')
@@ -523,4 +530,54 @@ it('в компактной шапке ошибка видна текстом, �
     await act(async () => root.render(<DocumentStatusView compact model={deriveDocumentStatus(base)} error="Переименуйте документы" versionOpen={false} onPrimary={() => {}} onSecondary={() => {}} onOpenVersion={() => {}} />))
     expect(host.querySelector('[role="alert"]')?.textContent).toBe('Переименуйте документы')
   } finally { await act(async () => root.unmount()); host.remove() }
+})
+
+it('перед публикацией показан весь проект; отмена не отправляет документы и шаблоны', async () => {
+  const published: string[] = []
+  const view = await mountStatus({ faults: { publish: 'published', published }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('все сохранённые изменения')
+    expect(dialog.textContent).toContain('личные заготовки шаблонов')
+    expect(dialog.textContent).toContain('Mnemos')
+    expect(published).toEqual([])
+    await act(async () => { ([...dialog.querySelectorAll('button')].find(button => button.textContent === 'Отмена') as HTMLButtonElement).click() })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(published).toEqual([])
+  } finally { await view.unmount() }
+})
+
+it('правка после открытия подтверждения блокирует отправку прежней версии проекта', async () => {
+  const published: string[] = [], revision = { current: 7 }
+  const view = await mountStatus({ faults: { publish: 'published', published }, savedRevision: 7, revision, pollMs: 10 })
+  try {
+    await view.settled()
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    revision.current = 8
+    await vi.waitFor(async () => { await act(async () => {}); expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain('Версия изменилась') })
+    const proceed = [...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Продолжить') as HTMLButtonElement
+    expect(proceed.disabled).toBe(true)
+    await act(async () => { proceed.click() })
+    expect(published).toEqual([])
+  } finally { await view.unmount() }
+})
+
+it('согласованная версия публикуется после подтверждения ровно один раз', async () => {
+  const published: string[] = []
+  sessionStorage.setItem('mnemos-native-review:/:project', 'proposal')
+  const approved = review({ ready: true, personal_head: head, shared_head: 'b'.repeat(64) })
+  const view = await mountStatus({ faults: { publish: 'published', published, review: approved }, savedRevision: 7, revision: { current: 7 } })
+  try {
+    await view.settled()
+    await act(async () => { (view.primary() as HTMLButtonElement).click() })
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.textContent).toContain('согласованная версия проекта')
+    expect(published).toEqual([])
+    const confirm = [...dialog.querySelectorAll('button')].find(button => button.textContent === 'Опубликовать версию проекта') as HTMLButtonElement
+    await act(async () => { confirm.click(); confirm.click() })
+    await act(async () => { await vi.waitFor(() => expect(published).toEqual(['project:proposal'])) })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  } finally { await view.unmount() }
 })
