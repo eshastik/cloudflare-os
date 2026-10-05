@@ -7,6 +7,7 @@ const permission=vi.hoisted(()=>({ready:true}));
 vi.mock('./SelectedTemplateAgentAccess',()=>({default:({items,onReady}:{items:{accountId:number;reference:unknown}[];onReady(key:string):void})=>{React.useEffect(()=>{if(permission.ready)onReady(JSON.stringify(items.map(item=>[item.accountId,item.reference])))},[items,onReady]);return <p>Проверка доступа агента</p>}}));
 const api = vi.hoisted(() => ({ listChatTemplateAccounts:vi.fn(),listChatProjects:vi.fn(),listChatTemplateScopes:vi.fn(),listChatTemplates:vi.fn(),listOutputFormats: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listOwnBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listLibraryBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listFeaturedBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>() }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
+vi.mock('./readWorkTemplatePreview',()=>({readWorkTemplatePreview:async (_api:unknown,_account:unknown,reference:unknown)=>({material:{reference,title:'Форма ТЗ',purpose:'Создать документ',kind:'document'},content:'Критерии приёмки'})}));
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 function setup() {
   permission.ready=true
@@ -169,5 +170,29 @@ it('общая библиотека видна сразу, выбирается 
   expect(api.listChatTemplates).toHaveBeenLastCalledWith(9,null,'','source9');
   expect(host.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Форма ТЗ · версия 5');
   expect(selected).not.toHaveBeenCalled();
+ }finally{await React.act(async()=>root.unmount());host.remove()}
+});
+
+it('выбор и удаление в просмотре возвращают к библиотеке с точной версией и сохраняют остальные материалы',async()=>{
+ setup();const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn(),close=vi.fn();
+ try{
+  await React.act(async()=>root.render(<ChatTemplatePicker onSelect={selected} onClose={close}/>));
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Методика ТЗ'))!.click());
+  await React.act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Версии')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Предыдущая')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Выбрать для задачи')!.click());
+  expect(document.querySelector('[aria-label="Содержимое шаблона"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Форма ТЗ · версия 4');
+  expect(document.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Методика ТЗ · версия 3');
+  expect(selected).not.toHaveBeenCalled();expect(close).not.toHaveBeenCalled();
+  await React.act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Версии')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Предыдущая')!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Убрать из задачи')!.click());
+  expect(document.querySelector('[aria-label="Содержимое шаблона"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).not.toContain('Форма ТЗ');
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Использовать выбранные'))!.click());
+  expect(selected.mock.calls[0][0].mnemos.map((item:{reference:unknown})=>item.reference)).toEqual([{template_id:'method',revision:3}]);
  }finally{await React.act(async()=>root.unmount());host.remove()}
 });

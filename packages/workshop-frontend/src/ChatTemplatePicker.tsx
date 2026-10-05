@@ -150,7 +150,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const filters=[['all','Все'],['document','Формы'],['guidance','Методики'],['agent_instructions','Инструкции'],['skill','Навыки']] as const;
  const chosen=(item:ChatWorkTemplate)=>selected.some(s=>templateSelectionKey(s)===templateSelectionKey(item));
  const remove=(item:ChatWorkTemplate)=>setSelected(old=>old.filter(s=>templateSelectionKey(s)!==templateSelectionKey(item)));
- if(preview)return <WorkTemplatePreview key={templateSelectionKey(preview)} editingProject={embedded&&accountId!==null&&projectId?{accountId,projectId}:undefined} item={preview} isSelected={chosen} selected={chosen(preview)} atLimit={selected.length>=16} onBack={()=>setPreview(null)} onClose={embedded?()=>setPreview(null):onClose} onToggle={item=>chosen(item)?remove(item):setSelected(old=>old.length<16?[...old,item]:old)}/>;
+ if(preview)return <WorkTemplatePreview key={templateSelectionKey(preview)} editingProject={embedded&&accountId!==null&&projectId?{accountId,projectId}:undefined} item={preview} isSelected={chosen} selected={chosen(preview)} atLimit={selected.length>=16} onBack={()=>setPreview(null)} onClose={embedded?()=>setPreview(null):onClose} onToggle={item=>{if(chosen(item))remove(item);else if(selected.length<16)setSelected(old=>[...old,item]);else return;setPreview(null)}}/>;
  const shown=items.filter(item=>(kind==='all'||item.kind===kind)&&(item.title+' '+item.purpose).toLocaleLowerCase('ru').includes(query.trim().toLocaleLowerCase('ru')));
  const selectClass='h-9 w-full min-w-0 rounded-lg border border-kumo-line bg-kumo-base px-2 text-[13px] text-kumo-default focus-visible:outline-2 focus-visible:outline-kumo-brand';
  const Container=embedded?'section':Dialog;

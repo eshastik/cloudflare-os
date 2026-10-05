@@ -90,7 +90,7 @@ test('редактирование личного шаблона из резул
  mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'native-doc',output:{id:'document'}}]);mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:async()=>({id:'edit-draft'}),[Symbol.dispose]:vi.fn()});mocks.navigate.mockResolvedValue(undefined);
  await React.act(async()=>root.render(<WorkTemplatePreview readOnly item={item} editingProject={{accountId:7,projectId:'result-project'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
  await React.act(async()=>button('Редактировать').click());await React.act(async()=>button('Открыть редактор').click());
- expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'document',templateEdit:{accountId:7,projectId:'source-project',reference:item.reference}}});
+ expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'document',templateEdit:{accountId:7,projectId:'source-project',reference:item.reference,autoOpen:true}}});
 });
 test('личный шаблон без подтверждённого исходного проекта доступен только для просмотра',async()=>{
  const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Форма',blocks:[]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');const preview=await mocks.preview();mocks.preview.mockResolvedValue({...preview as object,sourceProjectId:undefined});
