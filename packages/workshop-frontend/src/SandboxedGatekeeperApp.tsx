@@ -1,3 +1,5 @@
+import {templatePreviewText} from './templatePreviewContent'
+import {parseNativeReview} from './NativeReviewSnapshot'
 import OriginalFileViewer, { type OriginalFileView } from './OriginalFileViewer'
 import {launchTemplateProposal} from './templateProposalLaunch'
 import {homeProjectFromSearch} from './homePrompt'
@@ -514,7 +516,15 @@ class GatekeeperAppHostImpl extends RpcTarget {
     try {
       const downloads = this.#reviewDownloads
       const ticket = await downloads.issuer.issue(review, node, version, side)
-      const text = ticket === null ? null : await downloadGatekeeperText(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
+      let text: string | null = null
+      if (ticket?.content_type === 'application/vnd.cloudflareos.document+json') {
+        const snapshot = await downloadGatekeeperNativeDocument(downloads.storageOrigin, { ...ticket, content_type: ticket.content_type }, 'cloudflareos.document',
+          this.#uploadLifetime.signal, () => downloads.issuer.validate(review, node, version))
+        const view = parseNativeReview(snapshot)
+        text = view.title + '\n\n' + templatePreviewText(snapshot)
+      } else if (ticket !== null) {
+        text = await downloadGatekeeperText(downloads.storageOrigin, ticket, this.#uploadLifetime.signal)
+      }
       await downloads.issuer.validate(review, node, version)
       this.#uploadLifetime.signal.throwIfAborted()
       return text

@@ -488,6 +488,9 @@ export class MnemosAccountSession {
   async beginReviewDownload(review: string, node: string, version: number, side: "before" | "after") {
     return this.#reviewDownload(review, node, version, side, "text/plain");
   }
+  async beginReviewPreviewDownload(review: string, node: string, version: number, side: "before" | "after") {
+    return this.#reviewDownload(review, node, version, side, "preview");
+  }
   /** Exact native review side; generic JSON and text cannot stand in for a native format. */
   async beginNativeReviewDownload(review: string, node: string, version: number, side: "before" | "after", format: NativeDocumentFormat) {
     if (!isNativeDocumentFormat(format)) throw new MnemosAPIError(400);
@@ -499,6 +502,10 @@ export class MnemosAccountSession {
     this.#check();
     if (ticket.review_id !== review || ticket.node_id !== node || ticket.decision_version !== version || ticket.side !== side) throw new MnemosAPIError(502);
     if (ticket.present === false) return null;
+    if (contentType === "preview") {
+      if (typeof ticket.content_type !== "string" || !["text/plain", "application/vnd.mnemos.task-tracker+json", "application/vnd.mnemos.resource-map+json", "application/vnd.cloudflareos.document+json"].includes(ticket.content_type)) throw new MnemosAPIError(400);
+      contentType = ticket.content_type;
+    }
     if(contentType==="text/plain"&&(ticket.content_type==="application/vnd.mnemos.task-tracker+json"||ticket.content_type==="application/vnd.mnemos.resource-map+json"))contentType=ticket.content_type;
     if (ticket.present !== true || ticket.content_type !== contentType || !ticket.url || !ticket.method || !ticket.sha256_hex) throw new MnemosAPIError(400);
     const metadata = ticket.metadata;

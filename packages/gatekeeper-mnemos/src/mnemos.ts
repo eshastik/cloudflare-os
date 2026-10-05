@@ -1475,7 +1475,7 @@ class MnemosTextDownloadIssuer extends RpcTarget {
 class MnemosReviewDownloadIssuer extends RpcTarget {
   #session: MnemosAccountSession;
   constructor(session: MnemosAccountSession) { super(); this.#session = session; }
-  async issue(review: string, node: string, version: number, side: "before" | "after") { return this.#session.beginReviewDownload(review, node, version, side); }
+  async issue(review: string, node: string, version: number, side: "before" | "after") { return this.#session.beginReviewPreviewDownload(review, node, version, side); }
   async validate(review: string, node: string, version: number) { return this.#session.validateReviewDownload(review, node, version); }
   [Symbol.dispose](): void { this.#session.dispose(); }
 }

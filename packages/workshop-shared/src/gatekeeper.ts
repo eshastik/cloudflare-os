@@ -519,7 +519,7 @@ export interface GatekeeperTextDownloadIssuer extends RpcTarget {
 /** Host-only downloads of immutable document sides in an approval review. */
 export interface GatekeeperReviewDownloadIssuer extends RpcTarget {
   /** Issue a file ticket, or null when the requested side is absent. */
-  issue(review: string, node: string, version: number, side: "before" | "after"): Promise<GatekeeperDownloadTicket | null>;
+  issue(review: string, node: string, version: number, side: "before" | "after"): Promise<(GatekeeperDownloadTicket & { content_type?: string }) | null>;
   /** Recheck participation, document access and decision version after transfer. */
   validate(review: string, node: string, version: number): Promise<void>;
 }

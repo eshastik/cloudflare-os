@@ -127,6 +127,11 @@ test("native review sides bind identity, version and format without widening tex
   const get = () => session.beginNativeReviewDownload(review, "doc", 3, "after", "cloudflareos.document");
   assert.equal((await get())?.content_type, ticket.content_type);
   await assert.rejects(session.beginReviewDownload(review, "doc", 3, "after"));
+  assert.equal((await session.beginReviewPreviewDownload(review, "doc", 3, "after"))?.content_type, ticket.content_type);
+  const nativeTicket = ticket;
+  ticket = { ...ticket, content_type: "application/json" };
+  await assert.rejects(session.beginReviewPreviewDownload(review, "doc", 3, "after"));
+  ticket = nativeTicket;
   for (const change of [{ node_id: "other" }, { review_id: "c".repeat(64) }, { decision_version: 4 }, { side: "before" }, { content_type: "application/json" }, { content_type: "application/vnd.cloudflareos.spreadsheet+json" }]) {
     const original = ticket; ticket = { ...ticket, ...change };
     await assert.rejects(get()); ticket = original;

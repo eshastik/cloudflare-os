@@ -712,10 +712,13 @@ describe("SandboxedGatekeeperApp navigation", () => {
       }
       async validate() { if (!readable) throw new Error("revoked"); }
     }
+    let nativeReview = false;
     class ReviewIssuer extends RpcTarget {
       async issue(review: string, node: string, version: number, side: "before" | "after") {
         expect([review, node, version]).toEqual(["review", "doc", 3]);
-        return side === "before" ? null : new DownloadIssuer().issue("project", "doc", "version", 0);
+        if (side === "before") return null;
+        if (nativeReview) return { ...await new NativeDownload().issue(), content_type: "application/vnd.cloudflareos.document+json" };
+        return new DownloadIssuer().issue("project", "doc", "version", 0);
       }
       async validate() { if (!readable) throw new Error("revoked"); }
     }
@@ -778,6 +781,9 @@ describe("SandboxedGatekeeperApp navigation", () => {
       await expect(host.downloadNativeDocument("project", "doc", "publication", "cloudflareos.document")).resolves.toEqual(snapshot);
       await vi.waitFor(() => expect(nativeDisposed).toBe(1));
       await expect(host.downloadReviewText("review", "doc", 3, "after")).resolves.toBe("draft");
+      nativeReview = true;
+      await expect(host.downloadReviewText("review", "doc", 3, "after")).resolves.toBe("Заметка\n\nТекст");
+      nativeReview = false;
       const beforeAbsent = request.mock.calls.length;
       await expect(host.downloadReviewText("review", "doc", 3, "before")).resolves.toBeNull();
       expect(request.mock.calls.length).toBe(beforeAbsent);
