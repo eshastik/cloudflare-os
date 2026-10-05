@@ -20,11 +20,13 @@ import BlueprintsRoutePage from './TemplateLibraryPage'
 
 test('Библиотека передаёт форму и методику в новую задачу; возврат сохраняет текст и отправка точные ссылки',async()=>{
  const values=new Map<string,string>();vi.stubGlobal('localStorage',{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key),clear:()=>values.clear()});vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});state.newGadget.mockReturnValue({newChat:state.newChat,getMetadata:async()=>({id:'workspace'}),[Symbol.dispose]:()=>{}});
+ const catalogLoad=vi.spyOn(sessionApi,'listChatTemplateAccounts');
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
  const click=async(text:string)=>act(async()=>[...host.querySelectorAll('button')].find(button=>button.textContent===text)!.click());
  try{
  await act(async()=>root.render(<BlueprintsRoutePage/>));expect(document.querySelector('[role="dialog"]')).toBeNull();expect(host.querySelector('[aria-label="Рабочие шаблоны"]')).not.toBeNull();
  for(const title of ['Форма ТЗ','Методика ТЗ'])await act(async()=>[...host.querySelectorAll<HTMLButtonElement>('[aria-label="Рабочие шаблоны Mnemos"] button[aria-pressed]')].find(button=>button.textContent?.startsWith(title))!.click());
+ expect(catalogLoad).toHaveBeenCalledTimes(1);
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());expect(document.querySelector('[role="dialog"]')).not.toBeNull();await act(async()=>document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));expect(document.querySelector('[role="dialog"]')).toBeNull();
  await click('Мои приложения');await click('Рабочие шаблоны');expect(host.querySelector('[aria-label="Рабочие шаблоны Mnemos"]')?.querySelectorAll('[aria-pressed="true"]')).toHaveLength(2);
  await click('Использовать выбранные (2)');expect(state.newChat).not.toHaveBeenCalled();
@@ -32,5 +34,5 @@ test('Библиотека передаёт форму и методику в н
  expect(host.textContent).toContain('Форма документа · версия 5');expect(host.textContent).toContain('Методика · версия 3');
  await click('Назад к библиотеке');await click('Вернуться к черновику задачи');expect(host.querySelector('textarea')).toBe(input);expect(input.value).toBe('Подготовь ТЗ для клиента');expect(state.newChat).not.toHaveBeenCalled();
  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Отправить сообщение"]')!.click());expect(state.newChat).toHaveBeenCalledOnce();expect(state.newChat.mock.calls[0][0]).toBe('Подготовь ТЗ для клиента');expect(state.newChat.mock.calls[0][6]).toEqual([{accountId:3,reference:{template_id:'form',revision:5}},{accountId:3,reference:{template_id:'method',revision:3}}]);expect(state.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'workspace'},search:{chat:7}});
- }finally{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()}
+ }finally{await act(async()=>root.unmount());host.remove();catalogLoad.mockRestore();vi.unstubAllGlobals()}
 })
