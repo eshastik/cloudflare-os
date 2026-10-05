@@ -3,10 +3,13 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import ChatTemplatePicker, { loadChatTemplates, messageWithTemplate } from './ChatTemplatePicker'
+const permission=vi.hoisted(()=>({ready:true}));
+vi.mock('./SelectedTemplateAgentAccess',()=>({default:({items,onReady}:{items:{accountId:number;reference:unknown}[];onReady(key:string):void})=>{React.useEffect(()=>{if(permission.ready)onReady(JSON.stringify(items.map(item=>[item.accountId,item.reference])))},[items]);return <p>Проверка доступа агента</p>}}));
 const api = vi.hoisted(() => ({ listChatTemplateAccounts:vi.fn(),listChatProjects:vi.fn(),listChatTemplateScopes:vi.fn(),listChatTemplates:vi.fn(),listOutputFormats: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listOwnBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listLibraryBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listFeaturedBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>() }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 function setup() {
+  permission.ready=true
   api.listChatTemplateAccounts.mockResolvedValue([{accountId:7,title:'Mnemos'}])
   api.listChatProjects.mockResolvedValue([{accountId:7,projectId:'source',title:'Проект'}])
   api.listChatTemplateScopes.mockResolvedValue({scopes:[{scopeId:'department',title:'Отдел'}],nextCursor:''})
@@ -134,3 +137,5 @@ it('начинает с проекта беседы и не подменяет �
   expect(api.listChatTemplates).toHaveBeenCalledWith(7,'department','',undefined);
  }finally{await React.act(async()=>root.unmount());host.remove();}
 });
+
+it('не передаёт выбранные материалы в задачу до подтверждения доступа агента',async()=>{setup();permission.ready=false;const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn();try{await React.act(async()=>root.render(<ChatTemplatePicker onSelect={selected} onClose={()=>{}}/>));await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Форма ТЗ'))!.click());const use=[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Использовать выбранные'))!;expect(use.disabled).toBe(true);await React.act(async()=>use.click());expect(selected).not.toHaveBeenCalled();}finally{await React.act(async()=>root.unmount());host.remove()}});

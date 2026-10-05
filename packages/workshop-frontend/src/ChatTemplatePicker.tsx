@@ -1,3 +1,4 @@
+import SelectedTemplateAgentAccess from './SelectedTemplateAgentAccess'
 import WorkTemplatePreview from './WorkTemplatePreview'
 import { useEffect, useState, useRef } from 'react'
 import { Dialog } from '@cloudflare/kumo'
@@ -80,6 +81,8 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const [legacy,setLegacy]=useState(false);
  const [preview,setPreview]=useState<ChatWorkTemplate|null>(null);
  const [selected,setSelected]=useState<ChatWorkTemplate[]>(()=>[...initialSelected]);
+ const [agentReadyKey,setAgentReadyKey]=useState('');
+ const selectedKey=JSON.stringify(selected.map(item=>[item.accountId,item.reference]));
  useEffect(()=>{onSelectionChange?.(selected)},[selected,onSelectionChange]);
  const [accounts,setAccounts]=useState<Array<{accountId:number;title:string}>>([]);
  const [accountId,setAccountId]=useState<number|null>(initialSelected[0]?.accountId??preferredProject?.accountId??null);
@@ -188,8 +191,9 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
    </div>
    <div className={embedded?"sticky bottom-0 shrink-0 border-t border-kumo-line bg-kumo-base py-4":"shrink-0 border-t border-kumo-line bg-kumo-base px-5 py-4"}>
     {selected.length>0&&<div className="mb-3" aria-label="Выбранные шаблоны"><p className="mb-2 text-[12px] text-kumo-subtle">Материалы для задачи · {selected.length}</p><ul className="flex max-h-28 flex-wrap gap-2 overflow-y-auto">{selected.map(item=><li key={templateSelectionKey(item)} className="flex max-w-full items-center gap-1 rounded-lg border border-kumo-line py-1 pl-2 text-[12px]"><span className="min-w-0 truncate" title={item.title}>{item.title} · версия {item.reference.revision}</span><WorkshopIconButton aria-label={'Убрать: '+item.title} className="!h-6 !w-6" onClick={()=>remove(item)}><X size={12}/></WorkshopIconButton></li>)}</ul></div>}
+    {selected.length>0&&<SelectedTemplateAgentAccess key={selectedKey} items={selected} onReady={setAgentReadyKey}/>}
     {selected.length>=16&&<p role="status" className="mb-3 text-[12px] text-kumo-subtle">Можно выбрать до 16 материалов. Уберите один, чтобы добавить другой.</p>}
-    <div className="flex flex-wrap items-center justify-end gap-2">{!embedded&&<WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton>}<WorkshopButton tone="primary" disabled={!selected.length} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
+    <div className="flex flex-wrap items-center justify-end gap-2">{!embedded&&<WorkshopButton onClick={()=>onOtherTemplates?onOtherTemplates(selected):setLegacy(true)}>{onOtherTemplates?"Шаблоны приложений":"Другие шаблоны"}</WorkshopButton>}<WorkshopButton tone="primary" disabled={!selected.length||agentReadyKey!==selectedKey} onClick={()=>onSelect({id:JSON.stringify(selected.map(s=>[s.accountId,s.reference])),title:selected.map(s=>s.title+' · версия '+s.reference.revision).join('; '),description:'',mnemos:selected})}>Использовать выбранные ({selected.length})</WorkshopButton></div>
    </div>
   </Container>;
  return embedded?content:<Dialog.Root open onOpenChange={open=>{if(!open)onClose();}}>{content}</Dialog.Root>;

@@ -1,3 +1,4 @@
+import {templateAgentAccess,allowTemplateAgentAccess} from './workshop-template-access.ts';
 import {readDocumentTemplateOriginView} from "./work-template-origin.ts";
 import {listAgentTemplateScopes,listAgentTemplates,resolveAgentTemplate} from './agent-template-discovery.ts';
 import {readAgentNativeDocument,saveAgentNativeDocument} from './agent-native-document.ts';
@@ -1013,13 +1014,20 @@ export class UserAccount extends DurableObject<Env> {
       const url = new URL(storageOrigin);
       if (url.protocol !== "https:" || url.origin !== storageOrigin) throw new Error("Invalid storage origin");
     }
-    return { ...(storageOrigin ? { blueprintTemplates: { storageOrigin, selector: new RpcStub(new BlueprintTemplates(this.#account().session(), this.#operationStorage())) } } : {}), iframeHtml: APP_HTML, ui: await this.openManagementSession(),
+    return { ...(storageOrigin ? { blueprintTemplates: { storageOrigin, selector: new RpcStub(new BlueprintTemplates(this.#account().session(), this.#operationStorage(),{
+        read:references=>this.#templateAccess(references),
+        allow:(references,scope,binding,revision)=>this.#templateAccess(references,{scope,binding,revision}),
+      })) } } : {}), iframeHtml: APP_HTML, ui: await this.openManagementSession(),
       organizationMetrics: new RpcStub(new MnemosOrganizationMetrics(this.#account().session(),this.#origins().apiOrigin)),
       agentConsent: new RpcStub(new MnemosAgentConsent(this.#account().session())),
       ...(storageOrigin ? { nativeWrites: { storageOrigin, selector: new RpcStub(new NativeWriteSelector(this.#account().session(), new NativeCreationRecovery(this.#connectionStorage()),new OfficeUpdateRecovery(this.#connectionStorage()),this.#driveImports??=new DriveImportCapture(this.#operationStorage(),storageOrigin),this.#origins().apiOrigin)) } } : {}),
       ...(storageOrigin ? { nativeDownloads: { storageOrigin, selector: new RpcStub(new MnemosNativeDocumentSelector(this.#account().session(), this.#origins().apiOrigin, appCode === true ? (this.env.MNEMOS_SHELL_KEY ?? "") : null)) } } : {}),
       ...(storageOrigin ? { inboxUploads: {storageOrigin,issuer:new RpcStub(new MnemosInboxUploadIssuer(this.#account().session()))}, reviewDownloads: { storageOrigin, issuer: new RpcStub(new MnemosReviewDownloadIssuer(this.#account().session())) }, textDownloads: { storageOrigin, issuer: new RpcStub(new MnemosTextDownloadIssuer(this.#account().session())) }, textUploads: { storageOrigin, issuer: new RpcStub(new MnemosTextUploadIssuer(this.#account().session())) } } : {}) };
 
+  }
+  async #templateAccess(references:WorkTemplateReference[],allow?:{scope:string;binding:string;revision:number}){
+    const account=this.#account(),human=account.session();let agent:ReturnType<MnemosAccount['agentSession']>|undefined;
+    try{const {bindingId}=await account.ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);agent=account.agentSession();return allow?await allowTemplateAgentAccess(human,agent,bindingId,references,allow.scope,allow.binding,allow.revision):await templateAgentAccess(human,agent,bindingId,references);}finally{human.dispose();agent?.dispose();}
   }
   /** Связь синглтона Workshop (S15): имя агента для описания действия; связь заводится при первом обращении. */
   async workshopAgent(): Promise<{ connectionName: string }> {

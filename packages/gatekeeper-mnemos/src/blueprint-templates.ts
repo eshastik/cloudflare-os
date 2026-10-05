@@ -1,3 +1,4 @@
+import type {TemplateAgentAccessPlan} from './workshop-template-access.ts';
 import {templateReviewAccess,shareTemplateForReview} from './template-review-access.ts';
 import {checkedTemplateReferences,type WorkTemplateReference,type WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 import { RpcStub, RpcTarget } from 'cloudflare:workers'
@@ -10,7 +11,9 @@ type Improvement=Extract<WorkTemplateReference,{scope_id:string}> & {scopeRevisi
 type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string; accessKey?:string} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
-  constructor(private session: MnemosAccountSession, private storage: AccountStorage) { super() }
+  constructor(private session: MnemosAccountSession, private storage: AccountStorage,private agentAccessCalls?:{read(references:WorkTemplateReference[]):Promise<TemplateAgentAccessPlan>;allow(references:WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<TemplateAgentAccessPlan>}) { super() }
+  async agentAccess(references:WorkTemplateReference[]){if(!this.agentAccessCalls)throw Error('Проверка доступа агента недоступна');return this.agentAccessCalls.read(checkedTemplateReferences(references));}
+  async allowAgentAccess(references:WorkTemplateReference[],scope:string,binding:string,revision:number){if(!this.agentAccessCalls)throw Error('Проверка доступа агента недоступна');return this.agentAccessCalls.allow(checkedTemplateReferences(references),scope,binding,revision);}
   async preview(reference:WorkTemplateReference){
     const ref=checkedTemplateReferences([reference])[0]
     const issued=await this.session.beginWorkTemplateDownload(ref),source=issued.source,ticket=issued.ticket

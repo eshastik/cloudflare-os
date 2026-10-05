@@ -458,7 +458,10 @@ export interface GatekeeperTemplateScopeConfig {
   /** Согласующие — пользователи организации. */
   approvers: string[];
 }
+export type GatekeeperTemplateAgentAccessPlan={bindingId:string;ready:boolean;scopes:{scopeId:string;title:string;revision:number;enabled:boolean}[]};
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  agentAccess(references:import('./work-template.js').WorkTemplateReference[]):Promise<GatekeeperTemplateAgentAccessPlan>;
+  allowAgentAccess(references:import('./work-template.js').WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<GatekeeperTemplateAgentAccessPlan>;
   /** Выдаёт метаданные и билет прямого чтения точной версии; содержимое через RPC не передаётся. */
   preview(reference: import('./work-template.js').WorkTemplateReference): Promise<{material:import('./work-template.js').ChatWorkTemplateChoice;improvement?:{scope_id:string;revision:number;name:string};promotion?:{scope_id:string;revision:number;name:string;level:'department'|'organization'};sourceHead:string;ticket:GatekeeperDownloadTicket & {content_type:string}}>;
   /** Повторно проверяет текущие права и исходный снимок перед показом загруженного содержимого. */
