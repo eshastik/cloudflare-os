@@ -1,6 +1,6 @@
 import SelectedTemplateAgentAccess from './SelectedTemplateAgentAccess'
 import WorkTemplatePreview from './WorkTemplatePreview'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useCallback, useState, useRef } from 'react'
 import { Dialog } from '@cloudflare/kumo'
 import { Blueprint, Check, MagnifyingGlass, X, Eye, FileText, BookOpen, Robot, Lightning, Users, CaretRight } from '@phosphor-icons/react'
 import type {ChatWorkTemplate} from '@gadgets/workshop-shared/work-template'
@@ -80,6 +80,9 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const {authenticatedApi}=useAuthenticatedApi();
  const [legacy,setLegacy]=useState(false);
  const [preview,setPreview]=useState<ChatWorkTemplate|null>(null);
+ const catalogScroll=useRef<HTMLDivElement|null>(null),catalogPosition=useRef(0);
+ const bindCatalogScroll=useCallback((node:HTMLDivElement|null)=>{catalogScroll.current=node;if(node)node.scrollTop=catalogPosition.current},[]);
+ const openPreview=(item:ChatWorkTemplate)=>{catalogPosition.current=catalogScroll.current?.scrollTop??0;setPreview(item)};
  const [selected,setSelected]=useState<ChatWorkTemplate[]>(()=>[...initialSelected]);
  const [agentReadyKey,setAgentReadyKey]=useState('');
  const selectedKey=JSON.stringify(selected.map(item=>[item.accountId,item.reference]));
@@ -163,7 +166,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
     <div><Title className="text-[17px] font-medium">Шаблоны для задачи</Title><Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Description></div>
     {!embedded&&<WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>}
    </div>
-   <div role={embedded?"region":undefined} aria-label={embedded?"Каталог шаблонов":undefined} tabIndex={embedded?0:undefined} className={embedded?"min-h-0 flex-1 overflow-y-auto overscroll-contain":"contents"}>
+   <div ref={embedded?bindCatalogScroll:undefined} role={embedded?"region":undefined} aria-label={embedded?"Каталог шаблонов":undefined} tabIndex={embedded?0:undefined} className={embedded?"min-h-0 flex-1 overflow-y-auto overscroll-contain":"contents"}>
    <div className={embedded?"pb-5":"shrink-0 px-5 pb-4"}>
     {!choosingLibrary&&<label className="flex h-11 items-center gap-3 rounded-lg border border-kumo-line bg-kumo-base px-3 focus-within:border-kumo-brand"><MagnifyingGlass size={18} className="shrink-0 text-kumo-subtle"/><input autoFocus={!embedded} aria-label="Поиск шаблона" placeholder="Найти шаблон для задачи…" value={query} onChange={event=>setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none"/></label>}
     <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -173,9 +176,9 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
      {(accounts.length>1||accountId===null&&accounts.length>0)&&<select className={selectClass+' !w-auto max-w-full'} aria-label="Подключение Mnemos" value={accountId??''} onChange={event=>{setScopeId(null);setProjectId('');setAccountId(Number(event.target.value))}}><option value="" disabled>Выберите библиотеку</option>{accounts.map(a=><option key={a.accountId} value={a.accountId}>{a.title}</option>)}</select>}
      {library==='shared'&&scopeCursor&&<WorkshopButton disabled={scopeBusy} onClick={()=>void moreScopes()}>Ещё библиотеки</WorkshopButton>}
     </div>
-    {!choosingLibrary&&<div className="mt-3 flex flex-wrap gap-1" role="group" aria-label="Виды шаблонов">{filters.map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={'rounded-lg px-3 py-2 text-[13px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(kind===value?'bg-kumo-tint font-medium text-kumo-default':'text-kumo-subtle hover:bg-kumo-tint')}>{label}</button>)}</div>}
+    {!choosingLibrary&&<div className="mt-3 flex gap-1 overflow-x-auto pb-1" role="group" aria-label="Виды шаблонов">{filters.map(([value,label])=><button key={value} type="button" aria-pressed={kind===value} onClick={()=>setKind(value)} className={'shrink-0 rounded-lg px-3 py-2 text-[13px] focus-visible:outline-2 focus-visible:outline-kumo-brand '+(kind===value?'bg-kumo-tint font-medium text-kumo-default':'text-kumo-subtle hover:bg-kumo-tint')}>{label}</button>)}</div>}
    </div>
-   <div className={embedded?"pr-1":"min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-5"} aria-label="Рабочие шаблоны Mnemos">
+   <div ref={embedded?undefined:bindCatalogScroll} className={embedded?"pr-1":"min-h-0 flex-1 overflow-y-auto border-t border-kumo-line px-5"} aria-label="Рабочие шаблоны Mnemos">
     {scopeError&&<p role="alert" className="px-2 py-2 text-[13px]">{scopeError} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить загрузку областей</WorkshopButton></p>}
     {error&&<p role="alert" className="px-2 py-2 text-[13px]">{error} <WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton></p>}
     {choosingLibrary&&scopeLoading&&<p role="status" className="px-2 py-4 text-[13px] text-kumo-subtle">Загрузка общих библиотек…</p>}
@@ -187,7 +190,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
       <span className={'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg '+(chosen(item)?'bg-kumo-tint text-kumo-brand':'bg-kumo-tint text-kumo-subtle')} aria-hidden="true">{chosen(item)?<Check size={20}/>:<Glyph size={20}/>}</span>
       <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium text-kumo-default">{item.title}</span>{item.purpose&&<span className="mt-1 block line-clamp-2 text-[13px] leading-5 text-kumo-subtle">{item.purpose}</span>}<span className="mt-1 block text-[12px] text-kumo-subtle">{kinds[item.kind]} · версия {item.reference.revision}</span></span>
      </button>
-     <WorkshopIconButton aria-label={'Посмотреть: '+item.title} title="Посмотреть содержимое" onClick={()=>setPreview(item)}><Eye size={18}/></WorkshopIconButton>
+     <WorkshopIconButton aria-label={'Посмотреть: '+item.title} title="Посмотреть содержимое" onClick={()=>openPreview(item)}><Eye size={18}/></WorkshopIconButton>
     </div>})}
     {cursor&&<WorkshopButton className="mt-2" disabled={loading} onClick={()=>void more()}>Загрузить ещё шаблоны</WorkshopButton>}
    </div>

@@ -2,7 +2,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import ChatTemplatePicker, { loadChatTemplates, messageWithTemplate } from './ChatTemplatePicker'
+import ChatTemplatePicker, { loadChatTemplates, messageWithTemplate, type ChatTemplate } from './ChatTemplatePicker'
 const permission=vi.hoisted(()=>({ready:true}));
 vi.mock('./SelectedTemplateAgentAccess',()=>({default:({items,onReady}:{items:{accountId:number;reference:unknown}[];onReady(key:string):void})=>{React.useEffect(()=>{if(permission.ready)onReady(JSON.stringify(items.map(item=>[item.accountId,item.reference])))},[items,onReady]);return <p>Проверка доступа агента</p>}}));
 const api = vi.hoisted(() => ({ listChatTemplateAccounts:vi.fn(),listChatProjects:vi.fn(),listChatTemplateScopes:vi.fn(),listChatTemplates:vi.fn(),listOutputFormats: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listOwnBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listLibraryBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listFeaturedBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>() }))
@@ -195,5 +195,24 @@ it('выбор и удаление в просмотре возвращают к
   expect(document.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).not.toContain('Форма ТЗ');
   await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Использовать выбранные'))!.click());
   expect(selected.mock.calls[0][0].mnemos.map((item:{reference:unknown})=>item.reference)).toEqual([{template_id:'method',revision:3}]);
+ }finally{await React.act(async()=>root.unmount());host.remove()}
+});
+
+it.each([false,true])('возвращает место в каталоге и выбранную методику после просмотра формы (встроен: %s)',async embedded=>{
+ setup();const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn<(choice:ChatTemplate)=>void>();
+ const method={accountId:7,reference:{template_id:'method',revision:3},title:'Методика ТЗ',purpose:'Подготовить ТЗ',kind:'guidance' as const};
+ try{
+  await React.act(async()=>root.render(<ChatTemplatePicker embedded={embedded} initialSelected={[method]} onSelect={selected} onClose={()=>{}}/>));
+  await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Формы')!.click());
+  const catalog=()=>document.querySelector<HTMLDivElement>(embedded?'[aria-label="Каталог шаблонов"]':'[aria-label="Рабочие шаблоны Mnemos"]')!;
+  catalog().scrollTop=321;
+  await React.act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="Посмотреть: Форма ТЗ"]')!.click());
+  expect(document.querySelector('[aria-label="Содержимое шаблона"]')?.textContent).toContain('Критерии приёмки');
+  await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Назад к выбору')!.click());
+  expect(catalog().scrollTop).toBe(321);
+  expect([...document.querySelectorAll('button')].find(button=>button.textContent==='Формы')?.getAttribute('aria-pressed')).toBe('true');
+  await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent?.startsWith('Форма ТЗ'))!.click());
+  await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Использовать выбранные (2)')!.click());
+  expect(selected.mock.calls[0][0].mnemos!.map(item=>item.reference)).toEqual([method.reference,{template_id:'form',revision:5}]);
  }finally{await React.act(async()=>root.unmount());host.remove()}
 });
