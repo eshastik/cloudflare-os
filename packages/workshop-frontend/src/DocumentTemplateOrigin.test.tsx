@@ -11,11 +11,11 @@ const head='a'.repeat(64),form={scope_id:'department',template_key:'spec',revisi
 const origin:DocumentTemplateOriginView={project_id:'project',node_id:'document',head,initiated_by:'human',executed_by:'agent',operation_id:'operation',created_at_ms:1791000000000,form,inputs:[{reference:form,source_head:'b'.repeat(64)},{reference:{scope_id:'department',template_key:'method',revision:3},source_head:'c'.repeat(64)}],materials:[{reference:form,title:'Форма ТЗ',purpose:'Подготовить ТЗ',kind:'document' as const},{reference:{scope_id:'department',template_key:'method',revision:3},title:'Методика разработки',purpose:'Порядок работы',kind:'guidance' as const}]}
 let cleanups:Array<()=>Promise<void>>=[]
 afterEach(async()=>{for(const cleanup of cleanups)await cleanup();cleanups=[]})
-async function mount(read:(project:string,node:string,version:string)=>Promise<typeof origin|null>){
+async function mount(read:(project:string,node:string,version:string)=>Promise<typeof origin|null>,onPreview?:Parameters<typeof DocumentTemplateOrigin>[0]["onPreview"]){
  class Source extends RpcTarget {async templateOrigin(project:string,node:string,version:string){return read(project,node,version)}}
  const source=new RpcStub(new Source())
  const container=document.createElement('div');document.body.append(container);const root=createRoot(container)
- const render=async(node='document')=>{await act(async()=>root.render(<DocumentTemplateOrigin key={node} source={source} project="project" node={node} head={head}/>))}
+ const render=async(node='document')=>{await act(async()=>root.render(<DocumentTemplateOrigin key={node} source={source} project="project" node={node} head={head} onPreview={onPreview}/>))}
  cleanups.push(async()=>{await act(async()=>root.unmount());source[Symbol.dispose]();container.remove()})
  await render();return {container,render}
 }
@@ -43,3 +43,10 @@ it('поздний ответ другого документа не замен�
  await act(async()=>{answer(origin);await pending})
  expect(container.textContent).not.toContain('Форма ТЗ');expect(container.textContent).toContain('без применения шаблонов')
 })
+
+it('из результата открывается точная применённая версия, а не последняя',async()=>{
+ const seen:unknown[]=[];const {container}=await mount(async()=>origin,material=>seen.push(material));
+ const buttons=Array.from(container.querySelectorAll('button'));expect(buttons).toHaveLength(2);
+ await act(async()=>buttons[1].click());
+ expect(seen).toEqual([origin.materials[1]]);expect((seen[0] as typeof origin.materials[number]).reference.revision).toBe(3);
+});

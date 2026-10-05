@@ -11,6 +11,7 @@ vi.mock('./accountCapabilities', () => ({
   listAccounts: async () => [{ id: 7, vendorId: 'mnemos' }],
   storesDocuments: () => true,
   openNativeWritesFrame: async () => ({ iframeHtml: '', ui: {}, nativeWrites: { storageOrigin: 'https://objects.example', selector: frames.writes }, nativeDownloads: { storageOrigin: 'https://objects.example', selector: frames.downloads } }),
+  openNativeWritesContext: async () => ({accountId: 1, frame: { iframeHtml: '', ui: {}, nativeWrites: { storageOrigin: 'https://objects.example', selector: frames.writes }, nativeDownloads: { storageOrigin: 'https://objects.example', selector: frames.downloads } }}),
 }))
 vi.mock('./disposeGatekeeperFrame', () => ({ disposeGatekeeperFrame: () => {} }))
 const uploads: string[] = []

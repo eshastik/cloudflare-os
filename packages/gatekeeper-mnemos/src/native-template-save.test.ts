@@ -104,3 +104,9 @@ test('план доступа закреплён в предложении: ст
  scopes[2].revision=2;const changed=await creator.reviewAccess('group',1);
  await assert.rejects(creator.propose('group',1,undefined,changed.key),/прежним составом/);assert.equal(writes,2);
 });
+
+test('просмотр личной формы возвращает авторизованный исходный проект для редактирования',async()=>{
+ const ref={template_id:'personal',revision:3},source={project_id:'source-project',title:'Форма',purpose:'ТЗ',kind:'document',source_head:'a'.repeat(64),content_type:'application/vnd.cloudflareos.document+json'};
+ const session={async beginWorkTemplateDownload(reference:unknown){assert.deepEqual(reference,ref);return {source,ticket:{size_bytes:100,expires_at:new Date(Date.now()+60000).toISOString()}}}};
+ const preview=await new BlueprintTemplates(session as any,{} as any).preview(ref);assert.equal(preview.sourceProjectId,'source-project');assert.deepEqual(preview.material.reference,ref);
+});

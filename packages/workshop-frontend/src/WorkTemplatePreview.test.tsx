@@ -4,7 +4,8 @@ import {createRoot} from 'react-dom/client'
 import {beforeEach,afterEach,test,expect,vi} from 'vitest'
 const {webcrypto}=await vi.importActual<{webcrypto:Crypto}>('node:crypto')
 import WorkTemplatePreview from './WorkTemplatePreview'
-const mocks=vi.hoisted(()=>({api:{},preview:vi.fn<(...args:unknown[])=>Promise<unknown>>(),validate:vi.fn<(...args:unknown[])=>Promise<void>>(),dispose:vi.fn<()=>void>(),open:vi.fn<(...args:unknown[])=>Promise<unknown>>()}))
+const mocks=vi.hoisted(()=>({api:{listOutputFormats:vi.fn(),newGadgetFromBlueprint:vi.fn()},navigate:vi.fn(),preview:vi.fn<(...args:unknown[])=>Promise<unknown>>(),validate:vi.fn<(...args:unknown[])=>Promise<void>>(),dispose:vi.fn<()=>void>(),open:vi.fn<(...args:unknown[])=>Promise<unknown>>()}))
+vi.mock('@tanstack/react-router',()=>({useNavigate:()=>mocks.navigate}))
 vi.mock('./AuthContext',()=>({useAuthenticatedApi:()=>({authenticatedApi:mocks.api})}))
 vi.mock('./accountCapabilities',()=>({openBlueprintTemplatesFrame:(...args:unknown[])=>mocks.open(...args)}))
 vi.mock('./disposeGatekeeperFrame',()=>({disposeGatekeeperFrame:()=>mocks.dispose()}))
@@ -19,7 +20,7 @@ afterEach(async()=>{await React.act(async()=>root.unmount());container.remove();
 async function ticket(content:string,mime:string){
  const bytes=new TextEncoder().encode(content),digest=new Uint8Array(await webcrypto.subtle.digest('SHA-256',bytes));
  const sha=[...digest].map(b=>b.toString(16).padStart(2,'0')).join('');
- mocks.preview.mockResolvedValue({material:{reference:item.reference,title:item.title,purpose:item.purpose,kind:item.kind},sourceHead:'a'.repeat(64),ticket:{url:'https://objects.example/form',method:'GET',size_bytes:bytes.length,sha256_hex:sha,content_type:mime}});
+ mocks.preview.mockResolvedValue({material:{reference:item.reference,title:item.title,purpose:item.purpose,kind:item.kind},sourceProjectId:'source-project',sourceHead:'a'.repeat(64),ticket:{url:'https://objects.example/form',method:'GET',size_bytes:bytes.length,sha256_hex:sha,content_type:mime}});
  const fetcher=vi.fn<(...args:unknown[])=>Promise<Response>>().mockImplementation(async()=>new Response(bytes));vi.stubGlobal('fetch',fetcher);return fetcher;
 }
 const button=(label:string)=>[...document.body.querySelectorAll('button')].find(b=>b.textContent===label)!;
@@ -76,4 +77,22 @@ test('Просмотр общей версии показывает отдель
  const preview=await mocks.preview();const reference={scope_id:'team',template_key:'method',revision:5};mocks.preview.mockResolvedValue({...preview as object,material:{reference,title:'Методика',purpose:'ТЗ',kind:'guidance'},promotion:{scope_id:'dept',revision:3,name:'Разработка',level:'department'}});
  await React.act(async()=>root.render(<WorkTemplatePreview item={{...item,reference,kind:'guidance'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
  expect([...document.body.querySelectorAll('summary')].map(item=>item.textContent)).toContain('Предложить отделу');expect(document.body.textContent).toContain('Версия 5 станет доступна там после отдельного согласования');
+});
+
+test('просмотр из готового документа не предлагает применить шаблон заново',async()=>{
+ const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Форма ТЗ',blocks:[{html:'<p>Критерии приёмки</p>'}]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');const toggle=vi.fn();
+ await React.act(async()=>root.render(<WorkTemplatePreview readOnly item={item} editingProject={{accountId:7,projectId:'result-project'}} selected={false} atLimit={false} onToggle={toggle} onBack={()=>{}} onClose={()=>{}} backLabel="Назад к документу"/>));await settle();
+ expect(document.body.textContent).toContain('Просмотр не меняет созданный документ');expect(document.body.textContent).toContain('Критерии приёмки');expect(button('Выбрать для задачи')).toBeUndefined();expect(button('Редактировать')).toBeDefined();expect(toggle).not.toHaveBeenCalled();expect(mocks.preview).toHaveBeenCalledWith(item.reference);
+});
+
+test('редактирование личного шаблона из результата открывает исходный проект и точную версию',async()=>{
+ const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Форма ТЗ',blocks:[{html:'<p>Критерии</p>'}]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');
+ mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'native-doc',output:{id:'document'}}]);mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:async()=>({id:'edit-draft'}),[Symbol.dispose]:vi.fn()});mocks.navigate.mockResolvedValue(undefined);
+ await React.act(async()=>root.render(<WorkTemplatePreview readOnly item={item} editingProject={{accountId:7,projectId:'result-project'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ await React.act(async()=>button('Редактировать').click());await React.act(async()=>button('Открыть редактор').click());
+ expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'document',templateEdit:{accountId:7,projectId:'source-project',reference:item.reference}}});
+});
+test('личный шаблон без подтверждённого исходного проекта доступен только для просмотра',async()=>{
+ const snapshot={format:'cloudflareos.document',formatVersion:1,document:{title:'Форма',blocks:[]}};await ticket(JSON.stringify(snapshot),'application/vnd.cloudflareos.document+json');const preview=await mocks.preview();mocks.preview.mockResolvedValue({...preview as object,sourceProjectId:undefined});
+ await React.act(async()=>root.render(<WorkTemplatePreview readOnly item={item} editingProject={{accountId:7,projectId:'result-project'}} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();expect(button('Редактировать')).toBeUndefined();expect(document.body.textContent).toContain('Форма');
 });

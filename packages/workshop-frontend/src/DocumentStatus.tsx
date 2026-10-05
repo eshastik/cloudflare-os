@@ -14,7 +14,7 @@ import type { PublicationReview } from '@gadgets/workshop-shared/publication-rev
 import { useAuthenticatedApi } from './AuthContext'
 import { WorkshopButton } from './components/WorkshopControls'
 import { disposeGatekeeperFrame } from './disposeGatekeeperFrame'
-import { listAccounts, storesDocuments, openNativeWritesFrame } from './accountCapabilities'
+import { listAccounts, storesDocuments, openNativeWritesFrame, openNativeWritesContext } from './accountCapabilities'
 import DocumentVersionPanel, { fetchVersion, type PanelSection } from './DocumentVersionPanel'
 import DocumentSharePanel from './DocumentSharePanel'
 import { nativeOpenKey, readPendingNativeOpen } from './NativeDocumentOpen'
@@ -400,7 +400,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   }, [flash, flashMs])
   /** Содержимое версии, от которой правит редактор: сверка перед сохранением, чтобы не писать пустых версий. */
   const savedContent = useRef<{ head: string; snapshot: NativeDocumentSnapshot } | null>(null)
-  const source = useRef<{ selector: Selector; downloads: Downloads | null; origin: string; writesOrigin: string } | null>(null)
+  const source = useRef<{ accountId: number; selector: Selector; downloads: Downloads | null; origin: string; writesOrigin: string } | null>(null)
   const lifetime = useRef(new AbortController())
   /** Живёт, пока смонтирована шапка: перечитывание состояния его не обрывает. */
   const mounted = useRef(new AbortController())
@@ -447,12 +447,14 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
     setBusy(true); setError(''); setProjectLink(null)
     void (async () => {
       try {
-        frame = await openNativeWritesFrame(authenticatedApi, binding?.accountId ?? undefined)
+        const opened = await openNativeWritesContext(authenticatedApi, binding?.accountId ?? undefined)
+        const accountId = opened.accountId
+        frame = opened.frame
         if (abort.signal.aborted) { disposeGatekeeperFrame(frame); return }
         if (!frame?.nativeWrites) throw new Error()
         const selector = frame.nativeWrites.selector as Selector
         const downloads = frame.nativeDownloads ? frame.nativeDownloads.selector as Downloads : null
-        source.current = { selector, downloads, origin: frame.nativeDownloads?.storageOrigin ?? '', writesOrigin: frame.nativeWrites.storageOrigin }
+        source.current = { accountId, selector, downloads, origin: frame.nativeDownloads?.storageOrigin ?? '', writesOrigin: frame.nativeWrites.storageOrigin }
         const me = await selector.reviewerIdentity().catch(() => ''); abort.signal.throwIfAborted()
         if (!binding) { setData({ state: null, review: null, conflict: false, participants: [], history: [], sharedVersion: '—', me, access: 'owner', head: '', name: null, matchesShared: false }); return }
         const loaded = await loadStatus(selector, downloads, frame.nativeDownloads?.storageOrigin ?? '', binding, format, abort.signal)
@@ -805,7 +807,7 @@ export function useDocumentStatus({ gadget, format, snapshotSource, chatId, proj
   })
   const listScopes = async () => (await source.current?.selector.scopes())?.scopes ?? []
   const listDocuments = async (scope: string) => (await source.current?.selector.documents(scope, ''))?.documents ?? []
-  const comparison = () => source.current ? { selector: source.current.selector, downloads: source.current.downloads, origin: source.current.origin } : null
+  const comparison = () => source.current ? { accountId: source.current.accountId, selector: source.current.selector, downloads: source.current.downloads, origin: source.current.origin } : null
   const selector = () => source.current?.selector ?? null
   const writesOrigin = () => source.current?.writesOrigin ?? ''
   /** Открыта новая версия документа: чужая правка принята, можно снова сохранять. */

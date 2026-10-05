@@ -38,15 +38,19 @@ export type NativeWritesFrame = StoreFrame<'nativeWrites'>
 export type NativeDownloadsFrame = StoreFrame<'nativeDownloads'>
 
 /** Открывает фрейм хранилища документов с нужной возможностью; без accountId берётся первый подходящий аккаунт. */
-async function openStoreFrame<K extends StoreCapability>(api: Api, capability: K, accountId?: number): Promise<StoreFrame<K>> {
+async function openStoreContext<K extends StoreCapability>(api: Api, capability: K, accountId?: number): Promise<{frame:StoreFrame<K>;accountId:number}> {
   const candidates = (await listAccounts(api)).filter(account => storesDocuments(account) && (accountId === undefined || account.id === accountId))
   for (const account of candidates) {
     const frame = await api.getGatekeeperApp(account.vendorId, account.id)
-    if (frame?.[capability]) return frame as StoreFrame<K>
+    if (frame?.[capability]) return {frame:frame as StoreFrame<K>,accountId:account.id}
     disposeGatekeeperFrame(frame)
   }
   throw new Error(`Нет подключённого аккаунта с возможностью ${capability}`)
 }
+
+async function openStoreFrame<K extends StoreCapability>(api:Api,capability:K,accountId?:number):Promise<StoreFrame<K>> {return (await openStoreContext(api,capability,accountId)).frame}
+
+export const openNativeWritesContext = (api:Api,accountId?:number) => openStoreContext(api,'nativeWrites',accountId)
 
 export const openNativeWritesFrame = (api: Api, accountId?: number) => openStoreFrame(api, 'nativeWrites', accountId)
 export const openNativeDownloadsFrame = (api: Api, accountId?: number) => openStoreFrame(api, 'nativeDownloads', accountId)

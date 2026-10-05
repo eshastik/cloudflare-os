@@ -29,7 +29,7 @@ export class BlueprintTemplates extends RpcTarget {
       const parent=scopes.find(item=>item.scope_id===scope?.parent_id&&item.enabled)
       if(parent&&(parent.level==='department'||parent.level==='organization'))promotion={scope_id:parent.scope_id,revision:parent.revision,name:parent.name,level:parent.level}
     }
-    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,promotion,sourceHead:source.source_head,
+    return {material:{reference:ref,title:source.title,purpose:source.purpose,kind:source.kind},improvement,promotion,sourceProjectId:'template_id' in ref?source.project_id:undefined,sourceHead:source.source_head,
       ticket:{url:ticket.url,method:ticket.method,size_bytes:ticket.size_bytes,sha256_hex:ticket.sha256_hex,content_type:source.content_type}}
   }
   async validatePreview(reference:WorkTemplateReference,sourceHead:string){

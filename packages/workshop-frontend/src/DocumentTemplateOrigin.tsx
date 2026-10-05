@@ -1,12 +1,12 @@
 import {useEffect,useState} from 'react'
 import type {RpcStub} from 'capnweb'
 import type {GatekeeperNativeDocumentSelector} from '@gadgets/workshop-shared/gatekeeper'
-import type {DocumentTemplateOriginView,WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
+import type {ChatWorkTemplateChoice,DocumentTemplateOriginView,WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
 
 const kinds:Record<WorkTemplateKind,string>={document:'Форма',guidance:'Методика',agent_instructions:'Инструкции агента',skill:'Навык'}
 
 /** Происхождение выбранной сохранённой версии; отказ не означает отсутствие шаблонов. */
-export default function DocumentTemplateOrigin({source,project,node,head}:{source:Pick<RpcStub<GatekeeperNativeDocumentSelector>,'templateOrigin'>;project:string;node:string;head:string}) {
+export default function DocumentTemplateOrigin({source,project,node,head,onPreview}:{onPreview?(material:ChatWorkTemplateChoice):void;source:Pick<RpcStub<GatekeeperNativeDocumentSelector>,'templateOrigin'>;project:string;node:string;head:string}) {
  const [state,setState]=useState<{loading:boolean;origin?:DocumentTemplateOriginView|null;error?:string}>({loading:true})
  useEffect(()=>{
   let cancelled=false
@@ -26,6 +26,7 @@ export default function DocumentTemplateOrigin({source,project,node,head}:{sourc
   {state.origin&&<>
    <ul className="m-0 flex list-none flex-col gap-2 p-0">{state.origin.materials.map((material,index)=><li key={index} className="[overflow-wrap:anywhere]">
     <span>{kinds[material.kind]}: «{material.title}», версия {material.reference.revision}</span>
+    {onPreview&&<button type="button" onClick={()=>onPreview(material)} aria-label={"Открыть использованный шаблон: "+material.title+" · версия "+material.reference.revision} className="mt-1 block rounded text-[13px] text-kumo-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring">Открыть шаблон</button>}
     <span className="block text-[13px] text-kumo-subtle">{'template_id' in material.reference?'Личный шаблон':'Общий шаблон'}</span>
    </li>)}</ul>
    <p className="m-0 text-[13px] text-kumo-subtle">{state.origin.executed_by?'Создан агентом':'Создан человеком'} · {new Date(state.origin.created_at_ms).toLocaleString('ru-RU')}</p>
