@@ -693,6 +693,9 @@ export class MnemosLibrary extends DurableObject<Env, MnemosLibraryProps> implem
     const frozen=structuredClone(input);checkedTemplateReferences(frozen.references);
     identifier(frozen.project,'проект');identifier(frozen.name,'имя документа');
     await queue.authorizeObservation({ownerOnly:true,title:'Создание документа по шаблонам',description:'Личная копия формы с сохранением точных входов работы. Публикация выполняется отдельно.',activity:{kind:'mnemos.template.create',scopeId:frozen.project,subject:clip(frozen.name,200)}});
+    using reader=await this.#open();
+    const target=await this.#resolveReadProject(reader,frozen.project);
+    if(target.id!==frozen.project)throw new Error('Для создания нужен id проекта из listProjects(), а не его название. Для выбранного проекта передайте project='+target.id+'. Сохраните прежний requestId и остальные входы.');
     const account=this.#account();if(!account.createTemplateDocumentForAgent)throw new Error(UNSUPPORTED);
     const result=await this.#data(()=>account.createTemplateDocumentForAgent!(frozen));
     await queue.authorizeObservation({ownerOnly:true,title:'Документ создан',description:result.name,activity:{kind:'mnemos.template.created',scopeId:result.project,subject:result.name,items:[{name:result.name,documentId:result.document.node_id,projectId:result.project}]}});
