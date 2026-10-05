@@ -152,7 +152,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
  const Container=embedded?'section':Dialog;
  const Title=embedded?'h2':Dialog.Title;
  const Description=embedded?'p':Dialog.Description;
- const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"+(embedded?" !max-h-none !w-full":"")}>
+ const content=<Container size={embedded?undefined:"base"} aria-label={embedded?"Рабочие шаблоны":undefined} className={embedded?"flex w-full min-w-0 flex-col overflow-hidden bg-kumo-base p-0":"!z-[1200] !flex !max-h-[calc(100dvh-24px)] !w-[min(600px,calc(100vw-24px))] !flex-col overflow-hidden bg-kumo-base !p-0"}>
    <div className={embedded?"sr-only":"flex shrink-0 justify-between gap-4 px-5 py-4"}>
     <div><Title className="text-[17px] font-medium">Шаблоны для задачи</Title><Description className="mt-1 text-[13px] leading-5 text-kumo-subtle">Форма задаёт структуру документа, методика — порядок работы. Можно выбрать несколько материалов.</Description></div>
     {!embedded&&<WorkshopIconButton aria-label="Закрыть выбор шаблона" onClick={onClose}><X size={18}/></WorkshopIconButton>}
