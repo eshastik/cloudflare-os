@@ -214,7 +214,7 @@ export function DocumentStatusView({ model, bound, busy, disabled, versionOpen, 
     {!compact && <button type="button" disabled={disabled} aria-pressed={versionOpen} onClick={onOpenVersion}
       className={`inline-flex @max-[1100px]:hidden h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-kumo-fill-hover px-3 text-[13px] leading-4 text-kumo-default transition-colors duration-150 hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-40 ${versionOpen ? 'bg-kumo-tint' : 'bg-kumo-overlay'}`}><ClockCounterClockwise size={15} aria-hidden="true" />Версии</button>}
     {error && !compact && <span role="alert" title={error} className="min-w-0 max-w-[420px] truncate text-[13px] leading-4 text-kumo-danger @max-[1100px]:max-w-[160px]">{error}</span>}
-    {error && compact && <span role="alert" title={error} className="h-2 w-2 shrink-0 rounded-full bg-kumo-danger" aria-label={error} />}
+    {error && compact && <div role="alert" className="fixed inset-x-4 bottom-4 z-50 rounded-xl border border-kumo-danger/30 bg-kumo-base p-4 text-[13px] leading-5 text-kumo-danger shadow-lg">{error}</div>}
     {secondary && <WorkshopButton className={`${button} ${compact ? '' : '@max-[1100px]:!hidden'}`} disabled={disabled || busy} onClick={onSecondary}>{secondary.label}</WorkshopButton>}
     {model?.primary && <WorkshopButton tone="primary" className={button} data-primary-action title={model.primary.hint} disabled={disabled || busy || model.primary.disabled} onClick={() => onPrimary(model.primary!.kind)}>{model.primary.label}</WorkshopButton>}
     {!compact && <DropdownMenu>

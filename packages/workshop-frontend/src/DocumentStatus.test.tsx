@@ -515,3 +515,12 @@ it('дубликаты имён при публикации: причина и �
     expect(view.container.querySelector('[role="alert"]')?.textContent).not.toContain('не подтверждён')
   } finally { await view.unmount() }
 })
+
+it('в компактной шапке ошибка видна текстом, а не красной точкой', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<DocumentStatusView compact model={deriveDocumentStatus(base)} error="Переименуйте документы" versionOpen={false} onPrimary={() => {}} onSecondary={() => {}} onOpenVersion={() => {}} />))
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Переименуйте документы')
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
