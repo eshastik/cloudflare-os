@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import ChatTemplatePicker, { loadChatTemplates, messageWithTemplate } from './ChatTemplatePicker'
 const permission=vi.hoisted(()=>({ready:true}));
-vi.mock('./SelectedTemplateAgentAccess',()=>({default:({items,onReady}:{items:{accountId:number;reference:unknown}[];onReady(key:string):void})=>{React.useEffect(()=>{if(permission.ready)onReady(JSON.stringify(items.map(item=>[item.accountId,item.reference])))},[items]);return <p>Проверка доступа агента</p>}}));
+vi.mock('./SelectedTemplateAgentAccess',()=>({default:({items,onReady}:{items:{accountId:number;reference:unknown}[];onReady(key:string):void})=>{React.useEffect(()=>{if(permission.ready)onReady(JSON.stringify(items.map(item=>[item.accountId,item.reference])))},[items,onReady]);return <p>Проверка доступа агента</p>}}));
 const api = vi.hoisted(() => ({ listChatTemplateAccounts:vi.fn(),listChatProjects:vi.fn(),listChatTemplateScopes:vi.fn(),listChatTemplates:vi.fn(),listOutputFormats: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listOwnBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listLibraryBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>(), listFeaturedBlueprints: vi.fn<(...args: unknown[]) => Promise<unknown>>() }))
 vi.mock('./AuthContext', () => ({ useAuthenticatedApi: () => ({ authenticatedApi: api }) }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -77,6 +77,7 @@ it('отказ выбранной области не заменяется ли�
  setup();const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
  try{
   await React.act(async()=>root.render(<ChatTemplatePicker onSelect={()=>{}} onClose={()=>{}}/>));
+  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Общие')!.click());
   api.listChatTemplates.mockRejectedValue(new Error('access denied'));
   await React.act(async()=>{const select=document.querySelector<HTMLSelectElement>('[aria-label="Область шаблонов"]')!;select.value='department';select.dispatchEvent(new Event('change',{bubbles:true}));});
   expect(api.listChatTemplates).toHaveBeenLastCalledWith(7,'department','',undefined);
@@ -139,3 +140,34 @@ it('начинает с проекта беседы и не подменяет �
 });
 
 it('не передаёт выбранные материалы в задачу до подтверждения доступа агента',async()=>{setup();permission.ready=false;const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn();try{await React.act(async()=>root.render(<ChatTemplatePicker onSelect={selected} onClose={()=>{}}/>));await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Форма ТЗ'))!.click());const use=[...document.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Использовать выбранные'))!;expect(use.disabled).toBe(true);await React.act(async()=>use.click());expect(selected).not.toHaveBeenCalled();}finally{await React.act(async()=>root.unmount());host.remove()}});
+
+it('общая библиотека видна сразу, выбирается явно и сохраняет выбранные личные материалы',async()=>{
+ setup();api.listChatTemplateAccounts.mockResolvedValue([{accountId:7,title:'Первое подключение'},{accountId:9,title:'Второе подключение'}]);api.listChatProjects.mockResolvedValue([{accountId:7,projectId:'source',title:'Проект'},{accountId:9,projectId:'source9',title:'Второй проект'}]);api.listChatTemplateScopes.mockImplementation(async account=>({scopes:account===7?[{scopeId:'group-a',title:'Группа А'},{scopeId:'group-b',title:'Группа Б'}]:[{scopeId:'group9',title:'Группа второго подключения'}],nextCursor:''}));
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host),selected=vi.fn();
+ try{
+  await React.act(async()=>root.render(<ChatTemplatePicker embedded onSelect={selected} onClose={()=>{}}/>));
+  const libraries=host.querySelector('[aria-label="Библиотеки шаблонов"]')!;
+  expect(libraries.closest('details')).toBeNull();
+  await React.act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent?.startsWith('Форма ТЗ'))!.click());
+  api.listChatTemplates.mockClear();
+  await React.act(async()=>[...libraries.querySelectorAll('button')].find(b=>b.textContent==='Общие')!.click());
+  expect(api.listChatTemplates).not.toHaveBeenCalled();
+  const scope=host.querySelector<HTMLSelectElement>('[aria-label="Область шаблонов"]')!;
+  expect(scope.value).toBe('');expect(scope.closest('details')).toBeNull();
+  expect(host.textContent).toContain('Выберите общую библиотеку выше.');
+  expect(host.querySelector('[aria-label="Рабочие шаблоны Mnemos"]')?.textContent).not.toContain('Форма ТЗ');
+  expect(host.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Форма ТЗ · версия 5');
+  await React.act(async()=>{scope.value='group-b';scope.dispatchEvent(new Event('change',{bubbles:true}))});
+  expect(api.listChatTemplates).toHaveBeenLastCalledWith(7,'group-b','',undefined);
+  api.listChatTemplates.mockClear();
+  await React.act(async()=>{const account=host.querySelector<HTMLSelectElement>('[aria-label="Подключение Mnemos"]')!;account.value='9';account.dispatchEvent(new Event('change',{bubbles:true}))});
+  expect(api.listChatTemplates).not.toHaveBeenCalled();expect(scope.value).toBe('');
+  expect([...libraries.querySelectorAll('button')].find(b=>b.textContent==='Общие')?.getAttribute('aria-pressed')).toBe('true');
+  await React.act(async()=>{scope.value='group9';scope.dispatchEvent(new Event('change',{bubbles:true}))});
+  expect(api.listChatTemplates).toHaveBeenLastCalledWith(9,'group9','',undefined);
+  await React.act(async()=>[...libraries.querySelectorAll('button')].find(b=>b.textContent==='Личные')!.click());
+  expect(api.listChatTemplates).toHaveBeenLastCalledWith(9,null,'','source9');
+  expect(host.querySelector('[aria-label="Выбранные шаблоны"]')?.textContent).toContain('Форма ТЗ · версия 5');
+  expect(selected).not.toHaveBeenCalled();
+ }finally{await React.act(async()=>root.unmount());host.remove()}
+});
