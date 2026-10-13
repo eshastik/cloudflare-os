@@ -14,7 +14,7 @@ import { openNativeDownloadsFrame, storesDocuments } from './accountCapabilities
 import { downloadGatekeeperNativeDocument } from './gatekeeperAppDownload'
 import { waitForNativeSnapshotSource, type NativeSnapshotSourceRef } from './nativeSnapshotSource'
 
-type Pending = { accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
+type Pending = { confirmed?: boolean; accountId: number; resourceUrl: string; publication: string; revision: number; label: string; format: NativeDocumentFormat; at: number; sourceId?: number; scope?: string; resource?: string }
 /** Ограничиваем также подготовку: до apply могут зависнуть адрес и каталог версий. */
 async function boundedOpening<T>(operation: Promise<T>, timeoutMs: number, disposeLate?: (value: T) => void): Promise<T> {
   let expired = false
@@ -69,11 +69,12 @@ export default function NativeDocumentOpen({ open = true, onClose, ...props }: P
     void boundedOpening(props.gadget.getId(), props.openingTimeoutMs ?? 20000).then(id => {
       if (cancelled) return
       const key = nativeOpenKey(id)
-      if (props.confirmApply) sessionStorage.removeItem(key)
-      setLoaded({gadget: props.gadget, key, pending: props.confirmApply ? null : readPendingNativeOpen(key, props.format)})
+      let pending=readPendingNativeOpen(key,props.format)
+      if(props.confirmApply&&(!pending?.confirmed||pending.accountId!==props.initialAccountId||pending.scope!==props.initialScope||pending.resource!==props.initialResource||pending.publication!==props.initialPublication)){sessionStorage.removeItem(key);pending=null}
+      setLoaded({gadget: props.gadget, key, pending})
     }).catch(() => { if (!cancelled) setLoaded({gadget: props.gadget, key: '', pending: null, failed: true}) })
     return () => { cancelled = true }
-  }, [props.gadget, props.format, props.confirmApply, props.initialPublication, props.initialResource, props.initialScope, attempt])
+  }, [props.gadget, props.format, props.confirmApply, props.initialAccountId, props.initialPublication, props.initialResource, props.initialScope, attempt])
   function close() { if (loaded?.key) sessionStorage.removeItem(loaded.key); setClosed(true); onClose?.() }
   // При смене RPC старую попытку снимаем сразу. React может объединить очистку и
   // повторное чтение того же ID; совпадение ID не означает, что старая сессия жива.
@@ -88,7 +89,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   // Незавершённое открытие продолжается само: человек уже выбрал документ до перезагрузки. «Выбрать версию»
   // после ошибки переводит карточку в ручной выбор и забывает незавершённое открытие.
   const [resume, setResume] = useState(resumed), [manual, setManual] = useState(false)
-  const auto = !confirmApply && !manual && (!!resume || !!autoApply)
+  const auto = (!confirmApply || resume?.confirmed === true) && !manual && (!!resume || !!autoApply)
   const [accounts, setAccounts] = useState<{ id: number; name: string; valid: boolean }[]>([])
   const [accountId, setAccountId] = useState<number | null>(initialAccountId ?? null)
   const [scopes, setScopes] = useState<Item[]>([]), [documents, setDocuments] = useState<Item[]>([])
@@ -260,7 +261,7 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
       const current = await wait(flush(format, signal)), revision = current.document.revision
       setPhase('editor-revision')
       if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || (resume && resume.revision !== revision)) throw new Error()
-      const intent: Pending = resume ?? { accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }
+      const intent: Pending = resume ?? { ...(confirmApply?{confirmed:true}:{}), accountId: accountId!, resourceUrl, publication, revision, label: documents.find(d => d.id === document)?.name || 'Документ', format, at: Date.now(), scope, resource: document }
       signal.throwIfAborted()
       sessionStorage.setItem(storageKey, JSON.stringify(intent))
       setPhase('prepare-source')

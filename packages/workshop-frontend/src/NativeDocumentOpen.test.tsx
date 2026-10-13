@@ -229,7 +229,7 @@ it('новая RPC-сессия с тем же ID продолжает сохр�
 })
 
 it('новая заявка подтверждения не возобновляет старое открытие и не заменяет правки до клика',async()=>{
- const {useAuthenticatedApi}=await import('./AuthContext');const prepare=vi.fn(async()=>{throw Error('остановка после проверки адреса')});const flush=vi.fn(async()=>({format:'cloudflareos.spreadsheet' as const,formatVersion:1 as const,document:{revision:7}}));
+ const {useAuthenticatedApi}=await import('./AuthContext');const prepare=vi.fn(async(..._args:unknown[])=>{throw Error('остановка после проверки адреса')});const flush=vi.fn(async()=>({format:'cloudflareos.spreadsheet' as const,formatVersion:1 as const,document:{revision:7}}));
  const source={scopes:async()=>({scopes:[{id:'project',name:'Проект'}]}),documents:async()=>({documents:[{id:'new-doc',name:'Новый результат'}],nextCursor:'',truncated:false}),publications:async()=>({resourceUrl:'https://example.test/new-doc',publications:[{id:'new-version',format:'cloudflareos.spreadsheet'}],nextCursor:''}),[Symbol.dispose]() {}};
  Object.assign(useAuthenticatedApi().authenticatedApi,{subscribeConnectedAccounts:async(s:any)=>{s.add(3,{displayName:'Память',avatar:{url:''},providesUi:{title:'Память'}},{displayName:'Память',url:'https://memory.example'},[{urlPattern:'https://memory.example/drive',description:'',title:'',receives:'drive'}],true,'memory');s.ready();return {[Symbol.dispose]() {}}},getGatekeeperApp:async()=>({nativeDownloads:{selector:source}})});
  const key='mnemos-native-open:'+location.pathname+':8';sessionStorage.setItem(key,JSON.stringify({accountId:3,resourceUrl:'https://example.test/old-doc',publication:'old-version',revision:7,label:'Старая попытка',scope:'project',resource:'old-doc',format:'cloudflareos.spreadsheet',at:Date.now()}));
@@ -239,6 +239,9 @@ it('новая заявка подтверждения не возобновля
   await act(async()=>vi.waitFor(()=>expect(host.textContent).toContain('Сохранённая версия готова к открытию.')));
   expect(prepare).not.toHaveBeenCalled();expect(flush).not.toHaveBeenCalled();expect(sessionStorage.getItem(key)).toBeNull();expect(host.querySelectorAll('select')).toHaveLength(0);
   const button=[...host.querySelectorAll('button')].find(b=>b.textContent==='Открыть версию')!;expect(button.disabled).toBe(false);await act(async()=>button.click());
-  await act(async()=>vi.waitFor(()=>expect(prepare).toHaveBeenCalledWith(3,'https://example.test/new-doc','new-version')));expect(flush).toHaveBeenCalledOnce();
+  await act(async()=>vi.waitFor(()=>expect(prepare).toHaveBeenCalledWith(3,'https://example.test/new-doc','new-version')));expect(flush).toHaveBeenCalledOnce();expect(JSON.parse(sessionStorage.getItem(key)!).confirmed).toBe(true);
+  await act(async()=>root.render(null));
+  await act(async()=>root.render(<NativeDocumentOpen confirmApply initialAccountId={3} initialScope="project" initialResource="new-doc" initialPublication="new-version" gadget={{getId:async()=>8,prepareNativeDocumentRead:prepare} as unknown as ComponentProps<typeof NativeDocumentOpen>['gadget']} format="cloudflareos.spreadsheet" snapshotSource={{current:flush}} reconnect={()=>{}}/>));
+  await act(async()=>vi.waitFor(()=>expect(prepare).toHaveBeenCalledTimes(2)));expect(prepare.mock.calls).toEqual([[3,'https://example.test/new-doc','new-version'],[3,'https://example.test/new-doc','new-version']]);
  }finally {await act(async()=>root.unmount());host.remove();sessionStorage.clear()}
 })
