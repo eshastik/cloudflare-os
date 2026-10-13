@@ -12,3 +12,9 @@ export function templatePreviewText(snapshot:NativeDocumentSnapshot):string{
   return (template.content.textContent??'').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n')
  }).filter(Boolean).join('\n')
 }
+
+/** Одинаковое представление текста исключает ложные правки при импорте в документ. */
+export function templateComparisonText(content:string|NativeDocumentSnapshot):string{
+ const text=typeof content==='string'?content:templatePreviewText(content)
+ return text.replace(/\r\n?/g,'\n').split('\n').map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean).join('\n')
+}

@@ -41,12 +41,14 @@ test('отзыв перед показом скрывает загруженны
  expect(document.body.textContent).toContain('Секретная методика');expect(mocks.preview.mock.calls.map(args=>args[0])).toEqual([item.reference,item.reference]);
 });
 
-async function versions(mixed=false){
+async function versions(mixed=false,conversion?:'copy'|'edit'){
  const tickets=new Map<number,unknown>(),bytes=new Map<string,Uint8Array>()
  for(const revision of [4,5]){
   const content=JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{title:'Форма ТЗ',blocks:[{html:mixed?'<div>Сумма '+(revision===4?'100':'500')+'<p>Условия оплаты</p></div>':revision===4?'<p>Уточните цель.</p>':'<p>Уточните цель.</p><p>Добавьте критерии приёмки.</p>'}]}})
-  const body=new TextEncoder().encode(content),digest=new Uint8Array(await webcrypto.subtle.digest('SHA-256',body));const url='https://objects.example/version-'+revision;bytes.set(url,body)
-  tickets.set(revision,{material:{reference:{...item.reference,revision},title:item.title,purpose:item.purpose,kind:item.kind},sourceHead:String(revision).repeat(64),ticket:{url,method:'GET',size_bytes:body.length,sha256_hex:[...digest].map(b=>b.toString(16).padStart(2,'0')).join(''),content_type:'application/vnd.cloudflareos.document+json'}})
+  const source=conversion&&revision===4?'\nУточните цель.\n\n':conversion?JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{title:'Форма ТЗ',blocks:[{html:'<pre><span>\nУточните цель.\n\n</span></pre>'+(conversion==='edit'?'<p>Добавьте критерии приёмки.</p>':'')}]}}):content
+  const mime=conversion&&revision===4?'text/markdown':'application/vnd.cloudflareos.document+json'
+  const body=new TextEncoder().encode(source),digest=new Uint8Array(await webcrypto.subtle.digest('SHA-256',body));const url='https://objects.example/version-'+revision;bytes.set(url,body)
+  tickets.set(revision,{material:{reference:{...item.reference,revision},title:item.title,purpose:item.purpose,kind:item.kind},sourceHead:String(revision).repeat(64),ticket:{url,method:'GET',size_bytes:body.length,sha256_hex:[...digest].map(b=>b.toString(16).padStart(2,'0')).join(''),content_type:mime}})
  }
  mocks.preview.mockImplementation(async(ref:unknown)=>tickets.get((ref as {revision:number}).revision));vi.stubGlobal('fetch',vi.fn(async(url:string)=>new Response(new Uint8Array(bytes.get(String(url))!))))
 }
@@ -124,4 +126,15 @@ test('личный шаблон без подтверждённого исход
  await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} editingProject={{accountId:7,projectId:'source-project'}} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
  expect(button('Редактировать')).toBeDefined();await React.act(async()=>button('Редактировать').click());
  expect(document.body.textContent).toContain('Текст и Markdown откроются как текст');expect(document.body.textContent).toContain('исходная версия останется прежней');expect(mocks.api.newGadgetFromBlueprint).not.toHaveBeenCalled();
+ });
+
+ test.each(['copy','edit'] as const)('Сравнение Markdown и документа: %s не показывает ложное изменение текста',async conversion=>{
+ await versions(false,conversion);await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ await React.act(async()=>button('Версии').click());await React.act(async()=>button('Что изменилось').click());
+ await vi.waitFor(async()=>{await React.act(async()=>{});expect(document.body.querySelector('[aria-label="Сравнение версий шаблона"]')).not.toBeNull()},{interval:5,timeout:1000});
+ const comparison=document.body.querySelector('[aria-label="Сравнение версий шаблона"]')!;
+ expect(comparison.textContent).toContain('Формат изменён: текст → документ');expect(comparison.textContent).toContain('Пробелы и пустые строки не сравниваются');expect(comparison.querySelector('del')).toBeNull();
+ expect(comparison.textContent?.includes('Текст содержимого не изменился.')).toBe(conversion==='copy');
+ expect(comparison.querySelector('ins')?.textContent?.trim()??'').toBe(conversion==='copy'?'':'Добавьте критерии приёмки.');
+ expect(mocks.validate).toHaveBeenCalledWith({template_id:'form',revision:4},'4'.repeat(64));expect(mocks.validate).toHaveBeenCalledWith(item.reference,'5'.repeat(64));
  });
