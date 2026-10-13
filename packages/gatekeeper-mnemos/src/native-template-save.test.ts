@@ -138,3 +138,14 @@ test('просмотр личной формы возвращает автори
  assert.equal(calls[0].content_type,mime);assert.ok(calls[0].name.endsWith('.mnemos-'+format.slice('cloudflareos.'.length)));assert.equal(result.content_type,mime);assert.deepEqual(await prepared.creator.save(),result);const preview=await templates.preview({template_id:result.template_id,revision:1});assert.equal(preview.ticket?.content_type,mime);
  await assert.rejects(templates.prepare('project','План','Форма',{template_id:result.template_id,revision:1},'native-editor','cloudflareos.document'));
  });
+
+test('предложение сохранённой личной версии не создаёт новый снимок и не выдаёт возможности записи',async()=>{
+ const values=new Map(),id='12345678-1234-4234-8234-123456789012',ref={template_id:'personal',revision:2};let denied=false,owner='author';let writes=0;
+ const source={template_id:'personal',revision:2,user_id:'author',project_id:'p',source_head:'a'.repeat(64),title:'Форма',purpose:'Подготовить ТЗ',kind:'document'};
+ const session={readWorkTemplate:async()=>{if(denied)throw Error('denied');return source},whoAmI:async()=>({subject:{user_id:owner}})};
+ const store={get:(k:string)=>values.get(k),put:(k:string,v:unknown)=>{writes++;values.set(k,structuredClone(v))}},templates=new BlueprintTemplates(session as any,store as any);
+ const proposal=await templates.prepareSharing(ref,id);assert.equal(writes,1);assert.equal(typeof proposal.propose,'function');assert.equal(typeof proposal.reviewAccess,'function');assert.equal(typeof proposal.shareForReview,'function');assert.equal(proposal.issue,undefined);assert.equal(proposal.save,undefined);
+ await templates.prepareSharing(ref,id);assert.equal(writes,1);assert.deepEqual(values.get('blueprint-template:'+id).version,source);
+ denied=true;await assert.rejects(templates.prepareSharing(ref,id),/denied/);denied=false;owner='other';await assert.rejects(templates.prepareSharing(ref,id),/автор/);owner='author';
+ await assert.rejects(templates.prepareSharing({scope_id:'team',template_key:'x',revision:2},id));await assert.rejects(templates.prepareSharing({...ref,revision:1},id),/другому/);assert.equal(writes,1);
+});

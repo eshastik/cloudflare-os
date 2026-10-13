@@ -1,3 +1,4 @@
+import WorkTemplateSharing from './WorkTemplateSharing'
 import WorkTemplatePromotion from './WorkTemplatePromotion'
 import CreateWorkTemplate from './CreateWorkTemplate'
 import {useEffect,useState} from 'react'
@@ -34,6 +35,7 @@ export default function WorkTemplatePreview({item,selected,atLimit,onToggle,onBa
    {state.status==='error'&&<div className="space-y-3"><p role="alert">{state.reason==='format'?'Просмотр этого формата пока не поддерживается. Доступны текст, Markdown, документы, таблицы и презентации.':state.reason==='size'?'Шаблон превышает предел просмотра — 1 МиБ. Содержимое не загружено.':'Не удалось открыть содержимое. Проверьте доступ и подключение, затем повторите просмотр.'}</p>{!state.reason&&<WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить просмотр</WorkshopButton>}</div>}
    {comparison&&ready?<WorkTemplateComparison key={key} accountId={item.accountId} reference={reference}/>:ready&&state.status==='ready'&&<>{state.material.purpose&&<p className="mb-4 text-[13px] text-kumo-subtle">{state.material.purpose}</p>}{typeof state.content==='string'?<pre className="whitespace-pre-wrap break-words font-sans text-[14px] leading-6">{state.content}</pre>:<NativeTemplatePreview snapshot={state.content}/>}</>}
   </div>
+  {!readOnly&&!comparison&&ready&&state.status==='ready'&&'template_id' in reference&&<WorkTemplateSharing key={key} item={{...item,...state.material}}/>}
   {!readOnly&&!comparison&&ready&&state.status==='ready'&&state.promotion&&<WorkTemplatePromotion key={key} item={{...item,...state.material}} target={state.promotion}/>}
   <div className="flex shrink-0 flex-wrap justify-between gap-2 border-t border-kumo-line px-5 py-4"><WorkshopButton onClick={onBack}>{backLabel}</WorkshopButton>{!comparison&&editingProject&&ready&&state.status==='ready'&&('template_id' in reference?!!state.sourceProjectId:!!state.improvement)&&<CreateWorkTemplate format={typeof state.content==='string'?'cloudflareos.document':state.content.format} textSource={typeof state.content==='string'} editing={{...editingProject,projectId:'template_id' in reference?state.sourceProjectId!:editingProject.projectId,reference,item:{...item,...state.material}}}/>}{!readOnly&&<WorkshopButton tone="primary" disabled={!ready||!viewedSelected&&atLimit} onClick={()=>{if(ready&&state.status==='ready')onToggle({...item,...state.material})}}>{viewedSelected?'Убрать из задачи':'Выбрать для задачи'}</WorkshopButton>}</div>
  </Dialog></Dialog.Root>

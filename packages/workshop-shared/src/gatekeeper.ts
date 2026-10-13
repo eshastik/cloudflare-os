@@ -459,7 +459,18 @@ export interface GatekeeperTemplateScopeConfig {
   approvers: string[];
 }
 export type GatekeeperTemplateAgentAccessPlan={bindingId:string;ready:boolean;scopes:{scopeId:string;title:string;revision:number;enabled:boolean}[]};
+/** Предложение сохранённой личной версии; не создаёт новый снимок и не публикует его. */
+export interface GatekeeperWorkTemplateProposal extends RpcTarget {
+  /** Назначенные согласующие и текущий доступ к точному снимку. */
+  reviewAccess(scope:string,scopeRevision:number):Promise<GatekeeperTemplateReviewAccess>;
+  /** Явно открывает согласующим чтение только документа шаблона после сверки плана. */
+  shareForReview(scope:string,scopeRevision:number,key:string):Promise<GatekeeperTemplateReviewAccess>;
+  /** Отправляет закреплённую версию и объяснение; повтор сохраняет прежнее предложение. */
+  propose(scope:string,scopeRevision:number,explanation:string,accessKey:string):Promise<{proposal_id:string;target_scope_id:string}>;
+}
 export interface GatekeeperBlueprintTemplates extends RpcTarget {
+  /** Готовит предложение уже сохранённой личной версии без повторного сохранения. UUID закрепляет источник. */
+  prepareSharing(reference:import('./work-template.js').WorkTemplateReference,operation:string):Promise<RpcStub<GatekeeperWorkTemplateProposal>>;
   agentAccess(references:import('./work-template.js').WorkTemplateReference[]):Promise<GatekeeperTemplateAgentAccessPlan>;
   allowAgentAccess(references:import('./work-template.js').WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<GatekeeperTemplateAgentAccessPlan>;
   /** Проверяет доступ к точной версии. Возвращает билет прямого чтения либо ограничение просмотра без билета; содержимое через RPC не передаётся. */

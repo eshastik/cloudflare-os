@@ -22,10 +22,10 @@ function api(requirements=[]){const scope={...baseScope,review_requirements:requ
 test("Шаблон проверяется и согласуется из основной очереди",async()=>{
  const backend=api(),app=await mountMemoryApp(backend,{section:"approvals"});
  try{
-  await openRow(app);await app.until(()=>app.button("Проверить шаблон"),"карточка предложения");
+  await openRow(app);await app.until(()=>app.button("Обновить проверку"),"карточка предложения");
   assert.equal(app.document.querySelectorAll('#root [data-inbox="template"]').length,1,"собственное предложение исключено");
-  assert.equal(app.button("Опубликовать шаблон"),undefined);
-  app.button("Проверить шаблон").click();
+  assert.equal(backend.writes.length,0);
+  app.button("Обновить проверку").click();
   await app.until(()=>app.text().includes("текст")&&app.button("Опубликовать шаблон"),"предложенная версия");
   assert.equal(app.button("Опубликовать шаблон").disabled,true);
   app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),"Изменения проверены");
@@ -40,7 +40,7 @@ test("Потерянный ответ требует проверки сохра
  backend.saveTemplateDecision=async(...args)=>{await save(...args);throw Error("ответ потерян");};
  const app=await mountMemoryApp(backend,{section:"my-work"});
  try{
-  await openRow(app);await app.until(()=>app.button("Проверить шаблон"),"шаблон во входящих");app.button("Проверить шаблон").click();
+  await openRow(app);await app.until(()=>app.button("Обновить проверку"),"шаблон во входящих");app.button("Обновить проверку").click();
   await app.until(()=>app.document.querySelector('[aria-label="Комментарий к шаблону"]'),"форма решения");
   app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),"Проверено");
   await app.until(()=>app.button("Опубликовать шаблон")&&!app.button("Опубликовать шаблон").disabled,"версия прочитана");app.button("Опубликовать шаблон").click();
@@ -57,7 +57,7 @@ test("Предложенный Blueprint открывается отдельно
  const snapshot={schema:'mnemos.blueprint-template',schemaVersion:1,blueprint:{id:'bp',version:2,title:'Бюджет',archiveSHA256:hash,archiveBase64:Buffer.from(bytes).toString('base64')}};
  const app=await mountMemoryApp(backend,{section:'approvals',downloadText:JSON.stringify(snapshot)});
  try{
-  await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
+  await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();
   await app.until(()=>app.button('Открыть копию рядом')&&!app.button('Открыть копию рядом').disabled,'копия доступна');
   app.button('Открыть копию рядом').click();await app.until(()=>app.calls.some(([method])=>method==='openTemplateProposal'),'открытие через хост');
   assert.deepEqual(app.calls.find(([method])=>method==='openTemplateProposal'),['openTemplateProposal','project','doc','q']);
@@ -68,14 +68,14 @@ test("Предложенный Blueprint открывается отдельно
 test('при недоступной общей версии нельзя одобрить неполное сравнение',async()=>{
  const backend=api();backend.readTemplateProposalBaseline=async()=>{throw Error('forbidden')};
  const app=await mountMemoryApp(backend,{section:'approvals'});
- try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.button('Повторить проверку'),'отказ сравнения');app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),'Проверено');assert.equal(app.button('Опубликовать шаблон').disabled,true);assert.equal(backend.writes.length,0)}finally{app.dispose()}
+ try{await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();await app.until(()=>app.button('Повторить проверку'),'отказ сравнения');app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),'Проверено');assert.equal(app.button('Опубликовать шаблон').disabled,true);assert.equal(backend.writes.length,0)}finally{app.dispose()}
 });
 
 test('общая и предложенная версии видны рядом до принятия решения',async()=>{
  const backend=api(),readSource=backend.readTemplateProposalSource;backend.readTemplateProposalSource=async()=>{const source=await readSource();return {...source,source:{...source.source,content_type:'application/vnd.cloudflareos.document+json'}}};backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:'application/vnd.cloudflareos.document+json'});
  const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{blocks:[{html:version.startsWith('template-baseline:')?'<h2>Утверждённый текст</h2>':'<h2>Предлагаемый текст</h2>'}]}})});
  try{
-  await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();
+  await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();
   await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
   assert.match(app.document.querySelector('[aria-label="До изменений"]').textContent,/общая версия 7.*Утверждённый текст/);
   assert.match(app.document.querySelector('[aria-label="Предложенная версия"]').textContent,/Предлагаемый текст/);
@@ -88,15 +88,15 @@ test('общая и предложенная версии видны рядом 
 
 test('публикация ждёт каждого согласующего, а решение по направлению сохраняется отдельно',async()=>{
  const backend=api([{domain_id:'finance',approvers:['alice','bob']}]),app=await mountMemoryApp(backend,{section:'approvals'});
- try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'согласование');
- app.type(app.document.querySelector('[aria-label="Комментарий к шаблону"]'),'Опубликовать проверенную версию');app.type(app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'Финансы проверены');await app.until(()=>!app.button('Согласовать по направлению').disabled,'версия прочитана');assert.equal(app.button('Опубликовать шаблон').disabled,true);app.button('Согласовать по направлению').click();
- await app.until(()=>app.text().includes('согласовано')&&!app.button('Согласовать по направлению'),'ответ записан');assert.equal(app.button('Опубликовать шаблон').disabled,true,'нужен второй ответ');assert.equal(backend.contentWrites.length,1);assert.equal(backend.writes.length,0,'согласование не публикует');
+ try{await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();await app.until(()=>app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'согласование');
+ app.type(app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'Финансы проверены');await app.until(()=>!app.button('Согласовать содержание').disabled,'версия прочитана');assert.equal(app.button('Опубликовать шаблон'),undefined);app.button('Согласовать содержание').click();
+ await app.until(()=>app.text().includes('согласовано')&&!app.button('Согласовать содержание'),'ответ записан');assert.equal(app.button('Опубликовать шаблон'),undefined,'нужен второй ответ');assert.equal(backend.contentWrites.length,1);assert.equal(backend.writes.length,0,'согласование не публикует');
  }finally{app.dispose();}
 });
 
 test('отклонение по направлению доступно без чтения документа, одобрение запрещено',async()=>{
  const backend=api([{domain_id:'finance',approvers:['alice']}]);backend.readTemplateProposalSource=async()=>{throw Error('403')};const app=await mountMemoryApp(backend,{section:'approvals'});
- try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.text().includes('Не удалось открыть предложенную версию')&&app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'отказ чтения');app.type(app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'Нет доступа к содержимому');await app.until(()=>!app.button('Отклонить по направлению').disabled,'можно отклонить');assert.equal(app.button('Согласовать по направлению').disabled,true);assert.equal(app.button('Опубликовать шаблон').disabled,true);app.button('Отклонить по направлению').click();await app.until(()=>backend.contentWrites.length===1,'отказ сохранён');assert.equal(backend.contentWrites[0].approved,false);assert.equal(backend.writes.length,0);
+ try{await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();await app.until(()=>app.text().includes('Не удалось открыть предложенную версию')&&app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'отказ чтения');app.type(app.document.querySelector('[aria-label="Комментарий по направлению finance"]'),'Нет доступа к содержимому');await app.until(()=>!app.button('Вернуть на доработку').disabled,'можно отклонить');assert.equal(app.button('Согласовать содержание').disabled,true);assert.equal(app.button('Опубликовать шаблон'),undefined);app.button('Вернуть на доработку').click();await app.until(()=>backend.contentWrites.length===1,'отказ сохранён');assert.equal(backend.contentWrites[0].approved,false);assert.equal(backend.writes.length,0);
  }finally{app.dispose();}
 });
 
@@ -105,7 +105,7 @@ test('нативные версии показаны человеку без JSO
  backend.readTemplateProposalSource=async()=>({proposal_id:'q',source:{template_id:'template',revision:2,source_head:'a'.repeat(64),project_id:'project',node_id:'doc',content_type:mime}});
  backend.readTemplateProposalBaseline=async()=>({template_id:'old-template',revision:1,source_head:'b'.repeat(64),project_id:'old-project',node_id:'old-doc',content_type:mime});
  const app=await mountMemoryApp(backend,{section:'approvals',downloadText:(_p,_n,version)=>JSON.stringify({format:'cloudflareos.document',formatVersion:1,document:{title:'Методика',blocks:[{html:version.startsWith('template-baseline:')?'<p>Старая цель</p>':'Вводный текст<p>Новая цель</p><script>execute()</script>'}]}})});
- try{await openRow(app);await app.until(()=>app.button('Проверить шаблон'),'предложение');app.button('Проверить шаблон').click();await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
+ try{await openRow(app);await app.until(()=>app.button('Обновить проверку'),'предложение');app.button('Обновить проверку').click();await app.until(()=>app.document.querySelector('[aria-label="До изменений"]'),'сравнение');
  assert.match(app.document.querySelector('[aria-label="До изменений"]').textContent,/Методика\s+Старая цель/);
  const proposed=app.document.querySelector('[aria-label="Предложенная версия"]').textContent;assert.match(proposed,/Методика\s+Вводный текст\s+Новая цель/);assert(!proposed.includes('formatVersion'));assert(!proposed.includes('execute()'));assert.equal(backend.writes.length,0);
  }finally{app.dispose()}

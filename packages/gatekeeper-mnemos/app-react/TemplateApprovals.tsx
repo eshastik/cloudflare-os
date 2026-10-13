@@ -17,20 +17,22 @@ export async function loadTemplateReviews(ui:ReturnType<typeof useUi>):Promise<{
  return pages.flat();
 }
 export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:TemplatePromotionReview;scope:TemplateScope;onDone():void}){
- const ui=useUi(),host=useHost();const [open,setOpen]=useState(false),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
+ const ui=useUi(),host=useHost();const [open,setOpen]=useState(true),[text,setText]=useState<string|null>(null),[error,setError]=useState(""),[comment,setComment]=useState(""),[busy,setBusy]=useState(false),[saved,setSaved]=useState<SavedTemplateDecision|null>(null),[ready,setReady]=useState(false);
  const [baseline,setBaseline]=useState<string|null>(null);
  const [documentHtml,setDocumentHtml]=useState<string|undefined>(),[baselineHtml,setBaselineHtml]=useState<string|undefined>();
  const changes=baseline!==null&&text!==null?templateTextChanges(baseline,text):null;
  const [gadget,setGadget]=useState<{project:string;node:string}|null>(null);
  const [review,setReview]=useState(item);
  const proposal=review.proposal,id=proposal.proposal_id;
+ const [title,setTitle]=useState(proposal.message||"Общий шаблон");
  const requirements=proposal.scope_path.flatMap(s=>(s.review_requirements??[]).map(r=>({scope:s,requirement:r})));
  const mayPublish=scope.approvers.includes(userId)&&userId!==proposal.user_id&&userId!==proposal.source_owner_id;
  const contentApproved=requirements.every(({scope:s,requirement:r})=>r.approvers.every(u=>review.content_decisions?.some(d=>d.scope_id===s.scope_id&&d.domain_id===r.domain_id&&d.reviewer_id===u&&d.approved)));
  async function inspect(){setOpen(true);setBusy(true);setError("");setReady(false);setText(null);setBaseline(null);setDocumentHtml(undefined);setBaselineHtml(undefined);setGadget(null);
-  try{const current=await ui.readTemplateProposal(id);setReview(current);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}setReady(true);const source=await ui.readTemplateProposalSource(id);if(source.source.content_type===BLUEPRINT_TEMPLATE_MIME)setGadget({project:source.source.project_id,node:source.source.node_id});setReady(true);const preview=await readTemplateProposalPreview(ui,id,(...args)=>host.downloadText(...args));const before=await readTemplateBaselinePreview(ui,id,(...args)=>host.downloadText(...args));setBaseline(before?.text??null);setBaselineHtml(before?.documentHtml);setText(preview.text);setDocumentHtml(preview.documentHtml);}
+  try{const current=await ui.readTemplateProposal(id);setReview(current);const decision=await ui.readSavedTemplateDecision(id);setSaved(decision);if(current.decision){onDone();return;}setReady(true);const source=await ui.readTemplateProposalSource(id);setTitle(source.source.title||proposal.message||"Общий шаблон");if(source.source.content_type===BLUEPRINT_TEMPLATE_MIME)setGadget({project:source.source.project_id,node:source.source.node_id});setReady(true);const preview=await readTemplateProposalPreview(ui,id,(...args)=>host.downloadText(...args));const before=await readTemplateBaselinePreview(ui,id,(...args)=>host.downloadText(...args));setBaseline(before?.text??null);setBaselineHtml(before?.documentHtml);setText(preview.text);setDocumentHtml(preview.documentHtml);}
   catch{setError("Не удалось открыть предложенную версию. Проверьте доступ и повторите.");}finally{setBusy(false);}
  }
+ useEffect(()=>{void inspect()},[id]);
  async function openGadget(){if(!gadget||busy)return;setBusy(true);setError("");try{await host.openTemplateProposal(gadget.project,gadget.node,id);}catch{setError("Копия шаблона не открылась. Повторите проверку предложенной версии.");}finally{setBusy(false);}}
  async function decide(approved?:boolean){if(busy||!ready||!mayPublish||(approved===true||approved===undefined&&saved?.input.approved)&&(!contentApproved||text===null))return;setBusy(true);setError("");
   try{
@@ -39,8 +41,9 @@ export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:
   }catch{setReady(false);setError("Решение не подтверждено. Сначала проверьте его состояние.");}finally{setBusy(false);}
  }
  return <div className="border-t border-kumo-fill first:border-t-0" data-template-proposal="">
-  <div className="flex items-center gap-3 px-4 py-3"><RowTitle title={proposal.message||"Шаблон работы"} note={`${scope.name} · версия ${proposal.template_revision} · от ${personName(proposal.user_id)}`}/><Pill disabled={busy} aria-expanded={open} onClick={()=>open?setOpen(false):void inspect()}>{open?"Свернуть":"Проверить шаблон"}</Pill></div>
+  <div className="flex items-center gap-3 px-4 py-3"><RowTitle title={title} note={`${scope.name} · версия ${proposal.template_revision} · от ${personName(proposal.user_id)}`}/><Pill disabled={busy} aria-expanded={open} onClick={()=>void inspect()}>Обновить проверку</Pill></div>
   {open&&<div className="grid gap-3 px-4 pb-4 text-[14px]">
+   <div aria-label="Статус общего шаблона" className="rounded-xl bg-kumo-tint p-3"><p className="m-0 font-medium">{text===null?(error?"Предложенная версия не прочитана":"Открываем предложенную версию"):contentApproved?"Содержание проверено · публикация отдельным решением":"Ожидает согласования содержания"}</p><p className="mt-1 mb-0 text-[13px] text-kumo-subtle">{scope.name} · общая версия {proposal.expected_catalogue_revision?proposal.expected_catalogue_revision+1:1}. Согласование содержания и публикация выполняются отдельно.</p></div>
    <p className="m-0 text-kumo-subtle">{proposal.expected_catalogue_revision?"Сравните текст предложения с закреплённой общей версией. Просмотр текста не проверяет оформление и структуру документа.":"Прочитайте предложенный текст. После согласования эта точная версия станет доступна участникам области."}</p>
    {error&&<Notice tone="danger">{error}</Notice>}
    {busy&&<p role="status" className="m-0 text-kumo-subtle">Проверяем…</p>}
@@ -60,7 +63,7 @@ export function TemplateProposal({item,scope,userId,onDone}:{userId:string;item:
    {!busy&&(!ready||text===null)&&<div><Pill onClick={()=>void inspect()}>Повторить проверку</Pill></div>}
    {requirements.map(({scope:s,requirement:r})=><TemplateContentReview key={JSON.stringify([s.scope_id,r.domain_id])} review={review} scope={s} requirement={r} userId={userId} ready={ready&&!busy} verified={text!==null} onDone={()=>void inspect()}/>)}
    {mayPublish&&<p className="m-0 text-kumo-subtle">Публикация откроет участникам области эту версию шаблона. Исходный личный документ останется доступен по своим правам. Необходимы все согласования по направлениям.</p>}
-   {mayPublish&&(saved?<div><p className="m-0">{saved.receipt?"Решение записано.":`Сохранено решение: ${saved.input.approved?"одобрить":"отклонить"}.`}</p>{!saved.receipt&&ready&&<Pill tone="primary" className="mt-2" disabled={busy||saved.input.approved&&(text===null||!contentApproved)} onClick={()=>void decide()}>Повторить сохранённое решение</Pill>}</div>:<>
+   {mayPublish&&contentApproved&&(saved?<div><p className="m-0">{saved.receipt?"Решение записано.":`Сохранено решение: ${saved.input.approved?"одобрить":"отклонить"}.`}</p>{!saved.receipt&&ready&&<Pill tone="primary" className="mt-2" disabled={busy||saved.input.approved&&(text===null||!contentApproved)} onClick={()=>void decide()}>Повторить сохранённое решение</Pill>}</div>:<>
     <Field label="Комментарий" className="max-w-xl"><FieldInput aria-label="Комментарий к шаблону" value={comment} disabled={busy||!ready} onChange={e=>setComment(e.target.value)}/></Field>
     <div className="flex gap-2"><Pill disabled={busy||!ready||!comment.trim()} onClick={()=>void decide(false)}>Отклонить шаблон</Pill><Pill tone="primary" disabled={busy||!ready||text===null||!contentApproved||!comment.trim()} onClick={()=>void decide(true)}>Опубликовать шаблон</Pill></div>
    </>)}
@@ -82,7 +85,7 @@ function TemplateContentReview({review,scope,requirement,userId,ready,verified,o
   {error&&<Notice tone="danger">{error}</Notice>}
   {mayDecide&&!mine&&(!loaded?<div><Pill disabled={busy} onClick={()=>void load()}>Проверить решение по направлению</Pill></div>:saved?<div><p className="m-0">Сохранено решение: {saved.input.approved?'согласовать':'отклонить'}.</p>{!saved.receipt&&<Pill disabled={busy||!ready||saved.input.approved&&!verified} onClick={()=>void decide()}>Повторить решение по направлению</Pill>}</div>:<>
    <Field label="Комментарий"><FieldInput aria-label={'Комментарий по направлению '+domain} value={comment} disabled={busy||!ready} onChange={e=>setComment(e.target.value)}/></Field>
-   <div className="flex gap-2"><Pill disabled={busy||!ready||!comment.trim()} onClick={()=>void decide(false)}>Отклонить по направлению</Pill><Pill disabled={busy||!ready||!verified||!comment.trim()} onClick={()=>void decide(true)}>Согласовать по направлению</Pill></div>
+   <div className="flex gap-2"><Pill disabled={busy||!ready||!comment.trim()} onClick={()=>void decide(false)}>Вернуть на доработку</Pill><Pill disabled={busy||!ready||!verified||!comment.trim()} onClick={()=>void decide(true)}>Согласовать содержание</Pill></div>
   </>)}
  </section>;
 }

@@ -13,6 +13,16 @@ type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage,private agentAccessCalls?:{read(references:WorkTemplateReference[]):Promise<TemplateAgentAccessPlan>;allow(references:WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<TemplateAgentAccessPlan>}) { super() }
+  async prepareSharing(reference:WorkTemplateReference,operation:string){
+    const ref=checkedTemplateReferences([reference])[0];
+    if(typeof ref.template_id!=='string'||!/^[a-f0-9-]{36}$/.test(operation))throw Error('Выберите личную версию шаблона');
+    const version=await this.session.readWorkTemplate(ref.template_id,ref.revision);
+    if((await this.session.whoAmI()).subject.user_id!==version.user_id)throw Error('Предложить личный шаблон может его автор');
+    const key='blueprint-template:'+operation,previous=this.storage.get<Capture>(key);
+    if(previous){if(previous.template!==ref.template_id||previous.version?.revision!==ref.revision||previous.project!==version.project_id)throw Error('Операция относится к другому шаблону');}
+    else this.storage.put(key,{id:operation,project:version.project_id,title:version.title,purpose:version.purpose,head:version.source_head,upload:'',version,template:version.template_id,expectedRevision:version.revision,kind:version.kind} satisfies Capture);
+    return new RpcStub(new WorkTemplateProposal(new BlueprintTemplateCreator(this.session,this.storage,operation)));
+  }
   async agentAccess(references:WorkTemplateReference[]){if(!this.agentAccessCalls)throw Error('Проверка доступа агента недоступна');return this.agentAccessCalls.read(checkedTemplateReferences(references));}
   async allowAgentAccess(references:WorkTemplateReference[],scope:string,binding:string,revision:number){if(!this.agentAccessCalls)throw Error('Проверка доступа агента недоступна');return this.agentAccessCalls.allow(checkedTemplateReferences(references),scope,binding,revision);}
   async preview(reference:WorkTemplateReference){
@@ -235,4 +245,12 @@ class BlueprintTemplateCreator extends RpcTarget {
     if(capture.blueprint)this.storage.put(`blueprint-template-latest:${capture.blueprint}`,{template_id:version.template_id})
     return version
   }
+}
+
+/** Предложение не выдаёт полномочий загрузить или заменить сохранённый шаблон. */
+class WorkTemplateProposal extends RpcTarget {
+  constructor(private creator:BlueprintTemplateCreator){super()}
+  reviewAccess(scope:string,revision:number){return this.creator.reviewAccess(scope,revision)}
+  shareForReview(scope:string,revision:number,key:string){return this.creator.shareForReview(scope,revision,key)}
+  propose(scope:string,revision:number,reason:string,key:string){return this.creator.propose(scope,revision,reason,key)}
 }
