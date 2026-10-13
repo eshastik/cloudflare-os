@@ -5,20 +5,20 @@ import {useEffect,useState} from 'react'
 import type {RpcStub} from 'capnweb'
 import type {GadgetClient} from '@gadgets/workshop-shared/api'
 import type {NativeSnapshotSourceRef} from './nativeSnapshotSource'
-import {deriveNativeTitle,nativeTitleSource} from '@gadgets/workshop-shared/native-document'
+import {deriveNativeTitle,nativeTitleSource,type NativeDocumentFormat} from '@gadgets/workshop-shared/native-document'
 import BlueprintTemplateSave from './BlueprintTemplateSave'
 import {WorkshopButton} from './components/WorkshopControls'
 
-type Props={editing?:{context:TemplateEditingContext;material:ChatWorkTemplateChoice};initialKind?:WorkTemplateKind;gadget:RpcStub<GadgetClient>;sourceId:string;title:string;snapshotSource:NativeSnapshotSourceRef;projectChatId?:number;onUse?(template:ChatWorkTemplate):void;onClose():void}
+type Props={format?:NativeDocumentFormat;editing?:{context:TemplateEditingContext;material:ChatWorkTemplateChoice};initialKind?:WorkTemplateKind;gadget:RpcStub<GadgetClient>;sourceId:string;title:string;snapshotSource:NativeSnapshotSourceRef;projectChatId?:number;onUse?(template:ChatWorkTemplate):void;onClose():void}
 type Context={status:'loading'}|{status:'error'}|{status:'ready';project?:{accountId:number|null;projectId:string}}
 
-export default function DocumentTemplateSave({gadget,sourceId,title,snapshotSource,projectChatId,onClose,onUse,initialKind,editing}:Props){
+export default function DocumentTemplateSave({gadget,sourceId,title,snapshotSource,projectChatId,onClose,onUse,initialKind,editing,format='cloudflareos.document'}:Props){
  const [documentTitle,setDocumentTitle]=useState(title)
  const [context,setContext]=useState<Context>({status:'loading'}),[reload,setReload]=useState(0)
  useEffect(()=>{
   let cancelled=false;const controller=new AbortController();setContext({status:'loading'})
   const fallbackTitle=editing?.material.title??title
-  const readTitle=Promise.resolve().then(()=>snapshotSource.current?.('cloudflareos.document',controller.signal)).then(snapshot=>snapshot?.format==='cloudflareos.document'?deriveNativeTitle(nativeTitleSource(snapshot.format,snapshot.document))??fallbackTitle:fallbackTitle).catch(()=>fallbackTitle)
+  const readTitle=Promise.resolve().then(()=>snapshotSource.current?.(format,controller.signal)).then(snapshot=>snapshot?.format===format?deriveNativeTitle(nativeTitleSource(snapshot.format,snapshot.document))??fallbackTitle:fallbackTitle).catch(()=>fallbackTitle)
   void Promise.allSettled([gadget.getMnemosDocument(projectChatId),readTitle]).then(([state,name])=>{
    if(cancelled)return
    setDocumentTitle(name.status==='fulfilled'?name.value:fallbackTitle)
@@ -27,8 +27,8 @@ export default function DocumentTemplateSave({gadget,sourceId,title,snapshotSour
    setContext({status:'ready',project})
   })
   return()=>{cancelled=true;controller.abort()}
- },[gadget,projectChatId,reload,snapshotSource,title,editing?.material.title])
+ },[gadget,projectChatId,reload,snapshotSource,title,editing?.material.title,format])
  if(context.status==='loading')return <div className="space-y-3"><p role="status">Определяем проект документа…</p><WorkshopButton onClick={onClose}>Закрыть</WorkshopButton></div>
  if(context.status==='error')return <div className="space-y-3"><p role="alert">Не удалось определить проект документа.</p><WorkshopButton onClick={()=>setReload(v=>v+1)}>Повторить</WorkshopButton><WorkshopButton onClick={()=>setContext({status:'ready'})}>Выбрать проект вручную</WorkshopButton><WorkshopButton onClick={onClose}>Закрыть</WorkshopButton></div>
- return <BlueprintTemplateSave initialTemplate={editing} initialKind={editing?.material.kind??initialKind} nativeOnly onUse={onUse} preferredProject={editing?.context??context.project} blueprint={{id:sourceId,title:documentTitle,description:editing?.material.purpose??''}} format="cloudflareos.document" snapshotSource={snapshotSource} onClose={onClose}/>
+ return <BlueprintTemplateSave initialTemplate={editing} initialKind={editing?.material.kind??initialKind} nativeOnly onUse={onUse} preferredProject={editing?.context??context.project} blueprint={{id:sourceId,title:documentTitle,description:editing?.material.purpose??''}} format={format} snapshotSource={snapshotSource} onClose={onClose}/>
 }

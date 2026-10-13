@@ -4,9 +4,9 @@ import {MnemosAccount,MnemosAccountSession,type AccountStorage} from './account-
 import {MnemosAPI} from './mnemos-api.ts';
 import {createTemplateDocument} from './create-template-document.ts';
 
-function fixture(){
+function fixture(contentType='application/vnd.cloudflareos.document+json'){
  const values=new Map<string,unknown>();const storage:AccountStorage={get:<T>(k:string)=>structuredClone(values.get(k)) as T|undefined,put:(k,v)=>{values.set(k,structuredClone(v));},delete:k=>{values.delete(k);}};
- const form={template_id:'form',revision:5,title:'Форма',kind:'document',purpose:'Подготовить ТЗ',project_id:'source',node_id:'original',source_head:'a'.repeat(64),content_type:'application/vnd.cloudflareos.document+json',user_id:'human',agent_id:'',created_at:'2026-10-04T00:00:00Z'};
+ const form={template_id:'form',revision:5,title:'Форма',kind:'document',purpose:'Подготовить ТЗ',project_id:'source',node_id:'original',source_head:'a'.repeat(64),content_type:contentType,user_id:'human',agent_id:'',created_at:'2026-10-04T00:00:00Z'};
  const references=[{template_id:'form',revision:5},{template_id:'method',revision:3}];
  const input={project:'target',form:references[0],references,requestId:'once',name:'ТЗ.cfdoc'};
  const bodies:unknown[]=[];let lost=true;let revoked=false;let heads=0;
@@ -53,3 +53,10 @@ test('агент не переиспользует сохранённое нам
  assert.deepEqual(await human.readSavedTemplateAction('target'),saved);
  assert.equal((f.bodies[0] as any).request_id,'once');
 });
+
+ for(const format of ['spreadsheet','presentation'])test('Создание по нативной форме '+format+' сохраняет набор, формат и повтор операции',async()=>{
+ const mime='application/vnd.cloudflareos.'+format+'+json',f=fixture(mime);const account=new MnemosAccount(f.storage,'https://memory.example',f.fetcher);await account.connect('human-token');
+ await assert.rejects(createTemplateDocument(account.session(),f.input),/Mnemos request failed/);const result=await createTemplateDocument(account.session(),f.input);
+ assert.equal(result.contentType,mime);assert.deepEqual(result.references,f.input.references);assert.equal(result.document.node_id,'copy');assert.deepEqual(f.bodies[0],f.bodies[1]);assert.equal(f.heads(),1);
+ f.revoke();await assert.rejects(createTemplateDocument(account.session(),f.input));assert.equal(f.bodies.length,2);
+ });

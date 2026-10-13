@@ -14,7 +14,8 @@ import {uploadGatekeeperBlueprintTemplate, uploadGatekeeperNativeDocument} from 
 
 export default function BlueprintTemplateSave({blueprint, format, snapshotSource, onClose, nativeOnly=false, preferredProject, onUse, initialKind='document',initialTemplate}: {initialTemplate?:{context:TemplateEditingContext;material:ChatWorkTemplateChoice};initialKind?:WorkTemplateKind;onUse?(template:ChatWorkTemplate):void;preferredProject?:{accountId:number|null;projectId:string};nativeOnly?:boolean;blueprint:{id:string;title:string;description:string};format?:NativeDocumentFormat;snapshotSource?:NativeSnapshotSourceRef;onClose():void}) {
   const {authenticatedApi:api} = useAuthenticatedApi()
-  const improvement=initialTemplate&&'scope_id' in initialTemplate.context.reference?initialTemplate.context.reference:undefined
+  const nativeFormat=format??'cloudflareos.document'
+ const improvement=initialTemplate&&'scope_id' in initialTemplate.context.reference?initialTemplate.context.reference:undefined
   const [explanation,setExplanation]=useState('')
   const [accessPlan,setAccessPlan]=useState<GatekeeperTemplateReviewAccess|null>(null),[accessLoading,setAccessLoading]=useState(false),[accessError,setAccessError]=useState(''),[accessReload,setAccessReload]=useState(0)
   const [accounts,setAccounts] = useState<{id:number;name:string}[]>([])
@@ -142,7 +143,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         if(saved?.account===account)creator.current=await store.selector.resume(saved.id) as RpcStub<GatekeeperBlueprintTemplateCreator>
         else {
           const prepared=nativeOnly
-            ? improvement?await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind,improvement):await store.selector.prepare(project,title,purpose,previous,sourceKey,"cloudflareos.document",kind)
+            ? improvement?await store.selector.prepare(project,title,purpose,previous,sourceKey,nativeFormat,kind,improvement):await store.selector.prepare(project,title,purpose,previous,sourceKey,nativeFormat,kind)
             : await store.selector.prepare(project,title,purpose,previous,sourceKey)
           creator.current=prepared.creator as RpcStub<GatekeeperBlueprintTemplateCreator>
           sessionStorage.setItem(pendingKey,JSON.stringify({account,id:prepared.id}));setLocked(true)
@@ -158,8 +159,8 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
         let upload:string
         const issue=async(size:number,checksum:string)=>operation.issue(size,checksum)
         if(nativeOnly){
-          if(!snapshot||snapshot.format!=="cloudflareos.document"||new TextEncoder().encode(JSON.stringify(snapshot)).length>1024*1024)throw Error("Поддерживается документ до одного МиБ")
-          upload=await uploadGatekeeperNativeDocument(snapshot,"cloudflareos.document",store.storageOrigin,issue,signal)
+          if(!snapshot||snapshot.format!==nativeFormat||new TextEncoder().encode(JSON.stringify(snapshot)).length>1024*1024)throw Error("Поддерживается снимок до одного МиБ")
+          upload=await uploadGatekeeperNativeDocument(snapshot,nativeFormat,store.storageOrigin,issue,signal)
         }else{
           const stream=await api.captureBlueprintTemplate(blueprint.id,snapshot)
           const bytes=new Uint8Array(await new Response(stream).arrayBuffer())

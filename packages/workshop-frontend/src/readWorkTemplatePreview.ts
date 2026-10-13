@@ -1,3 +1,5 @@
+import {nativeDocumentFormatOfMime} from '@gadgets/workshop-shared/native-document'
+import {checkNativeTemplate} from './NativeTemplatePreview'
 import {checkedTemplateReferences,type WorkTemplateReference,type ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
 import type {NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document'
 import {openBlueprintTemplatesFrame} from './accountCapabilities'
@@ -29,9 +31,10 @@ export async function readWorkTemplatePreview(api:Parameters<typeof openBlueprin
   if(!Number.isSafeInteger(preview.ticket.size_bytes)||preview.ticket.size_bytes<0)throw Error('Снимок не подтверждён')
   if(preview.ticket.size_bytes>1024*1024){await validate();signal.throwIfAborted();throw new TemplatePreviewUnavailable('size')}
   let content:string|NativeDocumentSnapshot
-  if(preview.ticket.content_type==='application/vnd.cloudflareos.document+json'){
-   content=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,validate))
-   if(typeof content.document.title!=='string'||!Array.isArray(content.document.blocks)||content.document.blocks.some(block=>!block||typeof block.html!=='string'))throw Error('Форма повреждена')
+  const format=nativeDocumentFormatOfMime(preview.ticket.content_type)
+  if(format){
+   content=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,format,signal,validate))
+   checkNativeTemplate(content)
   }else if(['text/plain','text/markdown'].includes(preview.ticket.content_type))content=await wait(downloadGatekeeperWorkTemplateText(frame.blueprintTemplates.storageOrigin,preview.ticket,signal,validate))
   else {await validate();signal.throwIfAborted();throw new TemplatePreviewUnavailable('format')}
   signal.throwIfAborted();return {material:preview.material,content,sourceProjectId:typeof preview.sourceProjectId==='string'&&preview.sourceProjectId.trim()?preview.sourceProjectId:undefined,improvement:preview.improvement,promotion:preview.promotion}

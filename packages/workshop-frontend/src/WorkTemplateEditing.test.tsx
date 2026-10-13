@@ -97,3 +97,14 @@ test('Зависшее скачивание освобождает редакт�
  mocks.preview.mockResolvedValue({material,sourceHead:'a'.repeat(64),ticket:{content_type:'text/plain',size_bytes:200}});mocks.text.mockResolvedValue('Частная инструкция');mocks.validate.mockRejectedValue(Error('revoked'));
  await render();await open();expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).not.toHaveBeenCalled();expect(host.querySelector('[role="alert"]')).not.toBeNull();
  });
+
+ test.each(['spreadsheet','presentation'] as const)('Редактирование %s передаёт полный снимок без преобразования и не открывает его в другом редакторе',async output=>{
+ const format=('cloudflareos.'+output) as 'cloudflareos.spreadsheet'|'cloudflareos.presentation';
+ const native={format,formatVersion:1 as const,document:output==='spreadsheet'?{title:'План',sheetOrder:['s'],sheets:{s:{name:'План',frozenRows:1}},cells:{s:{A1:{value:'=SUM(B1:B3)',fmt:{b:true},version:1}}}}:{themeVersion:'workspace.1',title:'План',revision:3,lastModified:0,slides:[{id:'s',background:{color:'#ffffff'},blocks:[{id:'b',type:'title',x:10,y:20,props:{text:'План',tone:'accent'}}]}]}};
+ mocks.preview.mockResolvedValue({material,sourceHead:'a'.repeat(64),ticket:{content_type:'application/vnd.'+format+'+json',size_bytes:200}});mocks.download.mockResolvedValue(native);
+ await act(async()=>root.render(<WorkTemplateEditing context={{...context,format}} gadget={{connectToGadget:mocks.connect} as never} snapshotSource={{current:null}} onReady={mocks.ready}/>));
+ const source={current:async()=>native};await act(async()=>root.render(<WorkTemplateEditing context={{...context,format}} gadget={{connectToGadget:mocks.connect} as never} snapshotSource={source} onReady={mocks.ready}/>));await open();
+ expect(mocks.download.mock.calls.at(-1)?.[2]).toBe(format);expect(mocks.restore).toHaveBeenLastCalledWith(native,4);expect(mocks.ready).toHaveBeenCalledWith(material);
+ mocks.restore.mockClear();mocks.ready.mockClear();await act(async()=>root.render(<WorkTemplateEditing context={{...context,format:'cloudflareos.document'}} gadget={{connectToGadget:mocks.connect} as never} snapshotSource={source} onReady={mocks.ready}/>));await open();expect(mocks.restore).not.toHaveBeenCalled();expect(mocks.ready).not.toHaveBeenCalled();
+ expect(templateEditingContext({...context,format})?.format).toBe(format);expect(templateEditingContext({...context,format:'cloudflareos.app'})).toBeUndefined();
+ });

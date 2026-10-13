@@ -1,8 +1,9 @@
+import {VersionComparison} from './VersionComparison'
 import {useEffect,useState} from 'react'
 import type {WorkTemplateReference} from '@gadgets/workshop-shared/work-template'
 import {useAuthenticatedApi} from './AuthContext'
 import {readWorkTemplatePreview,type TemplatePreviewMaterial} from './readWorkTemplatePreview'
-import {diffWords,type Piece} from './versionDiff'
+import {compareSnapshots,diffWords,type Piece} from './versionDiff'
 import {templateComparisonText} from './templatePreviewContent'
 import {WorkshopButton} from './components/WorkshopControls'
 
@@ -21,6 +22,13 @@ export default function WorkTemplateComparison({accountId,reference}:{accountId:
  if('error' in state)return <div><p role="alert" className="mb-3 text-[13px]">Сравнение недоступно. Не удалось подтвердить доступ и содержимое обеих версий.</p><WorkshopButton onClick={()=>setReload(value=>value+1)}>Повторить сравнение</WorkshopButton></div>
  const [before,after]=state.pair
  const native=typeof before.content!=='string'&&typeof after.content!=='string'
+ const otherNative=typeof before.content!=='string'&&typeof after.content!=='string'&&(before.content.format!=='cloudflareos.document'||after.content.format!=='cloudflareos.document')
+ if(otherNative&&typeof before.content!=='string'&&typeof after.content!=='string'){
+  if(before.content.format!==after.content.format)return <p role="alert">Форматы версий различаются. Откройте их содержимое отдельно.</p>
+  const diff=compareSnapshots(before.content,after.content)
+  return <section aria-label="Сравнение версий шаблона" className="space-y-3"><p className="text-[13px] text-kumo-subtle">{diff.kind==='spreadsheet'?'Сравниваются значения и формулы. Оформление проверяйте в содержимом версий.':'Сравниваются текст и состав слайдов.'}</p><VersionComparison diff={diff} labels={['Версия '+(reference.revision-1),'версия '+reference.revision]} nothingText={diff.kind==='spreadsheet'?'Значения и формулы не изменились.':undefined}/></section>
+ }
+ if((typeof before.content!=='string'&&before.content.format!=='cloudflareos.document')||(typeof after.content!=='string'&&after.content.format!=='cloudflareos.document'))return <p role="alert">Форматы версий различаются. Откройте их содержимое отдельно.</p>
  const beforeText=templateComparisonText(before.content)
  const afterText=templateComparisonText(after.content)
  const converted=(typeof before.content==='string')!==(typeof after.content==='string')

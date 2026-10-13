@@ -194,3 +194,12 @@ export function nativeFormatForOutput(value: unknown): NativeDocumentFormat | nu
   if (value === 'presentation') return 'cloudflareos.presentation';
   return null;
 }
+
+/** Тип содержимого полного снимка нативного редактора. */
+export function nativeDocumentMime(format:NativeDocumentFormat):string{return `application/vnd.${format}+json`}
+
+/** Формат данных редактора; приложение не считается документом. */
+export function nativeDocumentFormatOfMime(mime:string):NativeDocumentFormat|null{
+ const format=mnemosNodeFormatOfMime(mime)
+ return isNativeDocumentFormat(format)?format:null
+}

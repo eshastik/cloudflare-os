@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react'
 import type {RpcStub} from 'capnweb'
 import type {GadgetClient} from '@gadgets/workshop-shared/api'
-import {nativeTitleSource} from '@gadgets/workshop-shared/native-document'
+import {nativeTitleSource,nativeDocumentMime} from '@gadgets/workshop-shared/native-document'
 import type {NativeDocumentEditor,NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document'
 import {checkedTemplateReferences,type ChatWorkTemplateChoice} from '@gadgets/workshop-shared/work-template'
 import {useAuthenticatedApi} from './AuthContext'
@@ -16,6 +16,7 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
  const {authenticatedApi}=useAuthenticatedApi()
  const [busy,setBusy]=useState(!!context.autoOpen),[error,setError]=useState(''),[material,setMaterial]=useState<ChatWorkTemplateChoice|null>(null)
  const [existingDraft,setExistingDraft]=useState(false)
+ const format=context.format??'cloudflareos.document'
  const contextKey=JSON.stringify(context)
  const lifetime=useRef(new AbortController()),opening=useRef<symbol|null>(null)
  useEffect(()=>{const owner=new AbortController();lifetime.current=owner;opening.current=null;setMaterial(null);setError('');setExistingDraft(false);setBusy(!!context.autoOpen);return()=>owner.abort()},[gadget,contextKey])
@@ -38,21 +39,21 @@ export default function WorkTemplateEditing({context,gadget,snapshotSource,onRea
    const {revision}=await wait(editor.getDocument());signal.throwIfAborted()
    if(!Number.isSafeInteger(revision)||revision<0)throw Error('Редактор не сообщил ревизию')
    if(automatic){
-    const current=await wait(snapshotSource.current!('cloudflareos.document',signal));signal.throwIfAborted()
+    const current=await wait(snapshotSource.current!(format,signal));signal.throwIfAborted()
     const blocks=current.document.blocks
-    const blank=Array.isArray(blocks)&&blocks.every(block=>typeof block?.html==='string'&&block.html.replace(/<\/?(?:p|div)>|<br\s*\/?>/gi,'').trim()==='')
-    if(current.document.revision!==revision||nativeTitleSource(current.format,current.document).title||!blank){setExistingDraft(true);return}
+    const blank=format!=='cloudflareos.document'?revision===0&&!nativeTitleSource(format,current.document).hasContent:Array.isArray(blocks)&&blocks.every(block=>typeof block?.html==='string'&&block.html.replace(/<\/?(?:p|div)>|<br\s*\/?>/gi,'').trim()==='')
+    if(current.document.revision!==revision||nativeTitleSource(format,current.document).title||!blank){setExistingDraft(true);return}
    }
    frame=await wait(openBlueprintTemplatesFrame(authenticatedApi,context.accountId),disposeGatekeeperFrame);signal.throwIfAborted()
    const selector=frame.blueprintTemplates.selector,preview=await wait<Awaited<ReturnType<typeof selector.preview>>>(selector.preview(context.reference));signal.throwIfAborted()
    if(preview.unavailable)throw Error('Нужен поддерживаемый снимок документа')
-   if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||!['application/vnd.cloudflareos.document+json','text/plain','text/markdown'].includes(preview.ticket.content_type)||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
+   if(JSON.stringify(checkedTemplateReferences([preview.material.reference])[0])!==JSON.stringify(context.reference)||!(preview.ticket.content_type===nativeDocumentMime(format)||format==='cloudflareos.document'&&['text/plain','text/markdown'].includes(preview.ticket.content_type))||preview.ticket.size_bytes>1024*1024)throw Error('Нужен снимок выбранной версии документа')
    const validate=()=>selector.validatePreview(context.reference,preview.sourceHead)
    if(keepCurrent){
     await wait(validate());signal.throwIfAborted()
    }else{
     let snapshot:NativeDocumentSnapshot
-    if(preview.ticket.content_type==='application/vnd.cloudflareos.document+json')snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,'cloudflareos.document',signal,()=>wait(validate())))
+    if(preview.ticket.content_type===nativeDocumentMime(format))snapshot=await wait(downloadGatekeeperNativeDocument(frame.blueprintTemplates.storageOrigin,preview.ticket,format,signal,()=>wait(validate())))
     else {
      const text=await wait(downloadGatekeeperWorkTemplateText(frame.blueprintTemplates.storageOrigin,preview.ticket,signal,()=>wait(validate())))
      const escaped=text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')

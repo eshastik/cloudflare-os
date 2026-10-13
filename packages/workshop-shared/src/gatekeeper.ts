@@ -485,7 +485,7 @@ export interface GatekeeperBlueprintTemplates extends RpcTarget {
   projects(): Promise<{projects: {id: string; name: string}[]}>;
   latest(blueprint:string): Promise<GatekeeperTemplateVersion|null>;
   /** Готовит личный снимок: без nativeFormat — совместимый Blueprint; с ним — данные документа без кода. */
-  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind?: import('./work-template.js').WorkTemplateKind, improvementReference?: import('./work-template.js').WorkTemplateReference): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
+  prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document" | "cloudflareos.spreadsheet" | "cloudflareos.presentation", kind?: import('./work-template.js').WorkTemplateKind, improvementReference?: import('./work-template.js').WorkTemplateReference): Promise<{id: string; creator: RpcStub<GatekeeperBlueprintTemplateCreator>}>;
   resume(id: string): Promise<RpcStub<GatekeeperBlueprintTemplateCreator>>;
 }
 

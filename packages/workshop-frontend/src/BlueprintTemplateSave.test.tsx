@@ -211,3 +211,8 @@ test.each(['department','organization'])('Правка уровня %s отпр�
  await React.act(async()=>{const textarea=container.querySelector<HTMLTextAreaElement>('[aria-label="Объяснение улучшения"]')!;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(textarea,'Добавить проверяемые критерии');textarea.dispatchEvent(new Event('input',{bubbles:true}))});
  expect(send.disabled).toBe(false);await React.act(async()=>send.click());expect(mocks.creator.propose).toHaveBeenCalledWith('finance',4,'Добавить проверяемые критерии','access-plan');expect(container.textContent).toContain('прежняя сохранится');
 });
+ test.each(['spreadsheet','presentation'] as const)('Нативная форма %s сохраняется тем же форматом и полным снимком',async output=>{
+ const format=('cloudflareos.'+output) as 'cloudflareos.spreadsheet'|'cloudflareos.presentation';const snapshot={format,formatVersion:1 as const,document:{title:'План',data:{formula:'=SUM(A1:A2)',style:{bold:true}}}};const read=vi.fn<()=>Promise<typeof snapshot>>().mockResolvedValue(snapshot);
+ await React.act(async()=>root.render(<BlueprintTemplateSave nativeOnly blueprint={{id:'editor',title:'План',description:'Форма'}} format={format} snapshotSource={{current:read}} onClose={()=>{}}/>));await React.act(async()=>button('Сохранить личный шаблон').click());
+ expect(read).toHaveBeenCalledWith(format,expect.any(AbortSignal));expect(mocks.selector.prepare).toHaveBeenCalledWith('project','План','Форма',undefined,'native-document:editor',format,'document');expect(mocks.nativeUpload.mock.calls[0].slice(0,3)).toEqual([snapshot,format,'https://objects.example']);expect(mocks.creator.propose).not.toHaveBeenCalled();
+ });

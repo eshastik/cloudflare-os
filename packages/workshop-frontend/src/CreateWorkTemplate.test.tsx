@@ -48,3 +48,10 @@ test('Редактирование из просмотра не открывае
   await act(async()=>button('Открыть редактор').click());expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'edit-draft'},search:{templateKind:'guidance',templateEdit:{accountId:7,projectId:'project',reference,autoOpen:true}}})
  }finally{await act(async()=>root.unmount());host.remove()}
 })
+
+ test.each(['spreadsheet','presentation'] as const)('Новая форма %s открывается явным выбором формата',async output=>{
+ vi.clearAllMocks();mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:'doc',output:{id:'document'}},{blueprintId:output,output:{id:output}}]);mocks.metadata.mockResolvedValue({id:'native-draft'});mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:mocks.metadata,[Symbol.dispose]:mocks.dispose});mocks.navigate.mockResolvedValue(undefined);
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host);const button=(title:string)=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent===title)!;
+ try {await act(async()=>root.render(<CreateWorkTemplate/>));await act(async()=>button('Создать шаблон').click());await act(async()=>{const select=document.querySelector<HTMLSelectElement>('[aria-label="Редактор нового шаблона"]')!;select.value=output;select.dispatchEvent(new Event('change',{bubbles:true}))});await act(async()=>button('Открыть редактор').click());expect(mocks.api.newGadgetFromBlueprint).toHaveBeenCalledWith(output,{});expect(mocks.navigate).toHaveBeenCalledWith({to:'/workspace/$id',params:{id:'native-draft'},search:{templateKind:'document'}})}
+ finally {await act(async()=>root.unmount());host.remove()}
+ });

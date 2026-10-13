@@ -100,10 +100,10 @@ test('личный шаблон без подтверждённого исход
 });
 
  test('неподдерживаемый формат назван явно, не скачивается и не предлагается текстовая подмена',async()=>{
- const fetcher=await ticket('Не должно скачаться','application/vnd.cloudflareos.spreadsheet+json');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});
+ const fetcher=await ticket('Не должно скачаться','application/octet-stream');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});
  await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
  expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Просмотр этого формата пока не поддерживается');
- expect(document.body.textContent).toContain('Таблицы и презентации не заменяются текстовым предпросмотром');
+ expect(document.body.textContent).toContain('Доступны текст, Markdown, документы, таблицы и презентации');
  expect(fetcher).not.toHaveBeenCalled();expect(mocks.validate).toHaveBeenCalledWith(item.reference,'a'.repeat(64));
  expect([...document.body.querySelectorAll('button')].some(b=>b.textContent==='Повторить просмотр')).toBe(false);expect(button('Выбрать для задачи').disabled).toBe(true);
  });
@@ -115,7 +115,7 @@ test('личный шаблон без подтверждённого исход
  expect(fetcher).not.toHaveBeenCalled();expect(mocks.validate).toHaveBeenCalledWith(item.reference,'a'.repeat(64));expect(button('Выбрать для задачи').disabled).toBe(true);
  });
  test('отказ доступа к неподдерживаемому формату не подменяется сообщением об ограничении просмотра',async()=>{
- const fetcher=await ticket('Не должно скачаться','application/vnd.cloudflareos.spreadsheet+json');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});mocks.validate.mockRejectedValue(new Error('revoked'));
+ const fetcher=await ticket('Не должно скачаться','application/octet-stream');const unavailable=await mocks.preview();mocks.preview.mockResolvedValue({material:(unavailable as {material:unknown}).material,sourceHead:'a'.repeat(64),unavailable:'format'});mocks.validate.mockRejectedValue(new Error('revoked'));
  await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
  expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Проверьте доступ и подключение');
  expect(document.body.textContent).not.toContain('Просмотр этого формата пока не поддерживается');expect(fetcher).not.toHaveBeenCalled();expect(button('Повторить просмотр').disabled).toBe(false);
@@ -137,4 +137,15 @@ test('личный шаблон без подтверждённого исход
  expect(comparison.textContent?.includes('Текст содержимого не изменился.')).toBe(conversion==='copy');
  expect(comparison.querySelector('ins')?.textContent?.trim()??'').toBe(conversion==='copy'?'':'Добавьте критерии приёмки.');
  expect(mocks.validate).toHaveBeenCalledWith({template_id:'form',revision:4},'4'.repeat(64));expect(mocks.validate).toHaveBeenCalledWith(item.reference,'5'.repeat(64));
+ });
+
+ test.each(['spreadsheet','presentation'] as const)('Форма %s показывается без JSON и открывается в соответствующем редакторе',async output=>{
+ const format=('cloudflareos.'+output) as 'cloudflareos.spreadsheet'|'cloudflareos.presentation';
+ const document=output==='spreadsheet'?{title:'Расчёт',sheetOrder:['sheet'],sheets:{sheet:{name:'План'}},cells:{sheet:{A1:{value:'=SUM(B1:B3)',fmt:{b:true},version:1}}}}:{themeVersion:'workspace.1',title:'План',slides:[{id:'slide',blocks:[{id:'title',type:'title',props:{text:'Квартальный план'}}]}]};
+ await ticket(JSON.stringify({format,formatVersion:1,document}),'application/vnd.'+format+'+json');mocks.api.listOutputFormats.mockResolvedValue([{blueprintId:output,output:{id:output}},{blueprintId:'document',output:{id:'document'}}]);
+ mocks.api.newGadgetFromBlueprint.mockResolvedValue({getMetadata:async()=>({id:'native-edit'}),[Symbol.dispose]:vi.fn<()=>void>()});mocks.navigate.mockResolvedValue(undefined);
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} editingProject={{accountId:7,projectId:'project'}} onToggle={()=>{}} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ expect(window.document.body.textContent).toContain(output==='spreadsheet'?'=SUM(B1:B3)':'Квартальный план');expect(window.document.body.textContent).not.toContain('formatVersion');expect(button('Выбрать для задачи').disabled).toBe(false);
+ await React.act(async()=>button('Редактировать').click());await React.act(async()=>button('Открыть редактор').click());
+ expect(mocks.api.newGadgetFromBlueprint).toHaveBeenLastCalledWith(output,{});expect(mocks.navigate).toHaveBeenLastCalledWith({to:'/workspace/$id',params:{id:'native-edit'},search:{templateKind:'document',templateEdit:{accountId:7,projectId:'source-project',reference:item.reference,autoOpen:true,format}}});
  });

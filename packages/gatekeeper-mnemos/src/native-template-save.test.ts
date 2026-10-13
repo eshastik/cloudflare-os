@@ -31,7 +31,7 @@ test('нативная форма сохраняется без Blueprint, по�
  assert.deepEqual(await (await templates.resume(prepared.id)).save(),saved);assert.equal(calls.length,3);
  assert.deepEqual(await templates.latest('native-document:editor'),saved);
  denied=true;await assert.rejects(creator.save(),/denied/);denied=false;
- await assert.rejects(templates.prepare('project','ТЗ','Форма',undefined,'source','cloudflareos.spreadsheet' as any));
+ await assert.rejects(templates.prepare('project','ТЗ','Форма',undefined,'source','cloudflareos.app' as any));
  await assert.rejects(templates.prepare('project','ТЗ','Форма',{template_id:saved.template_id,revision:1},'source'));
  const next=await templates.prepare('project','ТЗ','Правка',{template_id:saved.template_id,revision:1},'native-document:editor','cloudflareos.document');
  await next.creator.issue(100,'checksum');await next.creator.checkpoint('upload');const changed=await next.creator.save();
@@ -128,4 +128,13 @@ test('просмотр личной формы возвращает автори
  const common=await templates.prepare('project','Методика','ТЗ',undefined,'editor-common','cloudflareos.document','guidance',ref);
  const commonState=entries.get('blueprint-template:'+common.id) as any;assert.notEqual(common.id,'rules');assert.deepEqual(commonState.improvement,{...ref,scopeRevision:1});assert.equal(commonState.template,undefined);assert.equal(commonState.kind,'guidance');
  contentType='application/vnd.cloudflareos.spreadsheet+json';await assert.rejects(templates.prepare('project','Методика','ТЗ',{template_id:'personal',revision:2},'editor','cloudflareos.document','guidance'));await assert.rejects(templates.prepare('project','Методика','ТЗ',undefined,'editor','cloudflareos.document','guidance',ref));
+ });
+
+ for(const format of ['cloudflareos.spreadsheet','cloudflareos.presentation'] as const)test('Нативная форма '+format+' сохраняет формат и исходную версию',async()=>{
+ const entries=new Map<string,unknown>(),calls:any[]=[];let saved:any;const mime='application/vnd.'+format+'+json';
+ const session={async openDraft(){return {head:'a'.repeat(64)}},async beginNativeUpload(){return {upload_id:'native'}},async createPrivateDocument(_project:string,input:any){calls.push(input);return {node_id:'native-snapshot',head:'b'.repeat(64)}},async saveWorkTemplateSnapshot(id:string,input:any){saved={...input,template_id:id,revision:1,content_type:mime};return saved},async readWorkTemplate(){return saved},async beginWorkTemplateDownload(){return {source:saved,ticket:{method:'GET',url:'https://objects.example/snapshot',size_bytes:200,expires_at:new Date(Date.now()+60000).toISOString()}}}};
+ const templates=new BlueprintTemplates(session as any,{get:(key:string)=>entries.get(key),put:(key:string,value:unknown)=>entries.set(key,structuredClone(value))} as any);
+ const prepared=await templates.prepare('project','План','Форма',undefined,'native-editor',format);await prepared.creator.issue(200,'checksum');await prepared.creator.checkpoint('native');const result=await prepared.creator.save();
+ assert.equal(calls[0].content_type,mime);assert.ok(calls[0].name.endsWith('.mnemos-'+format.slice('cloudflareos.'.length)));assert.equal(result.content_type,mime);assert.deepEqual(await prepared.creator.save(),result);const preview=await templates.preview({template_id:result.template_id,revision:1});assert.equal(preview.ticket?.content_type,mime);
+ await assert.rejects(templates.prepare('project','План','Форма',{template_id:result.template_id,revision:1},'native-editor','cloudflareos.document'));
  });

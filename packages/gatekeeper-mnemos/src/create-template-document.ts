@@ -1,3 +1,4 @@
+import {nativeDocumentFormatOfMime} from '@gadgets/workshop-shared/native-document';
 import {checkedTemplateReferences,type WorkTemplateReference} from '@gadgets/workshop-shared/work-template';
 import type {MnemosAccountSession} from './account-session.ts';
 
@@ -13,7 +14,7 @@ export async function createTemplateDocument(session:Pick<MnemosAccountSession,'
  if([project,requestId].some(v=>typeof v!=='string'||!v.trim()||new TextEncoder().encode(v).length>255||v.includes('\0'))||typeof name!=='string'||!name.trim()||new TextEncoder().encode(name).length>255||name.includes('\0')||typeof parentId!=='string'||new TextEncoder().encode(parentId).length>255||parentId.includes('\0'))throw new Error('Некорректные параметры документа.');
  const selected=await session.readWorkTemplateSelection(refs);
  const chosen=selected.materials.find(m=>JSON.stringify(m.reference)===key);const source=chosen?.personal??chosen?.scoped?.source;
- if(!source||source.kind!=='document'||!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))throw new Error('Выберите поддерживаемую форму документа.');
+ if(!source||source.kind!=='document'||!['text/plain','text/markdown'].includes(source.content_type)&&!nativeDocumentFormatOfMime(source.content_type))throw new Error('Выберите поддерживаемую форму документа.');
  const previous=await session.readSavedTemplateAction(project);
  let saved;
  if(previous?.action.kind==='create'&&previous.action.input.request_id===requestId){

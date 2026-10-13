@@ -1,3 +1,4 @@
+import {isNativeDocumentFormat,nativeDocumentMime,nativeDocumentFormatOfMime,type NativeDocumentFormat} from '@gadgets/workshop-shared/native-document';
 import type {TemplateAgentAccessPlan} from './workshop-template-access.ts';
 import {templateReviewAccess,shareTemplateForReview} from './template-review-access.ts';
 import {checkedTemplateReferences,type WorkTemplateReference,type WorkTemplateKind} from '@gadgets/workshop-shared/work-template'
@@ -8,7 +9,7 @@ import { MnemosAPIError } from './mnemos-api'
 import type { WorkTemplateVersion } from './work-templates'
 
 type Improvement=Extract<WorkTemplateReference,{scope_id:string}> & {scopeRevision:number}
-type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: "cloudflareos.document"; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string; accessKey?:string} }
+type Capture = { improvement?:Improvement; kind?: WorkTemplateKind; nativeFormat?: NativeDocumentFormat; blueprint?: string; template?: string; expectedRevision?: number; id: string; project: string; title: string; purpose: string; head: string; upload: string; version?: WorkTemplateVersion; promotion?: {scope: string; revision: number; catalogueRevision?: number; message?:string; accessKey?:string} }
 /** Хранилище принадлежит подключению пользователя. Чужой receipt не даёт доступа к операции. */
 export class BlueprintTemplates extends RpcTarget {
   constructor(private session: MnemosAccountSession, private storage: AccountStorage,private agentAccessCalls?:{read(references:WorkTemplateReference[]):Promise<TemplateAgentAccessPlan>;allow(references:WorkTemplateReference[],scope:string,binding:string,revision:number):Promise<TemplateAgentAccessPlan>}) { super() }
@@ -20,7 +21,7 @@ export class BlueprintTemplates extends RpcTarget {
     if(!Number.isSafeInteger(ticket.size_bytes)||ticket.size_bytes<0||!Number.isFinite(Date.parse(ticket.expires_at))||Date.parse(ticket.expires_at)<=Date.now())throw new Error('Билет просмотра не подтверждён')
     const material={reference:ref,title:source.title,purpose:source.purpose,kind:source.kind}
     if(ticket.size_bytes>1024*1024)return {material,sourceHead:source.source_head,unavailable:'size' as const}
-    if(!['text/plain','text/markdown','application/vnd.cloudflareos.document+json'].includes(source.content_type))return {material,sourceHead:source.source_head,unavailable:'format' as const}
+    if(!['text/plain','text/markdown'].includes(source.content_type)&&!nativeDocumentFormatOfMime(source.content_type))return {material,sourceHead:source.source_head,unavailable:'format' as const}
     let improvement: {scope_id:string;revision:number;name:string}|undefined
     let promotion:{scope_id:string;revision:number;name:string;level:'department'|'organization'}|undefined
     if('scope_id' in ref){
@@ -116,23 +117,23 @@ export class BlueprintTemplates extends RpcTarget {
     if(!saved)return null
     return this.session.readWorkTemplate(saved.template_id,0)
   }
-  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: "cloudflareos.document", kind: WorkTemplateKind = "document", improvementReference?: WorkTemplateReference) {
-    if(nativeFormat!==undefined&&nativeFormat!=="cloudflareos.document")throw new Error("Поддерживается шаблон документа");
+  async prepare(project: string, title: string, purpose: string, previous?: {template_id:string;revision:number}, blueprint?:string, nativeFormat?: NativeDocumentFormat, kind: WorkTemplateKind = "document", improvementReference?: WorkTemplateReference) {
+    if(nativeFormat!==undefined&&!isNativeDocumentFormat(nativeFormat))throw new Error("Выберите поддерживаемый формат шаблона");
     if(!['document','guidance','agent_instructions','skill'].includes(kind)||(!nativeFormat&&kind!=='document'))throw new Error('Выберите поддерживаемый вид шаблона');
-    const contentType=nativeFormat ? "application/vnd.cloudflareos.document+json" : BLUEPRINT_TEMPLATE_MIME;
+    const contentType=nativeFormat ? nativeDocumentMime(nativeFormat) : BLUEPRINT_TEMPLATE_MIME;
     if (!title.trim() || title.length > 200 || !purpose.trim() || purpose.length > 2000) throw new Error('Укажите название и назначение шаблона')
     if(blueprint!==undefined&&(!blueprint||blueprint.length>256))throw new Error("Некорректный шаблон гаджета")
     if(previous){
       if(!previous.template_id||!Number.isSafeInteger(previous.revision)||previous.revision<1)throw new Error('Некорректная предыдущая версия')
       const version=await this.session.readWorkTemplate(previous.template_id,previous.revision)
-      if(version.project_id!==project||!(version.content_type===contentType||nativeFormat&&['text/plain','text/markdown'].includes(version.content_type))||version.kind!==kind)throw new Error('Версия относится к другому проекту или формату')
+      if(version.project_id!==project||!(version.content_type===contentType||nativeFormat==='cloudflareos.document'&&['text/plain','text/markdown'].includes(version.content_type))||version.kind!==kind)throw new Error('Версия относится к другому проекту или формату')
     }
     let improvement:Improvement|undefined
     if(improvementReference){
       const ref=checkedTemplateReferences([improvementReference])[0]
       if(typeof ref.scope_id!=='string'||typeof ref.template_key!=='string'||previous||!nativeFormat)throw Error('Выберите общую версию документа')
       const material=(await this.session.readWorkTemplateSelection([ref])).materials[0]
-      if(!material.scoped||material.scoped.source.kind!==kind||!(material.scoped.source.content_type===contentType||['text/plain','text/markdown'].includes(material.scoped.source.content_type)))throw Error('Вид или формат исходного шаблона не совпадает')
+      if(!material.scoped||material.scoped.source.kind!==kind||!(material.scoped.source.content_type===contentType||nativeFormat==='cloudflareos.document'&&['text/plain','text/markdown'].includes(material.scoped.source.content_type)))throw Error('Вид или формат исходного шаблона не совпадает')
       let scope:Awaited<ReturnType<MnemosAccountSession['listTemplateScopes']>>['scopes'][number]|undefined,cursor=''
       do{const page=await this.session.listTemplateScopes(cursor);scope??=page.scopes.find(item=>item.scope_id===ref.scope_id&&item.enabled);cursor=page.next_cursor||''}while(cursor)
       if(!scope)throw Error('Исходная область согласования недоступна')
@@ -223,8 +224,8 @@ class BlueprintTemplateCreator extends RpcTarget {
     // Повтор проходит через API: сохранённый receipt не заменяет актуальную проверку доступа.
     if (capture.version) return this.session.readWorkTemplate(capture.template??capture.id, capture.version.revision)
     const created = await this.session.createPrivateDocument(capture.project, {
-      request_id: capture.id, expected_head: capture.head, parent_id: '', name: `${capture.title}.${capture.nativeFormat ? "mnemos-document" : "mnemos-template"}`,
-      content_type: capture.nativeFormat ? "application/vnd.cloudflareos.document+json" : BLUEPRINT_TEMPLATE_MIME, upload_id: capture.upload, message: 'Личный снимок рабочего шаблона',
+      request_id: capture.id, expected_head: capture.head, parent_id: '', name: `${capture.title}.${capture.nativeFormat ? "mnemos-"+capture.nativeFormat.slice("cloudflareos.".length) : "mnemos-template"}`,
+      content_type: capture.nativeFormat ? nativeDocumentMime(capture.nativeFormat) : BLUEPRINT_TEMPLATE_MIME, upload_id: capture.upload, message: 'Личный снимок рабочего шаблона',
     })
     const version = await this.session.saveWorkTemplateSnapshot(capture.template??capture.id, {
       expected_revision: capture.expectedRevision??0, title: capture.title, purpose: capture.purpose, kind: capture.kind??'document',
