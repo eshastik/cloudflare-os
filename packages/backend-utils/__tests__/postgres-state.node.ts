@@ -11,9 +11,9 @@ vi.mock("pg", () => ({ Client: class {
 import { withPostgresState } from "../src/postgres-state";
 
 describe("соединение PostgreSQL одной операции", () => {
-  it.each(["127.0.0.1", "localhost", "[::1]"])("освобождает локальный транспорт %s после COMMIT", async host => {
+  it.each(["postgres://u:p@127.0.0.1/db", "postgres://u:p@localhost/db", "postgres://u:p@[::1]/db", "postgres://u:p@binding.hyperdrive.local/db?sslmode=disable"])("освобождает транспорт %s после COMMIT", async dsn => {
     const before = state.ended;
-    const result = await withPostgresState("postgres://u:p@" + host + "/db", "tenant", false, async () => 42);
+    const result = await withPostgresState(dsn, "tenant", false, async () => 42);
     expect(result).toBe(42);
     const config = state.configs.at(-1)!;
     const stream = config.stream as () => Socket;
@@ -23,7 +23,7 @@ describe("соединение PostgreSQL одной операции", () => {
     expect(state.queries.at(-1)).toBe("COMMIT");
     expect(state.ended).toBe(before + 1);
   });
-  it.each(["not-a-url", "postgres://u:p@localhost/db?host=database", "postgres://u:p@database/db", "postgres://u:p@127.0.0.1/db?sslmode=require", "postgres://u:p@localhost/db?ssl=true", "postgres://u:p@localhost/db?sslrootcert=ca.pem"])("сохраняет транспорт с настройками TLS: %s", async dsn => {
+  it.each(["postgres://u:p@database/db?sslmode=disable&sslmode=require", "not-a-url", "postgres://u:p@localhost/db?host=database", "postgres://u:p@database/db", "postgres://u:p@127.0.0.1/db?sslmode=require", "postgres://u:p@localhost/db?ssl=true", "postgres://u:p@localhost/db?sslrootcert=ca.pem"])("сохраняет транспорт с настройками TLS: %s", async dsn => {
     await withPostgresState(dsn, "tenant", false, async () => null);
     expect(state.configs.at(-1)!.stream).toBeUndefined();
   });

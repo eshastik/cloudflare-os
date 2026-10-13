@@ -1,11 +1,13 @@
 import { Client } from "pg";
 import { Socket } from "node:net";
 
-function localPlaintextConnection(connectionString: string): boolean {
+function plaintextConnection(connectionString: string): boolean {
   let address: URL;
   try { address = new URL(connectionString); } catch { return false; }
-  return ["localhost", "127.0.0.1", "[::1]"].includes(address.hostname)
-    && [...address.searchParams.keys()].every(key => !key.toLowerCase().startsWith("ssl") && key !== "host")
+  const sslmode = address.searchParams.get("sslmode");
+  return (sslmode === "disable" || sslmode === null && ["localhost", "127.0.0.1", "[::1]"].includes(address.hostname))
+    && address.searchParams.getAll("sslmode").length <= 1
+    && [...address.searchParams.keys()].every(key => (key === "sslmode" || !key.toLowerCase().startsWith("ssl")) && key !== "host")
     && !process.env.PGSSLMODE;
 }
 
@@ -18,8 +20,9 @@ export async function withPostgresState<T>(
     const client = new Client({
       connectionString: connectionString,
       // pg-cloudflare удерживает закрытые сокеты в долгоживущем workerd.
-      // Локальный TCP идёт через Node; настройки TLS сохраняют прежний транспорт.
-      ...(localPlaintextConnection(connectionString) ? { stream: () => new Socket() } : {}),
+      // TCP без TLS идёт через Node, включая локальную привязку Hyperdrive.
+      // Запрошенное шифрование сохраняет прежний транспорт.
+      ...(plaintextConnection(connectionString) ? { stream: () => new Socket() } : {}),
       connectionTimeoutMillis: 5_000,
       query_timeout: 10_000,
     });
