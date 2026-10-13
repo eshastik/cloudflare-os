@@ -1207,6 +1207,7 @@ export default function GadgetEditor() {
     if (isAgentActive) userPickedWorkpieceThisTurnRef.current = true
     // Picking a gadget is a deliberate move to its view, so the turn must not pull the tab back.
     handleTabSelect('app')
+    setNarrowPane('work')
     setWorkspaceVisibility('open', workpieceId)
     const pendingChatId = workpieces.get(workpieceId)?.chatId
     navigate({
