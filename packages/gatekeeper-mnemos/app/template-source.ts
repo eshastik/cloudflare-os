@@ -1,3 +1,4 @@
+import {nativeTemplatePreview} from '@gadgets/workshop-shared/native-template-preview'
 import {documentPreviewSource} from '@gadgets/workshop-shared/document-preview-html'
 import {BLUEPRINT_TEMPLATE_MIME, decodeBlueprintTemplate} from '@gadgets/workshop-shared/blueprint-template'
 import type {MnemosAccountSession} from "../src/account-session.ts";
@@ -5,7 +6,7 @@ type API=Pick<MnemosAccountSession,"readTemplateProposalSource">;
 type BaselineAPI=Pick<MnemosAccountSession,"readTemplateProposalBaseline">;
 export type TemplateTextDownload=(project:string,node:string,version:string,side:number)=>Promise<string>;
 /** Загрузка и проверка целостности остаются у оболочки. */
-export type TemplatePreview = {text:string;documentHtml?:string};
+export type TemplatePreview = {text:string;documentHtml?:string;nativeFormat?:'spreadsheet'|'presentation'};
 export async function readTemplateProposalText(api:API,id:string,download:TemplateTextDownload):Promise<string>{
  return (await readTemplateProposalPreview(api,id,download)).text;
 }
@@ -38,6 +39,11 @@ async function readTemplatePreview(read:()=>ReturnType<API["readTemplateProposal
   const snapshot=JSON.parse(text);
   if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot)||snapshot.format!=='cloudflareos.document'||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw Error('Неподдерживаемый снимок документа');
   return documentTemplatePreview(snapshot.document);
+ }
+ if(mime==='application/vnd.cloudflareos.spreadsheet+json'||mime==='application/vnd.cloudflareos.presentation+json'){
+  const snapshot=JSON.parse(text),format=mime.slice('application/vnd.'.length,-'+json'.length);
+  if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot)||snapshot.format!==format||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw Error('Неподдерживаемый снимок формы');
+  const preview=nativeTemplatePreview(snapshot);return {text:preview.text,documentHtml:preview.html,nativeFormat:preview.format};
  }
  if(/^application\/vnd\.cloudflareos\./.test(mime))throw Error('Просмотр этого нативного формата пока не поддерживается');
  return {text};

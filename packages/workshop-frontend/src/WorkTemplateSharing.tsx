@@ -8,7 +8,7 @@ import {WorkshopButton} from './components/WorkshopControls'
 
 type Proposal=Awaited<ReturnType<Awaited<ReturnType<typeof openBlueprintTemplatesFrame>>['blueprintTemplates']['selector']['prepareSharing']>>
 type Group={scope_id:string;revision:number;name:string}
-export default function WorkTemplateSharing({item}:{item:ChatWorkTemplate}){
+export default function WorkTemplateSharing({item,onVisibilityChange}:{item:ChatWorkTemplate;onVisibilityChange?(open:boolean):void}){
  const {authenticatedApi}=useAuthenticatedApi(),[open,setOpen]=useState(false),[groups,setGroups]=useState<Group[]>([]),[group,setGroup]=useState(''),[reason,setReason]=useState(''),[plan,setPlan]=useState<GatekeeperTemplateReviewAccess|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[sent,setSent]=useState(false),[reload,setReload]=useState(0),[frozen,setFrozen]=useState(false)
  const operation=useRef<Proposal|null>(null),lifetime=useRef<AbortController|null>(null)
  const key='mnemos-template-sharing:'+JSON.stringify([item.accountId,item.reference])
@@ -18,7 +18,7 @@ export default function WorkTemplateSharing({item}:{item:ChatWorkTemplate}){
   let frame:Awaited<ReturnType<typeof openBlueprintTemplatesFrame>>|null=null
   void (async()=>{
    frame=await openBlueprintTemplatesFrame(authenticatedApi,item.accountId);if(abort.signal.aborted)return
-   let saved:{id:string;reason?:string;group?:string}|null=null
+   let saved:{id:string;reason?:string;group?:string;sent?:boolean}|null=null
    try{saved=JSON.parse(localStorage.getItem(key)||'null')}catch{}
    const id=saved?.id??crypto.randomUUID();if(!saved)localStorage.setItem(key,JSON.stringify({id}))
    const creator=await frame.blueprintTemplates.selector.prepareSharing(item.reference,id)
@@ -26,7 +26,7 @@ export default function WorkTemplateSharing({item}:{item:ChatWorkTemplate}){
    const scopes:Group[]=[];let cursor=''
    do{const page=await frame.blueprintTemplates.selector.scopes(cursor);scopes.push(...page.scopes.filter(s=>s.enabled&&s.level==='group'));cursor=page.next_cursor||''}while(cursor)
    if(abort.signal.aborted)return
-   setGroups(scopes);if(saved?.reason!==undefined){setReason(saved.reason);setGroup(saved.group??'');setFrozen(true)}
+   setGroups(scopes);setSent(saved?.sent===true);if(!saved?.group&&scopes.length===1)setGroup(scopes[0].scope_id);if(saved?.reason!==undefined){setReason(saved.reason);setGroup(saved.group??'');setFrozen(true)}
   })().catch(()=>{if(!abort.signal.aborted)setError('Не удалось подготовить предложение. Проверьте доступ и повторите.')}).finally(()=>{if(abort.signal.aborted)disposeGatekeeperFrame(frame);else setBusy(false)})
   return()=>{abort.abort();operation.current?.[Symbol.dispose]();operation.current=null;disposeGatekeeperFrame(frame)}
  },[authenticatedApi,key,open,reload])
@@ -49,14 +49,15 @@ export default function WorkTemplateSharing({item}:{item:ChatWorkTemplate}){
     localStorage.setItem(key,JSON.stringify({...saved,reason:reason.trim(),group}));setFrozen(true)
     const result=await current.propose(group,selected.revision,reason.trim(),plan.key)
     if(result.target_scope_id!==group)throw Error('Другая область')
-    if(!signal.aborted)setSent(true)
+    localStorage.setItem(key,JSON.stringify({...saved,reason:reason.trim(),group,sent:true}));if(!signal.aborted)setSent(true)
    }
   }catch{if(!signal.aborted){setPlan(null);setError('Действие не подтверждено. Проверьте состояние и продолжите прежнее предложение.')}}finally{if(!signal.aborted)setBusy(false)}
  }
- return <section className="shrink-0 border-t border-kumo-line px-5 py-3" aria-label="Предложение общего шаблона">
-  {!open?<WorkshopButton onClick={()=>setOpen(true)}>Предложить команде</WorkshopButton>:<div className="space-y-3 text-[13px] leading-5">
-   <div><h3 className="m-0 text-[14px] font-medium">Предложить команде</h3><p className="mt-1 mb-0 text-kumo-subtle">Отправится версия {item.reference.revision}. После согласования и публикации она появится в общей библиотеке.</p></div>
-   {sent?<p role="status">Отправлено на согласование. Решение появится во «Входящих». Личный шаблон сохранён.</p>:<>
+ return <section className={open?'min-h-0 flex-1 overflow-y-auto px-5 py-5':'shrink-0 border-t border-kumo-line px-5 py-3'} aria-label="Предложение общего шаблона">
+  {!open?<WorkshopButton onClick={()=>{setOpen(true);onVisibilityChange?.(true)}}>Предложить команде</WorkshopButton>:<div className="space-y-3 text-[13px] leading-5">
+   <div><WorkshopButton onClick={()=>{setOpen(false);onVisibilityChange?.(false)}}>Назад к шаблону</WorkshopButton><h3 className="mt-5 mb-0 text-[18px] font-medium">Предложить команде</h3><p className="mt-1 mb-0 text-kumo-subtle">Отправится версия {item.reference.revision}. После согласования и публикации она появится в общей библиотеке.</p></div>
+   <ol aria-label="Путь общего шаблона" className="grid grid-cols-3 gap-2 rounded-xl bg-kumo-tint p-3 text-[12px]"><li className="font-medium">1. Предложение{sent?" · отправлено":""}</li><li>2. Согласование</li><li>3. Публикация</li></ol>
+   {sent?<div className="rounded-xl border border-kumo-line p-4"><p role="status" className="m-0 text-[15px] font-medium">Предложение отправлено.</p><p className="mt-2 mb-0 text-kumo-subtle">Согласующие получат эту версию во «Входящих». Личный шаблон сохранён. После публикации материал будет доступен в общей библиотеке.</p></div>:<>
     <label className="block">Команда<select aria-label="Команда для шаблона" className="mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base p-2" value={group} disabled={busy||frozen} onChange={e=>setGroup(e.target.value)}><option value="">Выберите команду</option>{groups.map(s=><option key={s.scope_id} value={s.scope_id}>{s.name}</option>)}</select></label>
     <label className="block">Для чего нужен общий шаблон<textarea aria-label="Объяснение общего шаблона" className="mt-1 block w-full rounded-lg border border-kumo-line bg-kumo-base p-2" rows={2} maxLength={4096} disabled={busy||frozen} value={reason} onChange={e=>setReason(e.target.value)}/></label>
     {plan&&<><p className="m-0 text-kumo-subtle">Согласующие: {plan.reviewers.map(p=>p.name).join(', ')}.</p>{plan.reviewers.some(p=>!p.canRead)?<div><p className="m-0 text-kumo-subtle">Для проверки им нужно чтение этого документа. Другие документы проекта не откроются.</p><WorkshopButton className="mt-2" disabled={busy} onClick={()=>void act(true)}>Открыть согласующим этот шаблон</WorkshopButton></div>:<p role="status" className="m-0 text-kumo-subtle">Доступ к предложенной версии проверен.</p>}</>}

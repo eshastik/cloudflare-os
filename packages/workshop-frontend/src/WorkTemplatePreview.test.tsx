@@ -149,3 +149,12 @@ test('личный шаблон без подтверждённого исход
  await React.act(async()=>button('Редактировать').click());await React.act(async()=>button('Открыть редактор').click());
  expect(mocks.api.newGadgetFromBlueprint).toHaveBeenLastCalledWith(output,{});expect(mocks.navigate).toHaveBeenLastCalledWith({to:'/workspace/$id',params:{id:'native-edit'},search:{templateKind:'document',templateEdit:{accountId:7,projectId:'source-project',reference:item.reference,autoOpen:true,format}}});
  });
+
+ test('пассивный просмотр показывает макет выбранного слайда, а переключение не меняет исходник и ссылку',async()=>{
+ const snapshot={format:'cloudflareos.presentation',formatVersion:1,document:{title:'План',themeVersion:'workspace.1',slides:[{id:'one',background:{color:'#1D6A50'},blocks:[{id:'a',type:'title',x:30,y:60,w:800,h:200,props:{text:'Первый слайд',color:'#FFFFFF'}}]},{id:'two',background:{color:'#FFFFFF'},blocks:[{id:'b',type:'text',x:30,y:60,w:800,h:200,props:{text:'Второй слайд'}}]}]}};
+ const original=JSON.stringify(snapshot),fetcher=await ticket(original,'application/vnd.cloudflareos.presentation+json'),toggle=vi.fn();
+ await React.act(async()=>root.render(<WorkTemplatePreview item={item} selected={false} atLimit={false} onToggle={toggle} onBack={()=>{}} onClose={()=>{}}/>));await settle();
+ const frame=()=>document.body.querySelector('iframe[title="Предпросмотр слайда"]')!;expect(frame().getAttribute('sandbox')).toBe('');expect(frame().getAttribute('srcdoc')).toContain('Первый слайд');expect(frame().getAttribute('srcdoc')).not.toContain('Второй слайд');
+ await React.act(async()=>(document.body.querySelector('button[aria-label="Следующий слайд"]') as HTMLButtonElement).click());expect(frame().getAttribute('srcdoc')).toContain('Второй слайд');expect(JSON.stringify(snapshot)).toBe(original);expect(fetcher).toHaveBeenCalledOnce();
+ await React.act(async()=>button('Выбрать для задачи').click());expect(toggle.mock.calls[0][0].reference).toEqual(item.reference);
+ });

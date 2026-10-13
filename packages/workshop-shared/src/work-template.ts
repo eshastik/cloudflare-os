@@ -16,6 +16,8 @@ export interface ChatWorkTemplateChoice {
   purpose: string;
   /** Способ применения. */
   kind: WorkTemplateKind;
+  /** Тип содержимого сохранённой версии для подписи формата; старые записи могут не содержать его. */
+  contentType?:string;
 }
 
 /** Выбор человека: подключение принадлежит отправителю сообщения. */

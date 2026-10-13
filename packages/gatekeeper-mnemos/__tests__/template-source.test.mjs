@@ -69,3 +69,20 @@ test('оформление нативного шаблона доступно б
   assert.match(preview.text,/Требования/);assert.match(preview.documentHtml,/<h2 style="color: red;">Требования/);assert.match(preview.documentHtml,/<td colspan="2">Срок/);assert.match(preview.documentHtml,/&lt;img src=x&gt;/);assert.match(preview.documentHtml,/default-src 'none'/);assert(!/onclick|<script|<img|href=|external.invalid|background-image|execute/.test(preview.documentHtml));
  }finally{dom.window.close();delete globalThis.document}
 });
+
+ test('таблица и презентация показывают данные без исполнения и не принимают чужой формат или изменённый источник',async()=>{
+ const cases=[['spreadsheet',{title:'Бюджет',sheetOrder:['s'],sheets:{s:{name:'Смета'}},cells:{s:{A1:{value:'=SUM(2,4)',fmt:null},B2:{value:'<script>не выполнять</script>'}}}},/A1\t=SUM\(2,4\)/],['presentation',{title:'План',themeVersion:'workspace.1',slides:[{blocks:[{props:{text:'<img src=x onerror=run()>'}},{props:{title:'Новая задача'}}]},{blocks:[{props:{body:'Критерии приёмки'}}]}]},/Слайд 2/]];
+ for(const [kind,data,expected] of cases){
+  const dom=new JSDOM('<main></main>');globalThis.document=dom.window.document;
+  if(kind==='presentation'){data.slides[1].blocks.push({type:'group',x:10,y:20,w:400,h:200,props:{width:400,height:200,blocks:[{type:'title',x:1,y:2,props:{text:'Срок: 20 октября'}}]}},{type:'table',x:10,y:230,w:400,h:200,props:{cells:[[{text:'Команда'},{text:'Срок'}],[{text:'Учебная'},{text:'20 октября'}]]}});}
+  if(kind==='presentation')data.slides[0].blocks.push({type:'svg',x:1,y:2,w:100,h:100,props:{markup:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" onload="run()"><script>run()</script><image href="https://external.invalid/track"/><rect x="1" y="2" width="50" height="20" fill="#1d6a50"/></svg>'}});
+
+  const metadata={...source,source:{...source.source,content_type:'application/vnd.cloudflareos.'+kind+'+json'}},snapshot={format:'cloudflareos.'+kind,formatVersion:1,document:data};
+  const preview=await readTemplateProposalPreview({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(snapshot));assert.equal(preview.nativeFormat,kind);assert.match(preview.text,expected);if(kind==='presentation'){assert.match(preview.text,/Срок: 20 октября/);assert.match(preview.documentHtml,/Срок: 20 октября/);assert.match(preview.text,/Команда/);assert.match(preview.documentHtml,/<td>Учебная<\/td>/);}assert.match(preview.documentHtml,/default-src 'none'/);assert(!preview.documentHtml.includes('<script>'));assert(!preview.documentHtml.includes('<img src=x')); const rendered=new JSDOM(preview.documentHtml);assert.equal(rendered.window.document.querySelector('script,image,[onload],[onerror],a[href]'),null);if(kind==='presentation')assert(rendered.window.document.querySelector('rect[fill="#1d6a50"]'));rendered.window.close();
+  const baseline=await readTemplateBaselineText({readTemplateProposalBaseline:async()=>metadata.source},'proposal',async()=>JSON.stringify(snapshot));assert.equal(baseline,preview.text);
+  for(const bad of [{...snapshot,formatVersion:2},{...snapshot,format:'cloudflareos.document'},{...snapshot,unexpected:true},{...snapshot,document:kind==='spreadsheet'?{...data,cells:{s:{A1:{value:4}}}}:{...data,slides:[{blocks:null}]}}])await assert.rejects(readTemplateProposalPreview({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify(bad)));
+  for(const document of kind==='spreadsheet'?[{...data,sheets:{s:null}},{...data,cells:{s:null}}]:[{...data,slides:[{blocks:[null]}]},{...data,slides:[{blocks:[{props:null}]}]},{...data,slides:[{blocks:[{props:[]}]}]}])await assert.rejects(readTemplateProposalPreview({readTemplateProposalSource:async()=>metadata},'proposal',async()=>JSON.stringify({...snapshot,document})));
+  let reads=0;await assert.rejects(readTemplateProposalPreview({readTemplateProposalSource:async()=>++reads===2?{...metadata,source:{...metadata.source,source_head:'b'.repeat(64)}}:metadata},'proposal',async()=>JSON.stringify(snapshot)));
+  dom.window.close();delete globalThis.document;
+ }
+ });

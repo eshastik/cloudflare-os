@@ -291,8 +291,8 @@ export class UserAccount extends DurableObject<Env> {
  async listChatTemplates(scopeId:string|null,cursor='',projectId?:string){
   const session=this.#account().session();
   try{
-   if(scopeId===null){const page=await session.listWorkTemplates(projectId??'',cursor);return {templates:page.templates.map(v=>({reference:{template_id:v.template_id,revision:v.revision},title:v.title,purpose:v.purpose,kind:v.kind})),nextCursor:page.next_cursor??''};}
-   const page=await session.listScopedWorkTemplates(scopeId,cursor);return {templates:page.templates.map(v=>({reference:{scope_id:v.scope_id,template_key:v.template_key,revision:v.revision},title:v.source.title,purpose:v.source.purpose,kind:v.source.kind})),nextCursor:page.next_cursor??''};
+   if(scopeId===null){const page=await session.listWorkTemplates(projectId??'',cursor);return {templates:page.templates.map(v=>({reference:{template_id:v.template_id,revision:v.revision},title:v.title,purpose:v.purpose,kind:v.kind,contentType:v.content_type})),nextCursor:page.next_cursor??''};}
+   const page=await session.listScopedWorkTemplates(scopeId,cursor);return {templates:page.templates.map(v=>({reference:{scope_id:v.scope_id,template_key:v.template_key,revision:v.revision},title:v.source.title,purpose:v.source.purpose,kind:v.source.kind,contentType:v.source.content_type})),nextCursor:page.next_cursor??''};
   }finally{session.dispose();}
  }
  async readChatTemplates(references:WorkTemplateReference[]):Promise<ChatWorkTemplateChoice[]>{

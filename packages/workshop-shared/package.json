@@ -116,6 +116,10 @@
     "./document-preview-html": {
       "types": "./src/document-preview-html.ts",
       "import": "./src/document-preview-html.ts"
+    },
+    "./native-template-preview": {
+      "types": "./src/native-template-preview.ts",
+      "import": "./src/native-template-preview.ts"
     }
   },
   "scripts": {
