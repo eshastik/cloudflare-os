@@ -49,7 +49,7 @@ test('агент не переиспользует сохранённое нам
  const agent=new MnemosAccountSession(new MnemosAPI('https://memory.example',async()=>'agent-token',f.fetcher),()=>true,f.storage,'binding-agent');
  assert.equal(await agent.readSavedTemplateAction('target'),null);
  await assert.rejects(createTemplateDocument(agent,f.input));
- const agentSaved=await agent.readSavedTemplateAction('target');assert.equal(agentSaved?.action.kind,'create');
+ const agentSaved=await agent.readSavedTemplateAction('target',f.input.requestId);assert.equal(agentSaved?.action.kind,'create');
  assert.deepEqual(await human.readSavedTemplateAction('target'),saved);
  assert.equal((f.bodies[0] as any).request_id,'once');
 });
@@ -60,3 +60,10 @@ test('агент не переиспользует сохранённое нам
  assert.equal(result.contentType,mime);assert.deepEqual(result.references,f.input.references);assert.equal(result.document.node_id,'copy');assert.deepEqual(f.bodies[0],f.bodies[1]);assert.equal(f.heads(),1);
  f.revoke();await assert.rejects(createTemplateDocument(account.session(),f.input));assert.equal(f.bodies.length,2);
  });
+
+test('незавершённые создания одного проекта разделены по requestId; потерянный ответ сохраняет прежние входы',async()=>{
+ const f=fixture(),account=new MnemosAccount(f.storage,'https://memory.example',f.fetcher);await account.connect('human-token');
+ await assert.rejects(createTemplateDocument(account.session(),f.input));
+ const other={...f.input,requestId:'second',name:'Другая форма'};await createTemplateDocument(account.session(),other);
+ await createTemplateDocument(account.session(),f.input);assert.deepEqual(f.bodies[0],f.bodies[2]);assert.equal((f.bodies[1] as any).name,'Другая форма');
+});

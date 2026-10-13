@@ -1334,16 +1334,23 @@ export class MnemosAccountSession {
   async saveWorkTemplateSnapshot(id:string,input:Parameters<MnemosAPI["saveWorkTemplate"]>[1]) {this.#check();const out=await this.#client.saveWorkTemplate(id,input,this.#lifetime.signal);this.#check();return out;}
   async readDocumentTemplateOrigin(project:string,node:string,head:string){this.#check();const out=await this.#client.readDocumentTemplateOrigin(project,node,head,this.#lifetime.signal);this.#check();return out;}
   async readWorkTemplate(id:string,revision:number) {this.#check();const out=await this.#client.readWorkTemplate(id,revision,this.#lifetime.signal);this.#check();return out;}
-  private templateActions(){
-    const source=this.requestStorage;const prefix=this.templateActor?'agent-template:'+encodeURIComponent(this.templateActor)+':':'';
+  private templateActions(requestId?:string){
+    if(requestId!==undefined&&(typeof requestId!=='string'||!requestId||requestId.length>255))throw new MnemosAPIError(400);
+    const source=this.requestStorage;const actor=this.templateActor?'agent-template:'+encodeURIComponent(this.templateActor)+':':'';const prefix=actor+(requestId!==undefined?'template-request:'+encodeURIComponent(requestId)+':':'');
     const storage=source&&prefix?{get:<T>(key:string)=>source.get<T>(prefix+key),put:<T>(key:string,value:T)=>source.put(prefix+key,value),delete:(key:string)=>source.delete(prefix+key)}:source;
     return new TemplateActions(storage,this.#client,()=>this.#check(),this.#lifetime.signal);
   }
-  async readSavedTemplateAction(project:string){return this.templateActions().read(project);}
-  async saveTemplateAction(project:string,action:TemplateAction,expected:string){return this.templateActions().save(project,action,expected);}
+  async readSavedTemplateAction(project:string,requestId?:string){
+    const actions=this.templateActions(requestId),saved=actions.read(project);if(saved||requestId===undefined)return saved;
+    // Старый запрос сохраняет исходные параметры и повторяется тем же request_id; чужое намерение не переносится.
+    const legacy=this.templateActions().read(project);
+    if(legacy?.action.kind==='create'&&legacy.action.input.request_id===requestId)return actions.save(project,legacy.action,'');
+    return null;
+  }
+  async saveTemplateAction(project:string,action:TemplateAction,expected:string,requestId?:string){return this.templateActions(requestId).save(project,action,expected);}
   async deferTemplateAction(project:string,id:string){return this.templateActions().defer(project,id);}
   async restoreTemplateAction(project:string,id:string,expected:string){return this.templateActions().restore(project,id,expected);}
-  executeSavedTemplateAction(project:string,id:string,revalidate=false){return this.templateActions().execute(project,id,revalidate);}
+  executeSavedTemplateAction(project:string,id:string,revalidate=false,requestId?:string){return this.templateActions(requestId).execute(project,id,revalidate);}
   async readPersonalMemoryVersion() {
     this.#check(); const result=await this.#client.readPersonalMemoryVersion(this.#lifetime.signal); this.#check(); return result;
   }

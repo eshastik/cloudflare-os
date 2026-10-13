@@ -1124,7 +1124,14 @@ export class UserAccount extends DurableObject<Env> {
     finally{session.dispose();}
   }
   /** Самостоятельный документ создаётся под агентом; повтор проверяет текущие права. */
+  #templateCreationQueue=new Map<string,Promise<unknown>>();
   async createTemplateDocumentForAgent(input:TemplateDocumentInput){
+    const previous=this.#templateCreationQueue.get(input.project)??Promise.resolve();
+    const operation=previous.catch(()=>{}).then(()=>this.#createTemplateDocumentForAgent(input));
+    this.#templateCreationQueue.set(input.project,operation);
+    try{return await operation;}finally{if(this.#templateCreationQueue.get(input.project)===operation)this.#templateCreationQueue.delete(input.project);}
+  }
+  async #createTemplateDocumentForAgent(input:TemplateDocumentInput){
     await this.#account().ensureWorkshopAgent(this.ctx.id.toString(),WORKSHOP_AGENT_NAME);
     const session=this.#account().agentSession();
     try{return await createTemplateDocument(session,input);}finally{session.dispose();}

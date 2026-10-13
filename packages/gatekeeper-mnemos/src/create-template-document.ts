@@ -15,7 +15,7 @@ export async function createTemplateDocument(session:Pick<MnemosAccountSession,'
  const selected=await session.readWorkTemplateSelection(refs);
  const chosen=selected.materials.find(m=>JSON.stringify(m.reference)===key);const source=chosen?.personal??chosen?.scoped?.source;
  if(!source||source.kind!=='document'||!['text/plain','text/markdown'].includes(source.content_type)&&!nativeDocumentFormatOfMime(source.content_type))throw new Error('Выберите поддерживаемую форму документа.');
- const previous=await session.readSavedTemplateAction(project);
+ const previous=await session.readSavedTemplateAction(project,requestId);
  let saved;
  if(previous?.action.kind==='create'&&previous.action.input.request_id===requestId){
   const action=previous.action;const oldForm=action.scope?{scope_id:action.scope,template_key:action.template,revision:action.input.revision}:{template_id:action.template,revision:action.input.revision};
@@ -26,9 +26,9 @@ export async function createTemplateDocument(session:Pick<MnemosAccountSession,'
   let state=await session.draftState(project);
   if(!state.personal_exists){await session.openDraft(project);state=await session.draftState(project);}
   if(!state.personal_exists||!state.personal_head)throw new Error('Личная ветка проекта недоступна.');
-  saved=await session.saveTemplateAction(project,{kind:'create',template:form.template_id??form.template_key,...(form.scope_id?{scope:form.scope_id}:{}),input:{references:refs,request_id:requestId,revision:form.revision,project_id:project,parent_id:parentId,name,expected_head:state.personal_head,message:'Создание документа по выбранным шаблонам'}},previous?.id??'');
+  saved=await session.saveTemplateAction(project,{kind:'create',template:form.template_id??form.template_key,...(form.scope_id?{scope:form.scope_id}:{}),input:{references:refs,request_id:requestId,revision:form.revision,project_id:project,parent_id:parentId,name,expected_head:state.personal_head,message:'Создание документа по выбранным шаблонам'}},previous?.id??'',requestId);
  }
- const completed=await session.executeSavedTemplateAction(project,saved.id,true);
+ const completed=await session.executeSavedTemplateAction(project,saved.id,true,requestId);
  if(completed.receipt?.kind!=='create')throw new Error('Mnemos не подтвердил создание документа.');
  return {project,name,operationId:requestId,document:completed.receipt.document,references:refs,contentType:source.content_type};
 }
