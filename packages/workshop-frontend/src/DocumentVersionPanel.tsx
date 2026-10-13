@@ -301,8 +301,9 @@ export default function DocumentVersionPanel({ launch, onLaunchConsumed, gadget,
         {rows.length > 0 && <p className="m-0 text-[13px] leading-[1.5] text-kumo-subtle">Ни одна версия не пропадает. Вернуть можно любую — это станет новой версией.</p>}
       </Section>}
 
+      {launch?.confirm && section === 'open' && <p role="status" className="text-[14px] leading-6">В Mnemos доступна сохранённая версия. Текущие правки остаются в редакторе. Выберите «Открыть версию», чтобы загрузить сохранённый результат; текущие правки редактора будут заменены.</p>}
       {chatId === undefined && (section === 'open' || section === 'reopen') && <NativeDocumentOpen gadget={gadget} format={format} snapshotSource={snapshotSource} disabled={disabled}
-        open autoApply={section === 'reopen' || !!launch?.publication}
+        open confirmApply={launch?.confirm} autoApply={!launch?.confirm && (section === 'reopen' || !!launch?.publication)}
         initialPublication={section === 'reopen' ? rows[0]?.id : launch?.publication}
         initialAccountId={launch?.accountId ?? binding?.accountId ?? undefined} initialScope={launch?.scope ?? binding?.scope} initialResource={launch?.resource ?? (binding?.resource || undefined)}
         onOpened={async result => {

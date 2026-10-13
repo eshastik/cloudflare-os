@@ -4,7 +4,7 @@ import type {GatekeeperNativeDocumentSelector} from '@gadgets/workshop-shared/ga
 import type {AuthenticatedApi} from '@gadgets/workshop-shared/api'
 import {launchMnemosApp, appVersionToOpen} from './mnemosAppLaunch'
 
-export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; gadgetId?: number; at: number}
+export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; gadgetId?: number; confirm?: boolean; at: number}
 const key = (path: string) => `mnemos-document-launch:${path}`
 export function readNativeDocumentLaunch(format: NativeDocumentFormat, gadgetId?: string | number): NativeDocumentLaunch | null {
   try {

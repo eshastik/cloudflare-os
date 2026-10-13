@@ -19,10 +19,16 @@ export function openNativeInWorkspace(api:Api,workspace:NativeWorkspace,target:A
   try{
    const history=await frame.nativeDownloads.selector.publications(target.scope,target.resource,'')
    const version=history.publications[0];if(!version||!isNativeDocumentFormat(version.format))return null
+   const format=version.format
+   const reuse=(id:number,binding:{savedHead?:string})=>{
+    // Открытый редактор сохраняет локальные правки. Новую серверную версию человек принимает явно.
+    if(target.refreshLatest&&version.id!==('private:'+binding.savedHead))rememberNativeDocumentLaunch(workspace.id,{accountId:target.accountId,scope:target.scope,resource:target.resource,format,publication:version.id,gadgetId:id,confirm:true})
+    return id
+   }
    for(const item of workspace.gadgets){
     if(nativeFormatForOutput(item.output?.id)!==version.format)continue
     const gadget=workspace.overseer.getGadget(item.id)
-    try{const binding=(await gadget.getMnemosDocument()).binding;if(binding?.accountId===target.accountId&&binding.scope===target.scope&&binding.resource===target.resource)return item.id}finally{gadget[Symbol.dispose]()}
+    try{const binding=(await gadget.getMnemosDocument()).binding;if(binding?.accountId===target.accountId&&binding.scope===target.scope&&binding.resource===target.resource)return reuse(item.id,binding)}finally{gadget[Symbol.dispose]()}
    }
    let stored:{operationId?:string;gadgetId?:number}|null=null
    try{stored=JSON.parse(localStorage.getItem(key)||'null')}catch{}
@@ -34,7 +40,7 @@ export function openNativeInWorkspace(api:Api,workspace:NativeWorkspace,target:A
      const binding=(await gadget.getMnemosDocument()).binding
      if(binding){
       if(binding.accountId!==target.accountId||binding.scope!==target.scope||binding.resource!==target.resource)throw Error('Редактор открывает другой документ')
-      return id
+      return reuse(id,binding)
      }
      const editor=await gadget.connectToGadget() as RpcStub<NativeDocumentEditor>
      try{if((await editor.getDocument()).revision>0)throw Error('В редакторе есть правки. Откройте его и выберите версию вручную.')}finally{editor[Symbol.dispose]()}
@@ -52,7 +58,7 @@ export function openNativeInWorkspace(api:Api,workspace:NativeWorkspace,target:A
     const binding=(await accepted.getMnemosDocument()).binding
     if(binding){
      if(binding.accountId!==target.accountId||binding.scope!==target.scope||binding.resource!==target.resource)throw Error('Редактор открывает другой документ')
-     return id
+     return reuse(id,binding)
     }
     const editor=await accepted.connectToGadget() as RpcStub<NativeDocumentEditor>
     try{if((await editor.getDocument()).revision>0)throw Error('В редакторе есть правки. Откройте его и выберите версию вручную.')}finally{editor[Symbol.dispose]()}

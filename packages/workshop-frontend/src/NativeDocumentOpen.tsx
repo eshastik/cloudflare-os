@@ -34,6 +34,8 @@ type Props = {
   open?: boolean; initialAccountId?: number; initialScope?: string; initialResource?: string; initialPublication?: string; onOpened?(result: NativeOpenResult): void | Promise<void>; onClose?(): void
   /** Открыть заданную версию сразу, без кнопки: «Открыть» из «Входящих», новая версия после чужой правки, возврат версии. */
   autoApply?: boolean
+  /** Повторное открытие привязанного редактора: версия выбрана, но замена требует явного нажатия. */
+  confirmApply?: boolean
   openingTimeoutMs?: number
 }
 type Item = { id: string; name: string; sharedDeleted?: boolean }
@@ -67,25 +69,26 @@ export default function NativeDocumentOpen({ open = true, onClose, ...props }: P
     void boundedOpening(props.gadget.getId(), props.openingTimeoutMs ?? 20000).then(id => {
       if (cancelled) return
       const key = nativeOpenKey(id)
-      setLoaded({gadget: props.gadget, key, pending: readPendingNativeOpen(key, props.format)})
+      if (props.confirmApply) sessionStorage.removeItem(key)
+      setLoaded({gadget: props.gadget, key, pending: props.confirmApply ? null : readPendingNativeOpen(key, props.format)})
     }).catch(() => { if (!cancelled) setLoaded({gadget: props.gadget, key: '', pending: null, failed: true}) })
     return () => { cancelled = true }
-  }, [props.gadget, props.format, attempt])
+  }, [props.gadget, props.format, props.confirmApply, props.initialPublication, props.initialResource, props.initialScope, attempt])
   function close() { if (loaded?.key) sessionStorage.removeItem(loaded.key); setClosed(true); onClose?.() }
   // При смене RPC старую попытку снимаем сразу. React может объединить очистку и
   // повторное чтение того же ID; совпадение ID не означает, что старая сессия жива.
   if (!loaded || loaded.gadget !== props.gadget) return null
   if (loaded.failed && open) return <section aria-label="Открытие документа"><p role="alert">Не удалось открыть рабочее место. Повторите попытку.</p><WorkshopButton onClick={() => setAttempt(value => value + 1)}>Повторить открытие</WorkshopButton></section>
   if (!loaded.key || closed || (!open && !loaded.pending)) return null
-  return <OpenSection key={attempt} {...props} storageKey={loaded.key} resume={loaded.pending} close={close} retry={() => setAttempt(value => value + 1)} />
+  return <OpenSection key={JSON.stringify([attempt,props.confirmApply,props.initialAccountId,props.initialScope,props.initialResource,props.initialPublication])} {...props} storageKey={loaded.key} resume={loaded.pending} close={close} retry={() => setAttempt(value => value + 1)} />
 }
 
-function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply, openingTimeoutMs = 20000, retry }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void; retry(): void }) {
+function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, resume: resumed, close, initialAccountId, initialScope, initialResource, initialPublication, onOpened, autoApply, confirmApply, openingTimeoutMs = 20000, retry }: Omit<Props, 'open' | 'onClose'> & { storageKey: string; resume: Pending | null; close(): void; retry(): void }) {
   const { authenticatedApi } = useAuthenticatedApi()
   // Незавершённое открытие продолжается само: человек уже выбрал документ до перезагрузки. «Выбрать версию»
   // после ошибки переводит карточку в ручной выбор и забывает незавершённое открытие.
   const [resume, setResume] = useState(resumed), [manual, setManual] = useState(false)
-  const auto = !manual && (!!resume || !!autoApply)
+  const auto = !confirmApply && !manual && (!!resume || !!autoApply)
   const [accounts, setAccounts] = useState<{ id: number; name: string; valid: boolean }[]>([])
   const [accountId, setAccountId] = useState<number | null>(initialAccountId ?? null)
   const [scopes, setScopes] = useState<Item[]>([]), [documents, setDocuments] = useState<Item[]>([])
@@ -350,12 +353,13 @@ function OpenSection({ gadget, format, snapshotSource, reconnect, storageKey, re
   const selectClass = 'mt-1 block h-10 w-full rounded-lg border border-kumo-line bg-kumo-base px-2 text-[16px] sm:h-9 sm:text-[13px]'
   const opening = resume?.label || documents.find(d => d.id === document)?.name || ''
   const openingError = timedOut ? 'Открытие заняло слишком много времени. Повторите попытку.' : attemptError || error
-  if (auto) return <section aria-label="Открытие документа" data-opening-phase={phase} data-opening-loading={loading} data-opening-ready={!!resourceUrl} data-opening-has-version={!!publication} data-opening-version-matches={publication === initialPublication} data-opening-resumed={!!resume} data-opening-attempted={autoTried.current} className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
+  if (auto || (confirmApply && !manual)) return <section aria-label="Открытие документа" data-opening-phase={phase} data-opening-loading={loading} data-opening-ready={!!resourceUrl} data-opening-has-version={!!publication} data-opening-version-matches={publication === initialPublication} data-opening-resumed={!!resume} data-opening-attempted={autoTried.current} className="flex flex-col gap-3 text-[14px] leading-5 text-kumo-default">
       {openingError ? <p role="alert" className="m-0 text-kumo-danger">{openingError}</p>
-        : <p role="status" className="m-0">{opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
+        : <p role="status" className="m-0">{confirmApply && !busy ? loading ? 'Читаю сохранённую версию…' : 'Сохранённая версия готова к открытию.' : opening ? `Открываю «${opening}»…` : 'Открываю документ…'}</p>}
       {preparing && !openingError && <HistoryPreparingNotice progress={preparing} subject="Документ откроется" />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <WorkshopButton className="!h-10 w-full sm:!h-8 sm:w-auto" onClick={close}>Отменить</WorkshopButton>
+        {confirmApply && !openingError && <WorkshopButton tone="primary" disabled={loading || busy || !resourceUrl || !publication} onClick={() => { void apply() }}>{busy ? 'Открываю…' : 'Открыть версию'}</WorkshopButton>}
         {openingError && !timedOut && <WorkshopButton className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={chooseManually}>Выбрать версию</WorkshopButton>}
         {openingError && <WorkshopButton tone="primary" className="!h-10 w-full sm:!h-9 sm:w-auto" onClick={retry}>Повторить открытие</WorkshopButton>}
       </div>

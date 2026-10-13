@@ -13,7 +13,7 @@ function fixture(){
  const create=vi.fn(async(_format:string,_title:string,_chat:number,_operation:string)=>8)
  const getGadget=()=>({getId:async()=>8,getMnemosDocument:async()=>({binding}),connectToGadget:async()=>({getDocument:async()=>({revision}),[Symbol.dispose]:()=>{}}),[Symbol.dispose]:()=>{}})
  const workspace={id:'current',chatId:0,overseer:{createNativeEditor:create,getGadget},gadgets:[]} as unknown as NativeWorkspace
- return {workspace,create,setBinding:()=>{binding={accountId:3,scope:'project',resource:'node'};workspace.gadgets=[{id:8,output:{id:'presentation'} as never}]},edit:()=>{revision=1}}
+ return {workspace,create,setBinding:(savedHead?:string)=>{binding={accountId:3,scope:'project',resource:'node',savedHead};workspace.gadgets=[{id:8,output:{id:'presentation'} as never}]},edit:()=>{revision=1}}
 }
 it.each(['cloudflareos.document','cloudflareos.spreadsheet','cloudflareos.presentation'] as const)('открывает %s в том же рабочем месте и только в нужном редакторе',async format=>{
  state.format=format;const f=fixture()
@@ -27,7 +27,7 @@ it('повтор и одновременные нажатия не создаю�
  const f=fixture();expect(await Promise.all([openNativeInWorkspace(api,f.workspace,target),openNativeInWorkspace(api,f.workspace,target)])).toEqual([8,8]);expect(f.create).toHaveBeenCalledOnce()
  f.setBinding();f.edit();clearNativeDocumentLaunch()
  expect(await openNativeInWorkspace(api,f.workspace,{...target,refreshLatest:true})).toBe(8)
- expect(f.create).toHaveBeenCalledOnce();expect(readNativeDocumentLaunch('cloudflareos.presentation',8)).toBeNull()
+ expect(f.create).toHaveBeenCalledOnce();expect(readNativeDocumentLaunch('cloudflareos.presentation',8)).toMatchObject({publication:'private:head',confirm:true,gadgetId:8})
 })
 it('после неудачного открытия не перезаписывает правки неподключённого редактора',async()=>{
  const f=fixture();await openNativeInWorkspace(api,f.workspace,target);f.edit();clearNativeDocumentLaunch()
@@ -44,3 +44,8 @@ it('потеря ответа создания не разрешает заме�
  await expect(openNativeInWorkspace(api,f.workspace,target)).rejects.toThrow('есть правки')
  expect(f.create).toHaveBeenCalledTimes(2);expect(f.create.mock.calls[1][3]).toBe(f.create.mock.calls[0][3]);expect(readNativeDocumentLaunch('cloudflareos.presentation',8)).toBeNull()
 });
+
+it('уже открытая сохранённая версия не предлагает повторное восстановление',async()=>{
+ const f=fixture();f.setBinding('head');clearNativeDocumentLaunch();
+ expect(await openNativeInWorkspace(api,f.workspace,{...target,refreshLatest:true})).toBe(8);expect(readNativeDocumentLaunch('cloudflareos.presentation',8)).toBeNull();expect(f.create).not.toHaveBeenCalled();
+})
