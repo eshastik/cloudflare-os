@@ -1,4 +1,13 @@
 import { Client } from "pg";
+import { Socket } from "node:net";
+
+function localPlaintextConnection(connectionString: string): boolean {
+  let address: URL;
+  try { address = new URL(connectionString); } catch { return false; }
+  return ["localhost", "127.0.0.1", "[::1]"].includes(address.hostname)
+    && [...address.searchParams.keys()].every(key => !key.toLowerCase().startsWith("ssl") && key !== "host")
+    && !process.env.PGSSLMODE;
+}
 
 /** Соединение принадлежит одной операции Worker; её запись подтверждается до ответа. */
 export async function withPostgresState<T>(
@@ -8,6 +17,9 @@ export async function withPostgresState<T>(
     // управляет пулом соединений; один клиент здесь принадлежит одной операции.
     const client = new Client({
       connectionString: connectionString,
+      // pg-cloudflare удерживает закрытые сокеты в долгоживущем workerd.
+      // Локальный TCP идёт через Node; настройки TLS сохраняют прежний транспорт.
+      ...(localPlaintextConnection(connectionString) ? { stream: () => new Socket() } : {}),
       connectionTimeoutMillis: 5_000,
       query_timeout: 10_000,
     });

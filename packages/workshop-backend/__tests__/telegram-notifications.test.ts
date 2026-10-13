@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { MnemosNotification, NotificationDecisionResult, NotificationObject } from "@gadgets/workshop-shared/telegram-bot";
 import type { SubmitExternalMessageInput } from "@gadgets/workshop-shared/external-message-gateway";
 import { CARD_BUSY, CARD_STALE, CARD_UNKNOWN, PersonalTelegramBot, SCREEN_TTL_MS, type BotRecord, type TelegramAgentGateway, type ThreadLink } from "../src/telegram/personal-bot";
-import { NOTICE_CARD_DECIDING_MS, NOTIFY_PER_HOUR, NOTIFY_HOUR_MS, type NoticeCard, type NotifyState, type TelegramMnemos } from "../src/telegram/notifications";
+import { noticeHtml, noticePlain, NOTICE_CARD_DECIDING_MS, NOTIFY_PER_HOUR, NOTIFY_HOUR_MS, type NoticeCard, type NotifyState, type TelegramMnemos } from "../src/telegram/notifications";
 import { verifyWebAppData, webAppCheckString, WEBAPP_DATA_MAX_AGE_MS } from "../src/telegram/web-app-data";
 import { DraftLimiter } from "../src/telegram/progress";
 import { handleTelegramAppOpen } from "../src/telegram/durable";
@@ -708,4 +708,10 @@ describe("устойчивость очереди", () => {
     expect(h.state()).toMatchObject({ sent: 2, acked: 2, principal: "alice-other" });
     expect(h.m.acksFor.at(-1)).toBe("alice-other");
   });
+});
+
+it("Восстановление проверки показывается как состояние системы", () => {
+ const item:MnemosNotification={sequence:1,kind:"platform_failure",object:{type:"platform_signal",id:"external.save"},summary:"Проверка установки восстановилась: внешнее сохранение",created_at:"2026-10-13T00:00:00Z"};
+ expect(noticeHtml(item,[])).toBe("<b>Состояние системы</b>\n"+item.summary);
+ expect(noticePlain(item,[])).toBe("Состояние системы\n"+item.summary);
 });

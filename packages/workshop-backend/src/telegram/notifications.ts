@@ -102,7 +102,7 @@ export const KIND_TITLES: Record<NotificationKind, string> = {
   decision_needed: "Нужно ваше решение",
   task_result: "Результат поручения",
   shared_with_me: "С вами поделились",
-  platform_failure: "Сбой системы",
+  platform_failure: "Состояние системы",
 };
 
 const DECISION_BUTTONS: Partial<Record<NotificationObject["type"], { approve: string; reject: string | null; approved: string; rejected: string }>> = {
