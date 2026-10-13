@@ -39,7 +39,7 @@ export default function BlueprintTemplateSave({blueprint, format, snapshotSource
   const lifetime = useRef(new AbortController())
   const [kind,setKind] = useState<WorkTemplateKind>(initialKind)
   const sourceKey = initialTemplate&&'template_id' in initialTemplate.context.reference?`native-template:${initialTemplate.context.reference.template_id}`:improvement?`native-improvement:${blueprint.id}:${improvement.scope_id}:${improvement.template_key}:${improvement.revision}`:nativeOnly ? `native-document:${blueprint.id}${kind==='document'?'':':'+kind}` : blueprint.id
-  const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
+  const kinds={document:'Форма',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
   const descriptions={document:'Текущее содержимое станет исходной формой для новых документов.',guidance:'Описывает порядок работы и требования к результату. Можно использовать вместе с формой документа.',agent_instructions:'Задаёт поведение агента в выбранной задаче. Инструкция не расширяет его права.',skill:'Описывает выполнение конкретной операции. Выбирается для задач, где эта операция нужна.'}
   const pendingKey = `mnemos-blueprint-save:${sourceKey}`
   useEffect(() => {

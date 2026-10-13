@@ -2,7 +2,7 @@ import type {ChatWorkTemplate} from '@gadgets/workshop-shared/work-template'
 import {X} from '@phosphor-icons/react'
 import {WorkshopButton,WorkshopIconButton} from './components/WorkshopControls'
 
-const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
+const kinds={document:'Форма',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}
 
 export default function TaskTemplateMaterials({items,onChoose,onPreview,onRemove,onClear}:{items:ChatWorkTemplate[];onChoose():void;onPreview(item:ChatWorkTemplate):void;onRemove(item:ChatWorkTemplate):void;onClear():void}){
  return <section aria-label="Материалы для задачи" className="mx-3 mb-2 rounded-lg border border-kumo-line bg-kumo-tint px-3 py-2">

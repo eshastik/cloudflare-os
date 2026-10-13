@@ -1,3 +1,4 @@
+import {openNativeInWorkspace} from './mnemosNativeInChat'
 import TemplateEditorStatus from './TemplateEditorStatus'
 import WorkTemplateEditing from './WorkTemplateEditing'
 import type {TemplateEditingContext} from './templateEditing'
@@ -1231,14 +1232,15 @@ export default function GadgetEditor() {
   const openMnemosApp = useCallback<OpenAppInChat>(async target => {
     if (!overseer || !id) return false
     const workspace: AppWorkspace = { id, overseer: overseer.stub as unknown as AppWorkspace['overseer'], gadgets: allGadgetsRef.current }
-    const gadgetId = await openAppInWorkspace(authenticatedApi, workspace, target)
+    const nativeId = effectiveSelectedChatId === null ? null : await openNativeInWorkspace(authenticatedApi, {id, chatId: effectiveSelectedChatId, overseer: overseer.stub, gadgets: allGadgetsRef.current}, target)
+    const gadgetId = nativeId ?? await openAppInWorkspace(authenticatedApi, workspace, target)
     if (gadgetId === null) return false
     // Новый гаджет выбирается, когда он уже в списке и страница перестроилась под первый гаджет.
     if (!await arrivals.wait(gadgetId, APP_ARRIVAL_MS)) throw new Error('рабочее место не показало новый гаджет')
     await new Promise(resolve => setTimeout(resolve, 0))
     selectWorkpieceRef.current(gadgetId)
     return true
-  }, [overseer, id, authenticatedApi, arrivals])
+  }, [overseer, id, authenticatedApi, arrivals, effectiveSelectedChatId])
 
   const handleRenameWorkpiece = useCallback(async (workpieceId: WorkpieceId, title: string) => {
     if (!overseer) return
@@ -1411,7 +1413,7 @@ export default function GadgetEditor() {
   // ── always render the full two-pane edit layout; preview overlays on top ──────
   const selectedNativeFormat = nativeFormatOf(selectedGadgetSummary?.output?.id)
   const templateMode = !!(templateKind||templateEdit)&&!!selectedNativeFormat
-  const templateTitle = {document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}[templateKind??editingMaterial?.material.kind??'document']
+  const templateTitle = {document:'Форма',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'}[templateKind??editingMaterial?.material.kind??'document']
   const editingReady=templateEdit&&editingMaterial&&editingMaterial.workspaceId===id&&editingMaterial.gadgetId===selectedGadgetId&&editingMaterial.gadget===selectedGadgetStub&&JSON.stringify(templateEdit)===JSON.stringify(editingMaterial.context)?editingMaterial.material:null
   const workLabel = showingActivity ? 'Активность' : formatOf(selectedGadgetSummary?.output ?? allGadgets[0]?.output).noun
   // Переключатель «Беседа | Документ» в шапке беседы на телефоне.
@@ -1773,7 +1775,7 @@ export default function GadgetEditor() {
               </div>
             )}
 
-            {!paneShowsActivity && !templateMode && !narrow && selectedNativeFormat==='cloudflareos.document' && selectedGadgetStub && <DropdownMenu>
+            {!paneShowsActivity && !templateMode && !narrow && selectedNativeFormat && selectedGadgetStub && <DropdownMenu>
               <DropdownMenu.Trigger render={<WorkshopIconButton aria-label="Действия с шаблоном" title="Действия с шаблоном" disabled={activeTab!=='app'||previewMode||!!templateEdit&&!editingReady}><DotsThree size={18}/></WorkshopIconButton>}/>
               <DropdownMenu.Content className={MENU_CONTENT}><DropdownMenu.Item className={MENU_ITEM} onClick={()=>setDocumentTemplateOpen(true)}>Сохранить как личный шаблон</DropdownMenu.Item></DropdownMenu.Content>
             </DropdownMenu>}

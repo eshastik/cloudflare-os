@@ -4,14 +4,19 @@ import type {GatekeeperNativeDocumentSelector} from '@gadgets/workshop-shared/ga
 import type {AuthenticatedApi} from '@gadgets/workshop-shared/api'
 import {launchMnemosApp, appVersionToOpen} from './mnemosAppLaunch'
 
-export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; at: number}
+export type NativeDocumentLaunch = {accountId: number; scope: string; resource: string; format: NativeDocumentFormat; publication: string; gadgetId?: number; at: number}
 const key = (path: string) => `mnemos-document-launch:${path}`
-export function readNativeDocumentLaunch(format: NativeDocumentFormat): NativeDocumentLaunch | null {
+export function readNativeDocumentLaunch(format: NativeDocumentFormat, gadgetId?: string | number): NativeDocumentLaunch | null {
   try {
     const value = JSON.parse(sessionStorage.getItem(key(location.pathname)) || 'null')
-    if (value && value.format === format && Number.isSafeInteger(value.accountId) && typeof value.scope === 'string' && value.scope && typeof value.resource === 'string' && value.resource && typeof value.publication === 'string' && value.publication && Number.isFinite(value.at) && Date.now() >= value.at && Date.now() - value.at < 1800000) return value
+    if (value && value.format === format && (value.gadgetId === undefined || value.gadgetId === Number(gadgetId)) && Number.isSafeInteger(value.accountId) && typeof value.scope === 'string' && value.scope && typeof value.resource === 'string' && value.resource && typeof value.publication === 'string' && value.publication && Number.isFinite(value.at) && Date.now() >= value.at && Date.now() - value.at < 1800000) return value
   } catch { /* Локальный адрес не даёт прав на документ. */ }
   return null
+}
+export const MNEMOS_DOCUMENT_LAUNCH_EVENT = 'mnemos-document-launch'
+/** Заявка относится к одному редактору текущего рабочего места; доступ проверяется при чтении. */
+export function rememberNativeDocumentLaunch(workspace: string, launch: Omit<NativeDocumentLaunch,'at'>) {
+ sessionStorage.setItem(key('/workspace/'+encodeURIComponent(workspace)),JSON.stringify({...launch,at:Date.now()}));window.dispatchEvent(new Event(MNEMOS_DOCUMENT_LAUNCH_EVENT))
 }
 export function clearNativeDocumentLaunch() { sessionStorage.removeItem(key(location.pathname)) }
 

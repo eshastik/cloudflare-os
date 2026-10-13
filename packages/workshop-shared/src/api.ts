@@ -1545,6 +1545,9 @@ export interface Overseer extends RpcTarget {
   /** Добавляет точный снимок как отдельный гаджет беседы; повтор операции не создаёт копию. */
   importTemplateIntoChat(stream: ReadableStream<Uint8Array>, chatId: number, operationId: string): Promise<{gadgetId: WorkpieceId; error?: never} | {error: string; gadgetId?: never}>;
 
+  /** Добавляет поставляемый нативный редактор в текущее рабочее место; повтор операции не создаёт второй редактор. */
+  createNativeEditor(format: import('./native-document.js').NativeDocumentFormat, title: string, chatId: number, operationId: string): Promise<WorkpieceId>;
+
   createGadget(title: string, chatId?: number, bindingName?: string)
       : Promise<RpcStub<GadgetClient>>;
 

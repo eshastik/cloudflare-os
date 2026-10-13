@@ -5,6 +5,7 @@ import { nativeEditorCode, nativeEditorChanges, replaceNativeEditorCode } from '
 it('updates only the selected native code root, including removed custom files', async () => {
   const target = await nativeEditorCode('spreadsheet');
   expect(target).not.toBeNull();
+  expect(target!.output?.id).toBe('spreadsheet');
   const old = new Y.Doc();
   const text = (value: string) => { const t = new Y.Text(); t.insert(0, value); return t; };
   old.getMap<Y.Text>('7').set('client.js', text('old code'));
@@ -21,4 +22,8 @@ it('updates only the selected native code root, including removed custom files',
   expect(nativeEditorChanges(replica, '7', target!.files)).toEqual([]);
   expect(await nativeEditorCode('app')).toBeNull();
   old.destroy(); replica.destroy();
+});
+
+it('все три штатных редактора имеют согласованный формат и оба файла кода',async()=>{
+ for(const id of ['document','spreadsheet','presentation']){const target=await nativeEditorCode(id);expect(target?.output?.id).toBe(id);expect(target?.files.has('server.js')).toBe(true);expect(target?.files.has('client.js')).toBe(true)}
 });

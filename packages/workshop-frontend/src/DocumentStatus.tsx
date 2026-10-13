@@ -1,6 +1,6 @@
 import { HISTORY_POLL_MS, historyPreparing, type HistoryProgress } from '../../gatekeeper-mnemos/src/history-preparing.ts'
 import { HistoryPreparingLine } from './HistoryPreparingNotice'
-import { readNativeDocumentLaunch, clearNativeDocumentLaunch, type NativeDocumentLaunch } from './nativeDocumentLaunch'
+import { readNativeDocumentLaunch, MNEMOS_DOCUMENT_LAUNCH_EVENT, clearNativeDocumentLaunch, type NativeDocumentLaunch } from './nativeDocumentLaunch'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ClockCounterClockwise, DotsThree } from '@phosphor-icons/react'
@@ -861,9 +861,14 @@ export default function DocumentStatus({ gadget, format, snapshotSource, chatId,
   // Незавершённое «Открыть из Mnemos» раньше всплывало диалогом само; теперь для него открывается панель.
   useEffect(() => {
     if (chatId !== undefined || status.gadgetId === null) return
-    const requested = readNativeDocumentLaunch(format)
-    setLaunch(requested)
-    if (requested || readPendingNativeOpen(nativeOpenKey(status.gadgetId), format)) setPanel({ open: true, section: 'open' })
+    const read = () => {
+      const requested = readNativeDocumentLaunch(format, status.gadgetId!)
+      setLaunch(requested)
+      if (requested || readPendingNativeOpen(nativeOpenKey(status.gadgetId!), format)) setPanel({ open: true, section: 'open' })
+    }
+    read()
+    window.addEventListener(MNEMOS_DOCUMENT_LAUNCH_EVENT, read)
+    return () => window.removeEventListener(MNEMOS_DOCUMENT_LAUNCH_EVENT, read)
   }, [status.gadgetId, chatId, format])
 
   // «Поделиться» в шапке гаджета документа открывает доступ к самому документу Mnemos.

@@ -150,7 +150,7 @@ export default function ChatTemplatePicker({onSelect,onClose,initialSelected=[],
   finally{if(scopeRequest.current===token){scopeRequest.current=null;setScopeBusy(false);}}
  };
  if(legacy)return <BlueprintTemplatePicker onSelect={onSelect} onClose={onClose} onBack={()=>setLegacy(false)}/>;
- const kinds={document:'Форма документа',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'};
+ const kinds={document:'Форма',guidance:'Методика',agent_instructions:'Инструкция агента',skill:'Навык'};
  const filters=[['all','Все'],['document','Формы'],['guidance','Методики'],['agent_instructions','Инструкции'],['skill','Навыки']] as const;
  const chosen=(item:ChatWorkTemplate)=>selected.some(s=>templateSelectionKey(s)===templateSelectionKey(item));
  const remove=(item:ChatWorkTemplate)=>setSelected(old=>old.filter(s=>templateSelectionKey(s)!==templateSelectionKey(item)));

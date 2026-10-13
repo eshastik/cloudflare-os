@@ -8801,6 +8801,41 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return operation.gadgetId;
   }
 
+  async createNativeEditor(format: NativeDocumentFormat, title: string, chatId: number, operationId: string): Promise<WorkpieceId> {
+    if (!/^[a-f0-9-]{36}$/.test(operationId) || !title.trim() || title.length > 120 || nativeFormatForOutput(format) !== format) throw new Error("Неверная заявка открытия редактора");
+    const hash = JSON.stringify([format, title, chatId]);
+    const previous = this.impl.storage.templateImports.get(operationId);
+    if (previous) {
+      if (previous.hash !== hash || previous.profile !== this.clientProfileId) throw new Error("Операция относится к другому редактору");
+      this.impl.getChatMetaOrThrow(chatId);
+      this.impl.getGadgetRecord(previous.gadgetId);
+      return previous.gadgetId;
+    }
+    const target = await nativeEditorCode(format.slice('cloudflareos.'.length));
+    if (!target || nativeFormatForOutput(target.output?.id) !== format) throw new Error("Редактор этого формата недоступен");
+    return this.impl.ctx.storage.transactionSync(() => {
+      this.impl.getChatMetaOrThrow(chatId);
+      if ([...this.impl.storage.chatMeta.list()].some(meta => meta.activeAgent || meta.hasProposedChanges)) throw new Error("Завершите или отклоните правки кода перед открытием редактора");
+      const raced = this.impl.storage.templateImports.get(operationId);
+      if (raced) {
+        if (raced.hash !== hash || raced.profile !== this.clientProfileId) throw new Error("Операция относится к другому редактору");
+        this.impl.getGadgetRecord(raced.gadgetId);
+        return raced.gadgetId;
+      }
+      // Код берём только из поставляемого редактора. Содержимое узла читает обычный путь Mnemos с проверкой прав.
+      const taken = new Set([...this.impl.storage.gadgets.list()].map(item => item.bindingName));
+      for (const name of this.impl.chatScopeNames(chatId)) taken.add(name);
+      const record = this.impl.createGadget(title, fallbackBindingName("DOCUMENT", name => taken.has(name)), undefined, target.output);
+      const doc = new Y.Doc();
+      try {
+        const update = replaceNativeEditorCode(doc, this.impl.gadgetRootName(record.id), target.files);
+        this.impl.updateCode(update, [record.id]);
+        this.impl.storage.templateImports.put({id: operationId, hash, chatId, profile: this.clientProfileId, gadgetId: record.id, complete: true});
+        return record.id;
+      } finally { doc.destroy(); }
+    });
+  }
+
   async createGadget(title: string, chatId?: number, bindingName?: string)
       : Promise<RpcStub<GadgetClient>> {
     // When creating within a chat, names already claimed in that chat's scope (its frozen seed
@@ -10541,6 +10576,7 @@ class UseOverseerInterface extends RpcTarget implements Overseer {
   async setPinned(_pinned: boolean): Promise<void> { this.#deny(); }
   async deleteSelf(): Promise<void> { this.#deny(); }
   async importTemplateIntoChat(_stream: ReadableStream<Uint8Array>, _chatId:number, _operationId:string): ReturnType<Overseer["importTemplateIntoChat"]> { this.#deny(); }
+  async createNativeEditor(_format: NativeDocumentFormat, _title: string, _chatId: number, _operationId: string): Promise<WorkpieceId> { this.#deny(); }
   async createGadget(_title: string): Promise<RpcStub<GadgetClient>> { this.#deny(); }
   async subscribeToCode(
       _subscriber: RpcStub<CodeSubscriber>, _fromVersion?: number): Promise<RpcStub<{}>> {

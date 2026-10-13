@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { FORMAT_BLUEPRINTS } from './generated/format-blueprints.js';
-import { parseBlueprintArchive } from './blueprint-archive.js';
+import { sanitizeBlueprintOutput, parseBlueprintArchive } from './blueprint-archive.js';
 
 /** Load only the deployment's bundled native editor code, never document data. */
 export async function nativeEditorCode(outputId: string) {
@@ -14,7 +14,7 @@ export async function nativeEditorCode(outputId: string) {
     Y.applyUpdateV2(doc, new Uint8Array(bytes));
     const files = new Map([...doc.getMap<Y.Text>()].map(([name, text]) => [name, text.toString()]));
     if (!files.has('server.js') || !files.has('client.js')) throw new Error('Native editor bundle is incomplete.');
-    return { revision: entry.revision, files };
+    return { revision: entry.revision, files, output: sanitizeBlueprintOutput(entry.output) };
   } finally { doc.destroy(); }
 }
 
