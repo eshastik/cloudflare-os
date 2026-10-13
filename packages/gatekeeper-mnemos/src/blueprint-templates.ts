@@ -211,8 +211,13 @@ class BlueprintTemplateCreator extends RpcTarget {
     if(reviewPlan&&(reviewPlan.key!==accessKey||reviewPlan.reviewers.some(p=>!p.canRead)))throw Error('Проверьте доступ согласующих перед отправкой');
     let catalogueRevision=capture.promotion?.catalogueRevision??capture.improvement?.revision??0
     if(!capture.promotion&&!capture.improvement&&capture.expectedRevision){
-      try{catalogueRevision=(await this.session.readScopedWorkTemplate(scope,capture.template??capture.id,0)).revision}
-      catch(error){if(!(error instanceof MnemosAPIError)||error.status!==404)throw error}
+      let cursor=''
+      do {
+        const page=await this.session.listScopedWorkTemplates(scope,cursor)
+        const existing=page.templates.find(item=>item.scope_id===scope&&item.template_key===(capture.template??capture.id))
+        if(existing){catalogueRevision=existing.revision;break}
+        cursor=page.next_cursor||''
+      } while(cursor)
     }
     const input = {project_id: capture.project, request_id: capture.id, revision: version.revision,
       target_scope_id: scope, target_scope_revision: scopeRevision, template_key: capture.improvement?.template_key??capture.template??capture.id,

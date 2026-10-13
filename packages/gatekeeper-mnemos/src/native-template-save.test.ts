@@ -149,3 +149,12 @@ test('предложение сохранённой личной версии н
  denied=true;await assert.rejects(templates.prepareSharing(ref,id),/denied/);denied=false;owner='other';await assert.rejects(templates.prepareSharing(ref,id),/автор/);owner='author';
  await assert.rejects(templates.prepareSharing({scope_id:'team',template_key:'x',revision:2},id));await assert.rejects(templates.prepareSharing({...ref,revision:1},id),/другому/);assert.equal(writes,1);
 });
+
+ test('предложение сохранённой версии берёт общую ревизию из каталога без чтения отсутствующего ключа',async()=>{
+ const id=crypto.randomUUID(),source={template_id:'personal',revision:2,user_id:'author',project_id:'p',source_head:'a'.repeat(64),title:'Форма',purpose:'ТЗ',kind:'document'},values=new Map();let revision=0,denied=false,writes:any[]=[];
+ const session={async readWorkTemplate(){return source},async whoAmI(){return {subject:{user_id:'author'}}},async listScopedWorkTemplates(scope:string,cursor:string){if(denied)throw Error('denied');assert.equal(scope,'team');return cursor?{templates:revision?[{scope_id:'team',template_key:'personal',revision}]:[],next_cursor:''}:{templates:[{scope_id:'org',template_key:'personal',revision:7}],next_cursor:'50'}},async readScopedWorkTemplate(){throw Error('403 absent key')},async readSavedTemplateAction(){return null},async saveTemplateAction(_p:string,input:any){writes.push(input);return {id:'action'}},async executeSavedTemplateAction(){return {receipt:{kind:'propose',proposal:{proposal_id:'proposal'}}}}};
+ const templates=new BlueprintTemplates(session as any,{get:(k:string)=>values.get(k),put:(k:string,v:unknown)=>values.set(k,structuredClone(v))} as any);
+ await (await templates.prepareSharing({template_id:'personal',revision:2},id)).propose('team',1,'Для команды',undefined as any);assert.equal(writes[0].input.expected_catalogue_revision,0);
+ revision=3;await (await templates.prepareSharing({template_id:'personal',revision:2},crypto.randomUUID())).propose('team',1,'Для команды',undefined as any);assert.equal(writes[1].input.expected_catalogue_revision,3);
+ denied=true;await assert.rejects((await templates.prepareSharing({template_id:'personal',revision:2},crypto.randomUUID())).propose('team',1,'Для команды',undefined as any),/denied/);assert.equal(writes.length,2);
+ });
