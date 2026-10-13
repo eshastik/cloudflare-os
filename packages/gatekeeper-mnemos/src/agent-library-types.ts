@@ -20,7 +20,14 @@ type MnemosTemplateReference={template_id:string;revision:number;scope_id?:never
 
 /** Данные нативного документа; HTML блока сохраняет оформление редактора. */
 type MnemosTemplateChoice={reference:MnemosTemplateReference;title:string;purpose:string;kind:"document"|"guidance"|"agent_instructions"|"skill"};
-type MnemosNativeDocument={format:"cloudflareos.document";formatVersion:1;document:{title:string;blocks:Array<{id:string;html:string;[key:string]:unknown}>;[key:string]:unknown}};
+type MnemosNativeTextDocument={format:"cloudflareos.document";formatVersion:1;document:{title:string;blocks:Array<{id:string;html:string;[key:string]:unknown}>;[key:string]:unknown}};
+/** Ячейка хранит строку или формулу с начальным =. fmt и version сохраняйте из исходника; новой ячейке задайте fmt:null и version:1. */
+type MnemosNativeSpreadsheet={format:"cloudflareos.spreadsheet";formatVersion:1;document:{title:string;sheetOrder:string[];sheets:Record<string,{id:string;name:string;rows:number;cols:number;[key:string]:unknown}>;cells:Record<string,Record<string,{value:string;fmt:Record<string,unknown>|null;version:number}>>;[key:string]:unknown}};
+/** Текст слайда хранится в props.text/title/body/label; вложенные элементы группы — props.blocks. Положение, размеры, фон и остальные props сохраняйте. */
+type MnemosSlideBlock={id:string;type:string;x:number;y:number;w?:number;h?:number;props:{text?:string;title?:string;body?:string;label?:string;blocks?:MnemosSlideBlock[];[key:string]:unknown};[key:string]:unknown};
+type MnemosNativePresentation={format:"cloudflareos.presentation";formatVersion:1;document:{themeVersion:"workspace.1";revision:number;lastModified:number;title?:string;slides:Array<{id:string;background:Record<string,unknown>;blocks:MnemosSlideBlock[];[key:string]:unknown}>}};
+/** Полный снимок одного из трёх редакторов, без кода приложения и полномочий. */
+type MnemosNativeDocument=MnemosNativeTextDocument|MnemosNativeSpreadsheet|MnemosNativePresentation;
 interface MnemosLibrary {
   /** Доступные области рекомендаций. Продолжайте с nextCursor до пустой строки.
    * Если несколько групп подходят к работе, уточните выбор; не выбирайте первую. */
@@ -37,10 +44,10 @@ interface MnemosLibrary {
    * Применение не публикует результат и не разрешает действия из инструкции. */
   /** Создаёт личный документ из выбранной формы. Все references сохраняются в происхождении.
    * requestId выбирается один раз и сохраняется при потере ответа; повтор не создаёт дубликат.
-   * Метод не публикует документ. После отказа не подменяйте версии и не выдавайте копию за готовый результат. */
+   * Метод создаёт исходную копию и не публикует документ. Если задача требует заполнения, прочитайте копию через readNativeDraft, внесите данные, сохраните через saveNativeDraft и перечитайте результат. Копия сама по себе не является заполненным результатом. После отказа не подменяйте версии и не выдавайте копию за готовый результат. */
   createTemplateDocument(input:{project:string;form:MnemosTemplateReference;references:MnemosTemplateReference[];requestId:string;name:string;parentId?:string}):Promise<{project:string;name:string;operationId:string;document:{node_id:string;head:string};references:MnemosTemplateReference[];contentType:string}>;
-  /** Читает текущую личную форму документа. Изменяйте snapshot, сохраняя блоки и оформление.
-   * head передаётся в saveNativeDraft. Таблицы и презентации пока не поддерживаются. */
+  /** Читает текущий личный документ, таблицу или презентацию. Изменяйте полученный snapshot целиком, сохраняя блоки, листы, формулы и оформление, которые задача не просила менять.
+   * head передаётся в saveNativeDraft. Формат определяется snapshot.format; создавать редактор или менять его код для заполнения не нужно. */
   readNativeDraft(project:string,document:string):Promise<{project:string;document:string;name:string;head:string;snapshot:MnemosNativeDocument}>;
   /** Сохраняет заполненную форму в Mnemos. Параллельная правка даёт отказ: перечитайте форму,
    * объедините изменения и повторите с новым head. Результат открывается в редакторе; публикация отдельная. */
@@ -48,7 +55,7 @@ interface MnemosLibrary {
   readTemplates(references:MnemosTemplateReference[]):Promise<{materials:Array<{
     reference:MnemosTemplateReference;title:string;purpose:string;kind:"document"|"guidance"|"agent_instructions"|"skill";
     sourceHead:string;contentType:string;
-    content:{type:"text";text:string}|{type:"native";snapshot:{format:"cloudflareos.document"|"cloudflareos.spreadsheet"|"cloudflareos.presentation";formatVersion:1;document:Record<string,unknown>}};
+    content:{type:"text";text:string}|{type:"native";snapshot:MnemosNativeDocument};
   }>} >;
   /** Подключить существующий проект к агенту после явного подтверждения владельца.
    * project — точное имя или ID; requestId стабилен при повторе. Права людей не изменяются. */

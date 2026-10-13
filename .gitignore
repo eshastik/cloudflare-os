@@ -39,3 +39,6 @@ wrangler.dev.jsonc
 .dev.vars.*
 **/.dev.vars
 **/.dev.vars.*
+
+# Валидаторы данных из поставляемых нативных редакторов.
+packages/gatekeeper-mnemos/src/generated/native-validation-*.js

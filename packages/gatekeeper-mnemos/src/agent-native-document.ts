@@ -1,14 +1,25 @@
 import type {MnemosAccountSession} from './account-session.ts';
+import {nativeDocumentFormatOfMime,nativeDocumentMime} from '@gadgets/workshop-shared/native-document';
+import {validateWorkbookSnapshot} from './generated/native-validation-sheets.js';
+import {validateDeck} from './generated/native-validation-slides.js';
 import type {NativeDocumentSnapshot} from '@gadgets/workshop-shared/native-document';
 
-const MIME='application/vnd.cloudflareos.document+json';
 const LIMIT=1024*1024;
 type Session=Pick<MnemosAccountSession,'readDraftDocument'|'beginDraftDownload'|'checkPrivateVersionRead'|'beginNativeUpload'|'saveDraftDocument'>;
 
-/** Принимает данные встроенного редактора документа, без кода и полномочий. */
+/** Принимает данные встроенных редакторов, без кода и полномочий. */
 export function checkedNativeDocument(value:unknown):NativeDocumentSnapshot{
  const snapshot=value as NativeDocumentSnapshot;
- if(!snapshot||snapshot.format!=='cloudflareos.document'||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw new Error('Поддерживается нативная форма документа.');
+ if(!snapshot||!nativeDocumentFormatOfMime(nativeDocumentMime(snapshot.format))||snapshot.formatVersion!==1||Object.keys(snapshot).some(key=>!['format','formatVersion','document'].includes(key)))throw new Error('Поддерживаются нативные документы, таблицы и презентации.');
+ let count=0;
+ const json=(value:unknown,depth=0):void=>{
+  if(++count>200000||depth>64)throw new Error('Слишком сложная структура документа.');
+  if(value===null||typeof value==='string'||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value))return;
+  if(!value||typeof value!=='object'||!Array.isArray(value)&&![Object.prototype,null].includes(Object.getPrototypeOf(value)))throw new Error('Снимок должен содержать только данные JSON.');
+  for(const child of Object.values(value))json(child,depth+1);
+ };
+ json(snapshot);
+ if(snapshot.format==='cloudflareos.document'){
  const doc=snapshot.document;
  if(!doc||Array.isArray(doc)||typeof doc.title!=='string'||!Array.isArray(doc.blocks))throw new Error('Повреждена структура документа.');
  const ids=new Set<string>();
@@ -16,6 +27,8 @@ export function checkedNativeDocument(value:unknown):NativeDocumentSnapshot{
   if(!block||typeof block.id!=='string'||!block.id||block.id.length>100||ids.has(block.id)||typeof block.html!=='string')throw new Error('Повреждён блок документа.');
   ids.add(block.id);
  }
+ }else if(snapshot.format==='cloudflareos.spreadsheet')validateWorkbookSnapshot(snapshot);
+ else validateDeck(snapshot.document);
  const bytes=new TextEncoder().encode(JSON.stringify(snapshot));
  if(bytes.length>LIMIT)throw new Error('Документ превышает один МиБ.');
  return structuredClone(snapshot);
@@ -30,7 +43,7 @@ function identity(project:string,node:string){
 }
 async function current(session:Session,project:string,node:string,expectedHead?:string){
  const doc=await session.readDraftDocument(project,node);
- if(!doc.exists||doc.conflicted||doc.content_type!==MIME||!/^[a-f0-9]{64}$/.test(doc.head))throw new Error('Нативный документ недоступен или содержит конфликт.');
+ if(!doc.exists||doc.conflicted||!nativeDocumentFormatOfMime(doc.content_type??'')||!/^[a-f0-9]{64}$/.test(doc.head))throw new Error('Нативный документ недоступен или содержит конфликт.');
  if(expectedHead!==undefined&&doc.head!==expectedHead)throw new Error('Версия документа изменилась. Перечитайте её и сохраните правку заново.');
  return doc;
 }
@@ -52,6 +65,7 @@ export async function readAgentNativeDocument(session:Session,origin:string,proj
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),b=>b.toString(16).padStart(2,'0')).join('');
  if(hash!==ticket.sha256_hex)throw new Error('Контрольная сумма документа не совпала.');
  const snapshot=checkedNativeDocument(JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(data)));
+ if(nativeDocumentMime(snapshot.format)!==doc.content_type)throw new Error('Формат снимка не совпал с документом Mnemos.');
  await session.checkPrivateVersionRead(project,node,doc.head);
  return {project,document:node,name:doc.terms[0]?.metadata?.name??node,head:doc.head,snapshot};
 }
@@ -61,7 +75,8 @@ export async function saveAgentNativeDocument(session:Session,origin:string,proj
  identity(project,node);
  if(typeof expectedHead!=='string'||!/^[a-f0-9]{64}$/.test(expectedHead))throw new Error('Передайте head из readNativeDraft.');
  const snapshot=checkedNativeDocument(value);
- await current(session,project,node,expectedHead);
+ const document=await current(session,project,node,expectedHead);
+ if(nativeDocumentMime(snapshot.format)!==document.content_type)throw new Error('Нельзя менять формат документа при заполнении.');
  const data=new TextEncoder().encode(JSON.stringify(snapshot));
  const checksum=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256',data))));
  const ticket=await session.beginNativeUpload(project,data.length,checksum);

@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import {checkedNativeDocument,readAgentNativeDocument,saveAgentNativeDocument} from './agent-native-document.ts';
 
 const HEAD='a'.repeat(64),NEXT='b'.repeat(64),ORIGIN='https://storage.test';
-const MIME='application/vnd.cloudflareos.document+json';
 const snapshot={format:'cloudflareos.document' as const,formatVersion:1 as const,document:{title:'ТЗ',revision:1,blocks:[{id:'requirements',html:'<h1>Требования</h1><p><strong>Исходные данные</strong></p>',version:1}]}};
-function fixture(){
- const state={head:HEAD,revoked:false,saves:0,uploads:0,gets:0,puts:0,drift:false,body:JSON.stringify(snapshot),ticketPatch:{} as Record<string,unknown>,uploadPatch:{} as Record<string,unknown>,uploaded:''};
+function fixture(source:Parameters<typeof checkedNativeDocument>[0]=snapshot){
+ const state={head:HEAD,revoked:false,saves:0,uploads:0,gets:0,puts:0,drift:false,mime:`application/vnd.${(source as {format:string}).format}+json`,body:JSON.stringify(source),ticketPatch:{} as Record<string,unknown>,uploadPatch:{} as Record<string,unknown>,uploaded:''};
  const api={
-  async readDraftDocument(){return {exists:true,conflicted:false,content_type:MIME,head:state.head,terms:[{metadata:{name:'ТЗ.cfdoc'}}]};},
+  async readDraftDocument(){return {exists:true,conflicted:false,content_type:state.mime,head:state.head,terms:[{metadata:{name:'ТЗ.cfdoc'}}]};},
   async checkPrivateVersionRead(){if(state.revoked)throw Error('Доступ отозван');},
   async beginDraftDownload(){const bytes=new TextEncoder().encode(state.body);const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');return {method:'GET',url:ORIGIN+'/doc',node_id:'node',head:state.head,term_index:0,size_bytes:bytes.length,sha256_hex:hash,expires_at:new Date(Date.now()+60_000).toISOString(),...state.ticketPatch};},
   async beginNativeUpload(_project:string,size:number,checksum:string){state.uploads++;return {method:'PUT',url:ORIGIN+'/doc',upload_id:'upload',content_length:size,checksum_header:'x-amz-checksum-sha256',checksum_value:checksum,...state.uploadPatch};},
@@ -82,3 +81,19 @@ test('перенаправление чтения или загрузки не �
   assert.equal(state.saves,0);
  }
 });
+
+const sheet={format:'cloudflareos.spreadsheet',formatVersion:1,document:{title:'Бюджет',dateSystem:'1900',sheetOrder:['s1'],sheets:{s1:{id:'s1',name:'План',rows:100,cols:26,colWidths:{},rowHeights:{},frozenRows:0,frozenCols:0,merges:[]}},cells:{s1:{A1:{value:'=SUM(B1:B2)',fmt:null,version:1},B1:{value:'10',fmt:{b:true},version:1}}}}};
+const deck={format:'cloudflareos.presentation',formatVersion:1,document:{themeVersion:'workspace.1',revision:1,lastModified:1,title:'План',slides:[{id:'slide',background:{color:'#154F3B'},blocks:[{id:'heading',type:'title',x:20,y:30,w:400,props:{text:'Цель',fontSize:40}}]}]}};
+for(const source of [sheet,deck])test(source.format+' заполняется без потери оформления и не меняет формат узла',async()=>{
+ const {api,state,fetcher}=fixture(source);const read=await readAgentNativeDocument(api,ORIGIN,'project','node',fetcher);const doc=read.snapshot.document as any;
+ if(source===sheet){doc.cells.s1.B1.value='42';doc.cells.s1.B2={value:'8',fmt:null,version:1};}else doc.slides[0].blocks[0].props.text='Запуск сервиса';
+ await saveAgentNativeDocument(api,ORIGIN,'project','node',read.head,read.snapshot,fetcher);const saved=JSON.parse(state.uploaded);
+ if(source===sheet){assert.equal(saved.document.cells.s1.A1.value,'=SUM(B1:B2)');assert.equal(saved.document.cells.s1.B1.value,'42');assert.deepEqual(saved.document.cells.s1.B1.fmt,{b:true});assert.deepEqual(saved.document.sheets,source.document.sheets);}else{assert.equal(saved.document.slides[0].blocks[0].props.text,'Запуск сервиса');assert.deepEqual(saved.document.slides[0].background,source.document.slides[0].background);assert.equal(saved.document.slides[0].blocks[0].props.fontSize,40);}
+ const other=fixture(source);await assert.rejects(saveAgentNativeDocument(other.api,ORIGIN,'project','node',HEAD,snapshot,other.fetcher),/менять формат/);assert.equal(other.state.uploads,0);
+});
+test('повреждённые таблицы и презентации отклоняются валидаторами редакторов до выгрузки',async()=>{
+ const badSheet=structuredClone(sheet);badSheet.document.cells.s1.A1.value=42 as any;
+ const badDeck=structuredClone(deck);badDeck.document.slides[0].blocks[0].x=NaN;
+ for(const source of [badSheet,badDeck]){const {api,state,fetcher}=fixture(source);await assert.rejects(saveAgentNativeDocument(api,ORIGIN,'project','node',HEAD,source as any,fetcher));assert.equal(state.uploads,0);}
+});
+test('MIME скачанного снимка должен совпасть с узлом',async()=>{const {api,state,fetcher}=fixture(sheet);state.mime='application/vnd.cloudflareos.presentation+json';await assert.rejects(readAgentNativeDocument(api,ORIGIN,'project','node',fetcher),/не совпал/);});
